@@ -1,0 +1,14 @@
+version: '3.8'
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    container_name: brownie-memory
+    ports:
+      - "8000:8000"
+    volumes:
+      - brownie-memory-data:/chroma/chroma
+    restart: always
+
+volumes:
+  brownie-memory-data:
+    driver: local

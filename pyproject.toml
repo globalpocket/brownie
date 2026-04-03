@@ -1,0 +1,30 @@
+[project]
+name = "brownie"
+version = "0.1.0"
+description = "Autonomous AI Software Engineering Environment"
+authors = [
+    { name = "Satoshi Tanaka", email = "satoshi@example.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "pygithub>=2.0.0",
+    "langchain>=0.1.0",
+    "tree-sitter>=0.20.0",
+    "python-levenshtein>=0.23.0",
+    "transformers>=4.36.0",
+    "pyyaml>=6.0.0",
+    "httpx>=0.25.0",
+    "aiosqlite>=0.19.0",
+    "chromadb>=0.4.0",
+    "pydantic>=2.0.0",
+    "rich>=13.0.0",
+    "docker>=7.0.0"
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+managed = true
+python-preference = "only-managed"
