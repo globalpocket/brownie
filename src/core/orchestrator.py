@@ -3,9 +3,11 @@ import os
 import logging
 import yaml
 import time
+import subprocess
 from typing import Optional, Dict, Any, List
 from src.core.state import StateManager
 from src.core.worker_pool import WorkerPool
+from src.core.agent import CoderAgent
 from src.gh_platform.client import GitHubClientWrapper
 from src.workspace.sandbox import SandboxManager
 
@@ -21,6 +23,7 @@ class Orchestrator:
         self.gh_client = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""))
         self.sandbox = SandboxManager(self.config['workspace']['sandbox_user_id'], 
                                      self.config['workspace']['sandbox_group_id'])
+        self.agent = CoderAgent(self.config, self.sandbox)
         self.is_running = True
 
     async def start(self):
@@ -61,22 +64,23 @@ class Orchestrator:
                                                "権限がありません。実行を拒否しました。キャッシュの削除と退避を完了します。")
                 continue
             
-            # 重複実行防止チェック
+            # 重複実行防止チェック (設計書 4. 状態管理)
             existing_task = await self.state.get_task(task_id)
             if existing_task:
-                logger.debug(f"Task {task_id} exists with status: {existing_task['status']}")
-                if existing_task['status'] in ['InProgress', 'InQueue', 'Completed']:
+                status = existing_task['status']
+                if status in ['InProgress', 'InQueue', 'Completed']:
+                    logger.debug(f"Skipping task {task_id} (Status: {status})")
                     continue
             
-            # タスク登録
+            # 1. まずステータスを InQueue に更新 (重複投入を物理的に防ぐ)
+            await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue.number)
+
+            # 2. キューに追加
             logger.info(f"Adding task {task_id} to queue (Author: {issue.user.login})")
             priority = self.config['agent']['inference_priority']['manual_issue']
-            await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue.number)
-            
-            # 優先度付きキューに追加
             await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue.number)
             
-            # UX通知
+            # UX通知 (新規投入時のみ)
             if self.config['agent'].get('queue_ux_notification', True):
                 status = self.worker_pool.get_queue_status()
                 await self.gh_client.post_comment(repo_name, issue.number, 
@@ -109,16 +113,29 @@ class Orchestrator:
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             git_ops = GitOperations(project_root)
             
-            # 3. Wikiタスクの判定 (Issue #1 を想定)
-            issue_title = self.gh_client.g.get_repo(repo_name).get_issue(issue_number).title
-            if "Wiki" in issue_title or "説明" in issue_title:
-                logger.info("Wiki description task detected.")
+            # 3. Issue情報の取得
+            target_issue = self.gh_client.g.get_repo(repo_name).get_issue(issue_number)
+            issue_title = target_issue.title
+            issue_body = target_issue.body or ""
+            
+            # 4. タスクの振り分け
+            title_lower = issue_title.lower()
+            if "wiki" in title_lower or "説明" in title_lower:
+                logger.info(f"Wiki description task detected for {task_id}")
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
             else:
-                # 通常の実装タスク (設計書に従い、LLM -> Sandbox -> Test のループ)
-                logger.info("General implementation task detected (Not yet fully implemented).")
-                await self.gh_client.post_comment(repo_name, issue_number, 
-                                               "Wiki以外のタスクは現在開発中です。")
+                logger.info(f"General implementation task detected for {task_id}")
+                await self.gh_client.post_comment(repo_name, issue_number, "🔍 タスクの解析と実装を開始します...")
+                
+                # エージェントによる自律実行 (設計書 8.4)
+                success = await self.agent.plan_and_execute(task_id, project_root, issue_title, issue_body)
+                
+                if success:
+                    # 修正が完了したらプッシュ (設計書 1. ライフサイクル完結)
+                    git_ops.commit_and_push("main", f"feat: automated implementation from Issue #{issue_number}")
+                    await self.gh_client.post_comment(repo_name, issue_number, "✅ 実装とプッシュが完了しました。")
+                else:
+                    await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。")
 
             stop_heartbeat.set()
             await self.state.update_task(task_id, "Completed", repo_name)
@@ -189,15 +206,26 @@ class Orchestrator:
             await asyncio.sleep(10)
 
     async def _check_llm_health(self):
-        """LLMサーバーの死活監視 (設計書 4. Orchestrator)"""
+        """LLMサーバーの死活監視と自動起動 (設計書 4. Orchestrator)"""
         import httpx
+        base_url = self.config['llm']['endpoint'].replace("/v1", "")
         try:
             async with httpx.AsyncClient() as client:
-                # OllamaのベースURLを取得（/v1を除去）して /api/tags でチェック
-                base_url = self.config['llm']['endpoint'].replace("/v1", "")
-                resp = await client.get(base_url + "/api/tags")
-                if resp.status_code != 200:
-                    logger.error(f"LLM Server health check failed! (Status: {resp.status_code})")
-                    # Watchdogへ再起動指示などを送信
-        except Exception:
-            logger.error("LLM Server unreachable!")
+                resp = await client.get(base_url + "/api/tags", timeout=5.0)
+                if resp.status_code == 200:
+                    return # 正常
+                logger.warning(f"LLM Server health check failed (Status: {resp.status_code}). Attempting to start Ollama...")
+        except (httpx.ConnectError, httpx.TimeoutException, Exception):
+            logger.warning("LLM Server unreachable. Attempting to start Ollama...")
+        
+        # Ollama の起動試行 (Mac)
+        try:
+            # バックグラウンドで起動
+            subprocess.Popen(["ollama", "serve"], 
+                             stdout=subprocess.DEVNULL, 
+                             stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            logger.info("Executed 'ollama serve' in background. Waiting for startup...")
+            await asyncio.sleep(10) # 起動待ち
+        except Exception as e:
+            logger.error(f"Failed to start Ollama: {e}")

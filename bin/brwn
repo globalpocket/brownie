@@ -50,6 +50,31 @@ def run_command(args):
             f.write(str(process.pid))
         print(f"Brownie started (Watchdog PID: {process.pid}).")
 
+    elif args.action == "debug":
+        pid = get_running_pid()
+        if pid:
+            print(f"Error: Brownie is already running (PID: {pid}).")
+            sys.exit(1)
+            
+        print("Starting Brownie in DEBUG mode (Foreground)...")
+        # 自身をPIDファイルに登録 (重複起動防止のため)
+        my_pid = os.getpid()
+        with open(PID_FILE, "w") as f:
+            f.write(str(my_pid))
+
+        envs = os.environ.copy()
+        envs["BROWNIE_DEBUG"] = "1"
+        try:
+            # フォアグラウンドで起動
+            subprocess.run([venv_python, "src/watchdog.py"], env=envs)
+        except KeyboardInterrupt:
+            print("\nDebug mode stopped by user.")
+        finally:
+            # 終了時にPIDファイルを削除
+            if get_running_pid() == my_pid:
+                if os.path.exists(PID_FILE):
+                    os.remove(PID_FILE)
+
     elif args.action == "stop":
         pid = get_running_pid()
         if not pid:
@@ -93,7 +118,7 @@ def run_command(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Brownie CLI")
-    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "queue"])
+    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "queue", "debug"])
     args = parser.parse_args()
 
     run_command(args)
