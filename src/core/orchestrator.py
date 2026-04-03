@@ -65,7 +65,7 @@ class Orchestrator:
             existing_task = await self.state.get_task(task_id)
             if existing_task:
                 logger.debug(f"Task {task_id} exists with status: {existing_task['status']}")
-                if existing_task['status'] in ['InProgress', 'InQueue']:
+                if existing_task['status'] in ['InProgress', 'InQueue', 'Completed']:
                     continue
             
             # タスク登録
