@@ -7,6 +7,8 @@ agent:
     manual_issue: 1
     review_comment: 2
     auto_wiki: 3
+  repositories:
+    - "globalpocket/brownie"
 llm:
   endpoint: "http://localhost:11434/v1"
   timeout_sec: 0 # 無限タイムアウト

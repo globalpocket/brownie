@@ -32,8 +32,7 @@ class Orchestrator:
         while self.is_running:
             try:
                 # 1. 監視 (GitHub API ポーリング)
-                # 注: 実際にはリポジトリのリストを設定から取得する
-                repo_list = ["craftbeer-inc/brownie"] # 例
+                repo_list = self.config['agent'].get('repositories', [])
                 for repo_name in repo_list:
                     await self._poll_repository(repo_name)
                 
@@ -121,9 +120,11 @@ class Orchestrator:
         import httpx
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(self.config['llm']['endpoint'] + "/health")
+                # OllamaのベースURLを取得（/v1を除去）して /api/tags でチェック
+                base_url = self.config['llm']['endpoint'].replace("/v1", "")
+                resp = await client.get(base_url + "/api/tags")
                 if resp.status_code != 200:
-                    logger.error("LLM Server health check failed!")
+                    logger.error(f"LLM Server health check failed! (Status: {resp.status_code})")
                     # Watchdogへ再起動指示などを送信
         except Exception:
             logger.error("LLM Server unreachable!")
