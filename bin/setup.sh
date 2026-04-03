@@ -103,7 +103,21 @@ mkdir -p ~/.local/share/brownie/
 mkdir -p ~/.cache/brownie/
 mkdir -p logs
 
-# 5. 保守・保護設定
+# 5. 環境設定 (.env)
+if [ ! -f ".env" ]; then
+    echo "Configuring GitHub Access Token..."
+    read -p "Enter your GitHub Personal Access Token (classic, repo scope): " TOKEN
+    if [[ -n "$TOKEN" ]]; then
+        echo "GITHUB_TOKEN=$TOKEN" > .env
+        echo ".env file created with GITHUB_TOKEN."
+    else
+        echo "Warning: GITHUB_TOKEN was not provided. You will need to set it manually in .env."
+    fi
+else
+    echo ".env file already exists. Skipping GitHub token configuration."
+fi
+
+# 6. 保守・保護設定
 if ! grep -q "alias brownie=" ~/.zshrc 2>/dev/null; then
     echo "Adding alias to ~/.zshrc..."
     echo "alias brownie='nice -n 10 ./bin/brwn'" >> ~/.zshrc

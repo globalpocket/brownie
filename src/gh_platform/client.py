@@ -7,6 +7,8 @@ logger = logging.getLogger(__name__)
 
 class GitHubClientWrapper:
     def __init__(self, token: str):
+        if not token:
+            raise ValueError("GITHUB_TOKEN is not set. Please set it as an environment variable (e.g., export GITHUB_TOKEN=...).")
         self.auth = Auth.Token(token)
         self.g = Github(auth=self.auth)
         self.etags: Dict[str, str] = {}

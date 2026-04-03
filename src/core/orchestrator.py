@@ -1,11 +1,12 @@
 import asyncio
+import os
 import logging
 import yaml
 import time
 from typing import Optional, Dict, Any, List
 from src.core.state import StateManager
 from src.core.worker_pool import WorkerPool
-from src.github.client import GitHubClientWrapper
+from src.gh_platform.client import GitHubClientWrapper
 from src.workspace.sandbox import SandboxManager
 
 logger = logging.getLogger(__name__)

@@ -1,4 +1,5 @@
 import docker
+import os
 import yaml
 import logging
 import re
@@ -8,9 +9,30 @@ logger = logging.getLogger(__name__)
 
 class SandboxManager:
     def __init__(self, user_id: int, group_id: int):
-        self.client = docker.from_env()
         self.user_id = user_id
         self.group_id = group_id
+        try:
+            self.client = docker.from_env()
+            self.client.ping()
+        except Exception:
+            # Mac / Linux の標準的なソケットパスを試行 (設計書 11.2 補足)
+            paths = [
+                f"unix://{os.path.expanduser('~/.docker/run/docker.sock')}",
+                "unix:///var/run/docker.sock"
+            ]
+            self.client = None
+            for path in paths:
+                try:
+                    self.client = docker.DockerClient(base_url=path)
+                    self.client.ping()
+                    break
+                except Exception:
+                    self.client = None
+            
+            if not self.client:
+                # 最終的なフォールバック（エラーメッセージを分かりやすくする）
+                raise RuntimeError("Docker daemon not found. Please ensure Docker Desktop is running. "
+                                 "On Mac, you may need to set: export DOCKER_HOST='unix://$HOME/.docker/run/docker.sock'")
 
     def sanitize_compose_yaml(self, yaml_content: str) -> str:
         """YAMLサニタイザー (設計書 8. サンドボックス & 実行環境)

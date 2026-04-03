@@ -12,21 +12,37 @@
 
 ---
 
-## 🚀 クイックスタート
+## 🚀 クイックスタートと設定手順
 
-以下のコマンドで、依存ツールのインストールからモデルのフェッチ、環境構築まで完全自動で完了します。
+### 1. プロビジョニング
+以下のコマンドを実行します。既存の Docker や Ollama がある場合は自動検知してスキップします。
 
 ```bash
 ./bin/setup.sh
 ```
 
-**`setup.sh` が自動実行するプロビジョニング詳細:**
-* **依存ツール導入**: `gh`, `git-lfs`, `docker`, `ollama`, `sqlite3`, `logrotate`, `Repomix` 等
-* **モデル・フェッチ**: 推論・埋め込み用モデルの `ollama pull`
-* **仮想環境隔離**: `uv` / `venv` によるBROWNIE専用環境構築
-* **CLI登録**: `brwn` コマンドのパス登録（仮想環境直結）
-* **権限・保守設定**: 非Root実行ユーザーでのデーモン登録、`nice` 値適用、`logrotate` 設定
-* **設定初期化**: `config.yaml`, `.env`, `.brwn.json` テンプレート生成と初期設定ウィザード
+### 2. GitHub 認証の設定 (重要)
+Brownie が GitHub と通信するために、以下のいずれかの方法で認証トークンを設定してください。
+
+- **方法A: 環境変数に設定する (推奨)**
+  GitHub の [Personal Access Token (classic)](https://github.com/settings/tokens) を作成（`repo` 権限必須）し、ターミナルで設定します。
+  ```bash
+  export GITHUB_TOKEN=ghp_YourTokenHere
+  ```
+- **方法B: GitHub CLI (gh) から取得する**
+  すでに `gh` でログインしている場合、以下で設定可能です。
+  ```bash
+  export GITHUB_TOKEN=$(gh auth token)
+  ```
+
+> [!TIP]
+> 毎回 `export` するのが面倒な場合は、`.zshrc` や `.bashrc` に追記するか、プロジェクトルートに `.env` ファイル（`GITHUB_TOKEN=...`）を作成することを検討してください。
+
+### 3. Brownie の起動
+
+```bash
+./bin/brwn start
+```
 
 ---
 

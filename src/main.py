@@ -3,6 +3,10 @@ import logging
 import os
 import sys
 import signal
+from dotenv import load_dotenv
+
+# .env ファイルの読み込み (設計書 11.2 補足)
+load_dotenv()
 
 # プロジェクトルートをパスに追加 (設計書 3.2 補足)
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
