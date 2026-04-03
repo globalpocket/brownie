@@ -140,6 +140,7 @@ brownie/
 * **テスト:** ネットワーク分離（DNS Proxy） ＋ **ログスクラビング**（機密情報を置換）。
 * **Wiki同期:** 生成物を `/docs` に反映し `git subtree push` でWikiリポジトリ（.wiki.git）へ自動プッシュ。
 * **競合回避:** Push直前にリモートSHAを再検証。
+* **ループ防止 (Label-based Logic):** ローカル DB に加え、GitHub Issue のラベル (`in-progress`, `completed`, `failed`) を監視。GitHub 側に完了ラベルがある場合は DB の状態に関わらずスキップし、DB を自動同期する二重化構造を採用。
 
 ---
 

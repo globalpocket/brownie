@@ -65,12 +65,24 @@ class Orchestrator:
                 continue
             
             # 重複実行防止チェック (設計書 4. 状態管理)
+            # 1. ローカル DB チェック
             existing_task = await self.state.get_task(task_id)
             if existing_task:
                 status = existing_task['status']
                 if status in ['InProgress', 'InQueue', 'Completed']:
-                    logger.debug(f"Skipping task {task_id} (Status: {status})")
+                    logger.debug(f"Skipping task {task_id} (Local Status: {status})")
                     continue
+            
+            # 2. GitHub ラベルチェック (二重のループ防止策)
+            labels = await self.gh_client.get_issue_labels(repo_name, issue.number)
+            if "completed" in labels:
+                logger.info(f"Skipping task {task_id} (GitHub Label: completed)")
+                # DB の状態が不一致なら更新しておく
+                await self.state.update_task(task_id, "Completed", repo_name)
+                continue
+            if "in-progress" in labels:
+                logger.info(f"Skipping task {task_id} (GitHub Label: in-progress)")
+                continue
             
             # 1. まずステータスを InQueue に更新 (重複投入を物理的に防ぐ)
             await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue.number)
@@ -125,6 +137,8 @@ class Orchestrator:
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
             else:
                 logger.info(f"General implementation task detected (Issue #{issue_number})")
+                # ラベル付与
+                await self.gh_client.add_label(repo_name, issue_number, "in-progress")
                 await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します...")
                 
                 # 1. トピックブランチの作成
@@ -152,12 +166,16 @@ class Orchestrator:
                     
                     if pr:
                         await self.state.update_task(task_id, "Completed", repo_name)
+                        await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+                        await self.gh_client.add_label(repo_name, issue_number, "completed")
                         await self.gh_client.post_comment(repo_name, issue_number, 
                             f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{pr.html_url}")
                     else:
                         await self.gh_client.post_comment(repo_name, issue_number, "❌ 実装は完了しましたが、PR作成に失敗しました。")
                 else:
                     await self.state.update_task(task_id, "Failed", repo_name)
+                    await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+                    await self.gh_client.add_label(repo_name, issue_number, "failed")
                     await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。ログを確認してください。")
 
             stop_heartbeat.set()
@@ -170,6 +188,7 @@ class Orchestrator:
     async def _handle_wiki_task(self, task_id: str, repo_name: str, issue_number: int, repo_path: str):
         """Wiki説明の自動生成とプッシュ (Issue #1)"""
         logger.info(f"Generating Wiki description for {repo_name}...")
+        await self.gh_client.add_label(repo_name, issue_number, "in-progress")
         
         try:
             # 1. LLM 推论 (設計書 2.1)
@@ -211,12 +230,16 @@ class Orchestrator:
             wiki_sync.setup_wiki_remote(repo_url)
             wiki_sync.sync_docs_to_wiki(prefix="docs", branch="main")
             
+            await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+            await self.gh_client.add_label(repo_name, issue_number, "completed")
             await self.gh_client.post_comment(repo_name, issue_number, 
                                            "### ✅ Wiki の更新が完了しました\n\n"
                                            "- `/docs/About-System.md` を作成しました。\n"
                                            "- Wiki リポジトリへの同期に成功しました。")
         except Exception as e:
             logger.error(f"Wiki task failed: {e}")
+            await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+            await self.gh_client.add_label(repo_name, issue_number, "failed")
             await self.gh_client.post_comment(repo_name, issue_number, 
                                            f"❌ Wiki の更新中にエラーが発生しました: {e}")
             raise

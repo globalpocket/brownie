@@ -79,3 +79,35 @@ class GitHubClientWrapper:
         except GithubException as e:
             logger.error(f"Failed to create PR: {e}")
             return None
+
+    async def get_issue_labels(self, repo_name: str, issue_number: int) -> List[str]:
+        """Issue のラベル一覧を取得する"""
+        try:
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            return [l.name for l in issue.get_labels()]
+        except GithubException as e:
+            logger.error(f"Failed to get labels: {e}")
+            return []
+
+    async def add_label(self, repo_name: str, issue_number: int, label_name: str):
+        """Issue にラベルを付与する"""
+        try:
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            # ラベルが存在しない場合に備えて、リポジトリ側での存在確認は省略（PyGithubが良きに計らう）
+            issue.add_to_labels(label_name)
+            logger.info(f"Added label '{label_name}' to Issue #{issue_number}")
+        except GithubException as e:
+            logger.error(f"Failed to add label: {e}")
+
+    async def remove_label(self, repo_name: str, issue_number: int, label_name: str):
+        """Issue からラベルを削除する"""
+        try:
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            issue.remove_from_labels(label_name)
+            logger.info(f"Removed label '{label_name}' from Issue #{issue_number}")
+        except GithubException as e:
+            # ラベルが元々付いていない場合のエラーは無視
+            logger.debug(f"Label '{label_name}' not found on Issue #{issue_number}, skipping remove.")
