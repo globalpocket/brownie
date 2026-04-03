@@ -1,28 +1,69 @@
 #!/bin/bash
 set -e
 
-# Brownie 統合セットアップスクリプト (設計書 11.1)
+# Brownie 統合セットアップスクリプト (設計書 11.1 - スマート版)
 echo "Starting Brownie Provisioning..."
+
+# ツール存在チェック関数
+# $1: コマンド名, $2: Macアプリ名 (省略可)
+check_tool() {
+    local cmd=$1
+    local app=$2
+    
+    # コマンドがすでに存在するかチェック
+    if command -v "$cmd" &> /dev/null; then
+        echo "Found existing command: $cmd ($(which $cmd))"
+        return 0
+    fi
+    
+    # Mac特有のアプリケーションパスをチェック
+    if [[ "$(uname)" == "Darwin" ]] && [[ -n "$app" ]] && [[ -d "/Applications/$app" ]]; then
+        echo "Found existing Application: /Applications/$app"
+        return 0
+    fi
+    
+    return 1
+}
 
 # 1. OS チェック
 OS="$(uname)"
 case $OS in
   "Darwin")
     echo "Running on macOS..."
-    # Homebrew がない場合は入れる
+    # Homebrew
     if ! command -v brew &> /dev/null; then
+        echo "Installing Homebrew..."
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
     fi
-    # 設計書 11.2: ツール導入 (brew)
-    brew install git-lfs gh docker docker-compose ollama
+
+    echo "Checking for missing tools..."
+    TOOLS_TO_INSTALL=()
+    
+    # git-lfs
+    if ! check_tool "git-lfs"; then TOOLS_TO_INSTALL+=("git-lfs"); fi
+    # gh (GitHub CLI) - ユーザーの要望により既存のものを尊重（ここでもチェック）
+    if ! check_tool "gh"; then TOOLS_TO_INSTALL+=("gh"); fi
+    # Docker (Application または CLI)
+    if ! check_tool "docker" "Docker.app"; then TOOLS_TO_INSTALL+=("docker" "docker-compose"); fi
+    # Ollama (Application または CLI)
+    if ! check_tool "ollama" "Ollama.app"; then TOOLS_TO_INSTALL+=("ollama"); fi
+    
+    if [ ${#TOOLS_TO_INSTALL[@]} -gt 0 ]; then
+        echo "Installing missing tools: ${TOOLS_TO_INSTALL[*]}"
+        brew install "${TOOLS_TO_INSTALL[@]}"
+    else
+        echo "All system tools are already installed. Skipping brew install."
+    fi
     ;;
+    
   "Linux")
     echo "Running on Linux..."
-    # Ubuntu 22.04 推奨 (設計書 11.1)
     sudo apt update
+    # Linux では基本的にパッケージマネージャ経由で一括管理
     sudo apt install -y git-lfs gh docker.io docker-compose-v2 curl
-    # Ollama インストール
-    curl -fsSL https://ollama.com/install.sh | sh
+    if ! check_tool "ollama"; then
+        curl -fsSL https://ollama.com/install.sh | sh
+    fi
     ;;
   *)
     echo "Unsupported OS: $OS"
@@ -30,30 +71,63 @@ case $OS in
     ;;
 esac
 
-# 2. Git LFS インストール (設計書 2.2, 11.2)
+# 2. Git LFS インストール
+echo "Initializing Git LFS..."
 git lfs install
 
-# 3. Python 仮想環境 (uv) の構築 (設計書 2.2, 11.3)
-if ! command -v uv &> /dev/null; then
+# 3. Python 仮想環境 (uv) の構築
+UV_CMD="$HOME/.local/bin/uv"
+if ! command -v uv &> /dev/null && [ ! -f "$UV_CMD" ]; then
+    echo "Installing uv..."
     curl -LsSf https://astral.sh/uv/install.sh | sh
 fi
-source $HOME/.cargo/env || true
-uv sync
 
-# 4. ディレクトリ初期化 (設計書 11.4)
+# PATHの反映とコマンドの確定
+export PATH="$HOME/.local/bin:$PATH"
+if [ -f "$HOME/.local/bin/env" ]; then
+    source "$HOME/.local/bin/env"
+fi
+# インストール直後などでパスが通っていない場合への対応
+if ! command -v uv &> /dev/null; then
+    UV_CMD="$HOME/.local/bin/uv"
+else
+    UV_CMD="uv"
+fi
+
+echo "Syncing Python dependencies..."
+$UV_CMD sync
+
+# 4. ディレクトリ初期化
+echo "Initializing directories..."
 mkdir -p ~/.local/share/brownie/
 mkdir -p ~/.cache/brownie/
 mkdir -p logs
 
-# 5. 保守・保護設定 (設計書 11.4: Nice値)
-# メインプロセスより LLM 等の重い処理の優先度を下げるため
-# 実際には実行時に nice -n 10 を適用するよう alias や wrapper を設定
-echo "alias brownie='nice -n 10 ./bin/brwn'" >> ~/.zshrc
+# 5. 保守・保護設定
+if ! grep -q "alias brownie=" ~/.zshrc 2>/dev/null; then
+    echo "Adding alias to ~/.zshrc..."
+    echo "alias brownie='nice -n 10 ./bin/brwn'" >> ~/.zshrc
+fi
 
 # 6. Docker ボリュームの初期化
-docker-compose up -d chromadb
+if command -v docker-compose &> /dev/null || docker compose version &> /dev/null; then
+    echo "Initializing Docker services..."
+    # 'docker compose' (V2) を優先使用
+    if docker compose version &> /dev/null; then
+        docker compose up -d chromadb
+    else
+        docker-compose up -d chromadb
+    fi
+else
+    echo "Warning: Docker not found. Skipping service initialization."
+fi
 
-# 7. LLM 推奨モデルの事前プル (設計書 11.2)
-ollama pull llama3:latest
+# 7. LLM 推奨モデルの事前プル
+if command -v ollama &> /dev/null; then
+    echo "Pulling recommended model (llama3:latest)..."
+    ollama pull llama3:latest
+else
+    echo "Warning: Ollama not found. Skipping model pull."
+fi
 
 echo "Brownie setup completed successfully!"

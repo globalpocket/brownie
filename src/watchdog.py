@@ -53,7 +53,11 @@ class Watchdog:
             time.sleep(wait_time)
             
         logger.info(f"Restarting main process (Attempt: {self.crash_count + 1})...")
-        self.process = subprocess.Popen(["python3", self.main_script])
+        
+        # 仮想環境のPythonを使用する
+        venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv", "bin", "python")
+        self.process = subprocess.Popen([venv_python, self.main_script])
+        
         self.crash_count += 1
         self.last_survival_time = time.time()
 

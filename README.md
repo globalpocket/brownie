@@ -12,12 +12,12 @@
 
 ---
 
-## 🚀 クイックスタート (真のワンライナー導入)
+## 🚀 クイックスタート
 
 以下のコマンドで、依存ツールのインストールからモデルのフェッチ、環境構築まで完全自動で完了します。
 
 ```bash
-curl -sL https://github.com/globalpocket/brownie/main/setup.sh | bash
+./bin/setup.sh
 ```
 
 **`setup.sh` が自動実行するプロビジョニング詳細:**
