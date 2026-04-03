@@ -133,13 +133,14 @@ class Orchestrator:
                 if success:
                     # 修正が完了したらプッシュ (設計書 1. ライフサイクル完結)
                     git_ops.commit_and_push("main", f"feat: automated implementation from Issue #{issue_number}")
+                    await self.state.update_task(task_id, "Completed", repo_name)
                     await self.gh_client.post_comment(repo_name, issue_number, "✅ 実装とプッシュが完了しました。")
                 else:
-                    await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。")
+                    await self.state.update_task(task_id, "Failed", repo_name)
+                    await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。ログを確認してください。")
 
             stop_heartbeat.set()
-            await self.state.update_task(task_id, "Completed", repo_name)
-            logger.info(f"Task {task_id} completed successfully.")
+            logger.info(f"Task {task_id} cycle finished (Success: {success}).")
             
         except Exception as e:
             logger.error(f"Task {task_id} failed: {e}", exc_info=True)
