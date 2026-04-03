@@ -1,11 +1,15 @@
 import time
 import os
+import sys
 import signal
 import subprocess
 import logging
 import shutil
 import psutil # psutil は依存関係に追加する必要がある
 from typing import Optional
+
+# プロジェクトルートをパスに追加 (設計書 3.2 補足)
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 # ログ設定
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')

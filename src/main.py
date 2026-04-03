@@ -1,7 +1,12 @@
 import asyncio
 import logging
 import os
+import sys
 import signal
+
+# プロジェクトルートをパスに追加 (設計書 3.2 補足)
+sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+
 from src.core.orchestrator import Orchestrator
 
 # 1. ログ設定
