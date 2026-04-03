@@ -162,7 +162,7 @@ class Orchestrator:
             # 3. コミット & プッシュ (GitOps)
             from src.workspace.git_ops import GitOperations
             git_ops = GitOperations(repo_path)
-            git_ops.commit_and_push("master", f"docs: update system description from Issue #{issue_number}")
+            git_ops.commit_and_push("main", f"docs: update system description from Issue #{issue_number}")
             
             # 4. Wiki リポジトリへの同期 (WikiSync)
             from src.workspace.wiki_sync import WikiSync
@@ -170,7 +170,7 @@ class Orchestrator:
             
             repo_url = f"https://github.com/{repo_name}.git"
             wiki_sync.setup_wiki_remote(repo_url)
-            wiki_sync.sync_docs_to_wiki(prefix="docs", branch="master")
+            wiki_sync.sync_docs_to_wiki(prefix="docs", branch="main")
             
             await self.gh_client.post_comment(repo_name, issue_number, 
                                            "### ✅ Wiki の更新が完了しました\n\n"
