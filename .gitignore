@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Brownie specific
+logs/
+*.signal
+*.db
+*.db-wal
+*.db-shm
+/tmp/brownie_workspace/
+.agent/

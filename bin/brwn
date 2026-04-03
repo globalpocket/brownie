@@ -4,25 +4,26 @@ import os
 import signal
 import subprocess
 import argparse
-import fcntl
+import time
 from pathlib import Path
 
 # プロジェクトルートをパスに追加
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
-# 1. 二重起動防止 (設計書 3.2: PIDロック)
-LOCK_FILE = "/tmp/brownie.lock"
+# 1. 永続的なPIDファイル (設計書 3.2: PIDロック)
+PID_FILE = "/tmp/brownie.pid"
 
-def acquire_lock():
-    pid_file = open(LOCK_FILE, "w")
-    try:
-        fcntl.lockf(pid_file, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        pid_file.write(str(os.getpid()))
-        pid_file.flush()
-        return pid_file
-    except IOError:
-        print("Error: Brownie CLI is already running.")
-        sys.exit(1)
+def get_running_pid():
+    if os.path.exists(PID_FILE):
+        try:
+            with open(PID_FILE, "r") as f:
+                pid = int(f.read().strip())
+                # プロセスが存在するか確認
+                os.kill(pid, 0)
+                return pid
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+    return None
 
 def run_command(args):
     """メインプロセス/Watchdog の制御"""
@@ -31,43 +32,68 @@ def run_command(args):
     venv_python = os.path.join(base_dir, ".venv", "bin", "python")
     
     if args.action == "start":
+        pid = get_running_pid()
+        if pid:
+            print(f"Error: Brownie is already running (PID: {pid}).")
+            sys.exit(1)
+            
         print("Starting Brownie system...")
-        # Watchdog をバックグラウンドで起動
-        subprocess.Popen([venv_python, "src/watchdog.py"], start_new_session=True)
+        # Watchdog を別セッションでバックグラウンド起動 (SIGINTの影響を受けないようにする)
+        process = subprocess.Popen(
+            [venv_python, "src/watchdog.py"],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        # PIDを保存
+        with open(PID_FILE, "w") as f:
+            f.write(str(process.pid))
+        print(f"Brownie started (Watchdog PID: {process.pid}).")
+
     elif args.action == "stop":
-        print("Stopping Brownie system...")
-        # プロセスを探して kill
+        pid = get_running_pid()
+        if not pid:
+            print("Brownie is not running.")
+            return
+
+        print(f"Stopping Brownie system (PID: {pid})...")
         try:
-            with open(LOCK_FILE, "r") as f:
-                pid = int(f.read())
-                os.kill(pid, signal.SIGTERM)
-        except Exception:
-            pass
+            # プロセスグループ全体に SIGTERM を送信
+            os.killpg(os.getpgid(pid), signal.SIGTERM)
+            
+            # 停止を待機
+            for _ in range(10):
+                if get_running_pid() is None:
+                    break
+                time.sleep(1)
+            
+            if get_running_pid():
+                print("Force killing Brownie...")
+                os.killpg(os.getpgid(pid), signal.SIGKILL)
+            
+            if os.path.exists(PID_FILE):
+                os.remove(PID_FILE)
+            print("Brownie stopped.")
+        except Exception as e:
+            print(f"Error stopping Brownie: {e}")
+
     elif args.action == "status":
-        print("Brownie Status:")
-        # 簡易的にプロセスが存在するか確認
-        res = subprocess.run(["pgrep", "-f", "src/watchdog.py"], capture_output=True)
-        if res.returncode == 0:
-            print(" - Watchdog: Running")
+        pid = get_running_pid()
+        if pid:
+            print(f"Brownie is ACTIVE (Watchdog PID: {pid})")
         else:
-            print(" - Watchdog: Stopped")
-    elif args.action == "queue":
-        print("Checking task queue...")
-        # 実際には SQLite や Orchestrator の API を叩く
-        pass
+            print("Brownie is STOPPED")
+
+    elif args.action == "logs":
+        log_file = os.path.join(base_dir, "logs", "brownie.log")
+        if os.path.exists(log_file):
+            subprocess.run(["tail", "-f", log_file])
+        else:
+            print("No log file found.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Brownie CLI")
-    parser.add_argument("action", choices=["start", "stop", "restart", "status", "queue", "log"])
+    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "queue"])
     args = parser.parse_args()
 
-    # 二重起動防止
-    lock = acquire_lock()
-    
-    try:
-        run_command(args)
-    finally:
-        # ロック解放
-        lock.close()
-        if os.path.exists(LOCK_FILE):
-            os.remove(LOCK_FILE)
+    run_command(args)

@@ -12,35 +12,40 @@ class GitHubClientWrapper:
         self.auth = Auth.Token(token)
         self.g = Github(auth=self.auth)
         self.etags: Dict[str, str] = {}
+        self._my_username: Optional[str] = None
 
-    async def get_issues_to_process(self, repo_name: str, mention_name: str) -> List[Any]:
-        """メンションを検知したIssue/PRを取得する。ETagを使用してトラフィックを抑制。"""
+    def get_my_username(self) -> str:
+        """認証されたユーザーのユーザー名を動的に取得する"""
+        if self._my_username is None:
+            try:
+                user = self.g.get_user()
+                self._my_username = user.login
+                logger.info(f"Authenticated as GitHub user: {self._my_username}")
+            except GithubException as e:
+                logger.error(f"Failed to fetch authenticated user: {e}")
+                raise
+        return self._my_username
+
+    async def get_issues_to_process(self, repo_name: str) -> List[Any]:
+        """自分（アサイニ）に割り当てられたIssue/PRを取得する。"""
         try:
+            my_username = self.get_my_username()
             repo = self.g.get_repo(repo_name)
-            # ETag監視 (設計書 4. GitHubClient)
-            # 実際には PyGithub で ETag を扱うには get_issues(etag=...) が必要だが
-            # ここではリポジトリの updated_at 等をベースにしたフィルタリングを行う。
             
-            # [bot] アカウントは無視 (設計書 4. GitHubClient)
-            issues = repo.get_issues(state='open', sort='updated', direction='desc')
+            # アサイニが自分であるIssueを取得 (設計書改修: メンションではなくアサインベース)
+            # PyGithubの get_issues は assignee 引数をサポートしている
+            issues = repo.get_issues(state='open', assignee=my_username, sort='updated', direction='desc')
             
             to_process = []
             for issue in issues:
+                # [bot] アカウントは無視
                 if issue.user.type == "Bot":
                     continue
                 
-                # 自分へのメンションがあるかチェック (簡易版)
-                if mention_name in (issue.body or ""):
-                    to_process.append(issue)
-                
-                # コメント内にメンションがあるかチェック
-                comments = issue.get_comments(since=issue.updated_at)
-                for comment in comments:
-                    if comment.user.type == "Bot":
-                        continue
-                    if mention_name in comment.body:
-                        to_process.append(issue)
-                        break
+                to_process.append(issue)
+            
+            if to_process:
+                logger.info(f"Found {len(to_process)} issues assigned to {my_username} in {repo_name}")
             
             return to_process
         except GithubException as e:
@@ -48,14 +53,12 @@ class GitHubClientWrapper:
             return []
 
     async def check_rbac(self, repo_name: str, username: str) -> bool:
-        """ユーザーがリポジトリの Collaborator または Owner かを検証する (設計書 4. Orchestrator)"""
+        """ユーザーがリポジトリの Collaborator または Owner かを検証する"""
         try:
             repo = self.g.get_repo(repo_name)
-            collaborators = repo.get_collaborators()
-            for coll in collaborators:
-                if coll.login == username:
-                    return True
-            return False
+            # 権限チェックの簡易化（実際には詳細な権限確認が必要な場合もある）
+            # ここでは collaborator かどうかを確認
+            return repo.has_in_collaborators(username)
         except GithubException:
             return False
 

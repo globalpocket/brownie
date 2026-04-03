@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import time
 import os
 import sys
@@ -5,14 +6,26 @@ import signal
 import subprocess
 import logging
 import shutil
-import psutil # psutil は依存関係に追加する必要がある
 from typing import Optional
 
-# プロジェクトルートをパスに追加 (設計書 3.2 補足)
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+# プロジェクトルートをパスに追加
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(base_dir)
 
-# ログ設定
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+# ログディレクトリの作成
+log_dir = os.path.join(base_dir, "logs")
+os.makedirs(log_dir, exist_ok=True)
+log_file = os.path.join(log_dir, "brownie.log")
+
+# ログ設定 (ファイルと標準出力の両方に出力)
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
 logger = logging.getLogger("brownie.watchdog")
 
 class Watchdog:
@@ -25,8 +38,30 @@ class Watchdog:
         self.max_crashes = 5
         self.is_running = True
 
+        # シグナルハンドラの設定 (設計書 4.2 運用監視)
+        signal.signal(signal.SIGINT, self._handle_exit_signal)
+        signal.signal(signal.SIGTERM, self._handle_exit_signal)
+
+    def _handle_exit_signal(self, signum, frame):
+        """終了シグナル受信時の処理"""
+        logger.info(f"Received signal {signum}. Shutting down Brownie...")
+        self.is_running = False
+        if self.process:
+            logger.info("Terminating main process...")
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                logger.warning("Main process did not terminate. Force killing...")
+                self.process.kill()
+        
+        if os.path.exists(self.survival_file):
+            os.remove(self.survival_file)
+        
+        sys.exit(0)
+
     def start(self):
-        """Watchdogの実行 (設計書 3.2: プロセス監視・ロールバック・CrashLoopBackOff)"""
+        """Watchdogの実行 (設計書 3.2)"""
         logger.info("Starting Brownie Watchdog...")
         
         while self.is_running:
@@ -34,19 +69,22 @@ class Watchdog:
             if self.process is None or self.process.poll() is not None:
                 self._handle_restart()
             
-            # 2. 生存信号の確認 (設計書 3.2: 生存信号)
+            # 2. 生存信号の確認
             self._check_survival()
             
-            # 3. リソース監視 (設計書 3.2: OOM/Disk 監視)
+            # 3. リソース監視
             self._monitor_resources()
             
+            # 終了フラグが立っていたらループを抜ける
+            if not self.is_running:
+                break
+                
             time.sleep(10)
 
     def _handle_restart(self):
-        """プロセス再起動と CrashLoopBackOff (設計書 9. CrashLoopBackOff)"""
+        """プロセス再起動と CrashLoopBackOff"""
         if self.crash_count >= self.max_crashes:
-            logger.error("Too many crashes! Out-of-Band (OOB) notification sent.")
-            # 外部通知 (設計書 5.1: oob_webhook_url)
+            logger.error("Too many crashes! System stopping.")
             self.is_running = False
             return
         
@@ -58,21 +96,20 @@ class Watchdog:
             
         logger.info(f"Restarting main process (Attempt: {self.crash_count + 1})...")
         
-        # 仮想環境のPythonを使用する
-        venv_python = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".venv", "bin", "python")
+        venv_python = os.path.join(base_dir, ".venv", "bin", "python")
+        # メインプロセスを起動
         self.process = subprocess.Popen([venv_python, self.main_script])
         
         self.crash_count += 1
         self.last_survival_time = time.time()
 
     def _check_survival(self):
-        """生存信号の確認 (設計書 4. ハートビート受信)"""
+        """生存信号の確認"""
         try:
             if os.path.exists(self.survival_file):
                 mtime = os.path.getmtime(self.survival_file)
                 if mtime > self.last_survival_time:
                     self.last_survival_time = mtime
-                    # 正常に動作していればクラッシュカウントをリセット
                     if time.time() - self.last_survival_time < 60:
                         self.crash_count = 0
             
@@ -81,28 +118,17 @@ class Watchdog:
                 logger.warning("Main process seems hung. Killing it...")
                 if self.process:
                     self.process.terminate()
-                    self.process.wait(timeout=10)
         except Exception as e:
             logger.error(f"Survival check error: {e}")
 
     def _monitor_resources(self):
-        """リソース監視 (設計書 10. OOM/Disk監視)"""
-        # 1. ディスク残量監視
+        """リソース監視"""
         usage = shutil.disk_usage("/")
         free_gb = usage.free / (1024**3)
-        if free_gb < 5: # 5GB未満で警告/停止
-            logger.error(f"Disk space low: {free_gb:.2f} GB left! Pausing operations.")
-            if self.process:
-                os.kill(self.process.pid, signal.SIGSTOP) # 一時停止 (設計書 10. インフラ保護)
-        
-        # 2. メモリ監視 (psutil)
-        mem = psutil.virtual_memory()
-        if mem.percent > 95:
-            logger.error("Memory usage critically high!")
-            # 必要に応じて LLM コンテナ等の停止を指示
+        if free_gb < 2: # 閾値を少し下げて 2GB
+            logger.error(f"Disk space critically low: {free_gb:.2f} GB left!")
 
 if __name__ == "__main__":
-    import os
     script_path = os.path.join(os.path.dirname(__file__), "main.py")
     dog = Watchdog(script_path, "/tmp/brownie_survival.signal")
     dog.start()
