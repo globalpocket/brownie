@@ -124,17 +124,38 @@ class Orchestrator:
                 logger.info(f"Wiki description task detected for {task_id}")
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
             else:
-                logger.info(f"General implementation task detected for {task_id}")
-                await self.gh_client.post_comment(repo_name, issue_number, "🔍 タスクの解析と実装を開始します...")
+                logger.info(f"General implementation task detected (Issue #{issue_number})")
+                await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します...")
                 
-                # エージェントによる自律実行 (設計書 8.4)
+                # 1. トピックブランチの作成
+                branch_name = f"issue-{issue_number}"
+                git_ops.create_and_checkout_branch(branch_name)
+                
+                # 2. エージェントによる自律実行 (設計書 8.4)
                 success = await self.agent.plan_and_execute(task_id, project_root, issue_title, issue_body)
                 
                 if success:
-                    # 修正が完了したらプッシュ (設計書 1. ライフサイクル完結)
-                    git_ops.commit_and_push("main", f"feat: automated implementation from Issue #{issue_number}")
-                    await self.state.update_task(task_id, "Completed", repo_name)
-                    await self.gh_client.post_comment(repo_name, issue_number, "✅ 実装とプッシュが完了しました。")
+                    # 3. 変更内容をトピックブランチにプッシュ
+                    commit_msg = f"feat: automated implementation for Issue #{issue_number}"
+                    git_ops.commit_and_push(branch_name, commit_msg)
+                    
+                    # 4. プルリクエストの作成 (設計書 7.1)
+                    pr_title = f"Fix #{issue_number}: {issue_title}"
+                    pr_body = f"## 概要\nIssue #{issue_number} に対する自動実装PRです。\n\n## 変更点\n{issue_body}"
+                    pr = await self.gh_client.create_pull_request(
+                        repo_name=repo_name,
+                        title=pr_title,
+                        body=pr_body,
+                        head=branch_name,
+                        base="main"
+                    )
+                    
+                    if pr:
+                        await self.state.update_task(task_id, "Completed", repo_name)
+                        await self.gh_client.post_comment(repo_name, issue_number, 
+                            f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{pr.html_url}")
+                    else:
+                        await self.gh_client.post_comment(repo_name, issue_number, "❌ 実装は完了しましたが、PR作成に失敗しました。")
                 else:
                     await self.state.update_task(task_id, "Failed", repo_name)
                     await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。ログを確認してください。")

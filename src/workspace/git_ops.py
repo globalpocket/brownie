@@ -67,8 +67,32 @@ class GitOperations:
         remote_sha = self._run_git(["rev-parse", f"origin/{branch}"])
         return local_sha == remote_sha
 
+    def create_and_checkout_branch(self, branch_name: str):
+        """トピックブランチの作成と切り替え (設計書 7.1)"""
+        logger.info(f"Creating and switching to branch: {branch_name}")
+        # 最新の main からブランチを切る
+        self._run_git(["checkout", "main"])
+        self._run_git(["fetch", "origin", "main"])
+        self._run_git(["reset", "--hard", "origin/main"])
+        
+        # 既存ブランチがあれば削除
+        try:
+            self._run_git(["branch", "-D", branch_name])
+        except Exception:
+            pass
+        self._run_git(["checkout", "-b", branch_name])
+
+    def checkout(self, branch_name: str):
+        """ブランチの切り替え"""
+        self._run_git(["checkout", branch_name])
+
     def commit_and_push(self, branch: str, message: str):
         """コミットとプッシュ"""
         self._run_git(["add", "."])
+        # 未変更の場合にエラーにならないよう、差分チェック
+        status = self._run_git(["status", "--porcelain"])
+        if not status:
+            logger.info("No changes to commit.")
+            return
         self._run_git(["commit", "-m", message])
-        self._run_git(["push", "origin", branch])
+        self._run_git(["push", "origin", branch, "--force"]) # トピックブランチなので強制プッシュで上書き可とする
