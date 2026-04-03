@@ -14,7 +14,12 @@ sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 from src.core.orchestrator import Orchestrator
 
 # 1. ログ設定
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+log_level = logging.DEBUG if os.environ.get("BROWNIE_DEBUG") == "1" else logging.INFO
+logging.basicConfig(
+    level=log_level,
+    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)]
+)
 logger = logging.getLogger("brownie.main")
 
 class BrownieApp:

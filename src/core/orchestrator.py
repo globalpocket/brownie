@@ -54,7 +54,8 @@ class Orchestrator:
             task_id = f"{repo_name}#{issue.number}"
             
             # RBAC (設計書 4. Orchestrator)
-            if not await self.gh_client.check_rbac(repo_name, issue.user.login):
+            is_collaborator = await self.gh_client.check_rbac(repo_name, issue.user.login)
+            if not is_collaborator:
                 logger.warning(f"RBAC Denied for {issue.user.login} on {task_id}")
                 await self.gh_client.post_comment(repo_name, issue.number, 
                                                "権限がありません。実行を拒否しました。キャッシュの削除と退避を完了します。")
@@ -62,10 +63,13 @@ class Orchestrator:
             
             # 重複実行防止チェック
             existing_task = await self.state.get_task(task_id)
-            if existing_task and existing_task['status'] in ['InProgress', 'InQueue']:
-                continue
+            if existing_task:
+                logger.debug(f"Task {task_id} exists with status: {existing_task['status']}")
+                if existing_task['status'] in ['InProgress', 'InQueue']:
+                    continue
             
             # タスク登録
+            logger.info(f"Adding task {task_id} to queue (Author: {issue.user.login})")
             priority = self.config['agent']['inference_priority']['manual_issue']
             await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue.number)
             
@@ -106,7 +110,7 @@ class Orchestrator:
             git_ops = GitOperations(project_root)
             
             # 3. Wikiタスクの判定 (Issue #1 を想定)
-            issue_title = (await self.gh_client.g.get_repo(repo_name).get_issue(issue_number)).title
+            issue_title = self.gh_client.g.get_repo(repo_name).get_issue(issue_number).title
             if "Wiki" in issue_title or "説明" in issue_title:
                 logger.info("Wiki description task detected.")
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
@@ -182,7 +186,7 @@ class Orchestrator:
         """Watchdogへの生存信号。設計書 4. ハートビート"""
         while not stop_event.is_set():
             # Watchdogへの生存信号（例：ファイルへの書き込みや特定APIの呼び出し）
-            asyncio.sleep(10)
+            await asyncio.sleep(10)
 
     async def _check_llm_health(self):
         """LLMサーバーの死活監視 (設計書 4. Orchestrator)"""
