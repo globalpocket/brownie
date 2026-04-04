@@ -157,7 +157,7 @@ class GitHubClientWrapper:
                     }
                 
                 # 2. 次にすべてのコメントをチェックして、より新しいメンションがあれば上書き
-                comments = issue.get_comments(sort="created", direction="asc")
+                comments = issue.get_comments()
                 for comment in comments:
                     if f"@{my_username}" in (comment.body or ""):
                         latest_mention = {
