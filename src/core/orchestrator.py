@@ -72,11 +72,15 @@ class Orchestrator:
             if status in ['InProgress', 'InQueue', 'Completed']:
                 return
 
-        # 2. GitHub ラベルチェック (二重のループ防止策 - メンション時はスキップ可能だが一応確認)
-        labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
-        if "completed" in labels:
-            await self.state.update_task(task_id, "Completed", repo_name)
-            return
+        # 2. GitHub ラベルチェック (二重のループ防止策)
+        # メンション起動の場合は「ラベルに関わらず反応する」要件に従い、このチェックをスキップする
+        if user_login != "mention_trigger":
+            labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
+            if "completed" in labels:
+                await self.state.update_task(task_id, "Completed", repo_name)
+                return
+            if "in-progress" in labels:
+                return
 
         # 3. RBAC確認 (メンションの場合はトリガー元を確認すべきだが、一旦リポジトリ単位で許可)
         if user_login != "mention_trigger":
