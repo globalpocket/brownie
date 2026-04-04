@@ -12,25 +12,44 @@ load_dotenv()
 sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
 
 from src.core.orchestrator import Orchestrator
+from src.core.agent import CoderAgent
+from src.workspace.sandbox import SandboxManager
+from src.version import get_build_id
 
 # 1. ログ設定
+from logging.handlers import RotatingFileHandler
+log_file = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "logs", "brownie.log"))
+os.makedirs(os.path.dirname(log_file), exist_ok=True)
 log_level = logging.DEBUG if os.environ.get("BROWNIE_DEBUG") == "1" else logging.INFO
-logging.basicConfig(
-    level=log_level,
-    format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+
+root_logger = logging.getLogger()
+root_logger.setLevel(log_level)
+formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+
+# ファイルハンドラ
+file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
+file_handler.setFormatter(formatter)
+root_logger.addHandler(file_handler)
+
+# コンソールハンドラ
+console_handler = logging.StreamHandler(sys.stdout)
+console_handler.setFormatter(formatter)
+root_logger.addHandler(console_handler)
+
 logger = logging.getLogger("brownie.main")
+logger.info(f"Logging initialized. Level: {log_level}, File: {log_file}")
 
 class BrownieApp:
     def __init__(self, config_path: str):
         self.config_path = config_path
         self.orchestrator = Orchestrator(config_path)
         self.stop_event = asyncio.Event()
-
     async def run(self):
         """メインプロセスの実行 (設計書 3.2: 生存信号送信・LLM死活監視)"""
-        logger.info("Starting Brownie Main Process...")
+        logger.info(f"Starting Brownie Main Process (Build: {get_build_id()})...")
+        logger.info(f"  - Loaded Agent from: {CoderAgent.__module__} in {os.path.abspath(CoderAgent.__module__.replace('.', '/') + '.py')}")
+        logger.info(f"  - Loaded Orchestrator from: {Orchestrator.__module__}")
+        logger.info(f"  - Loaded Sandbox from: {SandboxManager.__module__}")
         
         # 設計書に基づき、シグナルハンドラを設定
         loop = asyncio.get_running_loop()
