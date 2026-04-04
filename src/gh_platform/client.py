@@ -156,16 +156,16 @@ class GitHubClientWrapper:
                         "created_at": issue.created_at
                     }
                 
-                # 2. 次にすべてのコメントをチェックして、より新しいメンションがあれば上書き
-                comments = issue.get_comments()
-                for comment in comments:
-                    if f"@{my_username}" in (comment.body or ""):
-                        latest_mention = {
-                            "number": issue.number,
-                            "comment_id": str(comment.id),
-                            "body": comment.body,
-                            "created_at": comment.created_at
-                        }
+                # 2. 次にすべてのコメントをチェック (デバッグのため一時的にコメントアウト)
+                # comments = issue.get_comments()
+                # for comment in comments:
+                #     if f"@{my_username}" in (comment.body or ""):
+                #         latest_mention = {
+                #             "number": issue.number,
+                #             "comment_id": str(comment.id),
+                #             "body": comment.body,
+                #             "created_at": comment.created_at
+                #         }
                 
                 if latest_mention:
                     results.append(latest_mention)
