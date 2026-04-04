@@ -50,56 +50,61 @@ class Orchestrator:
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする"""
-        # アサインベースでタスクを取得 (設計書改修: メンション不要)
+        # 1. アサインベースのタスク取得
         issues = await self.gh_client.get_issues_to_process(repo_name)
-        
         for issue in issues:
             task_id = f"{repo_name}#{issue.number}"
-            
-            # RBAC (設計書 4. Orchestrator)
-            is_collaborator = await self.gh_client.check_rbac(repo_name, issue.user.login)
-            if not is_collaborator:
-                logger.warning(f"RBAC Denied for {issue.user.login} on {task_id}")
-                await self.gh_client.post_comment(repo_name, issue.number, 
-                                               "権限がありません。実行を拒否しました。キャッシュの削除と退避を完了します。")
-                continue
-            
-            # 重複実行防止チェック (設計書 4. 状態管理)
-            # 1. ローカル DB チェック
-            existing_task = await self.state.get_task(task_id)
-            if existing_task:
-                status = existing_task['status']
-                if status in ['InProgress', 'InQueue', 'Completed']:
-                    logger.debug(f"Skipping task {task_id} (Local Status: {status})")
-                    continue
-            
-            # 2. GitHub ラベルチェック (二重のループ防止策)
-            labels = await self.gh_client.get_issue_labels(repo_name, issue.number)
-            if "completed" in labels:
-                logger.info(f"Skipping task {task_id} (GitHub Label: completed)")
-                # DB の状態が不一致なら更新しておく
-                await self.state.update_task(task_id, "Completed", repo_name)
-                continue
-            if "in-progress" in labels:
-                logger.info(f"Skipping task {task_id} (GitHub Label: in-progress)")
-                continue
-            
-            # 1. まずステータスを InQueue に更新 (重複投入を物理的に防ぐ)
-            await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue.number)
+            await self._queue_if_needed(task_id, repo_name, issue.number, issue.user.login)
 
-            # 2. キューに追加
-            logger.info(f"Adding task {task_id} to queue (Author: {issue.user.login})")
-            priority = self.config['agent']['inference_priority']['manual_issue']
-            await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue.number)
-            
-            # UX通知 (新規投入時のみ)
-            if self.config['agent'].get('queue_ux_notification', True):
-                status = self.worker_pool.get_queue_status()
-                await self.gh_client.post_comment(repo_name, issue.number, 
-                                               f"現在順番待ちです。推定開始時刻：約 {len(status['active_tasks']) * 10} 分後")
+        # 2. メンションベースのタスク取得 (アサイン・ラベル不問)
+        mentions = await self.gh_client.get_mentions_to_process(repo_name)
+        for m in mentions:
+            # メンションの場合は "repo#issue:comment_id" 形式で一意性を管理
+            task_id = f"{repo_name}#{m['number']}:{m['comment_id']}"
+            await self._queue_if_needed(task_id, repo_name, m['number'], "mention_trigger")
+
+    async def _queue_if_needed(self, task_id: str, repo_name: str, issue_number: int, user_login: str):
+        """未処理のタスクをキューに追加する"""
+        # 1. 重複実行防止チェック (設計書 4. 状態管理)
+        existing_task = await self.state.get_task(task_id)
+        if existing_task:
+            status = existing_task['status']
+            if status in ['InProgress', 'InQueue', 'Completed']:
+                return
+
+        # 2. GitHub ラベルチェック (二重のループ防止策 - メンション時はスキップ可能だが一応確認)
+        labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
+        if "completed" in labels:
+            await self.state.update_task(task_id, "Completed", repo_name)
+            return
+
+        # 3. RBAC確認 (メンションの場合はトリガー元を確認すべきだが、一旦リポジトリ単位で許可)
+        if user_login != "mention_trigger":
+            is_collaborator = await self.gh_client.check_rbac(repo_name, user_login)
+            if not is_collaborator:
+                logger.warning(f"RBAC Denied for {user_login} on {task_id}")
+                return
+
+        # 4. キューに追加
+        logger.info(f"Queueing new task: {task_id}")
+        await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue_number)
+        priority = self.config['agent']['inference_priority']['manual_issue']
+        await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
+        
+        # UX通知 (新規投入時のみ)
+        if self.config['agent'].get('queue_ux_notification', True):
+            status = self.worker_pool.get_queue_status()
+            await self.gh_client.post_comment(repo_name, issue_number, 
+                                           f"現在順番待ちです。推定開始時刻：約 {len(status['active_tasks']) * 10} 分後")
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (設計書 7.2 タスク処理シーケンス)"""
+        # メンション情報が含まれているか確認 (ID形式: repo#issue:comment_id)
+        comment_id = None
+        if ":" in task_id:
+            _, suffix = task_id.split(":", 1)
+            comment_id = suffix
+
         await self.state.update_task(task_id, "InProgress", repo_name)
         success = False
         stop_heartbeat = asyncio.Event()
@@ -108,11 +113,8 @@ class Orchestrator:
             # ハートビート送信開始
             asyncio.create_task(self._send_heartbeat(stop_heartbeat))
             
-            # 1. ユーザー情報の取得 (アサイニ確認)
+            # 1. ユーザー情報 / Workspace 準備
             my_username = self.gh_client.get_my_username()
-            logger.info(f"Task {task_id} being processed by {my_username}")
-
-            # 2. Workspace 準備
             repo_path = os.path.join("/tmp/brownie_workspace", repo_name.replace("/", "_"))
             os.makedirs(repo_path, exist_ok=True)
             await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
@@ -121,35 +123,48 @@ class Orchestrator:
             git_ops = GitOperations(repo_path)
             project_root = repo_path
             
-            # 3. Issue情報の取得
+            # 2. Issue情報の取得と指示の決定
             target_issue = self.gh_client.g.get_repo(repo_name).get_issue(issue_number)
             issue_title = target_issue.title
             issue_body = target_issue.body or ""
             
-            # 4. タスクの振り分け
+            active_label = "in-progress"
+            
+            # メンション起動時の特別処理
+            if comment_id:
+                active_label = "ai-active"
+                # 初動コメントの投稿 (要件)
+                await self.gh_client.post_comment(repo_name, issue_number, "@globalpocket 承知しました。作業を開始します。")
+                
+                # コメント内容を指示として取得
+                if comment_id != "body":
+                    comment = target_issue.get_comment(int(comment_id))
+                    issue_body = comment.body
+                logger.info(f"Mention-based task detected via comment {comment_id}. Instruction: {issue_body[:50]}")
+
+            # 3. タスクの振り分け
             title_lower = issue_title.lower()
             if "wiki" in title_lower or "説明" in title_lower:
                 logger.info(f"Wiki description task detected for {task_id}")
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
-                success = True # Wiki タスク内の成功判定は別途必要だが、一旦完了とする
+                success = True
             else:
                 logger.info(f"General implementation task detected (Issue #{issue_number})")
-                await self.gh_client.add_label(repo_name, issue_number, "in-progress")
-                await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します...")
+                await self.gh_client.add_label(repo_name, issue_number, active_label)
+                if not comment_id:
+                    await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します...")
                 
-                # 1. トピックブランチの作成
+                # トピックブランチの作成
                 branch_name = f"issue-{issue_number}"
                 git_ops.create_and_checkout_branch(branch_name)
                 
-                # 2. エージェントによる自律実行
+                # エージェントによる自律実行 (指示を issue_body として渡す)
                 success = await self.agent.plan_and_execute(task_id, project_root, issue_title, issue_body, repo_name, issue_number)
                 
                 if success:
-                    # 3. 変更内容をプッシュ
                     commit_msg = f"feat: automated implementation for Issue #{issue_number}"
                     git_ops.commit_and_push(branch_name, commit_msg)
                     
-                    # 4. プルリクエストの作成 (既存 PR があっても取得するように client 側で修正済)
                     pr_title = f"Fix #{issue_number}: {issue_title}"
                     pr_body = f"## 概要\nIssue #{issue_number} に対する自動実装PRです。\n\n## 変更点\n{issue_body}"
                     pr = await self.gh_client.create_pull_request(
@@ -161,11 +176,9 @@ class Orchestrator:
                     )
                     
                     if pr:
-                        # 要件: 対応の完了を報告する時は、対応内容の要約を登録
                         summary = f"### 📝 対応内容の要約\n\nIssue #{issue_number} に対して以下の対応を行い、自律的な修正と検証を完了しました：\n- **実装内容**: {issue_title}\n- **Pull Request**: {pr.html_url}"
                         await self.gh_client.post_comment(repo_name, issue_number, f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{summary}")
                     else:
-                        # PR 作成自体に失敗した場合は、実装自体は成功していても失敗扱いとする (要確認)
                         success = False
                         await self.gh_client.post_comment(repo_name, issue_number, "❌ 実装は完了しましたが、PR作成に失敗しました。")
                 else:
@@ -176,13 +189,12 @@ class Orchestrator:
             success = False
             await self.gh_client.post_comment(repo_name, issue_number, f"❌ 予期せぬエラーでタスクが中断されました: {e}")
         finally:
-            # ハートビート停止
             stop_heartbeat.set()
-            # ステータスの最終確定
             final_status = "Completed" if success else "Failed"
             await self.state.update_task(task_id, final_status, repo_name)
             # ラベルの連動
-            await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+            active_label = "ai-active" if comment_id else "in-progress"
+            await self.gh_client.remove_label(repo_name, issue_number, active_label)
             await self.gh_client.add_label(repo_name, issue_number, "completed" if success else "failed")
             logger.info(f"Task {task_id} cycle finished (Success: {success}, Status: {final_status}).")
 

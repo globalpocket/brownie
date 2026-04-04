@@ -124,12 +124,7 @@ class GitHubClientWrapper:
         import os
         if not os.path.exists(os.path.join(repo_path, ".git")):
             # クローン (OAuthトークンを含ませる)
-            token = self.auth.token if hasattr(self.auth, 'token') else self.g.get_user().get_keys()[0].key # トークンの取得
-            # self.auth.token は PyGithub のバージョンにより直接アクセスできない場合があるため調整
-            # ここでは PyGithub のメンバ変数を直接参照するより、初期化時の token を保持しておくのが無難
-            # 今回は簡易的に、環境変数からも取得を試みる
             token = os.getenv("GITHUB_TOKEN", "")
-            
             clone_url = f"https://x-access-token:{token}@github.com/{repo_name}.git"
             logger.info(f"Cloning {repo_name} to {repo_path}...")
             subprocess.run(["git", "clone", clone_url, "."], cwd=repo_path, check=True)
@@ -139,3 +134,43 @@ class GitHubClientWrapper:
             subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
             subprocess.run(["git", "checkout", "main"], cwd=repo_path, check=True)
             subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, check=True)
+
+    async def get_mentions_to_process(self, repo_name: str) -> List[Dict[str, Any]]:
+        """@mentions を含む未処理の通知/コメントを取得する"""
+        try:
+            my_username = self.get_my_username()
+            query = f"repo:{repo_name} mentions:{my_username} is:open"
+            issues = self.g.search_issues(query, sort="updated", order="desc")
+            
+            results = []
+            # 検索で見つかったIssue/PRごとに、最新のメンションコメントを特定する
+            for issue in issues:
+                latest_mention = None
+                
+                # 1. まずIssue本文をチェック
+                if f"@{my_username}" in (issue.body or ""):
+                    latest_mention = {
+                        "number": issue.number,
+                        "comment_id": "body",
+                        "body": issue.body,
+                        "created_at": issue.created_at
+                    }
+                
+                # 2. 次にすべてのコメントをチェックして、より新しいメンションがあれば上書き
+                comments = issue.get_comments(sort="created", direction="asc")
+                for comment in comments:
+                    if f"@{my_username}" in (comment.body or ""):
+                        latest_mention = {
+                            "number": issue.number,
+                            "comment_id": str(comment.id),
+                            "body": comment.body,
+                            "created_at": comment.created_at
+                        }
+                
+                if latest_mention:
+                    results.append(latest_mention)
+            
+            return results
+        except GithubException as e:
+            logger.error(f"Failed to get mentions: {e}")
+            return []
