@@ -71,6 +71,10 @@ class Orchestrator:
             status = existing_task['status']
             if status in ['InProgress', 'InQueue', 'Completed']:
                 return
+            # メンション起動の場合、一度 Failed になったタスクは自動で再試行しない
+            # (ユーザーが新しいコメントで再度メンションすることを期待する)
+            if user_login == "mention_trigger" and status == 'Failed':
+                return
 
         # 2. GitHub ラベルチェック (二重のループ防止策)
         # メンション起動の場合は「ラベルに関わらず反応する」要件に従い、このチェックをスキップする
