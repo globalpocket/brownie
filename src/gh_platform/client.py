@@ -72,11 +72,17 @@ class GitHubClientWrapper:
             logger.error(f"Failed to post comment: {e}")
 
     async def create_pull_request(self, repo_name: str, title: str, body: str, head: str, base: str):
-        """プルリクエストを作成する"""
+        """プルリクエストを作成する (既存の場合は取得する)"""
         try:
             repo = self.g.get_repo(repo_name)
             return repo.create_pull(title=title, body=body, head=head, base=base)
         except GithubException as e:
+            if e.status == 422:
+                # すでにPRが存在する場合、既存のPRを探して返す
+                logger.info(f"PR already exists for {head}. Fetching existing PR...")
+                pulls = repo.get_pulls(state='open', head=f"{repo.owner.login}:{head}")
+                if pulls.totalCount > 0:
+                    return pulls[0]
             logger.error(f"Failed to create PR: {e}")
             return None
 
@@ -111,3 +117,25 @@ class GitHubClientWrapper:
         except GithubException as e:
             # ラベルが元々付いていない場合のエラーは無視
             logger.debug(f"Label '{label_name}' not found on Issue #{issue_number}, skipping remove.")
+
+    async def ensure_repo_cloned(self, repo_name: str, repo_path: str):
+        """設計書 7.2: リポジトリをクローンまたは最新状態にする"""
+        import subprocess
+        import os
+        if not os.path.exists(os.path.join(repo_path, ".git")):
+            # クローン (OAuthトークンを含ませる)
+            token = self.auth.token if hasattr(self.auth, 'token') else self.g.get_user().get_keys()[0].key # トークンの取得
+            # self.auth.token は PyGithub のバージョンにより直接アクセスできない場合があるため調整
+            # ここでは PyGithub のメンバ変数を直接参照するより、初期化時の token を保持しておくのが無難
+            # 今回は簡易的に、環境変数からも取得を試みる
+            token = os.getenv("GITHUB_TOKEN", "")
+            
+            clone_url = f"https://x-access-token:{token}@github.com/{repo_name}.git"
+            logger.info(f"Cloning {repo_name} to {repo_path}...")
+            subprocess.run(["git", "clone", clone_url, "."], cwd=repo_path, check=True)
+        else:
+            # 最新化 (mainブランチであることを前提)
+            logger.info(f"Updating {repo_name} in {repo_path}...")
+            subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
+            subprocess.run(["git", "checkout", "main"], cwd=repo_path, check=True)
+            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, check=True)

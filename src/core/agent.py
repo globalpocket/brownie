@@ -9,13 +9,14 @@ from src.workspace.sandbox import SandboxManager
 logger = logging.getLogger(__name__)
 
 class CoderAgent:
-    def __init__(self, config: Dict[str, Any], sandbox: SandboxManager):
+    def __init__(self, config: Dict[str, Any], sandbox: SandboxManager, gh_client: Optional[GitHubClientWrapper] = None):
         self.config = config
         self.sandbox = sandbox
+        self.gh_client = gh_client
         self.llm_endpoint = config['llm']['endpoint']
         self.model_name = config['llm']['model_name']
 
-    async def plan_and_execute(self, task_id: str, repo_path: str, issue_title: str, issue_body: str):
+    async def plan_and_execute(self, task_id: str, repo_path: str, issue_title: str, issue_body: str, repo_name: str = "", issue_number: int = 0):
         """ReActベースの自律実行ループ (設計書 8.4)"""
         logger.info(f"Agent starting task: {issue_title}")
         
@@ -32,7 +33,16 @@ class CoderAgent:
         for step in range(max_steps):
             # 1. LLMによる推論 (設計書 2.1)
             prompt = self._build_prompt(context)
+            
+            # 要件: AIにプロンプトを送信した時は、Issueコメントにプロンプトの内容を登録
+            if self.gh_client and repo_name and issue_number:
+                await self.gh_client.post_comment(repo_name, issue_number, f"### 🤖 AI Request (Step {step+1})\n\n```text\n{prompt}\n```")
+
             response = await self._call_llm(prompt)
+            
+            # 要件: AIから結果が返された時は、Issueコメントに返された結果を登録
+            if self.gh_client and repo_name and issue_number:
+                await self.gh_client.post_comment(repo_name, issue_number, f"### 🧠 AI Response (Step {step+1})\n\n{response}")
             
             # 2. アクションの抽出
             thought, action, action_input = self._parse_response(response)

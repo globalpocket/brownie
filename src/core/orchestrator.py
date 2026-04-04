@@ -23,7 +23,7 @@ class Orchestrator:
         self.gh_client = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""))
         self.sandbox = SandboxManager(self.config['workspace']['sandbox_user_id'], 
                                      self.config['workspace']['sandbox_group_id'])
-        self.agent = CoderAgent(self.config, self.sandbox)
+        self.agent = CoderAgent(self.config, self.sandbox, self.gh_client)
         self.is_running = True
 
     async def start(self):
@@ -101,29 +101,25 @@ class Orchestrator:
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (設計書 7.2 タスク処理シーケンス)"""
         await self.state.update_task(task_id, "InProgress", repo_name)
+        success = False
+        stop_heartbeat = asyncio.Event()
         
         try:
             # ハートビート送信開始
-            stop_heartbeat = asyncio.Event()
             asyncio.create_task(self._send_heartbeat(stop_heartbeat))
             
             # 1. ユーザー情報の取得 (アサイニ確認)
             my_username = self.gh_client.get_my_username()
             logger.info(f"Task {task_id} being processed by {my_username}")
 
-            # 2. Workspace 準備 (設計書: git clone / fetch & rebase)
-            # ローカルパスを計算 (例: /tmp/brownie_workspace/repo_name)
+            # 2. Workspace 準備
             repo_path = os.path.join("/tmp/brownie_workspace", repo_name.replace("/", "_"))
             os.makedirs(repo_path, exist_ok=True)
+            await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
             
             from src.workspace.git_ops import GitOperations
             git_ops = GitOperations(repo_path)
-            
-            # 実際にはここで git clone または同期を行う
-            # 簡易的に、既存のパスを使用するかモックする
-            # ※ 今回はプロジェクトルートを対象とする
-            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-            git_ops = GitOperations(project_root)
+            project_root = repo_path
             
             # 3. Issue情報の取得
             target_issue = self.gh_client.g.get_repo(repo_name).get_issue(issue_number)
@@ -135,9 +131,9 @@ class Orchestrator:
             if "wiki" in title_lower or "説明" in title_lower:
                 logger.info(f"Wiki description task detected for {task_id}")
                 await self._handle_wiki_task(task_id, repo_name, issue_number, project_root)
+                success = True # Wiki タスク内の成功判定は別途必要だが、一旦完了とする
             else:
                 logger.info(f"General implementation task detected (Issue #{issue_number})")
-                # ラベル付与
                 await self.gh_client.add_label(repo_name, issue_number, "in-progress")
                 await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します...")
                 
@@ -145,15 +141,15 @@ class Orchestrator:
                 branch_name = f"issue-{issue_number}"
                 git_ops.create_and_checkout_branch(branch_name)
                 
-                # 2. エージェントによる自律実行 (設計書 8.4)
-                success = await self.agent.plan_and_execute(task_id, project_root, issue_title, issue_body)
+                # 2. エージェントによる自律実行
+                success = await self.agent.plan_and_execute(task_id, project_root, issue_title, issue_body, repo_name, issue_number)
                 
                 if success:
-                    # 3. 変更内容をトピックブランチにプッシュ
+                    # 3. 変更内容をプッシュ
                     commit_msg = f"feat: automated implementation for Issue #{issue_number}"
                     git_ops.commit_and_push(branch_name, commit_msg)
                     
-                    # 4. プルリクエストの作成 (設計書 7.1)
+                    # 4. プルリクエストの作成 (既存 PR があっても取得するように client 側で修正済)
                     pr_title = f"Fix #{issue_number}: {issue_title}"
                     pr_body = f"## 概要\nIssue #{issue_number} に対する自動実装PRです。\n\n## 変更点\n{issue_body}"
                     pr = await self.gh_client.create_pull_request(
@@ -165,25 +161,30 @@ class Orchestrator:
                     )
                     
                     if pr:
-                        await self.state.update_task(task_id, "Completed", repo_name)
-                        await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
-                        await self.gh_client.add_label(repo_name, issue_number, "completed")
-                        await self.gh_client.post_comment(repo_name, issue_number, 
-                            f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{pr.html_url}")
+                        # 要件: 対応の完了を報告する時は、対応内容の要約を登録
+                        summary = f"### 📝 対応内容の要約\n\nIssue #{issue_number} に対して以下の対応を行い、自律的な修正と検証を完了しました：\n- **実装内容**: {issue_title}\n- **Pull Request**: {pr.html_url}"
+                        await self.gh_client.post_comment(repo_name, issue_number, f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{summary}")
                     else:
+                        # PR 作成自体に失敗した場合は、実装自体は成功していても失敗扱いとする (要確認)
+                        success = False
                         await self.gh_client.post_comment(repo_name, issue_number, "❌ 実装は完了しましたが、PR作成に失敗しました。")
                 else:
-                    await self.state.update_task(task_id, "Failed", repo_name)
-                    await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
-                    await self.gh_client.add_label(repo_name, issue_number, "failed")
                     await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。ログを確認してください。")
 
-            stop_heartbeat.set()
-            logger.info(f"Task {task_id} cycle finished (Success: {success}).")
-            
         except Exception as e:
-            logger.error(f"Task {task_id} failed: {e}", exc_info=True)
-            await self.state.update_task(task_id, "Failed", repo_name)
+            logger.error(f"Task {task_id} failed with exception: {e}", exc_info=True)
+            success = False
+            await self.gh_client.post_comment(repo_name, issue_number, f"❌ 予期せぬエラーでタスクが中断されました: {e}")
+        finally:
+            # ハートビート停止
+            stop_heartbeat.set()
+            # ステータスの最終確定
+            final_status = "Completed" if success else "Failed"
+            await self.state.update_task(task_id, final_status, repo_name)
+            # ラベルの連動
+            await self.gh_client.remove_label(repo_name, issue_number, "in-progress")
+            await self.gh_client.add_label(repo_name, issue_number, "completed" if success else "failed")
+            logger.info(f"Task {task_id} cycle finished (Success: {success}, Status: {final_status}).")
 
     async def _handle_wiki_task(self, task_id: str, repo_name: str, issue_number: int, repo_path: str):
         """Wiki説明の自動生成とプッシュ (Issue #1)"""
