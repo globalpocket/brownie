@@ -5,6 +5,7 @@ import sys
 import signal
 import subprocess
 import logging
+from logging.handlers import RotatingFileHandler
 import shutil
 from typing import Optional
 
@@ -23,7 +24,7 @@ logging.basicConfig(
     level=log_level,
     format='%(asctime)s [%(levelname)s] %(name)s: %(message)s',
     handlers=[
-        logging.FileHandler(log_file),
+        RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5),
         logging.StreamHandler(sys.stdout)
     ]
 )
@@ -80,7 +81,7 @@ class Watchdog:
             if not self.is_running:
                 break
                 
-            time.sleep(10)
+            time.sleep(30)
 
     def _handle_restart(self):
         """プロセス再起動と CrashLoopBackOff"""
@@ -98,8 +99,11 @@ class Watchdog:
         logger.info(f"Restarting main process (Attempt: {self.crash_count + 1})...")
         
         venv_python = os.path.join(base_dir, ".venv", "bin", "python")
-        # メインプロセスを起動
-        self.process = subprocess.Popen([venv_python, self.main_script])
+        # メインプロセスを起動 (親の死を検知できるようにする等、将来的な拡張の余地を残す)
+        self.process = subprocess.Popen(
+            [venv_python, self.main_script],
+            cwd=base_dir
+        )
         
         self.crash_count += 1
         self.last_survival_time = time.time()
@@ -114,9 +118,10 @@ class Watchdog:
                     if time.time() - self.last_survival_time < 60:
                         self.crash_count = 0
             
-            # 5分以上生存信号がなければハングアップとみなす
-            if time.time() - self.last_survival_time > 300:
-                logger.warning("Main process seems hung. Killing it...")
+            # 1時間以上生存信号がなければハングアップとみなす
+            # (GitHub APIのBackoffが40分程度になるケースがあるため、余裕を持たせる)
+            if time.time() - self.last_survival_time > 3600:
+                logger.warning("Main process seems hung (No survival signal for 1 hour). Killing it...")
                 if self.process:
                     self.process.terminate()
         except Exception as e:
@@ -130,6 +135,20 @@ class Watchdog:
             logger.error(f"Disk space critically low: {free_gb:.2f} GB left!")
 
 if __name__ == "__main__":
+    import fcntl
+    from pathlib import Path
+    
+    # ロックファイルの取得
+    lock_path = Path.home() / ".local" / "share" / "brownie" / "brownie.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    
+    lock_f = open(lock_path, "w")
+    try:
+        fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Error: Another Watchdog is already running.")
+        sys.exit(1)
+
     script_path = os.path.join(os.path.dirname(__file__), "main.py")
     dog = Watchdog(script_path, "/tmp/brownie_survival.signal")
     dog.start()

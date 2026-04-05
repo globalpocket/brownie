@@ -82,7 +82,7 @@ class BrownieApp:
             # 実際には Watchdog プロセスへのソケット通信など
             with open("/tmp/brownie_survival.signal", "w") as f:
                 f.write(str(asyncio.get_event_loop().time()))
-            await asyncio.sleep(5)
+            await asyncio.sleep(60)
 
     async def shutdown(self):
         """シャットダウン処理"""

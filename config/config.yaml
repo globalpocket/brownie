@@ -1,6 +1,8 @@
 agent:
   mention_name: "@brownie-agent"
   polling_interval_sec: 15
+  max_auto_retries: 30
+  max_history_steps: 15 # 履歴保持件数。DB肥大化防止。
   oob_webhook_url: "" # トークン失効・LLM停止等のFatalエラー用
   queue_ux_notification: true # 順番待ち時にGitHubへ推定時間をコメント
   inference_priority: # タスク優先度 (1=高)
@@ -17,8 +19,8 @@ llm:
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000
-  max_auto_retries: 3
   lfs_enabled: true
+  base_dir: "/tmp/brownie_workspace"
 database:
   db_path: "~/.local/share/brownie/brownie.db"
   memory_path: "~/.local/share/brownie/vector_db"

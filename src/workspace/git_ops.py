@@ -86,6 +86,11 @@ class GitOperations:
         """ブランチの切り替え"""
         self._run_git(["checkout", branch_name])
 
+    def has_changes(self) -> bool:
+        """作業ディレクトリに未コミットの変更があるか判定 (設計書 3.2)"""
+        status = self._run_git(["status", "--porcelain"])
+        return bool(status.strip())
+
     def commit_and_push(self, branch: str, message: str):
         """コミットとプッシュ"""
         self._run_git(["add", "."])

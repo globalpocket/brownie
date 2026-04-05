@@ -11,6 +11,8 @@ class SandboxManager:
     def __init__(self, user_id: int, group_id: int):
         self.user_id = user_id
         self.group_id = group_id
+        self.workspace_root = None
+        self.reference_root = None
         try:
             self.client = docker.from_env()
             self.client.ping()
@@ -71,32 +73,136 @@ class SandboxManager:
         
         return yaml.dump(data)
 
+    def dump(self, data): # Added for compatibility if needed
+        return yaml.dump(data)
+
+    def set_workspace_root(self, root_path: str):
+        """ワークスペースのルートパスを設定する"""
+        self.workspace_root = os.path.realpath(root_path)
+        logger.info(f"Sandbox workspace root set to: {self.workspace_root}")
+
+    def set_reference_root(self, ref_path: str):
+        """参照用（ローカル）ルートを設定する"""
+        self.reference_root = os.path.realpath(ref_path)
+        logger.info(f"Sandbox reference root set to: {self.reference_root}")
+
+    def _get_full_path(self, path: str, rw: bool = False) -> str:
+        """パスの正規化とセキュリティチェック (設計書 4.2)"""
+        if not self.workspace_root:
+            raise RuntimeError("Workspace root is not set.")
+        
+        # ワークスペース内として解決を試みる。
+        # Pythonの os.path.join は絶対パスが与えられた場合後ろの引数のみを返す。
+        # ユーザー環境の実パスを許容するため、そのまま結合・解決し、後続のスコープ検証に委ねる。
+        full_path = os.path.normpath(os.path.join(self.workspace_root, path))
+        
+        # 書き込み操作(rw=True)の場合、必ずワークスペース内であることを強制
+        if rw:
+            if not full_path.startswith(self.workspace_root):
+                logger.error(f"Write operation denied outside workspace: {full_path}")
+                raise PermissionError(f"Write access denied outside the workspace area.")
+            return full_path
+
+        # 3. 読み込み操作の場合、ワークスペースになければ参照用リポジトリ(Local)を探す
+        if os.path.exists(full_path):
+            return full_path
+        
+        if self.reference_root:
+            ref_path = os.path.normpath(os.path.join(self.reference_root, path))
+            # 参照ルート内かつ実在する場合のみ許可
+            if ref_path.startswith(self.reference_root) and os.path.exists(ref_path):
+                return ref_path
+            
+        return full_path
+
+    async def list_files(self, path: str = ".") -> str:
+        """指定パスのファイル一覧を階層的に返す (設計書 8.12)"""
+        full_path = self._get_full_path(path, rw=False)
+        if not os.path.exists(full_path):
+            raise FileNotFoundError(f"Path {path} does not exist.")
+        
+        output = []
+        # os.walk を使用して、指定パス以下の構造を走査
+        for root, dirs, files in os.walk(full_path):
+            # 隠しディレクトリ (.git 等) はスキップ
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            
+            # 起点からの相対パスを取得
+            rel_root = os.path.relpath(root, full_path)
+            prefix = "" if rel_root == "." else rel_root + "/"
+            
+            # ディレクトリとファイルを整形して追加
+            for d in sorted(dirs):
+                output.append(f"[DIR]  {prefix}{d}/")
+            for f in sorted(files):
+                if not f.startswith("."):
+                    output.append(f"[FILE] {prefix}{f}")
+            
+            # 深さ制限（初期探索時はあまり深く潜りすぎないように制御）
+            if rel_root.count(os.sep) >= 1: 
+                del dirs[:]
+        
+        if not output:
+            return "(Empty directory)"
+            
+        return "\n".join(output)
+
+    async def read_file(self, path: str) -> str:
+        """ファイル内容を読み取る"""
+        full_path = self._get_full_path(path, rw=False)
+        if not os.path.isfile(full_path):
+            raise FileNotFoundError(f"{path} is not a file.")
+        
+        # macOS などの大文字小文字を区別しないファイルシステムへの対策（厳密チェック）
+        dirname, basename = os.path.split(os.path.abspath(full_path))
+        if basename and basename not in os.listdir(dirname):
+            raise FileNotFoundError(f"{path} does not exist (case mismatch).")
+        
+        with open(full_path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    async def write_file(self, path: str, content: str) -> str:
+        """ファイルに内容を書き込む"""
+        full_path = self._get_full_path(path, rw=True)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True)
+        with open(full_path, "w", encoding="utf-8") as f:
+            f.write(content)
+        return f"Successfully written to {path}."
+    async def run_command(self, command: str, image: str = "ubuntu:22.04") -> Dict[str, Any]:
+        """run_in_sandbox のラッパー。タスクIDは呼び出し元で制御が必要だが、一旦共通IDを使用"""
+        return await self.run_in_sandbox("active_task", command, image)
+
     async def run_in_sandbox(self, task_id: str, command: str, image: str = "ubuntu:22.04") -> Dict[str, Any]:
         """Docker 経由でコマンドを実行。ログマスキング適用。 (設計書 7.1)"""
-        try:
-            container = self.client.containers.run(
-                image=image,
-                command=command,
-                user=f"{self.user_id}:{self.group_id}",
-                detach=True,
-                labels={"brownie_task_id": task_id}
-            )
+        if not self.workspace_root:
+            raise RuntimeError("Workspace root not set.")
+
+        container = self.client.containers.run(
+            image=image,
+            command=command,
+            user=f"{self.user_id}:{self.group_id}",
+            volumes={self.workspace_root: {'bind': '/workspace', 'mode': 'rw'}},
+            working_dir='/workspace',
+            detach=True,
+            labels={"brownie_task_id": task_id}
+        )
+        
+        result = container.wait()
+        logs = container.logs().decode("utf-8", errors="replace")
+        
+        # ログマスキング (設計書 7.1: ログスクラビング)
+        masked_logs = self._mask_sensitive_data(logs)
+        
+        container.remove()
+        
+        # コマンドが失敗した場合、例外を投げてPythonレベルでエラー処理させる
+        if result["StatusCode"] != 0:
+            raise RuntimeError(f"Command execution failed with exit code {result['StatusCode']}.\nLogs:\n{masked_logs}")
             
-            result = container.wait()
-            logs = container.logs().decode("utf-8")
-            
-            # ログマスキング (設計書 7.1: ログスクラビング)
-            masked_logs = self._mask_sensitive_data(logs)
-            
-            container.remove()
-            
-            return {
-                "exit_code": result["StatusCode"],
-                "logs": masked_logs
-            }
-        except Exception as e:
-            logger.error(f"Sandbox execution error: {e}")
-            return {"exit_code": -1, "logs": str(e)}
+        return {
+            "exit_code": result["StatusCode"],
+            "logs": masked_logs
+        }
 
     def _mask_sensitive_data(self, text: str) -> str:
         """機密情報のマスキング (設計書 7.1: ログスクラビング)"""

@@ -93,6 +93,26 @@ class StateManager:
                 }
         return None
 
+    async def get_active_tasks_for_issue(self, repo_name: str, issue_number: int) -> List[Dict[str, Any]]:
+        """指定された Issue に対して実行中または待機中のタスクをすべて取得する (設計書 4. 状態管理)"""
+        query = "SELECT * FROM tasks WHERE repo_full_name = ? AND issue_number = ? AND status IN ('InProgress', 'InQueue')"
+        async with self.conn.execute(query, (repo_name, issue_number)) as cursor:
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                import json
+                results.append({
+                    "id": row[0],
+                    "repo_full_name": row[1],
+                    "issue_number": row[2],
+                    "pr_number": row[3],
+                    "status": row[4],
+                    "context": json.loads(row[5]) if row[5] else None,
+                    "updated_at": row[6],
+                    "created_at": row[7]
+                })
+            return results
+
     async def close(self):
         if self.conn:
             await self.conn.close()
