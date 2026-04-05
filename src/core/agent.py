@@ -345,8 +345,7 @@ EXAMPLE RESPONSE 2:
 【Constraints】
 {chr(10).join(['- ' + c for c in context.get('intent_analysis', {}).get('constraints', [])]) if context.get('intent_analysis', {}).get('constraints') else 'None'}
 
-【Available Tools & Required Parameters】
-You must use the following tools:
+- run_semgrep: {{}}
 - list_files(path: string, max_depth: integer): 指定パスのファイル一覧を表示します。大規模リポジトリでは `max_depth=1` で Discovery (階層的探索) を行い、トークン消費を抑えてください。
 - read_file(path: string): 指定したファイルの内容を読み取ります。
 - write_file(path: string, content: string)
@@ -516,6 +515,9 @@ Reference Code fallback is active.
         elif action_clean == "run_command":
             res = await self.sandbox.run_command(action_input.get("command"))
             return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
+        elif action_clean == "run_semgrep":
+            res = await self.sandbox.run_semgrep(context.get("task_id", "default"))
+            return f"Semgrep Analysis Result:\nStatus: {res['status']}\nLogs: {res['logs']}"
         elif action_clean == "lint_code":
             return await self.sandbox.lint_code(action_input.get("path", "."))
         elif action_clean == "format_code":
@@ -564,7 +566,7 @@ Reference Code fallback is active.
             if not symbol: raise ValueError("'entry_symbol' (e.g., function name) parameter is required.")
             return await self.get_repository_flow(symbol, int(depth))
         
-        allowed_tools = ["list_files", "read_file", "write_file", "run_command", "close_pull_request", "merge_pull_request", "get_repository_flow", "Finish", "post_comment"]
+        allowed_tools = ["list_files", "read_file", "write_file", "run_command", "run_semgrep", "close_pull_request", "merge_pull_request", "get_repository_flow", "Finish", "post_comment"]
         raise ValueError(f"Unknown action: '{action_clean}'. 利用可能なツールは {allowed_tools} のみです。")
 
     async def get_repository_flow(self, entry_symbol: str, max_depth: int = 5) -> str:

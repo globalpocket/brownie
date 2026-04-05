@@ -13,12 +13,11 @@ agent:
     - "globalpocket/brownie"
 llm:
   endpoint: "http://localhost:11434/v1"
-  timeout_sec: 900 # 大規模モデル向けにタイムアウトを調整
+  timeout_sec: 0
   tokenizer: "auto"
   models:
-    router: "Qwen3-Coder:30b"
-    coder: "Qwen3-Coder:30b"
-    reviewer: "Qwen3-Coder:30b"
+    router: "llama3.1:8b"     # Issue解析・初期ルーティング用（軽量）
+    coder: "qwen3-coder:30b"  # 実装・自己修正ループ用（重量）
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000

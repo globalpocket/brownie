@@ -35,7 +35,7 @@ class Orchestrator:
         self.http_client = httpx.AsyncClient(timeout=300.0)
         
         # モデル管理の初期化
-        self.model_manager = OllamaModelManager(self.config['llm']['endpoint'])
+        self.model_manager = OllamaModelManager(self.config['llm']['endpoint'].replace("/v1", ""))
         
         self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, 
                                http_client=self.http_client, model_manager=self.model_manager)
@@ -267,6 +267,9 @@ class Orchestrator:
             
             branch_name = f"issue-{issue_number}"
             
+            # 指示通り、実装前に重量モデル (coder) へ切り替える
+            await self.model_manager.switch_model(self.config['llm']['models']['coder'])
+
             success = await self.agent.plan_and_execute(
                 task_id=task_id,
                 repo_name=repo_name,

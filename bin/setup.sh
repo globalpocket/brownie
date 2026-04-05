@@ -148,8 +148,11 @@ fi
 
 # 7. LLM 推奨モデルの事前プル (Role-based Routing 用)
 if command -v ollama &> /dev/null; then
-    echo "Pulling recommended model for Brownie (Qwen3-Coder:30b)..."
-    ollama pull Qwen3-Coder:30b
+    echo "Pulling recommended models for dynamic routing..."
+    # Router: 軽量モデル (8B)
+    ollama pull llama3.1:8b
+    # Coder: 重量モデル (30B)
+    ollama pull qwen3-coder:30b
 else
     echo "Warning: Ollama not found. Skipping model pull."
 fi

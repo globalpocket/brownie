@@ -51,10 +51,11 @@ fi
 
 # 7. LLM モデルの削除 (Ollama)
 if command -v ollama &> /dev/null; then
-    read -p "Do you want to remove the Ollama models used by Brownie (Qwen3-Coder)? [y/N]: " REMOVE_MODELS
+    read -p "Do you want to remove the Ollama models used by Brownie (qwen3-coder)? [y/N]: " REMOVE_MODELS
     if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
         echo "Removing Ollama models..."
-        ollama rm Qwen3-Coder:30b || true
+        ollama rm llama3.1:8b || true
+        ollama rm qwen3-coder:30b || true
         # 以前使用していたモデルもクリーンアップ対象に含める
         ollama rm qwen2.5-coder:7b || true
         ollama rm qwen2.5-coder:14b || true

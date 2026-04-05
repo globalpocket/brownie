@@ -179,6 +179,15 @@ class SandboxManager:
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully written to {path}."
+
+    async def run_semgrep(self, task_id: str) -> dict:
+        """コンテナ内でSemgrepを実行し、静的解析の指摘事項を取得する"""
+        command = "semgrep scan --config=auto --json /workspace"
+        try:
+            result = await self.run_in_sandbox(task_id, command)
+            return {"status": "success", "logs": result["logs"]}
+        except Exception as e:
+            return {"status": "failed", "logs": str(e)}
     async def run_command(self, command: str, image: str = "ubuntu:22.04") -> Dict[str, Any]:
         """run_in_sandbox のラッパー。タスクIDは呼び出し元で制御が必要だが、一旦共通IDを使用"""
         return await self.run_in_sandbox("active_task", command, image)
