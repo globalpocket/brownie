@@ -113,6 +113,25 @@ class StateManager:
                 })
             return results
 
+    async def get_latest_task_for_issue(self, repo_name: str, issue_number: int) -> Optional[Dict[str, Any]]:
+        """指定された Issue に対して最後に実行されたタスク（状態問わず）を取得する"""
+        query = "SELECT * FROM tasks WHERE repo_full_name = ? AND issue_number = ? ORDER BY updated_at DESC LIMIT 1"
+        async with self.conn.execute(query, (repo_name, issue_number)) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                import json
+                return {
+                    "id": row[0],
+                    "repo_full_name": row[1],
+                    "issue_number": row[2],
+                    "pr_number": row[3],
+                    "status": row[4],
+                    "context": json.loads(row[5]) if row[5] else None,
+                    "updated_at": row[6],
+                    "created_at": row[7]
+                }
+        return None
+
     async def close(self):
         if self.conn:
             await self.conn.close()

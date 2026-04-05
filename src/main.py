@@ -3,6 +3,8 @@ import logging
 import os
 import sys
 import signal
+import json
+import time
 from dotenv import load_dotenv
 
 # .env ファイルの読み込み (設計書 11.2 補足)
@@ -77,12 +79,23 @@ class BrownieApp:
 
     async def _send_survival_signals(self):
         """Watchdogへの生存信号の送信 (設計書 3.2: 生存信号)"""
-        while not self.stop_event.is_set():
-            # 簡易的にロックファイルの更新時刻を更新するなどで生存を示す
-            # 実際には Watchdog プロセスへのソケット通信など
-            with open("/tmp/brownie_survival.signal", "w") as f:
-                f.write(str(asyncio.get_event_loop().time()))
-            await asyncio.sleep(60)
+        pid = os.getpid()
+        signal_file = f"/tmp/brownie_{pid}.signal"
+        logger.info(f"Starting survival signal: {signal_file}")
+        try:
+            while not self.stop_event.is_set():
+                # PID をファイル名に含め、内容も JSON 化して詳細情報を付与する
+                with open(signal_file, "w") as f:
+                    f.write(json.dumps({
+                        "pid": pid,
+                        "timestamp": time.time(),
+                        "build": get_build_id()
+                    }))
+                await asyncio.sleep(60)
+        finally:
+            if os.path.exists(signal_file):
+                os.remove(signal_file)
+                logger.info(f"Removed survival signal: {signal_file}")
 
     async def shutdown(self):
         """シャットダウン処理"""

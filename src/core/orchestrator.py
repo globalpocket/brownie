@@ -13,7 +13,9 @@ from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
 from src.workspace.analyzer.core import CodeAnalyzer
+from src.version import get_footer
 import json
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -130,18 +132,27 @@ class Orchestrator:
         # 2. 個別タスクIDの状態チェック
         existing_task = await self.state.get_task(task_id)
         if existing_task:
-            status = existing_task['status']
-            if status == 'Completed':
+            # 既にDBに登録されているタスク（特定のメンションやIssue作成イベントなど）は
+            # 成功・失敗にかかわらずポーリングループからの自動再実行は行わない（無限ループ防止）
+            return
+
+        # 2. GitHub ラベルチェック (重複・完了・失敗ガード)
+        labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
+        
+        # 完了または失敗ラベルがついている場合は、原則としてキューイングしない
+        # ただし、メンションベースのトリガー（指示あり）の場合は許容することも検討できるが、
+        # 現状は一度 Failed になったら手動でラベルを消す運用とする（無限ループ防止を優先）
+        if "completed" in labels or "failed" in labels:
+            if user_login != "mention_trigger":
+                # アサインベースの定期実行は完全停止
                 return
-            if user_login == "mention_trigger" and status == 'Failed':
+            else:
+                # メンションベースでも、前回の失敗から時間が経過していない場合はスキップ（二重起動防止）
+                # ここでは安全のため、明示的にこれらラベルがある間はスキップを維持
+                logger.info(f"Skipping task {task_id} because issue has 'completed' or 'failed' label.")
                 return
 
-        # 2. GitHub ラベルチェック
         if user_login != "mention_trigger":
-            labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
-            if "completed" in labels:
-                await self.state.update_task(task_id, "Completed", repo_name)
-                return
             if "in-progress" in labels:
                 return
 
@@ -211,10 +222,7 @@ class Orchestrator:
                     is_pr = False
 
                 start_msg = "プルリクエストを確認しました。指示に従います。" if is_pr else "課題を確認しました。作業を開始します。"
-                # 依頼主（user_login）がいればその人にメンションし、いなければリクエスト本体へ
-                trigger_user = user_login if user_login != "mention_trigger" else ""
-                mention_prefix = f"@{trigger_user} " if trigger_user else ""
-                await self.gh_client.post_comment(repo_name, issue_number, f"{mention_prefix}{start_msg}" + get_footer())
+                await self.gh_client.post_comment(repo_name, issue_number, f"🔍 {start_msg}" + get_footer())
                 
                 if comment_id != "body":
                     if comment_id.startswith("review-"):
@@ -241,10 +249,11 @@ class Orchestrator:
 
             await self.gh_client.add_label(repo_name, issue_number, active_label)
             if not is_mention:
-                await self.gh_client.post_comment(repo_name, issue_number, f"🔍 トピックブランチ `issue-{issue_number}` を作成し、実装を開始します..." + get_footer())
+                trigger_user = target_issue.user.login if hasattr(target_issue, 'user') else ""
+                mention_prefix = f"@{trigger_user} " if trigger_user else ""
+                await self.gh_client.post_comment(repo_name, issue_number, f"{mention_prefix}🔍 課題を確認しました。解析と作業を開始します..." + get_footer())
             
             branch_name = f"issue-{issue_number}"
-            git_ops.create_and_checkout_branch(branch_name)
             
             success = await self.agent.plan_and_execute(
                 task_id=task_id,
@@ -258,10 +267,14 @@ class Orchestrator:
                 instruction_priority=instruction_priority
             )
                 
-            if success:
-                if is_mention and not git_ops.has_changes():
-                    await self.gh_client.post_comment(repo_name, issue_number, "✅ 依頼された操作（または確認）を完了しました。")
-                else:
+            if success == True:
+                has_changes = git_ops.has_changes()
+                if is_mention and not has_changes:
+                    pass # Summary will be handled in finally
+                elif has_changes:
+                    # サンドボックス上で変更が生じた場合のみ、ここで初めてブランチを切ってコミットする
+                    git_ops.create_and_checkout_branch(branch_name)
+                    
                     commit_msg = f"feat: automated implementation for {location_type} #{issue_number}"
                     git_ops.commit_and_push(branch_name, commit_msg)
                     
@@ -274,26 +287,57 @@ class Orchestrator:
                         head=branch_name,
                         base="main"
                     )
-                    
                     if pr:
-                        summary = f"### 📝 対応内容の要約\n\n{location_type} #{issue_number} に対して以下の対応を行い、自律的な修正と検証を完了しました：\n- **実装内容**: {issue_title}\n- **Pull Request**: {pr.html_url}"
-                        await self.gh_client.post_comment(repo_name, issue_number, f"✅ 実装が完了し、プルリクエストを作成しました！\n\n{summary}" + get_footer())
-                    else:
-                        await self.gh_client.post_comment(repo_name, issue_number, "❌ 実装は完了しましたが、PR作成に失敗しました。" + get_footer())
+                        logger.info(f"[{task_id}] PR created: {pr.html_url}")
+                else:
+                    # メンションでない通常実行で、変更が発生しなかった場合
+                    pass
+
+            elif success == "SUSPENDED":
+                pass # The summary will be posted in finally block
             else:
-                await self.gh_client.post_comment(repo_name, issue_number, "❌ 自律実装中にエラーが発生しました。ログを確認してください。" + get_footer())
+                pass # Failed case is handled by agent's error reporter
 
         except Exception as e:
             logger.error(f"Task {task_id} failed with exception: {e}", exc_info=True)
             success = False
-            await self.gh_client.post_comment(repo_name, issue_number, f"❌ 予期せぬエラーでタスクが中断されました: {e}" + get_footer())
+            
+            # オーナー取得処理を追加
+            try:
+                owner = await self.gh_client.get_repo_owner(repo_name)
+                mention_prefix = f"@{owner} " if owner else ""
+            except Exception:
+                mention_prefix = ""
+                
+            await self.gh_client.post_comment(repo_name, issue_number, f"{mention_prefix}❌ 予期せぬエラーでタスクが中断されました: {e}" + get_footer())
+
         finally:
             stop_heartbeat.set()
-            final_status = "Completed" if success else "Failed"
+            if success == "SUSPENDED":
+                final_status = "Suspended"
+            else:
+                final_status = "Completed" if success else "Failed"
+            
+            # 最終要約の投稿 (Success or Suspended 時)
+            if success in [True, "SUSPENDED"]:
+                latest_task = await self.state.get_task(task_id)
+                summary = latest_task.get('context', {}).get('final_summary') if latest_task else None
+                if summary:
+                    status_icon = "⏳ 一時中断（回答待ち）" if success == "SUSPENDED" else "✅ タスク完了"
+                    msg = f"### {status_icon}\n\n{summary}"
+                    await self.gh_client.post_comment(repo_name, issue_number, msg + get_footer())
+            
             await self.state.update_task(task_id, final_status, repo_name)
             active_label = "ai-active" if comment_id else "in-progress"
             await self.gh_client.remove_label(repo_name, issue_number, active_label)
-            await self.gh_client.add_label(repo_name, issue_number, "completed" if success else "failed")
+            
+            if final_status == "Completed":
+                await self.gh_client.add_label(repo_name, issue_number, "completed")
+            elif final_status == "Failed":
+                await self.gh_client.add_label(repo_name, issue_number, "failed")
+            elif final_status == "Suspended":
+                await self.gh_client.add_label(repo_name, issue_number, "waiting-for-user")
+            
             logger.info(f"Task {task_id} cycle finished (Success: {success}, Status: {final_status}).")
 
 

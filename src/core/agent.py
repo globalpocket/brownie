@@ -5,6 +5,9 @@ import httpx
 from typing import Dict, Any, List, Optional
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
+from src.workspace.analyzer.flow import FlowTracer
+import os
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,7 @@ class CoderAgent:
         self.http_client = http_client or httpx.AsyncClient(timeout=300.0)
         self.llm_endpoint = config['llm']['endpoint']
         self.model_name = config['llm']['model_name']
+        self.max_llm_retries = config['agent'].get('max_llm_retries', 5)
         self._target_language = "日本語" # デフォルト
 
     COMMON_RULES = """
@@ -56,15 +60,15 @@ class CoderAgent:
         intent = await self._analyze_intent(issue_title, issue_body or "", instruction_priority or "")
         logger.info(f"[{task_id}] Intent Analysis: {intent['category']} - {intent['goal']}")
 
-        # GitHubへ意図解析結果を報告
-        if self.gh_client:
-            intent_msg = f"### 🔍 Initial Intent Analysis\n"
-            intent_msg += f"- **Category**: `{intent['category']}`\n"
-            intent_msg += f"- **Goal**: {intent['goal']}\n"
-            if intent['constraints']:
-                intent_msg += f"- **Constraints**: {', '.join(intent['constraints'])}\n"
-            intent_msg += f"- **Next Step**: {intent['initial_action_suggestion']}\n"
-            await self.gh_client.post_comment(repo_name, issue_number, intent_msg + get_footer())
+        existing_task = await self.state.get_task(task_id)
+        existing_context = existing_task.get("context") or {} if existing_task else {}
+        existing_history = existing_context.get("history", [])
+
+        # もし特定のメンション等の新規イベントで履歴がない場合、Issue全体の最新の履歴を継承する
+        if not existing_history:
+            latest_task = await self.state.get_latest_task_for_issue(repo_name, issue_number)
+            latest_context = latest_task.get("context") or {} if latest_task else {}
+            existing_history = latest_context.get("history", [])
 
         context = {
             "repo_name": repo_name,
@@ -76,15 +80,17 @@ class CoderAgent:
             "location_type": location_type,
             "location_context": location_context,
             "instruction_priority": instruction_priority,
-            "history": []
+            "history": existing_history
         }
 
         max_steps = self.config['agent'].get('max_auto_retries', 15)
         
         for step in range(max_steps):
-            # 1. LLMによる推論
-            system_prompt, user_prompt = self._build_prompt(context)
-            response = await self._call_llm(system_prompt, user_prompt)
+            # 1. プロンプト（多段メッセージ）の構築
+            messages = await self._build_prompt(context)
+            
+            # 2. LLM 呼び出し
+            response = await self._call_llm(messages)
             logger.info(f"[{task_id}] Step {step+1} LLM Response: {response}")
             
             # 2. アクションの抽出
@@ -95,37 +101,34 @@ class CoderAgent:
             current_action_signature = f"{norm_action}_{json.dumps(action_input, sort_keys=True, ensure_ascii=False)}"
             context["repeated_action_alert"] = False
 
-            if len(context["history"]) >= 2:
-                # 履歴内のアクションを正規化して比較（None や Retry を排除）
-                last_actions = []
-                for h_item in context["history"][-2:]:
-                    h_action = h_item['action'] if h_item['action'] not in [None, "Retry"] else "None"
-                    last_actions.append(f"{h_action}_{json.dumps(h_item['input'], sort_keys=True, ensure_ascii=False)}")
+            if len(context["history"]) >= 1:
+                last_h = context["history"][-1]
+                last_sig = f"{last_h['action']}_{json.dumps(last_h['input'], sort_keys=True, ensure_ascii=False)}"
                 
-                if all(a == current_action_signature for a in last_actions):
-                    # 同一アクションが 3 回連続（今回の1回 + 履歴の2回）した場合はハードストップ
-                    logger.error(f"[{task_id}] Hard loop detected at Step {step+1}! Terminating task. Action: {norm_action}")
-                    await self.gh_client.post_comment(repo_name, issue_number, f"❌ 無限ループを検知したため（同一アクションの3回連続実行）、作業を停止しました。\nアクション: `{norm_action}`\n\n一度指示を修正するか、現在のファイルを削除してやり直してください。" + get_footer())
-                    return False
+                if last_sig == current_action_signature:
+                    # 2回連続：警告フラグを立てる
+                    context["repeated_action_alert"] = True
+                    logger.warning(f"[{task_id}] Soft loop detected (2nd time). Warning will be injected into prompt.")
+                    
+                    if len(context["history"]) >= 2:
+                        # 3回目連続：ハードストップ
+                        prev_last_h = context["history"][-2]
+                        prev_last_sig = f"{prev_last_h['action']}_{json.dumps(prev_last_h['input'], sort_keys=True, ensure_ascii=False)}"
+                        
+                        if prev_last_sig == current_action_signature:
+                            logger.error(f"[{task_id}] Hard loop detected at Step {step+1}! Terminating task. Action: {norm_action}")
+                            await self.gh_client.post_comment(repo_name, issue_number, f"❌ 無限ループを検知したため（同一アクションの3回連続実行）、作業を停止しました。\nアクション: `{norm_action}`\n対象: {json.dumps(action_input, ensure_ascii=False)}\n\n一度指示を修正するか、現在のファイルを削除してやり直してください。" + get_footer())
+                            return False
             
             # 3. アクションの実行（Python例外によるフェイルセーフ）
-            if self.gh_client and repo_name and issue_number:
-                req_json = context["history"][-1] if len(context["history"]) > 0 else "Initial Execution"
-                resp_json = {
-                    "thought": thought,
-                    "action": {
-                        "tool": action,
-                        "parameters": action_input
-                    }
-                }
-                msg = f"### 💬 Step {step+1} Request\n```json\n{json.dumps(req_json, ensure_ascii=False, indent=2)}\n```\n\n### 🧠 Step {step+1} Response\n```json\n{json.dumps(resp_json, ensure_ascii=False, indent=2)}\n```"
-                await self.gh_client.post_comment(repo_name, issue_number, msg + get_footer())
-
             try:
                 if not thought and not action:
                     raise ValueError("返答形式が不正です。JSONオブジェクトのみを返してください。")
                 elif action == "Finish" or (not action and thought and "完了" in thought):
                     logger.info(f"[{task_id}] Agent decided to finish.")
+                    summary = await self._generate_summary(context["history"], "SUCCESS")
+                    context["final_summary"] = summary
+                    await self.state.update_task(task_id, "Completed", repo_name, issue_num=issue_number, context=context)
                     return True
                 else:
                     observation = await self._execute_action(repo_name, action, action_input, context)
@@ -144,6 +147,15 @@ class CoderAgent:
                 "observation": observation
             })
             
+            # 判断依頼（質問して終了）の検知 
+            # 質問に関連する単語が含まれ、かつ Finish していない場合を判定
+            if action == "post_comment" and any(q in (thought or "") + (action_input.get("body") or "") for q in ["質問", "判断", "確認", "教えて"]):
+                summary = await self._generate_summary(context["history"], "SUSPENDED")
+                context["final_summary"] = summary
+                logger.info(f"[{task_id}] Agent requested user decision. Suspending task.")
+                await self.state.update_task(task_id, "Suspended", repo_name, issue_num=issue_number, context=context)
+                return "SUSPENDED" 
+            
             # 【重要】履歴のトリミング (設計書：メモリ・DB肥大化防止)
             max_history = self.config['agent'].get('max_history_steps', 15)
             if len(context["history"]) > max_history:
@@ -157,29 +169,64 @@ class CoderAgent:
         logger.error("Reached maximum steps without completion.")
         return False
 
-    async def _call_llm(self, system_prompt: str, user_prompt: str) -> str:
-        try:
-            resp = await self.http_client.post(
-                f"{self.llm_endpoint}/chat/completions",
-                json={
+    async def _call_llm(self, messages: List[Dict[str, str]], force_json: bool = True) -> str:
+        max_retries = self.max_llm_retries if force_json else 1
+        last_error = ""
+
+        for attempt in range(max_retries):
+            try:
+                payload = {
                     "model": self.model_name,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt}
-                    ],
+                    "messages": messages,
                     "temperature": 0.0,
-                    "response_format": {"type": "json_object"},
                     "options": {
                         "num_ctx": 32768
                     }
                 }
-            )
-            if resp.status_code == 200:
-                return resp.json()['choices'][0]['message']['content']
-            else:
-                return f"Error: LLM HTTP {resp.status_code} - {resp.text}"
-        except Exception as e:
-            return f"Error: {str(e)}"
+                if force_json:
+                    payload["response_format"] = {"type": "json_object"}
+
+                resp = await self.http_client.post(
+                    f"{self.llm_endpoint}/chat/completions",
+                    json=payload
+                )
+                if resp.status_code == 200:
+                    content = resp.json()['choices'][0]['message']['content']
+                    logger.debug(f"Raw LLM Response (Attempt {attempt+1}): {content}")
+                    
+                    # Markdown ブロックの除去
+                    clean_content = content.strip()
+                    if "```json" in clean_content:
+                        clean_content = clean_content.split("```json")[1].split("```")[0].strip()
+                    elif "```" in clean_content:
+                        clean_content = clean_content.split("```")[1].split("```")[0].strip()
+                    
+                    # { } の間を抽出 (フォールバック)
+                    if "{" in clean_content and "}" in clean_content:
+                        start = clean_content.find("{")
+                        end = clean_content.rfind("}") + 1
+                        clean_content = clean_content[start:end]
+
+                    # JSON形式の検証
+                    if force_json:
+                        try:
+                            json.loads(clean_content)
+                            return clean_content
+                        except json.JSONDecodeError as e:
+                            last_error = f"Invalid JSON format: {str(e)}"
+                            logger.warning(f"LLM returned invalid JSON (Attempt {attempt+1}/{max_retries}). Retrying...")
+                            continue
+                    return clean_content
+                else:
+                    last_error = f"LLM HTTP {resp.status_code} - {resp.text}"
+                    logger.warning(f"LLM request failed (Attempt {attempt+1}/{max_retries}): {last_error}")
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Error calling LLM (Attempt {attempt+1}/{max_retries}): {last_error}")
+            
+            await asyncio.sleep(1.0) # 短い待機を入れて再試行
+
+        return f"Error after {max_retries} attempts: {last_error}"
 
     def _get_language_resources(self, lang: str) -> Dict[str, str]:
         """ターゲット言語に基づいた表示ラベルと警告文を返す"""
@@ -200,8 +247,8 @@ class CoderAgent:
                 "loop_warning": "【WARNING】Loop detected. Try a different approach."
             }
 
-    def _build_prompt(self, context: Dict[str, Any]) -> Tuple[str, str]:
-        """システムプロンプトとユーザープロンプトを構築する"""
+    async def _build_prompt(self, context: Dict[str, Any]) -> List[Dict[str, str]]:
+        """システムプロンプトとユーザープロンプトを構築する (多段メッセージ形式)"""
         is_mention = context.get('is_mention', False)
         loc_type = context.get('location_type', 'ISSUE')
         instruct = context.get('instruction_priority', '')
@@ -218,13 +265,48 @@ class CoderAgent:
   }}
 }}"""
 
-        # 2. システムプロンプトの構築
-        role = res['role_pr'] if loc_type.startswith("PR") else res['role']
-        system_prompt = f"""{role}
+        # 2. システムコンテンツの生成 (役割、ツール、制約)
+        if context.get('error_mode'):
+            # エラー報告モード専用の簡潔なプロンプト (v22)
+            system_content = f"""{res['role']}
+{res['enforcement']}
+{res['json_schema_desc']}
+{common_json_schema}
+
+【!!! MISSION: ERROR REPORTING !!!】
+現在、予期せぬエラーにより作業が中断されています。
+あなたの任務は、最後に発生したエラー内容を解析し、{self._target_language} で GitHub に報告することだけです。
+
+1. `post_comment` を使用して、エラーの概要と（可能であれば）解決策のヒントを報告してください。
+2. その後、直ちに `Finish` を実行して終了してください。
+
+※ 他のツール（read_file, list_files, run_command 等）の使用は厳禁です。
+"""
+        else:
+            role = res['role_pr'] if loc_type.startswith("PR") else res['role']
+            system_content = f"""{role}
 {res['enforcement']}
 
 {res['json_schema_desc']}
 {common_json_schema}
+
+EXAMPLE RESPONSE 1:
+{{
+  "thought": "I will check the top-level directory to understand the project structure.",
+  "action": {{
+    "tool": "list_files",
+    "parameters": {{ "path": ".", "max_depth": 1 }}
+  }}
+}}
+
+EXAMPLE RESPONSE 2:
+{{
+  "thought": "I will trace the execution flow starting from the main function.",
+  "action": {{
+    "tool": "get_repository_flow",
+    "parameters": {{ "entry_symbol": "main", "max_depth": 3 }}
+  }}
+}}
 
 【Goal of This Session】
 {context.get('intent_analysis', {}).get('goal', 'Undetermined')}
@@ -233,23 +315,42 @@ class CoderAgent:
 {chr(10).join(['- ' + c for c in context.get('intent_analysis', {}).get('constraints', [])]) if context.get('intent_analysis', {}).get('constraints') else 'None'}
 
 【Available Tools & Required Parameters】
-You must strictly use the exact parameter keys defined below:
-- list_files: {{ "path": "string" }}
-- read_file: {{ "path": "string" }}
-- write_file: {{ "path": "string", "content": "string" }}
-- run_command: {{ "command": "string" }}
-- post_comment: {{ "body": "string" }}
-- create_issue: {{ "title": "string", "body": "string" }}
-- close_issue: {{ "issue_number": "integer" }}
-- close_pull_request: {{ "pull_number": "integer" }}
-- merge_pull_request: {{ "pull_number": "integer" }}
-- Finish: {{}}
+You must use the following tools:
+- list_files(path: string, max_depth: integer): 指定パスのファイル一覧を表示します。大規模リポジトリでは `max_depth=1` で Discovery (階層的探索) を行い、トークン消費を抑えてください。
+- read_file(path: string): 指定したファイルの内容を読み取ります。
+- write_file(path: string, content: string)
+- run_command(command: string)
+- post_comment(body: string)
+- create_issue(title: string, body: string)
+- close_issue(issue_number: integer)
+- close_pull_request(pull_number: integer)
+- merge_pull_request(pull_number: integer)
+- get_repository_flow(entry_symbol: string, max_depth: integer): シンボル名（関数名やクラス名など）から始まる詳細な処理フローを解析します。
+- Finish()
+
 【Rules (MANDATORY)】
 {self.COMMON_RULES}
-"""
 
-        # 3. 履歴文字列の構築
-        history_str = ""
+### 🚨 WDCA (Deep Context Awareness)
+リポジトリ全体の構造を把握しています。必要に応じて `get_repository_flow` を使用せよ。
+
+### 🚨 ユーザーへの判断依頼 (IMPORTANT)
+実装方針や、目的の曖昧さがある場合は、`post_comment` 後、`Finish` せずに停止してください。
+"""
+        messages = [{"role": "system", "content": system_content}]
+
+        # 3. 初期依頼 (Initial User Message)
+        instruct_msg = f"(Additional Instructions: {instruct})" if (is_mention and instruct) else ""
+        user_content = f"""【Target Issue】: {context['issue_title']}
+{instruct_msg}
+[Target Language]: {self._target_language}
+
+Sandbox root is './'.
+Reference Code fallback is active.
+"""
+        messages.append({"role": "user", "content": user_content})
+
+        # 4. 履歴の展開 (History as turns)
         max_history_to_include = 10
         total_history = len(context["history"])
         start_idx = max(0, total_history - max_history_to_include)
@@ -258,60 +359,41 @@ You must strictly use the exact parameter keys defined below:
         num_relevant = len(relevant_history)
 
         for i, h in enumerate(relevant_history):
-            input_str = json.dumps(h['input'], ensure_ascii=False)
+            # 不要なエラー報告履歴やハルシネーション（なりきり）を除外
+            if h.get('action') in ['post_comment', 'post_error', 'report_error']:
+                body_text = str(h.get('input', {}).get('body', "")) + " " + str(h.get('thought', ""))
+                # エラー報告や監視、および PM なりきりパターンを除外
+                skip_keywords = ["エラー", "Error", "Failed", "中断", "Project Manager", "Project Overview", "Milestones achieved"]
+                if any(q in body_text for q in skip_keywords):
+                    continue
+
+            # Assistant 回答
+            assistant_body = {
+                "thought": h.get("thought", ""),
+                "action": h.get("original_action", {"tool": h.get('action'), "parameters": h.get('input')})
+            }
+            messages.append({"role": "assistant", "content": json.dumps(assistant_body, ensure_ascii=False)})
+
+            # User 観測結果 (Observation)
             is_latest = (i == num_relevant - 1)
-            
-            if is_latest:
-                obs_limit = 30000
-            elif i >= num_relevant - 3:
-                obs_limit = 1000
-            else:
-                obs_limit = 200
-            
+            obs_limit = 30000 if is_latest else 1000
             obs = h['observation']
             if len(obs) > obs_limit:
                 obs = obs[:obs_limit] + f"\n... (truncated {len(obs) - obs_limit} chars)"
             
-            history_str += f"\nStep {h['step']}:\nThought: {h['thought']}\nAction: {h['action']}({input_str})\nObservation: {obs}\n"
+            messages.append({"role": "user", "content": f"Observation:\n{obs}"})
 
-        # 4. ユーザープロンプト（タスクと履歴）の構築
-        # 絶対パスがプロンプトに含まれるとAIが絶対パスを生成し混乱するため、隠蔽する
-        ref_env = "Reference Code fallback is active. Use relative paths like './src'."
-        ws_env = "Sandbox root is './'."
-        
-        # 条件付きメッセージの事前構築
-        instruct_msg = f"(Additional Instructions: {instruct})" if (is_mention and instruct) else ""
-        loop_msg = f"[LOOP WARNING] {res['loop_warning']}" if context.get('repeated_action_alert') else ""
-        
-        error_report_msg = ""
+        # 5. ループ警告・エラーモード・最終指示
+        if context.get('repeated_action_alert'):
+            messages.append({"role": "user", "content": f"[LOOP WARNING] {res['loop_warning']}"})
+
         if context.get('error_mode'):
-            error_report_msg = f"""
-【!!! CRITICAL ERROR: REPORTING ONLY !!!】
-Last operation failed: {context['error_obs']}
-PROHIBITED: read_file, list_files, run_command, write_file.
-REQUIRED: Translate and Summarize the above error in THE TARGET LANGUAGE via `post_comment`, then `Finish` immediately.
-"""
+            err_instr = f"\n【!!! CRITICAL ERROR !!!】\nLast operation failed: {context['error_obs']}\nReport this error via `post_comment` then `Finish`."
+            messages.append({"role": "user", "content": err_instr})
+        else:
+            messages.append({"role": "user", "content": "Next step: Please provide your thought and next action in a SINGLE JSON object."})
 
-        user_prompt = f"""
-【Target Issue】: {context['issue_title']}
-{instruct_msg}
-[Target Language]: {self._target_language}
-
-[Environment (Write/Test)]: {ws_env}
-[Environment (Read-only)]: {ref_env}
-
-【Execution History】
-{history_str}
-
-Issue Body:
-{context['issue_body']}
-
-{loop_msg}
-{error_report_msg}
-
-Based on the execution history above, what is your next step? (Respond with a SINGLE JSON object)
-"""
-        return system_prompt, user_prompt
+        return messages
 
     def _parse_response(self, response: str):
         """JSON オブジェクトをパースして Thought と Action を抽出する"""
@@ -328,19 +410,37 @@ Based on the execution history above, what is your next step? (Respond with a SI
         def extract_tool_data(data: dict):
             t = data.get("thought", "")
             act_data = data.get("action", {})
+            
             if isinstance(act_data, str):
+                # 形式 A: {"action": "tool_name", "param": "val"}
                 act = act_data
                 act_input = {k: v for k, v in data.items() if k not in ("thought", "action")}
+            elif isinstance(act_data, dict):
+                if "tool" in act_data:
+                    # 形式 B: {"action": {"tool": "T", "parameters": {P}}}
+                    act = act_data.get("tool")
+                    act_input = act_data.get("parameters", {})
+                elif len(act_data) == 1:
+                    # 形式 C: {"action": {"tool_name": {params}}} - AIがやりがちなミスへの対応
+                    act = list(act_data.keys())[0]
+                    act_input = act_data[act]
+                    if not isinstance(act_input, dict): act_input = {}
+                else:
+                    act = None
+                    act_input = {}
             else:
-                act = act_data.get("tool")
-                act_input = act_data.get("parameters", {})
+                act = None
+                act_input = {}
+                
             return t, act, act_input
 
         try:
+            # _call_llm で既に { } の抽出が試みられている想定
             data = json.loads(clean_resp)
             thought, action, action_input = extract_tool_data(data)
         except Exception as e:
             logger.error(f"Failed to parse JSON response: {e}")
+            # 二重のセーフティネット
             if "{" in response and "}" in response:
                 try:
                     start = response.find("{")
@@ -354,31 +454,35 @@ Based on the execution history above, what is your next step? (Respond with a SI
 
     async def _execute_action(self, repo_name: str, action: str, action_input: Any, context: Dict[str, Any]) -> str:
         """JSON 形式の引数を受け取って実行する。エラーはPython例外として投げる。"""
-        if not action: raise ValueError("有効な Action (JSONブロック) が見つかりませんでした。")
-        action_lower = action.lower()
+        if not action: 
+            raise ValueError("有効な Action (JSONブロック) が見つかりませんでした。回答には必ず JSON ブロックを含めてください。")
         
-        if action_lower == "finish":
+        # ツール名の正規化: "Finish()" -> "finish", "list_files(path: string)" -> "list_files"
+        action_clean = action.strip().split("(")[0].lower()
+        
+        if action_clean == "finish":
             return "Task completed successfully."
         
         if not isinstance(action_input, dict):
-            raise ValueError(f"Parameters must be a dictionary, got {type(action_input)}")
+            raise ValueError(f"Parameters must be a dictionary, got {type(action_input)}. Tool: {action}")
 
-        if action_lower == "list_files":
+        if action_clean == "list_files":
             path = action_input.get("path", action_input.get("file_path", "."))
-            return await self.sandbox.list_files(path)
-        elif action_lower == "read_file":
+            depth = action_input.get("max_depth", action_input.get("depth", 1))
+            return await self.sandbox.list_files(path, max_depth=int(depth))
+        elif action_clean == "read_file":
             path = action_input.get("path", action_input.get("file_path"))
             if not path: raise ValueError("'path' parameter is strictly required.")
             return await self.sandbox.read_file(path)
-        elif action_lower == "write_file":
+        elif action_clean == "write_file":
             path = action_input.get("path", action_input.get("file_path"))
             content = action_input.get("content", action_input.get("text", action_input.get("body")))
             if not path or content is None: raise ValueError("Both 'path' and 'content' parameters are strictly required.")
             return await self.sandbox.write_file(path, content)
-        elif action_lower == "run_command":
+        elif action_clean == "run_command":
             res = await self.sandbox.run_command(action_input.get("command"))
             return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
-        elif action_lower == "post_comment":
+        elif action_clean == "post_comment":
             body = action_input.get("body")
             if not body: raise ValueError("'body' parameter is required for post_comment.")
             
@@ -387,7 +491,7 @@ Based on the execution history above, what is your next step? (Respond with a SI
             
             await self.gh_client.post_comment(repo_name, context["issue_number"], translated_body + get_footer())
             return "Successfully posted comment to GitHub."
-        elif action_lower == "create_issue":
+        elif action_clean == "create_issue":
             title = action_input.get("title")
             body = action_input.get("body")
             if not title or not body:
@@ -398,24 +502,51 @@ Based on the execution history above, what is your next step? (Respond with a SI
             
             new_issue_number = await self.gh_client.create_issue(repo_name, translated_title, translated_body + get_footer())
             return f"Successfully created new Issue #{new_issue_number} in GitHub."
-        elif action_lower == "close_issue":
+        elif action_clean == "close_issue":
             num = action_input.get("issue_number")
             if num is None: raise ValueError("'issue_number' parameter is required.")
             await self.gh_client.close_issue(repo_name, int(num))
             return f"Successfully closed Issue #{num}."
-        elif action_lower == "close_pull_request":
+        elif action_clean == "close_pull_request":
             num = action_input.get("pull_number")
             if num is None: raise ValueError("'pull_number' parameter is required.")
             await self.gh_client.close_pull_request(repo_name, int(num))
             return f"Goal achieved: Successfully closed PR #{num}. Please call Finish() now."
-        elif action_lower == "merge_pull_request":
+        elif action_clean == "merge_pull_request":
             num = action_input.get("pull_number")
             if num is None: raise ValueError("'pull_number' parameter is required.")
             await self.gh_client.merge_pull_request(repo_name, int(num))
             return f"Goal achieved: Successfully merged PR #{num}. Please call Finish() now."
+        elif action_clean == "get_repository_flow":
+            # AIが誤って 'path' や 'name' などのキーを使うことがあるため、正規化する
+            symbol = action_input.get("entry_symbol") or action_input.get("symbol") or action_input.get("path") or action_input.get("name")
+            depth = action_input.get("max_depth", action_input.get("depth", 5))
+            if not symbol: raise ValueError("'entry_symbol' (e.g., function name) parameter is required.")
+            return await self.get_repository_flow(symbol, int(depth))
         
-        allowed_tools = ["list_files", "read_file", "write_file", "run_command", "close_pull_request", "merge_pull_request", "Finish", "post_comment"]
-        raise ValueError(f"Unknown action: '{action}'. 利用可能なツールは {allowed_tools} のみです。")
+        allowed_tools = ["list_files", "read_file", "write_file", "run_command", "close_pull_request", "merge_pull_request", "get_repository_flow", "Finish", "post_comment"]
+        raise ValueError(f"Unknown action: '{action_clean}'. 利用可能なツールは {allowed_tools} のみです。")
+
+    async def get_repository_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
+        """ 指定されたシンボルから始まる処理シーケンスを Mermaid 形式で取得するツール """
+        repo_path = self.sandbox.workspace_root
+        if not repo_path:
+            return "Workspace root not set."
+            
+        db_path = os.path.join(repo_path, ".brwn", "index.db")
+        
+        if not os.path.exists(db_path):
+            return f"Analysis index not found at {db_path}. Please check if .brwn directory exists."
+            
+        tracer = FlowTracer(db_path)
+        try:
+            # CPU バウンドな追跡処理をスレッドで実行
+            flow_data = await asyncio.to_thread(tracer.trace_flow, entry_symbol, max_depth)
+            return f"### {entry_symbol} の処理フロー\n\n```mermaid\n{flow_data}\n```"
+        except Exception as e:
+            return f"Error tracing flow: {str(e)}"
+        finally:
+            tracer.close()
 
     async def _analyze_and_report_error(self, error_str: str, repo_name: str, issue_number: int, target_lang: str, step: int, context: Dict[str, Any]) -> str:
         """Pythonレイヤーでキャッチした例外をLLMに分析・翻訳させ、Observationとして返す。"""
@@ -429,35 +560,46 @@ Based on the execution history above, what is your next step? (Respond with a SI
         
         system_prompt = f"""You are a senior system debugger. An error just occurred during a tool execution.
 Your task is to analyze the raw error and explain it clearly.
-
 CRITICAL REQUIREMENT: You MUST analyze and write your explanation STRICTLY in the following language: {target_lang}.
-Do not use English or any other language for the text inside your JSON output unless {target_lang} is English.
-
-You MUST respond with a SINGLE JSON object exactly in the following format:
+You MUST respond with a SINGLE JSON object:
 {{
   "analysis": "[Detailed error analysis and hints to fix it, strictly written in {target_lang}]"
 }}"""
         
         user_prompt = f"Raw Error Output:\n{error_str}"
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
         
-        analysis_json_str = await self._call_llm(system_prompt, user_prompt)
+        analysis_json_str = await self._call_llm(messages, force_json=True)
         analysis_text = "エラーが発生しました。"
         
         try:
-            # クリーンアップとパース
-            clean_resp = analysis_json_str.strip()
-            if clean_resp.startswith("```json"): clean_resp = clean_resp[len("```json"):].strip()
-            if clean_resp.endswith("```"): clean_resp = clean_resp[:-3].strip()
-            
-            data = json.loads(clean_resp)
+            # クリーンアップは _call_llm で実施済み
+            data = json.loads(analysis_json_str)
             analysis_text = data.get("analysis", result_fallback := "Error analyzing the error. Proceed with caution.")
         except Exception as e:
             logger.error(f"Failed to parse LLM error analysis: {e}")
             analysis_text = f"LLM parsing failed. Raw error: {error_str}"
             
-        # GitHubへ透明性のために報告（その後、AIループ自体は切断される）
+        # GitHubへ報告 (オーナーと依頼者へメンション)
         if self.gh_client and repo_name and issue_number:
-            msg = f"### ⚠️ Step {step} Error Detected (System Halted)\n\n**Analysis:** {analysis_text}"
+            owner = await self.gh_client.get_repo_owner(repo_name)
+            # 依頼者の特定 (履歴または context から)
+            requester = context.get('location_context', {}).get('user_login', "")
+            
+            my_username = self.gh_client.get_my_username().lower()
+            mention_parts = [f"@{owner}"]
+            if requester and requester.lower() != my_username and requester != "mention_trigger":
+                mention_parts.append(f"@{requester}")
+            
+            mention_str = " ".join(mention_parts)
+            
+            # 手順の要約生成
+            summary = await self._generate_summary(context["history"], "FAILED", error_str)
+            
+            msg = f"### ⚠️ {mention_str} エラーによるタスクの中断報\n\n**状況:** {analysis_text}\n\n**これまでの実施内容:**\n{summary}"
             await self.gh_client.post_comment(repo_name, issue_number, msg + get_footer())
 
     def _detect_language(self, text: str) -> str:
@@ -485,27 +627,16 @@ JSON Schema:
 }}
 """
         try:
-            import httpx
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(
-                    f"{self.llm_endpoint}/v1/chat/completions",
-                    json={
-                        "model": self.model_name,
-                        "messages": [{"role": "user", "content": prompt}]
-                    }
-                )
-                response.raise_for_status()
-                res = response.json()
-                content = res['choices'][0]['message']['content']
-                
-                # JSONの抽出
-                clean_content = content.strip()
-                if "```json" in clean_content:
-                    clean_content = clean_content.split("```json")[1].split("```")[0].strip()
-                elif "{" in clean_content:
-                    clean_content = clean_content[clean_content.find("{"):clean_content.rfind("}")+1]
-                
-                return json.loads(clean_content)
+            # システムプロンプトは特になし（ユーザープロンプトに全て含める）
+            messages = [{"role": "user", "content": prompt}]
+            content = await self._call_llm(messages, force_json=True)
+            
+            # JSONの抽出部分は _call_llm 内で行われているが、念のため再パース
+            clean_content = content.strip()
+            if "{" in clean_content:
+                clean_content = clean_content[clean_content.find("{"):clean_content.rfind("}")+1]
+            
+            return json.loads(clean_content)
         except Exception as e:
             logger.error(f"Intent analysis failed: {e}")
             return {
@@ -539,7 +670,11 @@ No other explanation or text is allowed."""
         
         user_prompt = f"Text to translate:\n{text}"
         
-        translated = await self._call_llm(system_prompt, user_prompt)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ]
+        translated = await self._call_llm(messages)
         
         if translated.strip().startswith("{"):
             try:
@@ -549,3 +684,48 @@ No other explanation or text is allowed."""
                 pass
         
         return translated.strip()
+
+    async def _generate_summary(self, history: List[Dict], status: str, error_detail: str = "") -> str:
+        """ 実施した内容を LLM で要約し、自然言語の報告書を生成する """
+        if not history: return "開始直後に中断されました。"
+
+        status_text = {
+            "SUCCESS": "タスクが正常に完了しました。",
+            "FAILED": "予期せぬエラーにより中断しました。",
+            "SUSPENDED": "ユーザーの判断を仰ぐために一時停止しています。"
+        }.get(status, "処理が中断されました。")
+
+        # 履歴のフィルタリング (エラー報告などを除外)
+        filtered_history = []
+        for h in history:
+            if h.get('action') in ['post_comment', 'post_error', 'report_error']:
+                body_text = str(h.get('input', {}).get('body', "")) + " " + str(h.get('thought', ""))
+                if "エラー" in body_text or "Error" in body_text or "Failed" in body_text or "中断" in body_text:
+                    continue
+            filtered_history.append(h)
+
+        prompt = f"""以下の実行履歴（ReActループ）を元に、ユーザー（GitHub Issueの依頼者）向けの「実施内容の報告書」を生成してください。
+現在の状態: {status_text}
+エラー詳細（あれば）: {error_detail}
+
+出力ルール:
+- 【!! 日本語限定 !!】
+- 親しみやすく、専門的で信頼できるトーン。
+- 箇条書きで分かりやすく。
+- エラーの場合は「どのステップで何が原因で中断したか」を具体的に。
+- 質問（SUSPENDED）の場合は、何を答えてほしいのかを明確に。
+- **重要: JSON 形式ではなく、直接テキスト（Markdown形式）で回答してください。**
+
+実行履歴:
+{json.dumps(filtered_history[-10:], ensure_ascii=False, indent=2)}
+"""
+        messages = [
+            {"role": "system", "content": "あなたは技術的な実施内容を簡潔にまとめて報告するソフトウェアエンジニアです。必ず日本語で回答してください。"},
+            {"role": "user", "content": prompt}
+        ]
+        try:
+            summary_text = await self._call_llm(messages, force_json=False)
+            return summary_text.strip()
+        except Exception as e:
+            logger.error(f"Failed to generate summary: {e}")
+            return "実施内容の要約生成に失敗しました。"

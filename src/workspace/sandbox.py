@@ -115,31 +115,31 @@ class SandboxManager:
             
         return full_path
 
-    async def list_files(self, path: str = ".") -> str:
-        """指定パスのファイル一覧を階層的に返す (設計書 8.12)"""
+    async def list_files(self, path: str = ".", max_depth: int = 1) -> str:
+        """指定されたパスのファイル一覧を取得する (max_depth で制御可能)"""
         full_path = self._get_full_path(path, rw=False)
         if not os.path.exists(full_path):
             raise FileNotFoundError(f"Path {path} does not exist.")
         
         output = []
-        # os.walk を使用して、指定パス以下の構造を走査
         for root, dirs, files in os.walk(full_path):
-            # 隠しディレクトリ (.git 等) はスキップ
             dirs[:] = [d for d in dirs if not d.startswith(".")]
-            
-            # 起点からの相対パスを取得
             rel_root = os.path.relpath(root, full_path)
             prefix = "" if rel_root == "." else rel_root + "/"
             
-            # ディレクトリとファイルを整形して追加
+            # 整形
+            output_items = []
             for d in sorted(dirs):
-                output.append(f"[DIR]  {prefix}{d}/")
+                output_items.append(f"[DIR]  {prefix}{d}/")
             for f in sorted(files):
                 if not f.startswith("."):
-                    output.append(f"[FILE] {prefix}{f}")
+                    output_items.append(f"[FILE] {prefix}{f}")
             
-            # 深さ制限（初期探索時はあまり深く潜りすぎないように制御）
-            if rel_root.count(os.sep) >= 1: 
+            output.extend(output_items)
+            
+            # 深さ制限
+            current_depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+            if current_depth >= max_depth:
                 del dirs[:]
         
         if not output:
@@ -159,7 +159,10 @@ class SandboxManager:
             raise FileNotFoundError(f"{path} does not exist (case mismatch).")
         
         with open(full_path, "r", encoding="utf-8") as f:
-            return f.read()
+            content = f.read()
+            if not content:
+                return f"(File {path} is empty)"
+            return f"--- Contents of {path} (Full) ---\n{content}\n--- End of {path} ---"
 
     async def write_file(self, path: str, content: str) -> str:
         """ファイルに内容を書き込む"""

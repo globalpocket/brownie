@@ -1,6 +1,7 @@
 agent:
   polling_interval_sec: 15
   max_auto_retries: 30
+  max_llm_retries: 5
   max_history_steps: 15 # 履歴保持件数。DB肥大化防止。
   oob_webhook_url: "" # トークン失効・LLM停止等のFatalエラー用
   queue_ux_notification: true # 順番待ち時にGitHubへ推定時間をコメント

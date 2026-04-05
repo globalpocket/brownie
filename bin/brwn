@@ -171,13 +171,17 @@ def run_command(args):
             run_command(args)
 
     elif args.action == "status":
-        lock_f = open(LOCK_FILE, "r+")
         running = False
         try:
-            fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-        except BlockingIOError:
-            running = True
+            lock_f = open(LOCK_FILE, "r+")
+            try:
+                fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(lock_f, fcntl.LOCK_UN)
+            except BlockingIOError:
+                running = True
+            lock_f.close()
+        except FileNotFoundError:
+            pass
         
         pid = get_running_pid()
         hibernation_file = "/tmp/brownie_hibernation.json"

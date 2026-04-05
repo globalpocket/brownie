@@ -1,5 +1,7 @@
 import logging
 import time
+import random
+import functools
 from typing import Optional, List, Dict, Any
 from github import Github, GithubException, Auth
 import re
@@ -23,6 +25,31 @@ class GitHubClientWrapper:
         self.etags: Dict[str, str] = {}
         self.last_api_call_time = 0
         self._my_username: Optional[str] = None
+
+    def github_retry(func):
+        """GitHub API の一時的なエラーに対するリトライデコレータ"""
+        @functools.wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            max_retries = 3
+            base_delay = 5  # 秒
+            for attempt in range(max_retries):
+                try:
+                    return await func(self, *args, **kwargs)
+                except GithubException as e:
+                    # 429 (Too Many Requests) または 403 (Secondary Rate Limit) はリトライ可能
+                    is_retryable = (e.status == 429) or (e.status == 403 and "secondary" in str(e).lower())
+                    
+                    if is_retryable and attempt < max_retries - 1:
+                        # Exponential Backoff + Jitter (揺らぎ)
+                        delay = (base_delay ** (attempt + 1)) + (random.random() * 5)
+                        logger.warning(f"Retryable GitHub API error {e.status}. Retrying in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
+                        await asyncio.sleep(delay)
+                        continue
+                    
+                    # リトライ不可、または最大回数到達時は通常の例外ハンドラへ
+                    self._handle_exception(e)
+            return None
+        return wrapper
 
     async def _throttle(self, is_write: bool = False):
         """API呼び出しの流量を制御する (設計書 拡張)"""
@@ -54,6 +81,16 @@ class GitHubClientWrapper:
             except GithubException as e:
                 self._handle_exception(e)
         return self._my_username
+
+    async def get_repo_owner(self, repo_name: str) -> str:
+        """ リポジトリのオーナー名を取得する """
+        try:
+            await self._throttle(is_write=False)
+            repo = self.g.get_repo(repo_name)
+            return repo.owner.login
+        except Exception as e:
+            logger.error(f"Failed to get repo owner for {repo_name}: {e}")
+            return ""
 
     async def get_issues_to_process(self, repo_name: str) -> List[Any]:
         """自分（アサイニ）に割り当てられたIssue/PRを取得する。"""
@@ -87,6 +124,7 @@ class GitHubClientWrapper:
             self._handle_exception(e)
             return False
 
+    @github_retry
     async def post_comment(self, repo_name: str, issue_number: int, body: str):
         """コメントを投稿する"""
         try:
@@ -97,6 +135,7 @@ class GitHubClientWrapper:
         except GithubException as e:
             self._handle_exception(e)
 
+    @github_retry
     async def create_pull_request(self, repo_name: str, title: str, body: str, head: str, base: str):
         """プルリクエストを作成する (既存の場合は取得する)"""
         try:
@@ -113,6 +152,7 @@ class GitHubClientWrapper:
             self._handle_exception(e)
             return None
 
+    @github_retry
     async def close_pull_request(self, repo_name: str, pull_number: int):
         """プルリクエストを閉じる"""
         try:
@@ -296,8 +336,8 @@ class GitHubClientWrapper:
                     try:
                         comments = issue.get_comments()
                         for comment in comments:
-                            comment_author = comment.user.login if comment.user else None
-                            if f"@{my_username}" in (comment.body or "") and comment_author != my_username:
+                            comment_author = comment.user.login.lower() if comment.user else None
+                            if f"@{my_username.lower()}" in (comment.body or "").lower() and comment_author != my_username.lower():
                                 latest_mention = {
                                     "number": issue.number,
                                     "comment_id": str(comment.id),
@@ -315,8 +355,8 @@ class GitHubClientWrapper:
                             # レビューサマリー (承認/却下時のタイトルコメント)
                             reviews = pr.get_reviews()
                             for review in reviews:
-                                review_author = review.user.login if review.user else None
-                                if review.body and f"@{my_username}" in review.body and review_author != my_username:
+                                review_author = review.user.login.lower() if review.user else None
+                                if review.body and f"@{my_username.lower()}" in review.body.lower() and review_author != my_username.lower():
                                     if not latest_mention or review.submitted_at > latest_mention["created_at"]:
                                         latest_mention = {
                                             "number": issue.number,
@@ -328,8 +368,8 @@ class GitHubClientWrapper:
                             # レビューインラインコメント (コードへの直接指摘)
                             review_comments = pr.get_review_comments()
                             for r_comment in review_comments:
-                                r_author = r_comment.user.login if r_comment.user else None
-                                if f"@{my_username}" in (r_comment.body or "") and r_author != my_username:
+                                r_author = r_comment.user.login.lower() if r_comment.user else None
+                                if f"@{my_username.lower()}" in (r_comment.body or "").lower() and r_author != my_username.lower():
                                     if not latest_mention or r_comment.created_at > latest_mention["created_at"]:
                                         latest_mention = {
                                             "number": issue.number,
