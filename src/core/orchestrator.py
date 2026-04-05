@@ -13,7 +13,7 @@ from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
 from src.workspace.analyzer.core import CodeAnalyzer
-from src.version import get_footer
+from src.llm.model_manager import OllamaModelManager
 import json
 import asyncio
 
@@ -33,7 +33,12 @@ class Orchestrator:
         self.sandbox = SandboxManager(self.config['workspace']['sandbox_user_id'], 
                                      self.config['workspace']['sandbox_group_id'])
         self.http_client = httpx.AsyncClient(timeout=300.0)
-        self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, http_client=self.http_client)
+        
+        # モデル管理の初期化
+        self.model_manager = OllamaModelManager(self.config['llm']['endpoint'])
+        
+        self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, 
+                               http_client=self.http_client, model_manager=self.model_manager)
         self.is_running = True
 
     async def start(self):
@@ -44,6 +49,9 @@ class Orchestrator:
         # 0. 起動初期化: 全リポジトリの深層解析 (WDCA)
         repo_list = self.config['agent'].get('repositories', [])
         workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
+        
+        # 解析には重量モデル (coder) を使用
+        await self.model_manager.switch_model(self.config['llm']['models']['coder'])
         
         logger.info(f"BOOT SEQUENCE: Initializing Deep Context for {len(repo_list)} repositories...")
         for repo_name in repo_list:
@@ -182,6 +190,10 @@ class Orchestrator:
             comment_id = suffix
 
         await self.state.update_task(task_id, "InProgress", repo_name)
+        
+        # タスク開始フェーズ: router モデルへ切り替え
+        await self.model_manager.switch_model(self.config['llm']['models']['router'])
+        
         success = False
         stop_heartbeat = asyncio.Event()
         

@@ -13,9 +13,12 @@ agent:
     - "globalpocket/brownie"
 llm:
   endpoint: "http://localhost:11434/v1"
-  timeout_sec: 0 # 無限タイムアウト
-  tokenizer: "auto" # transformersによりモデル構成を動的ロード
-  model_name: "llama3:latest"
+  timeout_sec: 900 # 大規模モデル向けにタイムアウトを調整
+  tokenizer: "auto"
+  models:
+    router: "llama3.1:8b"     # 判定・分類用
+    coder: "qwen2.5-coder:32b" # 実装・解析用
+    reviewer: "command-r:latest"      # レビュー・文書生成用
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000

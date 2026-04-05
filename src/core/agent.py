@@ -14,14 +14,16 @@ logger = logging.getLogger(__name__)
 class CoderAgent:
     def __init__(self, config: Dict[str, Any], sandbox: SandboxManager, state: 'StateManager', 
                  gh_client: Optional[GitHubClientWrapper] = None, 
-                 http_client: Optional[httpx.AsyncClient] = None):
+                 http_client: Optional[httpx.AsyncClient] = None,
+                 model_manager: Optional['OllamaModelManager'] = None):
         self.config = config
         self.sandbox = sandbox
         self.state = state
         self.gh_client = gh_client
         self.http_client = http_client or httpx.AsyncClient(timeout=300.0)
+        self.model_manager = model_manager
         self.llm_endpoint = config['llm']['endpoint']
-        self.model_name = config['llm']['model_name']
+        # self.model_name は廃止し、随時 model_manager から取得するか config を参照する
         self.max_llm_retries = config['agent'].get('max_llm_retries', 5)
         self._target_language = "日本語" # デフォルト
 
@@ -41,6 +43,13 @@ class CoderAgent:
 8. **Terminology Definitions**: In the context of Issue body or comments, the word "Issue" refers to the GitHub Issue of this repository. The word "Wiki" refers to the GitHub Wiki of this repository. Do not confuse them with local files unless explicitly specified.
 9. **Verification of Current State**: Before concluding a comparison task, you should list files in the workspace (using `list_files` or `run_command`) to understand the current implementation state. 
 10. **Atomic Issue Creation**: Once a specific difference is registered as an Issue, do not repeat the same issue creation. Record your progress in `thought`. If you accidentally created duplicate or incorrect issues, you may use `close_issue` to clean up.
+11. **Directory Structure Awareness**: Always use `list_files(path=".", max_depth=1)` to verify the top-level structure before accessing subdirectories. Do not assume a directory (e.g., `workspace/`) exists at the root if it is actually nested (e.g., `src/workspace/`).
+12. **Relative Pathing**: All paths provided to tools must be relative to the project root. If you see an error like "Path not found", re-verify the structure using `list_files` and try with the correct prefix (e.g., `src/`).
+13. **Quality Guardrails (MANDATORY)**: 
+    - After modifying any code, you MUST run `lint_code` to detect typos or structural errors before running tests.
+    - Before finishing or committing, you MUST run `format_code` to ensure code style consistency.
+    - If you introduce sensitive logic, run `scan_security` to check for vulnerabilities.
+    - Use the feedback from these tools to self-correct your code.
 """
 
     async def plan_and_execute(self, task_id: str, repo_name: str, issue_number: int, issue_title: str, issue_body: str, 
@@ -56,7 +65,10 @@ class CoderAgent:
         self._target_language = self._detect_language(detect_text)
         logger.info(f"[{task_id}] Detected target language: {self._target_language}")
         
-        # 意図解析 (Intent Analysis) - 設計書拡張 (v21)
+        # 1. 意図解析 (Intent Analysis) - router モデルを使用
+        if self.model_manager:
+            await self.model_manager.switch_model(self.config['llm']['models']['router'])
+            
         intent = await self._analyze_intent(issue_title, issue_body or "", instruction_priority or "")
         logger.info(f"[{task_id}] Intent Analysis: {intent['category']} - {intent['goal']}")
 
@@ -90,6 +102,10 @@ class CoderAgent:
             messages = await self._build_prompt(context)
             
             # 2. LLM 呼び出し
+            # 実行フェーズでは重量モデル (coder) に切り替え
+            if step == 0 and self.model_manager:
+                await self.model_manager.switch_model(self.config['llm']['models']['coder'])
+
             response = await self._call_llm(messages)
             logger.info(f"[{task_id}] Step {step+1} LLM Response: {response}")
             
@@ -126,6 +142,11 @@ class CoderAgent:
                     raise ValueError("返答形式が不正です。JSONオブジェクトのみを返してください。")
                 elif action == "Finish" or (not action and thought and "完了" in thought):
                     logger.info(f"[{task_id}] Agent decided to finish.")
+                    
+                    # 終了フェーズ（要約・報告）: reviewer モデルへ切り替え
+                    if self.model_manager:
+                        await self.model_manager.switch_model(self.config['llm']['models']['reviewer'])
+                    
                     summary = await self._generate_summary(context["history"], "SUCCESS")
                     context["final_summary"] = summary
                     await self.state.update_task(task_id, "Completed", repo_name, issue_num=issue_number, context=context)
@@ -169,14 +190,24 @@ class CoderAgent:
         logger.error("Reached maximum steps without completion.")
         return False
 
-    async def _call_llm(self, messages: List[Dict[str, str]], force_json: bool = True) -> str:
+    async def _call_llm(self, messages: List[Dict[str, str]], force_json: bool = True, model_role: str = "coder") -> str:
         max_retries = self.max_llm_retries if force_json else 1
         last_error = ""
+
+        # 使用するモデルの決定
+        target_model = self.config['llm']['models'].get(model_role)
+        if self.model_manager:
+            current = self.model_manager.get_current_model()
+            if current:
+                target_model = current
+        
+        if not target_model:
+            target_model = self.config['llm']['models'].get('router', 'llama3')
 
         for attempt in range(max_retries):
             try:
                 payload = {
-                    "model": self.model_name,
+                    "model": target_model,
                     "messages": messages,
                     "temperature": 0.0,
                     "options": {
@@ -326,6 +357,9 @@ You must use the following tools:
 - close_pull_request(pull_number: integer)
 - merge_pull_request(pull_number: integer)
 - get_repository_flow(entry_symbol: string, max_depth: integer): シンボル名（関数名やクラス名など）から始まる詳細な処理フローを解析します。
+- lint_code(path: string): Semgrep やリンターを使用して、指定パスのコード品質（タイポ、未使用変数、アンチパターン）を診断します。実装後の必須ステップ。
+- format_code(path: string): Black (Python) や Prettier (JS/TS) を使用して、コードを適切にフォーマットします。PR作成前の必須ステップ。
+- scan_security(path: string): Bandit 等を使用して、セキュリティ脆弱性をスキャンします。
 - Finish()
 
 【Rules (MANDATORY)】
@@ -482,6 +516,12 @@ Reference Code fallback is active.
         elif action_clean == "run_command":
             res = await self.sandbox.run_command(action_input.get("command"))
             return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
+        elif action_clean == "lint_code":
+            return await self.sandbox.lint_code(action_input.get("path", "."))
+        elif action_clean == "format_code":
+            return await self.sandbox.format_code(action_input.get("path", "."))
+        elif action_clean == "scan_security":
+            return await self.sandbox.scan_security(action_input.get("path", "."))
         elif action_clean == "post_comment":
             body = action_input.get("body")
             if not body: raise ValueError("'body' parameter is required for post_comment.")

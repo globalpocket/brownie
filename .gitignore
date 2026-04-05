@@ -214,3 +214,6 @@ logs/
 *.db-shm
 /tmp/brownie_workspace/
 .agent/
+
+# Brownie Context Data
+.brwn/

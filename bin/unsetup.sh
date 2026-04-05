@@ -49,7 +49,18 @@ if [ -f "$HOME/.zshrc" ]; then
     fi
 fi
 
-# 7. システムツール (brew/aptで入れたもの) について
+# 7. LLM モデルの削除 (Ollama)
+if command -v ollama &> /dev/null; then
+    read -p "Do you want to remove the Ollama models used by Brownie (qwen2.5-coder)? [y/N]: " REMOVE_MODELS
+    if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
+        echo "Removing Ollama models..."
+        ollama rm qwen2.5-coder:7b || true
+        ollama rm qwen2.5-coder:14b || true
+        ollama rm qwen2.5-coder:32b || true
+    fi
+fi
+
+# 8. システムツール (brew/aptで入れたもの) について
 echo ""
 echo "Note: System-wide tools (Node.js, Docker, Ollama, etc.) were not removed."
 echo "If you want to uninstall them, please use your package manager (brew/apt) manually."

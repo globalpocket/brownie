@@ -26,6 +26,11 @@ dependencies = [
     "tree-sitter-javascript>=0.25.0",
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-go>=0.25.0",
+    "black>=24.0.0",
+    "ruff>=0.3.0",
+    "bandit>=1.7.0",
+    "semgrep>=1.65.0",
+    "ast-grep-py>=0.22.0",
 ]
 
 [build-system]

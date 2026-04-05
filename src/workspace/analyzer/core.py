@@ -57,9 +57,10 @@ class CodeAnalyzer:
                 last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS symbol_id_seq")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS symbols (
-                id INTEGER PRIMARY KEY,
+                id INTEGER PRIMARY KEY DEFAULT nextval('symbol_id_seq'),
                 file_path TEXT,
                 name TEXT,
                 type TEXT, -- 'class', 'function', 'method'
@@ -179,47 +180,62 @@ class CodeAnalyzer:
             query_str = self._get_queries(lang_key)
             if not query_str: return
 
+            from tree_sitter import Query, QueryCursor
             language = self.parsers[lang_key].language
-            query = language.query(query_str)
-            captures = query.captures(tree.root_node)
+            query = Query(language, query_str)
+            cursor = QueryCursor(query)
+            captures = cursor.captures(tree.root_node)
 
             # 既存の当該ファイル情報をクリア
             self.conn.execute("DELETE FROM symbols WHERE file_path = ?", (rel_path,))
             self.conn.execute("DELETE FROM calls WHERE file_path = ?", (rel_path,))
 
             # シンボル情報の抽出と保存
-            current_container = "global"
-            for node, tag in captures:
-                start_line = node.start_point[0] + 1
-                end_line = node.end_point[0] + 1
-                
-                if tag.endswith(".def"):
-                    # 定義の開始。次のキャプチャが名前であることを想定。
-                    continue 
-
-                if tag.endswith(".name"):
-                    name = node.text.decode('utf-8')
-                    symbol_type = tag.split('.')[0] # 'class' or 'func'
-                    
-                    if symbol_type in ('class', 'func'):
-                        self.conn.execute("""
-                            INSERT INTO symbols (file_path, name, type, start_line, end_line)
-                            VALUES (?, ?, ?, ?, ?)
-                        """, (rel_path, name, symbol_type, start_line, end_line))
-                        
-                elif tag == "call.name":
-                    call_name = node.text.decode('utf-8')
-                    # 呼び出し関係の保存
-                    self.conn.execute("""
-                        INSERT INTO calls (caller_name, callee_name, file_path, line)
-                        VALUES (?, ?, ?, ?)
-                    """, (current_container, call_name, rel_path, start_line))
+            # Tree-sitter 0.22+ では captures() はタグ名をキーとした辞書を返す場合がある
+            if isinstance(captures, dict):
+                for tag, nodes in captures.items():
+                    for node in nodes:
+                        self._process_single_capture(rel_path, node, tag)
+            else:
+                # 従来のタプル形式の場合
+                for node, tag in captures:
+                    self._process_single_capture(rel_path, node, tag)
 
             # ファイルハッシュの更新
             self.conn.execute("INSERT OR REPLACE INTO files (path, hash) VALUES (?, ?)", (rel_path, current_hash))
             
         except Exception as e:
             logger.error(f"Error scanning {rel_path}: {e}")
+
+    def _process_single_capture(self, rel_path: str, node: Any, tag: str):
+        """ 単一のキャプチャ（ノードとタグ）を処理して DB に保存 """
+        try:
+            start_line = node.start_point[0] + 1
+            end_line = node.end_point[0] + 1
+            
+            if tag.endswith(".def"):
+                return 
+
+            if tag.endswith(".name"):
+                name = node.text.decode('utf-8')
+                symbol_type = tag.split('.')[0] # 'class' or 'func'
+                
+                if symbol_type in ('class', 'func'):
+                    self.conn.execute("""
+                        INSERT INTO symbols (file_path, name, type, start_line, end_line)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, (rel_path, name, symbol_type, start_line, end_line))
+                    
+            elif tag == "call.name":
+                # 呼び出し関係の保存
+                call_name = node.text.decode('utf-8')
+                self.conn.execute("""
+                    INSERT INTO calls (caller_name, callee_name, file_path, line)
+                    VALUES (?, ?, ?, ?)
+                """, ("global", call_name, rel_path, start_line))
+                
+        except Exception as e:
+            logger.error(f"Error processing capture in {rel_path}: {e}")
 
     def close(self):
         self.conn.close()

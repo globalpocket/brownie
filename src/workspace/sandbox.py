@@ -5,6 +5,8 @@ import logging
 import re
 from typing import Dict, Any, List, Optional
 
+from src.workspace.linter import LinterEngine
+
 logger = logging.getLogger(__name__)
 
 class SandboxManager:
@@ -13,6 +15,7 @@ class SandboxManager:
         self.group_id = group_id
         self.workspace_root = None
         self.reference_root = None
+        self.linter = None
         try:
             self.client = docker.from_env()
             self.client.ping()
@@ -79,6 +82,7 @@ class SandboxManager:
     def set_workspace_root(self, root_path: str):
         """ワークスペースのルートパスを設定する"""
         self.workspace_root = os.path.realpath(root_path)
+        self.linter = LinterEngine(self.workspace_root)
         logger.info(f"Sandbox workspace root set to: {self.workspace_root}")
 
     def set_reference_root(self, ref_path: str):
@@ -119,7 +123,9 @@ class SandboxManager:
         """指定されたパスのファイル一覧を取得する (max_depth で制御可能)"""
         full_path = self._get_full_path(path, rw=False)
         if not os.path.exists(full_path):
-            raise FileNotFoundError(f"Path {path} does not exist.")
+            # パスが見つからない場合、例外を投げずに AI へのヒントを返して自律復旧を促す
+            parent_dir = os.path.dirname(path) or "."
+            return f"Error: Path '{path}' not found. Please check the directory structure (e.g., did you mean 'src/{path}'?)."
         
         output = []
         for root, dirs, files in os.walk(full_path):
@@ -150,13 +156,15 @@ class SandboxManager:
     async def read_file(self, path: str) -> str:
         """ファイル内容を読み取る"""
         full_path = self._get_full_path(path, rw=False)
-        if not os.path.isfile(full_path):
-            raise FileNotFoundError(f"{path} is not a file.")
+        if not os.path.exists(full_path):
+            return f"Error: File '{path}' not found. Please check if you missed a directory prefix (e.g., 'src/{path}'). Verify with list_files."
+        if os.path.isdir(full_path):
+            return f"Error: '{path}' is a directory. Use list_files to list its contents."
         
         # macOS などの大文字小文字を区別しないファイルシステムへの対策（厳密チェック）
-        dirname, basename = os.path.split(os.path.abspath(full_path))
+        dirname, basename = os.path.split(os.path.realpath(full_path))
         if basename and basename not in os.listdir(dirname):
-            raise FileNotFoundError(f"{path} does not exist (case mismatch).")
+            return f"Error: File '{path}' not found (case-sensitive check failed). Verify the exact spelling."
         
         with open(full_path, "r", encoding="utf-8") as f:
             content = f.read()
@@ -219,12 +227,45 @@ class SandboxManager:
             text = re.sub(p, r"\1=***" if "=" in p else "***", text, flags=re.IGNORECASE)
         return text
 
+    async def lint_code(self, path: str = ".") -> str:
+        """Semgrep とリンターによるコード品質診断を実行"""
+        if not self.linter: return "Linter not initialized."
+        
+        # 1. Semgrep Scan (Semantic Rules)
+        semgrep_data = await self.linter.scan_semgrep(path)
+        report = []
+        if "findings" in semgrep_data:
+            for f in semgrep_data["findings"]:
+                report.append(f"[{f['severity']}] {f['path']}:{f['line']} - {f['message']}")
+        
+        # 2. Standard Linter (Ruff/ESLint)
+        lint_output = await self.linter.run_lint(path)
+        
+        summary = "--- Lint / Scan Results ---\n"
+        if report:
+            summary += "Semgrep (Semantic Rules):\n" + "\n".join(report) + "\n\n"
+        summary += "Standard Linter:\n" + lint_output
+        return summary
+
+    async def format_code(self, path: str = ".") -> str:
+        """Black / Prettier によるコード整形を実行"""
+        if not self.linter: return "Linter not initialized."
+        return await self.linter.run_format(path)
+
+    async def scan_security(self, path: str = ".") -> str:
+        """Bandit 等によるセキュリティ診断を実行"""
+        if not self.linter: return "Linter not initialized."
+        return await self.linter.scan_security(path)
+
     def cleanup_orphans(self):
         """オーファンコンテナ・ボリュームの定期GC (設計書 8.4 浄化)"""
         containers = self.client.containers.list(all=True, filters={"label": "brownie_task_id"})
         for c in containers:
             if c.status != "running":
-                logger.info(f"Removing orphan container: {c.id}")
-                c.remove()
+                logger.debug(f"Removing orphan container: {c.id}")
+                try:
+                    c.remove()
+                except Exception:
+                    pass
         
         self.client.volumes.prune()
