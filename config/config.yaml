@@ -16,9 +16,9 @@ llm:
   timeout_sec: 900 # 大規模モデル向けにタイムアウトを調整
   tokenizer: "auto"
   models:
-    router: "llama3.1:8b"     # 判定・分類用
-    coder: "qwen2.5-coder:32b" # 実装・解析用
-    reviewer: "command-r:latest"      # レビュー・文書生成用
+    router: "Qwen3-Coder:30b"
+    coder: "Qwen3-Coder:30b"
+    reviewer: "Qwen3-Coder:30b"
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000

@@ -148,14 +148,8 @@ fi
 
 # 7. LLM 推奨モデルの事前プル (Role-based Routing 用)
 if command -v ollama &> /dev/null; then
-    echo "Pulling recommended models for dynamic routing..."
-    # Router: 軽量モデル (7B)
-    ollama pull qwen2.5-coder:7b
-    # Reviewer: 中量モデル (14B)
-    ollama pull qwen2.5-coder:14b
-    # Coder: 重量モデル (32B)
-    # ⚠️ 32B はメモリが多量に必要なため、環境に応じて失敗する可能性があります
-    ollama pull qwen2.5-coder:32b || echo "Warning: Failed to pull 32B model. You may need more RAM/VRAM."
+    echo "Pulling recommended model for Brownie (Qwen3-Coder:30b)..."
+    ollama pull Qwen3-Coder:30b
 else
     echo "Warning: Ollama not found. Skipping model pull."
 fi
