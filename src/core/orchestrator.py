@@ -12,6 +12,7 @@ from src.core.agent import CoderAgent
 from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
+from src.workspace.analyzer.core import CodeAnalyzer
 import json
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,27 @@ class Orchestrator:
         await self.state.connect()
         asyncio.create_task(self.worker_pool.run()) # ワーカープール起動
         
+        # 0. 起動初期化: 全リポジトリの深層解析 (WDCA)
+        repo_list = self.config['agent'].get('repositories', [])
+        workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
+        
+        logger.info(f"BOOT SEQUENCE: Initializing Deep Context for {len(repo_list)} repositories...")
+        for repo_name in repo_list:
+            repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
+            os.makedirs(repo_path, exist_ok=True)
+            
+            # リポジトリの同期
+            logger.info(f"WDCA Phase 1: Ensuring repo is cloned: {repo_name}")
+            await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
+            
+            # フルスキャン (同期待機)
+            logger.info(f"WDCA Phase 2: Building symbol map for {repo_name}...")
+            analyzer = CodeAnalyzer(repo_path)
+            await analyzer.scan_project()
+            analyzer.close()
+            
+        logger.info("BOOT SEQUENCE COMPLETED. Entering main polling loop.")
+
         # メインポーリングループ
         while self.is_running:
             try:
