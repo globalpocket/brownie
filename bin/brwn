@@ -5,10 +5,18 @@ import signal
 import subprocess
 import argparse
 import time
+import fcntl
 from pathlib import Path
 
 # プロジェクトルートをパスに追加
-sys.path.append(os.path.join(os.path.dirname(__file__), ".."))
+base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.append(base_dir)
+
+# 仮想環境 (uv) の Python を強制使用する再実行ロジック (設計書 3.2 補足)
+venv_python = os.path.join(base_dir, ".venv", "bin", "python")
+if os.path.exists(venv_python) and sys.executable != venv_python:
+    os.execv(venv_python, [venv_python] + sys.argv)
+
 from src.version import get_build_id
 BUILD_ID = get_build_id()
 
@@ -35,11 +43,8 @@ def kill_all_brownie():
     """システム上のすべてのBrownie関連プロセス（watchdog, main）を物理的に一掃する"""
     print("🧹 Cleaning up all Brownie-related processes...")
     
-    # psコマンドで、Brownieのリポジトリパスを含むPythonプロセスを探し出す
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     try:
-        # brownieのリポジトリパスを含むpythonプロセスを洗い出す
-        # ps -eo pid,args はMac/Linux共通
         ps_cmd = f"ps -eo pid,args | grep '{base_dir}' | grep 'python' | grep -E 'watchdog\\.py|main\\.py' | grep -v 'grep'"
         output = subprocess.check_output(ps_cmd, shell=True).decode().strip()
         
@@ -55,41 +60,72 @@ def kill_all_brownie():
                     except ProcessLookupError:
                         pass
     except Exception:
-        pass # プロセスが見つからない場合は正常終了
+        pass 
     
     if os.path.exists(PID_FILE):
         os.remove(PID_FILE)
     
-    # 生存信号ファイルも一掃
     if os.path.exists("/tmp/brownie_survival.signal"):
         try: os.remove("/tmp/brownie_survival.signal")
         except: pass
 
 def run_command(args):
     """メインプロセス/Watchdog の制御"""
-    import fcntl
-    
     base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     venv_python = os.path.join(base_dir, ".venv", "bin", "python")
     
-    if args.action == "start":
-        # ロックファイルで二重起動を厳格に防止
-        lock_f = open(LOCK_FILE, "a")
-        try:
-            # 試しにロック。取れないなら誰かが動いている
-            fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # 取れたら他は動いていないので、一旦アンロックしてWatchdogにバトンを渡す
-            fcntl.flock(lock_f, fcntl.LOCK_UN)
-        except BlockingIOError:
-            pid = get_running_pid()
-            if pid is None:
-                # ロックはされているがPIDが追跡不能な場合、残留プロセスを掃除して続行
-                print("⚠️ Stale lock or untracked process found. Cleaning up...")
-                kill_all_brownie()
-            else:
-                print(f"Error: Brownie is already running (PID: {pid}).")
+    # 実行前チェック: start と debug は排他的かつ事前認証が必要 (設計書 3.2 修認)
+    if args.action in ["start", "debug"]:
+        pid = get_running_pid()
+        if pid is not None:
+            # プロセスが実在する場合のみ停止させる
+            print(f"Error: Brownie is already running (PID: {pid}).")
+            sys.exit(1)
+        
+        # 共通の認証チェック
+        env_path = os.path.join(base_dir, ".env")
+        from dotenv import load_dotenv
+        load_dotenv(env_path)
+        
+        token = os.getenv("GITHUB_TOKEN")
+        user_name = os.getenv("USER_NAME")
+        
+        if not token or not user_name:
+            print("🔑 GitHub authentication required.")
+            new_token = input("Enter your GitHub Personal Access Token: ").strip()
+            if not new_token:
+                print("Error: Token is required to start Brownie.")
+                sys.exit(1)
+            
+            print("Checking token and fetching username...")
+            try:
+                import requests
+                res = requests.get("https://api.github.com/user", headers={"Authorization": f"token {new_token}"})
+                res.raise_for_status()
+                user_data = res.json()
+                new_user_name = user_data["login"]
+                print(f"✅ Authenticated as: {new_user_name}")
+                
+                env_lines = []
+                if os.path.exists(env_path):
+                    with open(env_path, "r") as f:
+                        for line in f:
+                            if not line.startswith("GITHUB_TOKEN=") and not line.startswith("USER_NAME="):
+                                env_lines.append(line)
+                
+                env_lines.append(f"GITHUB_TOKEN={new_token}\n")
+                env_lines.append(f"USER_NAME={new_user_name}\n")
+                
+                with open(env_path, "w") as f:
+                    f.writelines(env_lines)
+                
+                os.environ["GITHUB_TOKEN"] = new_token
+                os.environ["USER_NAME"] = new_user_name
+            except Exception as e:
+                print(f"❌ Failed to verify token: {e}")
                 sys.exit(1)
 
+    if args.action == "start":
         print(f"Starting Brownie system (Build: {BUILD_ID})...")
         process = subprocess.Popen(
             [venv_python, "src/watchdog.py"],
@@ -97,22 +133,11 @@ def run_command(args):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        # PIDを保存
         with open(PID_FILE, "w") as f:
             f.write(str(process.pid))
         print(f"Brownie started (Watchdog PID: {process.pid}).")
 
     elif args.action == "debug":
-        # デバッグモードでもロックを確認
-        lock_f = open(LOCK_FILE, "a")
-        try:
-            fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # フォアグラウンドで動かす間はこのCLIがロックを持ち続ける
-        except BlockingIOError:
-            pid = get_running_pid()
-            print(f"Error: Brownie is already running (PID: {pid or 'Unknown'}).")
-            sys.exit(1)
-
         print(f"Starting Brownie in DEBUG mode (Build: {BUILD_ID})...")
         my_pid = os.getpid()
         with open(PID_FILE, "w") as f:
@@ -138,7 +163,6 @@ def run_command(args):
             except:
                 pass
         
-        # PIDベースの停止が失敗した場合や、残留プロセスがある場合に備えて「大掃除」
         kill_all_brownie()
         
         if args.action == "restart":
@@ -147,19 +171,36 @@ def run_command(args):
             run_command(args)
 
     elif args.action == "status":
-        # ロックが取得できるなら動いていない、取得できないなら動いている
         lock_f = open(LOCK_FILE, "r+")
         running = False
         try:
             fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            # ロックが取れた = 動いていない
             fcntl.flock(lock_f, fcntl.LOCK_UN)
         except BlockingIOError:
             running = True
         
         pid = get_running_pid()
+        hibernation_file = "/tmp/brownie_hibernation.json"
+        is_hibernating = False
+        hibernation_msg = ""
+        
+        if os.path.exists(hibernation_file):
+            try:
+                import json
+                with open(hibernation_file, "r") as f:
+                    data = json.load(f)
+                    reset_at = data.get("reset_at", 0)
+                    remaining = int(reset_at - time.time())
+                    if remaining > 0:
+                        is_hibernating = True
+                        mins, secs = divmod(remaining, 60)
+                        hibernation_msg = f" (HIBERNATING - Wake up at {data.get('wake_up_at')}, Remaining: {mins}m {secs}s)"
+            except:
+                pass
+
         if running or pid:
-            print(f"Brownie is ACTIVE (PID: {pid or 'Unknown'})")
+            status_text = "ACTIVE" if not is_hibernating else "HIBERNATING"
+            print(f"Brownie is {status_text} (PID: {pid or 'Unknown'}){hibernation_msg}")
         else:
             print("Brownie is STOPPED")
 
@@ -170,18 +211,32 @@ def run_command(args):
         else:
             print("No log file found.")
 
-    elif args.action == "reset":
-        # 1. 停止
+    elif args.action == "logout":
         args.action = "stop"
         run_command(args)
         
-        # 2. ファイル削除 (仮想環境のPythonを使って安全に実行)
+        env_path = os.path.join(base_dir, ".env")
+        if os.path.exists(env_path):
+            print("Wiping GitHub credentials from .env...")
+            new_lines = []
+            with open(env_path, "r") as f:
+                for line in f:
+                    if not line.startswith("GITHUB_TOKEN=") and not line.startswith("USER_NAME="):
+                        new_lines.append(line)
+            with open(env_path, "w") as f:
+                f.writelines(new_lines)
+            print("✅ Logout successful.")
+        else:
+            print("No .env file found. Already logged out.")
+
+    elif args.action == "reset":
+        args.action = "stop"
+        run_command(args)
         print("Starting cleanup process...")
         subprocess.run([venv_python, "src/utils/reset_system.py"])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Brownie CLI")
-    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "log", "queue", "debug", "reset"])
+    parser.add_argument("action", choices=["start", "stop", "restart", "status", "logs", "log", "queue", "debug", "reset", "logout"])
     args = parser.parse_args()
-
     run_command(args)

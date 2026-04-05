@@ -139,15 +139,45 @@ if __name__ == "__main__":
     from pathlib import Path
     
     # ロックファイルの取得
-    lock_path = Path.home() / ".local" / "share" / "brownie" / "brownie.lock"
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    data_dir = Path.home() / ".local" / "share" / "brownie"
+    lock_path = data_dir / "brownie.lock"
+    pid_file = data_dir / "brownie.pid"
+    data_dir.mkdir(parents=True, exist_ok=True)
     
-    lock_f = open(lock_path, "w")
-    try:
-        fcntl.flock(lock_f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print("Error: Another Watchdog is already running.")
-        sys.exit(1)
+    def try_lock(path):
+        f = open(path, "a")
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return f
+        except BlockingIOError:
+            return None
+
+    lock_f = try_lock(lock_path)
+    if lock_f is None:
+        # ロックが取れない場合、実際にプロセスが生きているか確認
+        is_stale = True
+        if pid_file.exists():
+            try:
+                with open(pid_file, "r") as pf:
+                    pid = int(pf.read().strip())
+                    os.kill(pid, 0) # 生存確認
+                    is_stale = False
+                    print(f"Error: Another Watchdog is already running (PID: {pid}).")
+            except (ValueError, ProcessLookupError):
+                pass
+        
+        if is_stale:
+            # プロセスはいないのにロックがある = Stale Lock
+            print("⚠️ Stale lock detected in watchdog. Cleaning up...")
+            if lock_path.exists():
+                try: os.remove(lock_path)
+                except: pass
+            lock_f = try_lock(lock_path)
+            if lock_f is None:
+                print("Error: Could not acquire lock even after cleanup.")
+                sys.exit(1)
+        else:
+            sys.exit(1)
 
     script_path = os.path.join(os.path.dirname(__file__), "main.py")
     dog = Watchdog(script_path, "/tmp/brownie_survival.signal")

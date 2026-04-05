@@ -41,12 +41,19 @@ case $OS in
     
     # git-lfs
     if ! check_tool "git-lfs"; then TOOLS_TO_INSTALL+=("git-lfs"); fi
-    # gh (GitHub CLI) - ユーザーの要望により既存のものを尊重（ここでもチェック）
+    # gh (GitHub CLI)
     if ! check_tool "gh"; then TOOLS_TO_INSTALL+=("gh"); fi
     # Docker (Application または CLI)
     if ! check_tool "docker" "Docker.app"; then TOOLS_TO_INSTALL+=("docker" "docker-compose"); fi
     # Ollama (Application または CLI)
     if ! check_tool "ollama" "Ollama.app"; then TOOLS_TO_INSTALL+=("ollama"); fi
+    # Node.js (for Repomix)
+    if ! check_tool "node"; then TOOLS_TO_INSTALL+=("node"); fi
+    # C Compiler (for Tree-sitter build)
+    if ! xcode-select -p &> /dev/null; then
+        echo "Xcode Command Line Tools not found. Installing..."
+        xcode-select --install || true # すでに対話型のインストーラが走っている場合はエラーになるので続行
+    fi
     
     if [ ${#TOOLS_TO_INSTALL[@]} -gt 0 ]; then
         echo "Installing missing tools: ${TOOLS_TO_INSTALL[*]}"
@@ -60,7 +67,8 @@ case $OS in
     echo "Running on Linux..."
     sudo apt update
     # Linux では基本的にパッケージマネージャ経由で一括管理
-    sudo apt install -y git-lfs gh docker.io docker-compose-v2 curl
+    # build-essential: Cコンパイラ, nodejs/npm: Repomix実行用
+    sudo apt install -y git-lfs gh docker.io docker-compose-v2 curl build-essential nodejs npm
     if ! check_tool "ollama"; then
         curl -fsSL https://ollama.com/install.sh | sh
     fi
@@ -143,5 +151,10 @@ if command -v ollama &> /dev/null; then
 else
     echo "Warning: Ollama not found. Skipping model pull."
 fi
+
+# 8. 高度な解析エンジンのセットアップ (Tree-sitter Grammars)
+echo "Setting up advanced analysis engine (Tree-sitter)..."
+# パッケージ方式に移行したため、uv sync で全て揃う。最後にロードチェックのみ実行。
+$UV_CMD run scripts/build_grammars.py
 
 echo "Brownie setup completed successfully!"

@@ -9,9 +9,10 @@ from typing import Optional, Dict, Any, List
 from src.core.state import StateManager
 from src.core.worker_pool import WorkerPool
 from src.core.agent import CoderAgent
-from src.gh_platform.client import GitHubClientWrapper
+from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +54,28 @@ class Orchestrator:
                 
                 # 4. 待機 (configのインターバル)
                 await asyncio.sleep(self.config['agent']['polling_interval_sec'])
+            except GitHubRateLimitException as e:
+                wait_seconds = int(e.reset_at - time.time()) + 60 # 余裕を持って+60秒
+                logger.warning(f"HIBERNATION MODE: Captured GitHub rate limit. Sleeping for {wait_seconds}s until {time.ctime(e.reset_at)}")
+                
+                # 冬眠情報をファイルに記録 (CLI/Watchdog用)
+                hibernation_info = {
+                    "reset_at": e.reset_at,
+                    "wake_up_at": time.ctime(e.reset_at + 60),
+                    "reason": str(e)
+                }
+                with open("/tmp/brownie_hibernation.json", "w") as f:
+                    json.dump(hibernation_info, f)
+                
+                # 冬眠中も定期的に生存信号（ダミーのウェイクアップ）を送り、Watchdogに殺されないようにする
+                # (Orchestrator自体はループを止めるが、 asyncio.sleep で待機)
+                try:
+                    await asyncio.sleep(wait_seconds)
+                finally:
+                    # 冬眠終了
+                    if os.path.exists("/tmp/brownie_hibernation.json"):
+                        os.remove("/tmp/brownie_hibernation.json")
+                    logger.info("HIBERNATION MODE: Wake up. Resuming polling.")
             except Exception as e:
                 logger.error(f"Orchestrator error: {e}", exc_info=True)
                 await asyncio.sleep(10)
@@ -166,7 +189,10 @@ class Orchestrator:
                     is_pr = False
 
                 start_msg = "プルリクエストを確認しました。指示に従います。" if is_pr else "課題を確認しました。作業を開始します。"
-                await self.gh_client.post_comment(repo_name, issue_number, f"@globalpocket {start_msg}" + get_footer())
+                # 依頼主（user_login）がいればその人にメンションし、いなければリクエスト本体へ
+                trigger_user = user_login if user_login != "mention_trigger" else ""
+                mention_prefix = f"@{trigger_user} " if trigger_user else ""
+                await self.gh_client.post_comment(repo_name, issue_number, f"{mention_prefix}{start_msg}" + get_footer())
                 
                 if comment_id != "body":
                     if comment_id.startswith("review-"):

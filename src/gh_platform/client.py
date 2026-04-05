@@ -1,10 +1,18 @@
 import logging
+import time
 from typing import Optional, List, Dict, Any
 from github import Github, GithubException, Auth
-import time
 import re
+import json
+import asyncio
 
 logger = logging.getLogger(__name__)
+
+class GitHubRateLimitException(Exception):
+    """GitHubのレートリミットに達したことを示す例外"""
+    def __init__(self, message: str, reset_at: float):
+        super().__init__(message)
+        self.reset_at = reset_at
 
 class GitHubClientWrapper:
     def __init__(self, token: str):
@@ -13,7 +21,28 @@ class GitHubClientWrapper:
         self.auth = Auth.Token(token)
         self.g = Github(auth=self.auth)
         self.etags: Dict[str, str] = {}
+        self.last_api_call_time = 0
         self._my_username: Optional[str] = None
+
+    async def _throttle(self, is_write: bool = False):
+        """API呼び出しの流量を制御する (設計書 拡張)"""
+        now = time.time()
+        elapsed = now - self.last_api_call_time
+        # 読み取りは最低1秒、書き込みは最低3秒空ける
+        delay = 3.0 if is_write else 1.0
+        if elapsed < delay:
+            await asyncio.sleep(delay - elapsed)
+        self.last_api_call_time = time.time()
+
+    def _handle_exception(self, e: GithubException):
+        """GitHub例外の共通処理。レートリミットを検知して専用例外を投げる"""
+        if e.status == 403 and "rate limit" in str(e).lower():
+            # リセット時刻を取得 (デフォルトは1回リトライ後の1時間後)
+            reset_at = time.time() + 3600
+            if e.headers and 'x-ratelimit-reset' in e.headers:
+                reset_at = float(e.headers['x-ratelimit-reset'])
+            raise GitHubRateLimitException(f"GitHub Rate Limit Reached: {e}", reset_at)
+        raise e
 
     def get_my_username(self) -> str:
         """認証されたユーザーのユーザー名を動的に取得する"""
@@ -23,73 +52,65 @@ class GitHubClientWrapper:
                 self._my_username = user.login
                 logger.info(f"Authenticated as GitHub user: {self._my_username}")
             except GithubException as e:
-                logger.error(f"Failed to fetch authenticated user: {e}")
-                raise
+                self._handle_exception(e)
         return self._my_username
 
     async def get_issues_to_process(self, repo_name: str) -> List[Any]:
         """自分（アサイニ）に割り当てられたIssue/PRを取得する。"""
         try:
+            await self._throttle(is_write=False)
             my_username = self.get_my_username()
             repo = self.g.get_repo(repo_name)
             
-            # アサイニが自分であるIssueを取得 (設計書改修: メンションではなくアサインベース)
-            # PyGithubの get_issues は assignee 引数をサポートしている
             issues = repo.get_issues(state='open', assignee=my_username, sort='updated', direction='desc')
             
             to_process = []
             for issue in issues:
-                # [bot] アカウントは無視
                 if issue.user.type == "Bot":
                     continue
-                
                 to_process.append(issue)
             
             if to_process:
                 logger.info(f"Found {len(to_process)} issues assigned to {my_username} in {repo_name}")
-            
             return to_process
         except GithubException as e:
-            logger.error(f"GitHub API Error: {e}")
+            self._handle_exception(e)
             return []
 
     async def check_rbac(self, repo_name: str, username: str) -> bool:
         """ユーザーがリポジトリの Collaborator または Owner かを検証する"""
         try:
+            await self._throttle(is_write=False)
             repo = self.g.get_repo(repo_name)
-            # 権限チェックの簡易化（実際には詳細な権限確認が必要な場合もある）
-            # ここでは collaborator かどうかを確認
             return repo.has_in_collaborators(username)
-        except GithubException:
+        except GithubException as e:
+            self._handle_exception(e)
             return False
 
     async def post_comment(self, repo_name: str, issue_number: int, body: str):
         """コメントを投稿する"""
         try:
+            await self._throttle(is_write=True)
             repo = self.g.get_repo(repo_name)
             issue = repo.get_issue(issue_number)
             issue.create_comment(body)
-            # レートリミット対策: 書き込み操作の後にスリープを入れる
-            time.sleep(2)
         except GithubException as e:
-            logger.error(f"Failed to post comment: {e}")
+            self._handle_exception(e)
 
     async def create_pull_request(self, repo_name: str, title: str, body: str, head: str, base: str):
         """プルリクエストを作成する (既存の場合は取得する)"""
         try:
+            await self._throttle(is_write=True)
             repo = self.g.get_repo(repo_name)
             pr = repo.create_pull(title=title, body=body, head=head, base=base)
-            # レートリミット対策: 書き込み操作の後にスリープを入れる
-            time.sleep(2)
             return pr
         except GithubException as e:
             if e.status == 422:
-                # すでにPRが存在する場合、既存のPRを探して返す
                 logger.info(f"PR already exists for {head}. Fetching existing PR...")
                 pulls = repo.get_pulls(state='open', head=f"{repo.owner.login}:{head}")
                 if pulls.totalCount > 0:
                     return pulls[0]
-            logger.error(f"Failed to create PR: {e}")
+            self._handle_exception(e)
             return None
 
     async def close_pull_request(self, repo_name: str, pull_number: int):
@@ -250,7 +271,8 @@ class GitHubClientWrapper:
     async def get_mentions_to_process(self, repo_name: str) -> List[Dict[str, Any]]:
         """@mentions を含む未処理の通知/コメントを取得する"""
         try:
-            my_username = self.get_my_username()
+            import os
+            my_username = os.getenv("USER_NAME") or self.get_my_username()
             query = f"repo:{repo_name} \"@{my_username}\" is:open"
             issues = self.g.search_issues(query, sort="updated", order="desc")
             
