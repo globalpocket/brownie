@@ -2,7 +2,15 @@
 set -e
 
 # Brownie 環境削除スクリプト (Unsetup)
-echo "⚠️ Starting Brownie environment removal..."
+# 0. Docker サービスの停止とリソース削除 (ChromaDB 等)
+if command -v docker-compose &> /dev/null || docker compose version &> /dev/null; then
+    echo "Stopping Docker services and removing volumes..."
+    if docker compose version &> /dev/null; then
+        docker compose down -v || true
+    else
+        docker-compose down -v || true
+    fi
+fi
 
 # 1. Python 仮想環境の削除
 if [ -d ".venv" ]; then

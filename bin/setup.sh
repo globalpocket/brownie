@@ -71,6 +71,13 @@ case $OS in
     # Linux では基本的にパッケージマネージャ経由で一括管理
     # build-essential: Cコンパイラ, nodejs/npm: Repomix実行用
     sudo apt install -y git-lfs gh docker.io docker-compose-v2 curl build-essential nodejs npm
+    
+    # ast-grep (Semantic search/replace) - Linux 用
+    if ! check_tool "sg"; then
+        echo "Installing ast-grep via npm..."
+        sudo npm install -g @ast-grep/cli || true
+    fi
+    
     if ! check_tool "ollama"; then
         curl -fsSL https://ollama.com/install.sh | sh
     fi
