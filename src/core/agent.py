@@ -36,6 +36,94 @@ class CoderAgent:
         self.max_llm_retries = config['agent'].get('max_llm_retries', 5)
         self._target_language = "日本語" # デフォルト
 
+        # --- ツールレジストリの定義 (Phase 1) ---
+        self.tools = {
+            "list_files": {
+                "description": "指定パスのファイル一覧を表示します。大規模リポジトリでは `max_depth=1` で Discovery (階層的探索) を行います。",
+                "parameters": {"path": "string", "max_depth": "integer"},
+                "handler": self.sandbox.list_files,
+                "arg_mapping": {"path": ["path", "file_path", "dir_path"], "max_depth": ["max_depth", "depth"]}
+            },
+            "read_file": {
+                "description": "指定したファイルの内容を読み取ります。",
+                "parameters": {"path": "string"},
+                "handler": self.sandbox.read_file,
+                "arg_mapping": {"path": ["path", "file_path"]}
+            },
+            "write_file": {
+                "description": "ファイルを新規作成または上書きします。",
+                "parameters": {"path": "string", "content": "string"},
+                "handler": self.sandbox.write_file,
+                "arg_mapping": {"path": ["path", "file_path"], "content": ["content", "text", "body"]}
+            },
+            "run_command": {
+                "description": "シェルコマンドを実行します。",
+                "parameters": {"command": "string"},
+                "handler": self._handle_run_command,
+                "arg_mapping": {"command": ["command", "cmd"]}
+            },
+            "run_semgrep": {
+                "description": "Semgrep による静的解析を実行します。",
+                "parameters": {},
+                "handler": self._handle_run_semgrep,
+                "arg_mapping": {}
+            },
+            "lint_code": {
+                "description": "Semgrep やリンターを使用してコード品質を診断します。",
+                "parameters": {"path": "string"},
+                "handler": self.sandbox.lint_code,
+                "arg_mapping": {"path": ["path", "file_path"]}
+            },
+            "format_code": {
+                "description": "Black や Prettier 等でコードをフォーマットします。",
+                "parameters": {"path": "string"},
+                "handler": self.sandbox.format_code,
+                "arg_mapping": {"path": ["path", "file_path"]}
+            },
+            "scan_security": {
+                "description": " Bandit 等でセキュリティ脆弱性をスキャンします。",
+                "parameters": {"path": "string"},
+                "handler": self.sandbox.scan_security,
+                "arg_mapping": {"path": ["path", "file_path"]}
+            },
+            "post_comment": {
+                "description": "GitHub の Issue または PR にコメントを投稿します。質問や報告に必須。",
+                "parameters": {"body": "string"},
+                "handler": self._handle_post_comment,
+                "arg_mapping": {"body": ["body", "content", "text"]}
+            },
+            "create_issue": {
+                "description": "新しい GitHub Issue を作成します。",
+                "parameters": {"title": "string", "body": "string"},
+                "handler": self._handle_create_issue,
+                "arg_mapping": {"title": ["title", "name"], "body": ["body", "content"]}
+            },
+            "close_issue": {
+                "description": "GitHub Issue をクローズします。",
+                "parameters": {"issue_number": "integer"},
+                "handler": self._handle_close_issue,
+                "arg_mapping": {"issue_number": ["issue_number", "number", "num"]}
+            },
+            "close_pull_request": {
+                "description": "GitHub PR をクローズします。",
+                "parameters": {"pull_number": "integer"},
+                "handler": self._handle_close_pull_request,
+                "arg_mapping": {"pull_number": ["pull_number", "number", "num"]}
+            },
+            "merge_pull_request": {
+                "description": "GitHub PR をマージします。",
+                "parameters": {"pull_number": "integer"},
+                "handler": self._handle_merge_pull_request,
+                "arg_mapping": {"pull_number": ["pull_number", "number", "num"]}
+            },
+            "get_repository_flow": {
+                "description": "シンボル名からの処理フローを Mermaid 形式で取得します。",
+                "parameters": {"entry_symbol": "string", "max_depth": "integer"},
+                "handler": self.get_repository_flow,
+                "arg_mapping": {"entry_symbol": ["entry_symbol", "symbol", "name"], "max_depth": ["max_depth", "depth"]}
+            }
+        }
+
     COMMON_RULES = """
 1. **No Repetition**: Avoid repeating the same actions or tool calls without progress. If stuck, change your approach.
 2. **Research First**: Always read the existing code in [Reference Root] before making any changes in [Workspace Root].
@@ -336,24 +424,19 @@ class CoderAgent:
                 forbidden_tools = ["write_file", "run_command", "merge_pull_request", "close_pull_request", "create_issue"]
                 logger.info(f"Applying Least Privilege for category {intent_cat}: disabling {forbidden_tools}")
 
-            all_tools_list = [
-                ("- run_semgrep: {{}}", "run_semgrep"),
-                ("- list_files(path: string, max_depth: integer)", "list_files"),
-                ("- read_file(path: string)", "read_file"),
-                ("- write_file(path: string, content: string)", "write_file"),
-                ("- run_command(command: string)", "run_command"),
-                ("- post_comment(body: string)", "post_comment"),
-                ("- create_issue(title: string, body: string)", "create_issue"),
-                ("- close_issue(issue_number: integer)", "close_issue"),
-                ("- close_pull_request(pull_number: integer)", "close_pull_request"),
-                ("- merge_pull_request(pull_number: integer)", "merge_pull_request"),
-                ("- get_repository_flow(entry_symbol: string, max_depth: integer)", "get_repository_flow"),
-                ("- lint_code(path: string)", "lint_code"),
-                ("- format_code(path: string)", "format_code"),
-                ("- scan_security(path: string)", "scan_security"),
-                ("- Finish()", "finish")
-            ]
-            tools_description = "\n".join([desc for desc, name in all_tools_list if name not in forbidden_tools])
+            # --- ツールリストの動的生成 (Phase 1) ---
+            tool_descriptions = []
+            for name, config in self.tools.items():
+                if name in forbidden_tools:
+                    continue
+                # パラメータ文字列の構築
+                params_str = ", ".join([f"{k}: {v}" for k, v in config["parameters"].items()])
+                tool_descriptions.append(f"- {name}({params_str}): {config['description']}")
+            
+            # Finish は特別扱い
+            tool_descriptions.append("- Finish(): タスクが完了したか、これ以上進められない場合に呼び出します。")
+            
+            tools_description = "\n".join(tool_descriptions)
 
             system_content = f"""{role}
 {res['enforcement']}
@@ -558,75 +641,69 @@ Reference Code fallback is active.
         if not isinstance(action_input, dict):
             raise ValueError(f"Parameters must be a dictionary, got {type(action_input)}. Tool: {action}")
 
-        if action_clean == "list_files":
-            path = action_input.get("path", action_input.get("file_path", "."))
-            depth = action_input.get("max_depth", action_input.get("depth", 1))
-            return await self.sandbox.list_files(path, max_depth=int(depth))
-        elif action_clean == "read_file":
-            path = action_input.get("path", action_input.get("file_path"))
-            if not path: raise ValueError("'path' parameter is strictly required.")
-            return await self.sandbox.read_file(path)
-        elif action_clean == "write_file":
-            path = action_input.get("path", action_input.get("file_path"))
-            content = action_input.get("content", action_input.get("text", action_input.get("body")))
-            if not path or content is None: raise ValueError("Both 'path' and 'content' parameters are strictly required.")
-            return await self.sandbox.write_file(path, content)
-        elif action_clean == "run_command":
-            res = await self.sandbox.run_command(action_input.get("command"))
-            return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
-        elif action_clean == "run_semgrep":
-            res = await self.sandbox.run_semgrep(context.get("task_id", "default"))
-            return f"Semgrep Analysis Result:\nStatus: {res['status']}\nLogs: {res['logs']}"
-        elif action_clean == "lint_code":
-            return await self.sandbox.lint_code(action_input.get("path", "."))
-        elif action_clean == "format_code":
-            return await self.sandbox.format_code(action_input.get("path", "."))
-        elif action_clean == "scan_security":
-            return await self.sandbox.scan_security(action_input.get("path", "."))
-        elif action_clean == "post_comment":
-            body = action_input.get("body")
-            if not body: raise ValueError("'body' parameter is required for post_comment.")
-            
-            # 自動翻訳ガードレール (v16)
-            translated_body = await self._translate_if_needed(body, self._target_language)
-            
-            await self.gh_client.post_comment(repo_name, context["issue_number"], translated_body + get_footer())
-            return "Successfully posted comment to GitHub."
-        elif action_clean == "create_issue":
-            title = action_input.get("title")
-            body = action_input.get("body")
-            if not title or not body:
-                raise ValueError("'title' and 'body' parameters are required for create_issue.")
-            
-            translated_title = await self._translate_if_needed(title, self._target_language)
-            translated_body = await self._translate_if_needed(body, self._target_language)
-            
-            new_issue_number = await self.gh_client.create_issue(repo_name, translated_title, translated_body + get_footer())
-            return f"Successfully created new Issue #{new_issue_number} in GitHub."
-        elif action_clean == "close_issue":
-            num = action_input.get("issue_number")
-            if num is None: raise ValueError("'issue_number' parameter is required.")
-            await self.gh_client.close_issue(repo_name, int(num))
-            return f"Successfully closed Issue #{num}."
-        elif action_clean == "close_pull_request":
-            num = action_input.get("pull_number")
-            if num is None: raise ValueError("'pull_number' parameter is required.")
-            await self.gh_client.close_pull_request(repo_name, int(num))
-            return f"Goal achieved: Successfully closed PR #{num}. Please call Finish() now."
-        elif action_clean == "merge_pull_request":
-            num = action_input.get("pull_number")
-            if num is None: raise ValueError("'pull_number' parameter is required.")
-            await self.gh_client.merge_pull_request(repo_name, int(num))
-            return f"Goal achieved: Successfully merged PR #{num}. Please call Finish() now."
-        elif action_clean == "get_repository_flow":
-            # AIが誤って 'path' や 'name' などのキーを使うことがあるため、正規化する
-            symbol = action_input.get("entry_symbol") or action_input.get("symbol") or action_input.get("path") or action_input.get("name")
-            depth = action_input.get("max_depth", action_input.get("depth", 5))
-            if not symbol: raise ValueError("'entry_symbol' (e.g., function name) parameter is required.")
-            return await self.get_repository_flow(symbol, int(depth))
-        
-        allowed_tools = ["list_files", "read_file", "write_file", "run_command", "run_semgrep", "close_pull_request", "merge_pull_request", "get_repository_flow", "Finish", "post_comment"]
-        raise ValueError(f"Unknown action: '{action_clean}'. 利用可能なツールは {allowed_tools} のみです。")
+        # --- 動的ディスパッチ (Phase 1) ---
+        tool_config = self.tools.get(action_clean)
+        if not tool_config:
+            allowed_tools = list(self.tools.keys()) + ["Finish"]
+            raise ValueError(f"Unknown action: '{action_clean}'. 利用可能なツールは {allowed_tools} のみです。")
+
+        # 1. 引数の正規化 (arg_mapping による揺らぎ吸収)
+        normalized_args = {}
+        for official_name, aliases in tool_config.get("arg_mapping", {}).items():
+            val = None
+            # エイリアスを順に探し、最初に見つかった値を使用
+            for alias in aliases:
+                if alias in action_input:
+                    val = action_input[alias]
+                    break
+            # 値が見つからなかった場合の処理 (必須チェック等は各ツール側に任せるか、ここで None を渡す)
+            normalized_args[official_name] = val
+
+        # 2. ハンドラの実行 (非同期/同期の判別)
+        handler = tool_config["handler"]
+        try:
+            if asyncio.iscoroutinefunction(handler):
+                return await handler(**normalized_args)
+            else:
+                return handler(**normalized_args)
+        except TypeError as e:
+            # 引数不足等のエラーメッセージを分かりやすくラップ
+            logger.error(f"Handler argument error for {action_clean}: {e}")
+            raise ValueError(f"ツール '{action_clean}' の呼び出し引数が正しくありません。必要なパラメータを確認してください。詳細: {e}")
+
+    # --- Tool Registry Handlers (Phase 1) ---
+
+    async def _handle_run_command(self, command: str) -> str:
+        res = await self.sandbox.run_command(command)
+        return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
+
+    async def _handle_run_semgrep(self) -> str:
+        res = await self.sandbox.run_semgrep(getattr(self, "_task_id", "default"))
+        return f"Semgrep Analysis Result:\nStatus: {res['status']}\nLogs: {res['logs']}"
+
+    async def _handle_post_comment(self, body: str) -> str:
+        # 自動翻訳ガードレール (リマインド事項)
+        translated_body = await self._translate_if_needed(body, self._target_language)
+        await self.gh_client.post_comment(self._current_repo_name, self._current_issue_number, translated_body + get_footer())
+        return "Successfully posted comment to GitHub."
+
+    async def _handle_create_issue(self, title: str, body: str) -> str:
+        translated_title = await self._translate_if_needed(title, self._target_language)
+        translated_body = await self._translate_if_needed(body, self._target_language)
+        new_issue_number = await self.gh_client.create_issue(self._current_repo_name, translated_title, translated_body + get_footer())
+        return f"Successfully created new Issue #{new_issue_number} in GitHub."
+
+    async def _handle_close_issue(self, issue_number: int) -> str:
+        await self.gh_client.close_issue(self._current_repo_name, int(issue_number))
+        return f"Successfully closed Issue #{issue_number}."
+
+    async def _handle_close_pull_request(self, pull_number: int) -> str:
+        await self.gh_client.close_pull_request(self._current_repo_name, int(pull_number))
+        return f"Goal achieved: Successfully closed PR #{pull_number}. Please call Finish() now."
+
+    async def _handle_merge_pull_request(self, pull_number: int) -> str:
+        await self.gh_client.merge_pull_request(self._current_repo_name, int(pull_number))
+        return f"Goal achieved: Successfully merged PR #{pull_number}. Please call Finish() now."
 
     async def get_repository_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
         """ 指定されたシンボルから始まる処理シーケンスを Mermaid 形式で取得するツール """
