@@ -32,6 +32,9 @@ dependencies = [
     "semgrep>=1.0.0",
     "ast-grep-py>=0.22.0",
     "fastmcp>=2.0.0",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "respx>=0.20.0",
 ]
 
 [build-system]

@@ -131,6 +131,12 @@ class CoderAgent:
                 "parameters": {"query": "string", "limit": "integer"},
                 "handler": self._handle_semantic_search,
                 "arg_mapping": {"query": ["query", "search", "q"], "limit": ["limit", "count", "n"]}
+            },
+            "get_repo_summary": {
+                "description": "リポジトリの全体像（ファイル構成、主要コンポーネント、RAGインデックス状態）を取得します。",
+                "parameters": {},
+                "handler": self._handle_get_repo_summary,
+                "arg_mapping": {}
             }
         }
 
@@ -307,7 +313,7 @@ class CoderAgent:
         # 使用するモデルの決定
         target_model = self.config['llm']['models'].get(model_role)
         if self.model_manager:
-            current = self.model_manager.get_current_model()
+            current = self.model_manager.current_model
             if current:
                 target_model = current
         
@@ -791,6 +797,17 @@ Reference Code fallback is active.
                 logger.warning(f"MCP semantic_search failed: {e}")
                 return f"セマンティック検索でエラーが発生しました: {e}"
         return "Knowledge MCP Server が接続されていません。semantic_search は利用できません。"
+
+    async def _handle_get_repo_summary(self) -> str:
+        """MCP 経由で Knowledge Server の get_repo_summary を呼び出す。"""
+        if self.knowledge_mcp_client:
+            try:
+                result = await self.knowledge_mcp_client.call_tool("get_repo_summary", {})
+                return result.content[0].text
+            except Exception as e:
+                logger.warning(f"MCP get_repo_summary failed: {e}")
+                return f"リポジトリ概要の取得に失敗しました: {e}"
+        return "Knowledge MCP Server が接続されていないため、概要を取得できません。"
 
     async def get_repository_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
         """ 指定されたシンボルから始まる処理シーケンスを Mermaid 形式で取得するツール """

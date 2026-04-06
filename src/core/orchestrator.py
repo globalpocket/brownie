@@ -16,6 +16,8 @@ from src.version import get_footer
 from src.workspace.analyzer.core import CodeAnalyzer
 from src.llm.model_manager import OllamaModelManager
 import json
+from fastmcp import Client
+from fastmcp.client.transports.stdio import StdioTransport
 
 logger = logging.getLogger(__name__)
 
@@ -415,58 +417,41 @@ class Orchestrator:
             logger.info(f"Starting Knowledge MCP Server for {repo_name}...")
 
             # サブプロセスとして起動
-            self._knowledge_server_proc = subprocess.Popen(
-                [sys.executable, "-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=self.project_root,
-                env={**os.environ, "BROWNIE_TARGET_REPO": repo_name, "BROWNIE_REPO_PATH": repo_path, "BROWNIE_MEMORY_PATH": memory_path}
-            )
-
-            # MCP クライアントの接続
+            # MCP クライアントの接続 (StdioTransport を明示的に使用)
             try:
-                from fastmcp import Client
-                mcp_client = Client(self._knowledge_server_proc)
+                env = {**os.environ, "BROWNIE_TARGET_REPO": repo_name, "BROWNIE_REPO_PATH": repo_path, "BROWNIE_MEMORY_PATH": memory_path}
+                if "PYTHONPATH" not in env:
+                    env["PYTHONPATH"] = "."
+
+                transport = StdioTransport(
+                    command=sys.executable,
+                    args=["-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name],
+                    env=env,
+                    cwd=self.project_root,
+                    keep_alive=False # 切断時にプロセスを終了
+                )
+                mcp_client = Client(transport)
                 await mcp_client.__aenter__()
                 self.agent.knowledge_mcp_client = mcp_client
-                logger.info(f"Knowledge MCP Server connected successfully for {repo_name}")
-            except ImportError:
-                logger.warning("fastmcp パッケージが見つかりません。MCP クライアント無しで動作を継続します。")
+                logger.info(f"Knowledge MCP Server connected successfully via StdioTransport for {repo_name}")
             except Exception as e:
                 logger.warning(f"MCP クライアント接続に失敗しました。フォールバックモードで動作します: {e}")
+                self.agent.knowledge_mcp_client = None
 
         except Exception as e:
             logger.error(f"Knowledge MCP Server の起動に失敗しました: {e}")
             logger.info("Agent はフォールバックモード（直接呼び出し）で動作を継続します。")
 
     async def _stop_knowledge_server(self):
-        """Knowledge MCP Server のサブプロセスを安全に終了"""
-        if self._knowledge_server_proc is None:
-            return
-
-        try:
-            # MCP クライアントが存在すればクローズ
-            if self.agent.knowledge_mcp_client:
-                try:
-                    await self.agent.knowledge_mcp_client.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                self.agent.knowledge_mcp_client = None
-
-            # サブプロセスの停止
-            self._knowledge_server_proc.terminate()
+        """Knowledge MCP Server の停止"""
+        if self.agent.knowledge_mcp_client:
+            logger.info("Stopping Knowledge MCP Server...")
             try:
-                self._knowledge_server_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._knowledge_server_proc.kill()
-                self._knowledge_server_proc.wait(timeout=3)
-
-            logger.info("Knowledge MCP Server stopped.")
-        except Exception as e:
-            logger.error(f"Knowledge MCP Server の停止に失敗: {e}")
-        finally:
-            self._knowledge_server_proc = None
+                await self.agent.knowledge_mcp_client.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"Error stopping Knowledge MCP Client: {e}")
+            finally:
+                self.agent.knowledge_mcp_client = None
 
     # --- Workspace MCP Server ライフサイクル管理 (Phase 3) ---
 
@@ -475,52 +460,38 @@ class Orchestrator:
         try:
             logger.info(f"Starting Workspace MCP Server: workspace={repo_path}")
 
-            self._workspace_server_proc = subprocess.Popen(
-                [sys.executable, "-m", "src.mcp.workspace_server", repo_path, reference_path, str(user_id), str(group_id)],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                cwd=self.project_root,
-                env={**os.environ, "BROWNIE_WORKSPACE_ROOT": repo_path, "BROWNIE_REFERENCE_ROOT": reference_path}
-            )
-
+            # Workspace MCP クライアントの接続 (StdioTransport を明示的に使用)
             try:
-                from fastmcp import Client
-                ws_client = Client(self._workspace_server_proc)
+                env = {**os.environ, "BROWNIE_WORKSPACE_ROOT": repo_path, "BROWNIE_REFERENCE_ROOT": reference_path}
+                if "PYTHONPATH" not in env:
+                    env["PYTHONPATH"] = "."
+
+                transport = StdioTransport(
+                    command=sys.executable,
+                    args=["-m", "src.mcp.workspace_server", repo_path, reference_path, str(user_id), str(group_id)],
+                    env=env,
+                    cwd=self.project_root,
+                    keep_alive=False # 切断時にプロセスを終了
+                )
+                ws_client = Client(transport)
                 await ws_client.__aenter__()
                 self.agent.workspace_mcp_client = ws_client
-                logger.info("Workspace MCP Server connected successfully")
-            except ImportError:
-                logger.warning("fastmcp パッケージが見つかりません。Workspace MCP クライアント無しで動作を継続します。")
+                logger.info("Workspace MCP Server connected successfully via StdioTransport")
             except Exception as e:
                 logger.warning(f"Workspace MCP クライアント接続に失敗。フォールバックモードで動作します: {e}")
+                self.agent.workspace_mcp_client = None
 
         except Exception as e:
             logger.error(f"Workspace MCP Server の起動に失敗しました: {e}")
             logger.info("Agent はフォールバックモード（self.sandbox 直接呼び出し）で動作を継続します。")
 
     async def _stop_workspace_server(self):
-        """Workspace MCP Server のサブプロセスを安全に終了"""
-        if self._workspace_server_proc is None:
-            return
-
-        try:
-            if self.agent.workspace_mcp_client:
-                try:
-                    await self.agent.workspace_mcp_client.__aexit__(None, None, None)
-                except Exception:
-                    pass
-                self.agent.workspace_mcp_client = None
-
-            self._workspace_server_proc.terminate()
+        """Workspace MCP Server の停止"""
+        if self.agent.workspace_mcp_client:
+            logger.info("Stopping Workspace MCP Server...")
             try:
-                self._workspace_server_proc.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._workspace_server_proc.kill()
-                self._workspace_server_proc.wait(timeout=3)
-
-            logger.info("Workspace MCP Server stopped.")
-        except Exception as e:
-            logger.error(f"Workspace MCP Server の停止に失敗: {e}")
-        finally:
-            self._workspace_server_proc = None
+                await self.agent.workspace_mcp_client.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"Error stopping Workspace MCP Client: {e}")
+            finally:
+                self.agent.workspace_mcp_client = None
