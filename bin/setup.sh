@@ -104,7 +104,7 @@ else
     UV_CMD="uv"
 fi
 
-echo "Syncing Python dependencies..."
+echo "Syncing Python dependencies (including Pydantic)..."
 $UV_CMD sync
 
 # 4. ディレクトリ初期化

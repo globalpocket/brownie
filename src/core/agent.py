@@ -1,8 +1,9 @@
+from pydantic import BaseModel, Field
 import re
 import logging
 import json
 import httpx
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
 from src.workspace.analyzer.flow import FlowTracer
@@ -10,6 +11,14 @@ import os
 import asyncio
 
 logger = logging.getLogger(__name__)
+
+class ActionDetail(BaseModel):
+    tool: str = Field(..., description="The name of the tool to be called.")
+    parameters: Dict[str, Any] = Field(default_factory=dict, description="Parameters for the tool call as a dictionary.")
+
+class AgentAction(BaseModel):
+    thought: str = Field(..., description="The agent's internal reasoning and analysis.")
+    action: ActionDetail = Field(..., description="The tool to execute and its inputs.")
 
 class CoderAgent:
     def __init__(self, config: Dict[str, Any], sandbox: SandboxManager, state: 'StateManager', 
@@ -159,7 +168,10 @@ class CoderAgent:
                 await self._analyze_and_report_error(str(e), repo_name, issue_number, self._target_language, step + 1, context)
                 return False  # AIには渡さずにここで終了
             
-            logger.info(f"[{task_id}] Step {step+1} Observation (first 500 chars): {observation[:500]}")
+            # --- Context Summarization (Phase 3) ---
+            observation = await self._summarize_observation(observation)
+            
+            logger.info(f"[{task_id}] Step {step+1} Observation (summarized, first 500 chars): {observation[:500]}")
             context["history"].append({
                 "step": step + 1,
                 "thought": thought or "Formatting error",
@@ -215,7 +227,8 @@ class CoderAgent:
                     }
                 }
                 if force_json:
-                    payload["response_format"] = {"type": "json_object"}
+                    # Pydantic モデルから JSON Schema を生成して渡す
+                    payload["response_format"] = AgentAction.model_json_schema()
 
                 resp = await self.http_client.post(
                     f"{self.llm_endpoint}/chat/completions",
@@ -315,6 +328,33 @@ class CoderAgent:
 """
         else:
             role = res['role_pr'] if loc_type.startswith("PR") else res['role']
+
+            # --- Least Privilege: 動的なツール制限 (Phase 2) ---
+            intent_cat = context.get('intent_analysis', {}).get('category', 'UNKNOWN')
+            forbidden_tools = []
+            if intent_cat in ["DISCUSSION", "DIAGNOSTICS"]:
+                forbidden_tools = ["write_file", "run_command", "merge_pull_request", "close_pull_request", "create_issue"]
+                logger.info(f"Applying Least Privilege for category {intent_cat}: disabling {forbidden_tools}")
+
+            all_tools_list = [
+                ("- run_semgrep: {{}}", "run_semgrep"),
+                ("- list_files(path: string, max_depth: integer)", "list_files"),
+                ("- read_file(path: string)", "read_file"),
+                ("- write_file(path: string, content: string)", "write_file"),
+                ("- run_command(command: string)", "run_command"),
+                ("- post_comment(body: string)", "post_comment"),
+                ("- create_issue(title: string, body: string)", "create_issue"),
+                ("- close_issue(issue_number: integer)", "close_issue"),
+                ("- close_pull_request(pull_number: integer)", "close_pull_request"),
+                ("- merge_pull_request(pull_number: integer)", "merge_pull_request"),
+                ("- get_repository_flow(entry_symbol: string, max_depth: integer)", "get_repository_flow"),
+                ("- lint_code(path: string)", "lint_code"),
+                ("- format_code(path: string)", "format_code"),
+                ("- scan_security(path: string)", "scan_security"),
+                ("- Finish()", "finish")
+            ]
+            tools_description = "\n".join([desc for desc, name in all_tools_list if name not in forbidden_tools])
+
             system_content = f"""{role}
 {res['enforcement']}
 
@@ -345,21 +385,9 @@ EXAMPLE RESPONSE 2:
 【Constraints】
 {chr(10).join(['- ' + c for c in context.get('intent_analysis', {}).get('constraints', [])]) if context.get('intent_analysis', {}).get('constraints') else 'None'}
 
-- run_semgrep: {{}}
-- list_files(path: string, max_depth: integer): 指定パスのファイル一覧を表示します。大規模リポジトリでは `max_depth=1` で Discovery (階層的探索) を行い、トークン消費を抑えてください。
-- read_file(path: string): 指定したファイルの内容を読み取ります。
-- write_file(path: string, content: string)
-- run_command(command: string)
-- post_comment(body: string)
-- create_issue(title: string, body: string)
-- close_issue(issue_number: integer)
-- close_pull_request(pull_number: integer)
-- merge_pull_request(pull_number: integer)
-- get_repository_flow(entry_symbol: string, max_depth: integer): シンボル名（関数名やクラス名など）から始まる詳細な処理フローを解析します。
-- lint_code(path: string): Semgrep やリンターを使用して、指定パスのコード品質（タイポ、未使用変数、アンチパターン）を診断します。実装後の必須ステップ。
-- format_code(path: string): Black (Python) や Prettier (JS/TS) を使用して、コードを適切にフォーマットします。PR作成前の必須ステップ。
-- scan_security(path: string): Bandit 等を使用して、セキュリティ脆弱性をスキャンします。
-- Finish()
+【Available Tools & Required Parameters】
+You must use the following tools:
+{tools_description}
 
 【Rules (MANDATORY)】
 {self.COMMON_RULES}
@@ -440,21 +468,32 @@ Reference Code fallback is active.
         if clean_resp.endswith("```"):
             clean_resp = clean_resp[:-3].strip()
 
+        # Step 1: Pydantic による一次パース (Structured Output 優先)
+        try:
+            # { } の抽出ロジック（_call_llm でも一部実施済みだが念のため）
+            if "{" in clean_resp and "}" in clean_resp:
+                start = clean_resp.find("{")
+                end = clean_resp.rfind("}") + 1
+                clean_json = clean_resp[start:end]
+                
+                parsed = AgentAction.model_validate_json(clean_json)
+                return parsed.thought, parsed.action.tool, parsed.action.parameters
+        except Exception as e:
+            logger.debug(f"Pydantic parsing failed, falling back to heuristic: {e}")
+
+        # Step 2: 既存のヒューリスティック・パース (フォールバック)
         def extract_tool_data(data: dict):
             t = data.get("thought", "")
             act_data = data.get("action", {})
             
             if isinstance(act_data, str):
-                # 形式 A: {"action": "tool_name", "param": "val"}
                 act = act_data
                 act_input = {k: v for k, v in data.items() if k not in ("thought", "action")}
             elif isinstance(act_data, dict):
                 if "tool" in act_data:
-                    # 形式 B: {"action": {"tool": "T", "parameters": {P}}}
                     act = act_data.get("tool")
                     act_input = act_data.get("parameters", {})
                 elif len(act_data) == 1:
-                    # 形式 C: {"action": {"tool_name": {params}}} - AIがやりがちなミスへの対応
                     act = list(act_data.keys())[0]
                     act_input = act_data[act]
                     if not isinstance(act_input, dict): act_input = {}
@@ -468,12 +507,10 @@ Reference Code fallback is active.
             return t, act, act_input
 
         try:
-            # _call_llm で既に { } の抽出が試みられている想定
             data = json.loads(clean_resp)
             thought, action, action_input = extract_tool_data(data)
         except Exception as e:
             logger.error(f"Failed to parse JSON response: {e}")
-            # 二重のセーフティネット
             if "{" in response and "}" in response:
                 try:
                     start = response.find("{")
@@ -494,6 +531,28 @@ Reference Code fallback is active.
         action_clean = action.strip().split("(")[0].lower()
         
         if action_clean == "finish":
+            # --- Critique Gateway: 終了前の品質チェック (Phase 2) ---
+            history = context.get("history", [])
+            has_write = any(h.get("action") == "write_file" for h in history)
+            
+            if has_write:
+                # 最後の write_file 後のインデックスを取得
+                last_write_idx = max(i for i, h in enumerate(history) if h.get("action") == "write_file")
+                subsequent_actions = history[last_write_idx+1:]
+                
+                # lint_code と format_code の実行を確認 (致命的なエラーは Observation 内の文字列で判定)
+                linted = any(h.get("action") == "lint_code" and "❌" not in h.get("observation", "") for h in subsequent_actions)
+                formatted = any(h.get("action") == "format_code" for h in subsequent_actions)
+                
+                if not linted or not formatted:
+                    missing = []
+                    if not linted: missing.append("lint_code")
+                    if not formatted: missing.append("format_code")
+                    
+                    msg = f"【Finish 拒否】ファイルを書き換えましたが、その後に以下のツールが正常に実行されていません: {', '.join(missing)}。品質確保（致命的なエラーの解消とフォーマット）を行ってから完了してください。"
+                    logger.warning(f"Critique Gateway blocked Finish: {msg}")
+                    return msg
+
             return "Task completed successfully."
         
         if not isinstance(action_input, dict):
@@ -641,8 +700,64 @@ You MUST respond with a SINGLE JSON object:
             # 手順の要約生成
             summary = await self._generate_summary(context["history"], "FAILED", error_str)
             
-            msg = f"### ⚠️ {mention_str} エラーによるタスクの中断報\n\n**状況:** {analysis_text}\n\n**これまでの実施内容:**\n{summary}"
+            msg = f"### ⚠️ {mention_str} エラーによるタスクの中断報告\n\n**状況:** {analysis_text}\n\n**これまでの実施内容:**\n{summary}"
             await self.gh_client.post_comment(repo_name, issue_number, msg + get_footer())
+
+    async def _summarize_observation(self, observation: str) -> str:
+        """長すぎる Observation を要約する (Phase 3)"""
+        limit = 2000
+        if len(observation) <= limit:
+            return observation
+
+        logger.info(f"Observation length ({len(observation)}) exceeds limit. Summarizing...")
+
+        # 1. Regex による重要行の抽出 (スタックトレースやエラーメッセージを優先)
+        important_lines = []
+        lines = observation.splitlines()
+        error_patterns = [
+            r"error", r"fail", r"exception", r"traceback", r"caused by", r"denied", r"not found", r"❌"
+        ]
+        
+        for i, line in enumerate(lines):
+            if any(re.search(pat, line, re.IGNORECASE) for pat in error_patterns):
+                # 前後1行を含めて抽出
+                start = max(0, i - 1)
+                end = min(len(lines), i + 2)
+                important_lines.extend(lines[start:end])
+        
+        # 重複除去（順序維持）
+        unique_important = []
+        seen = set()
+        for l in important_lines:
+            if l not in seen:
+                unique_important.append(l)
+                seen.add(l)
+        
+        filtered_obs = "\n".join(unique_important)
+        
+        if len(filtered_obs) > limit:
+            filtered_obs = filtered_obs[:limit] + "\n... (further truncated by regex)"
+        
+        # 2. LLM によるセマンティック要約 (軽量モデルを使用)
+        if self.model_manager and len(observation) > 5000:
+            try:
+                # router モデルに切り替え
+                await self.model_manager.switch_model(self.config['llm']['models']['router'])
+                
+                prompt = [
+                    {"role": "system", "content": "あなたは技術ログの要約エキスパートです。以下のログからエラーの原因や重要な事実のみを抽出し、簡潔に要約してください。"},
+                    {"role": "user", "content": f"Logs to summarize:\n{filtered_obs or observation[:limit]}"}
+                ]
+                summary = await self._call_llm(prompt, force_json=False, model_role="router")
+                
+                # coder モデルに戻す（次のステップのため）
+                await self.model_manager.switch_model(self.config['llm']['models']['coder'])
+                
+                return f"[Summarized Observation]\n{summary.strip()}\n\n[Original length: {len(observation)} chars]"
+            except Exception as e:
+                logger.error(f"Semantic summarization failed: {e}")
+        
+        return f"[Regex-Extracted Observation]\n{filtered_obs or observation[:limit]}\n\n[Original length: {len(observation)} chars]"
 
     def _detect_language(self, text: str) -> str:
         """テキストから主に使用されている言語を判定する"""

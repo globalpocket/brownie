@@ -56,7 +56,7 @@ if command -v ollama &> /dev/null; then
         echo "Removing Ollama models..."
         ollama rm llama3.1:8b || true
         ollama rm qwen3-coder:30b || true
-        # 以前使用していたモデルもクリーンアップ対象に含める
+        # --- Clean up legacy models ---
         ollama rm qwen2.5-coder:7b || true
         ollama rm qwen2.5-coder:14b || true
         ollama rm qwen2.5-coder:32b || true
