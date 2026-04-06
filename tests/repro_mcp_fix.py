@@ -10,7 +10,7 @@ async def main():
     repo_name = "test-repo"
     
     command = sys.executable
-    args = ["-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name]
+    args = ["-m", "src.mcp_server.knowledge_server", repo_path, memory_path, repo_name]
     env = {**os.environ, "PYTHONPATH": "."}
     
     print(f"Connecting client with StdioTransport: {command} {args}")

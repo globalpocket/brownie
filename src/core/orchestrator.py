@@ -425,7 +425,7 @@ class Orchestrator:
 
                 transport = StdioTransport(
                     command=sys.executable,
-                    args=["-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name],
+                    args=["-m", "src.mcp_server.knowledge_server", repo_path, memory_path, repo_name],
                     env=env,
                     cwd=self.project_root,
                     keep_alive=False # 切断時にプロセスを終了
@@ -468,7 +468,7 @@ class Orchestrator:
 
                 transport = StdioTransport(
                     command=sys.executable,
-                    args=["-m", "src.mcp.workspace_server", repo_path, reference_path, str(user_id), str(group_id)],
+                    args=["-m", "src.mcp_server.workspace_server", repo_path, reference_path, str(user_id), str(group_id)],
                     env=env,
                     cwd=self.project_root,
                     keep_alive=False # 切断時にプロセスを終了

@@ -10,8 +10,8 @@ async def main():
     memory_path = "/tmp/brownie_mem"
     repo_name = "test-repo"
     
-    command = sys.executable
-    args = ["-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name]
+    command = f"{sys.executable} -m src.mcp_server.knowledge_server {repo_path} {memory_path} {repo_name}"
+    args = []
     env = {**os.environ, "PYTHONPATH": "."}
     
     print("Connecting client...")

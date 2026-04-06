@@ -9,7 +9,7 @@ async def main():
     repo_name = "test-repo"
     
     # コマンドを文字列として結合（またはリストで試す）
-    cmd_str = f"{sys.executable} -m src.mcp.knowledge_server {repo_path} {memory_path} {repo_name}"
+    cmd_str = f"{sys.executable} -m src.mcp_server.knowledge_server {repo_path} {memory_path} {repo_name}"
     env = {**os.environ, "PYTHONPATH": "."}
     
     # 環境変数を反映させるために sh -c や env コマンドを使う必要があるかもしれないが、
