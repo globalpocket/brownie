@@ -183,7 +183,7 @@ class CoderAgent:
             await self.model_manager.switch_model(self.config['llm']['models']['router'])
             
         intent = await self._analyze_intent(issue_title, issue_body or "", instruction_priority or "")
-        logger.info(f"[{task_id}] Intent Analysis: {intent['category']} - {intent['goal']}")
+        logger.info(f"[{task_id}] Intent Analysis: {intent.get('category', 'UNKNOWN')} - {intent.get('goal', 'N/A')}")
 
         existing_task = await self.state.get_task(task_id)
         existing_context = existing_task.get("context") or {} if existing_task else {}
@@ -974,7 +974,14 @@ JSON Schema:
             if "{" in clean_content:
                 clean_content = clean_content[clean_content.find("{"):clean_content.rfind("}")+1]
             
-            return json.loads(clean_content)
+            parsed = json.loads(clean_content)
+            # 必要なキーが欠落している場合のデフォルト値を保証
+            return {
+                "category": parsed.get("category", "UNKNOWN"),
+                "goal": parsed.get("goal", "Failed to analyze intent automatically."),
+                "constraints": parsed.get("constraints", []),
+                "initial_action_suggestion": parsed.get("initial_action_suggestion", "list_files")
+            }
         except Exception as e:
             logger.error(f"Intent analysis failed: {e}")
             return {
