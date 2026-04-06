@@ -25,37 +25,39 @@ class CoderAgent:
                  gh_client: Optional[GitHubClientWrapper] = None, 
                  http_client: Optional[httpx.AsyncClient] = None,
                  model_manager: Optional['OllamaModelManager'] = None,
-                 mcp_client = None):
+                 knowledge_mcp_client = None,
+                 workspace_mcp_client = None):
         self.config = config
         self.sandbox = sandbox
         self.state = state
         self.gh_client = gh_client
         self.http_client = http_client or httpx.AsyncClient(timeout=300.0)
         self.model_manager = model_manager
-        self.mcp_client = mcp_client  # Knowledge MCP Server クライアント（Phase 2）
+        self.knowledge_mcp_client = knowledge_mcp_client  # Knowledge MCP Server クライアント（Phase 2）
+        self.workspace_mcp_client = workspace_mcp_client  # Workspace MCP Server クライアント（Phase 3）
         self.llm_endpoint = config['llm']['endpoint']
         # self.model_name は廃止し、随時 model_manager から取得するか config を参照する
         self.max_llm_retries = config['agent'].get('max_llm_retries', 5)
         self._target_language = "日本語" # デフォルト
 
-        # --- ツールレジストリの定義 (Phase 1) ---
+        # --- ツールレジストリの定義 (Phase 1 → Phase 3 MCP 対応) ---
         self.tools = {
             "list_files": {
                 "description": "指定パスのファイル一覧を表示します。大規模リポジトリでは `max_depth=1` で Discovery (階層的探索) を行います。",
                 "parameters": {"path": "string", "max_depth": "integer"},
-                "handler": self.sandbox.list_files,
+                "handler": self._ws_list_files,
                 "arg_mapping": {"path": ["path", "file_path", "dir_path"], "max_depth": ["max_depth", "depth"]}
             },
             "read_file": {
                 "description": "指定したファイルの内容を読み取ります。",
                 "parameters": {"path": "string"},
-                "handler": self.sandbox.read_file,
+                "handler": self._ws_read_file,
                 "arg_mapping": {"path": ["path", "file_path"]}
             },
             "write_file": {
                 "description": "ファイルを新規作成または上書きします。",
                 "parameters": {"path": "string", "content": "string"},
-                "handler": self.sandbox.write_file,
+                "handler": self._ws_write_file,
                 "arg_mapping": {"path": ["path", "file_path"], "content": ["content", "text", "body"]}
             },
             "run_command": {
@@ -73,19 +75,19 @@ class CoderAgent:
             "lint_code": {
                 "description": "Semgrep やリンターを使用してコード品質を診断します。",
                 "parameters": {"path": "string"},
-                "handler": self.sandbox.lint_code,
+                "handler": self._ws_lint_code,
                 "arg_mapping": {"path": ["path", "file_path"]}
             },
             "format_code": {
                 "description": "Black や Prettier 等でコードをフォーマットします。",
                 "parameters": {"path": "string"},
-                "handler": self.sandbox.format_code,
+                "handler": self._ws_format_code,
                 "arg_mapping": {"path": ["path", "file_path"]}
             },
             "scan_security": {
                 "description": " Bandit 等でセキュリティ脆弱性をスキャンします。",
                 "parameters": {"path": "string"},
-                "handler": self.sandbox.scan_security,
+                "handler": self._ws_scan_security,
                 "arg_mapping": {"path": ["path", "file_path"]}
             },
             "post_comment": {
@@ -679,13 +681,21 @@ Reference Code fallback is active.
             logger.error(f"Handler argument error for {action_clean}: {e}")
             raise ValueError(f"ツール '{action_clean}' の呼び出し引数が正しくありません。必要なパラメータを確認してください。詳細: {e}")
 
-    # --- Tool Registry Handlers (Phase 1) ---
+    # --- Tool Registry Handlers (Phase 1 → Phase 3 MCP 対応) ---
 
     async def _handle_run_command(self, command: str) -> str:
-        res = await self.sandbox.run_command(command)
-        return f"ExitStatus: {res['exit_code']}\nLogs: {res['logs']}"
+        """run_command を MCP 経由で実行。フォールバック付き。"""
+        return await self._call_workspace_tool("run_command", command=command)
 
     async def _handle_run_semgrep(self) -> str:
+        """run_semgrep を MCP 経由で実行。フォールバック付き。"""
+        if self.workspace_mcp_client:
+            try:
+                result = await self.workspace_mcp_client.call_tool("run_semgrep", {})
+                return result.content[0].text
+            except Exception as e:
+                logger.warning(f"MCP run_semgrep failed, falling back: {e}")
+        # フォールバック: 従来の直接呼び出し
         res = await self.sandbox.run_semgrep(getattr(self, "_task_id", "default"))
         return f"Semgrep Analysis Result:\nStatus: {res['status']}\nLogs: {res['logs']}"
 
@@ -713,14 +723,51 @@ Reference Code fallback is active.
         await self.gh_client.merge_pull_request(self._current_repo_name, int(pull_number))
         return f"Goal achieved: Successfully merged PR #{pull_number}. Please call Finish() now."
 
+    # --- MCP Workspace Server 汎用ラッパー (Phase 3) ---
+
+    async def _call_workspace_tool(self, tool_name: str, **kwargs) -> str:
+        """Workspace MCP Server 経由でツールを呼び出す汎用ラッパー。
+        MCP 未接続時は self.sandbox の同名メソッドにフォールバック。"""
+        if self.workspace_mcp_client:
+            try:
+                result = await self.workspace_mcp_client.call_tool(tool_name, kwargs)
+                return result.content[0].text
+            except Exception as e:
+                logger.warning(f"MCP workspace {tool_name} failed, falling back: {e}")
+        # フォールバック: 従来の直接呼び出し
+        fallback = getattr(self.sandbox, tool_name, None)
+        if fallback and asyncio.iscoroutinefunction(fallback):
+            return await fallback(**kwargs)
+        if fallback:
+            return fallback(**kwargs)
+        raise ValueError(f"Fallback failed: sandbox has no method '{tool_name}'")
+
+    async def _ws_list_files(self, path: str = ".", max_depth: int = 1) -> str:
+        return await self._call_workspace_tool("list_files", path=path, max_depth=int(max_depth))
+
+    async def _ws_read_file(self, path: str = None) -> str:
+        return await self._call_workspace_tool("read_file", path=path)
+
+    async def _ws_write_file(self, path: str = None, content: str = "") -> str:
+        return await self._call_workspace_tool("write_file", path=path, content=content)
+
+    async def _ws_lint_code(self, path: str = ".") -> str:
+        return await self._call_workspace_tool("lint_code", path=path)
+
+    async def _ws_format_code(self, path: str = ".") -> str:
+        return await self._call_workspace_tool("format_code", path=path)
+
+    async def _ws_scan_security(self, path: str = ".") -> str:
+        return await self._call_workspace_tool("scan_security", path=path)
+
     # --- MCP Knowledge Server ラッパー (Phase 2) ---
 
     async def _handle_get_code_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
         """MCP 経由で Knowledge Server の get_code_flow を呼び出す。
         MCP 未接続時は従来の直接呼び出しにフォールバック。"""
-        if self.mcp_client:
+        if self.knowledge_mcp_client:
             try:
-                result = await self.mcp_client.call_tool(
+                result = await self.knowledge_mcp_client.call_tool(
                     "get_code_flow",
                     {"entry_symbol": entry_symbol, "depth": int(max_depth)}
                 )
@@ -733,9 +780,9 @@ Reference Code fallback is active.
     async def _handle_semantic_search(self, query: str, limit: int = 5) -> str:
         """MCP 経由でセマンティック検索を実行する。
         MCP 未接続時はエラーメッセージを返す。"""
-        if self.mcp_client:
+        if self.knowledge_mcp_client:
             try:
-                result = await self.mcp_client.call_tool(
+                result = await self.knowledge_mcp_client.call_tool(
                     "semantic_search",
                     {"query": query, "limit": int(limit)}
                 )

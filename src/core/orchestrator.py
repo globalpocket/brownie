@@ -40,7 +40,8 @@ class Orchestrator:
         self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, 
                                http_client=self.http_client, model_manager=self.model_manager)
         self.is_running = True
-        self._knowledge_server_proc = None  # MCP サブプロセス (Phase 2)
+        self._knowledge_server_proc = None   # Knowledge MCP サブプロセス (Phase 2)
+        self._workspace_server_proc = None   # Workspace MCP サブプロセス (Phase 3)
 
     async def start(self):
         """オーケストレーターの起動"""
@@ -81,7 +82,15 @@ class Orchestrator:
 
             await self._start_knowledge_server(first_repo_path, memory_path, first_repo)
 
-        logger.info("Knowledge MCP Server initialized. Entering main polling loop.")
+        # Workspace MCP Server の起動 (Phase 3)
+        if repo_list:
+            first_repo = repo_list[0]
+            first_repo_path = os.path.join(workspace_base, first_repo.replace("/", "_"))
+            user_id = self.config['workspace']['sandbox_user_id']
+            group_id = self.config['workspace']['sandbox_group_id']
+            await self._start_workspace_server(first_repo_path, self.project_root, user_id, group_id)
+
+        logger.info("All MCP Servers initialized. Entering main polling loop.")
 
         # メインポーリングループ
         while self.is_running:
@@ -130,6 +139,9 @@ class Orchestrator:
 
         # Knowledge MCP Server の停止 (Phase 2)
         await self._stop_knowledge_server()
+
+        # Workspace MCP Server の停止 (Phase 3)
+        await self._stop_workspace_server()
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする"""
@@ -417,7 +429,7 @@ class Orchestrator:
                 from fastmcp import Client
                 mcp_client = Client(self._knowledge_server_proc)
                 await mcp_client.__aenter__()
-                self.agent.mcp_client = mcp_client
+                self.agent.knowledge_mcp_client = mcp_client
                 logger.info(f"Knowledge MCP Server connected successfully for {repo_name}")
             except ImportError:
                 logger.warning("fastmcp パッケージが見つかりません。MCP クライアント無しで動作を継続します。")
@@ -435,12 +447,12 @@ class Orchestrator:
 
         try:
             # MCP クライアントが存在すればクローズ
-            if self.agent.mcp_client:
+            if self.agent.knowledge_mcp_client:
                 try:
-                    await self.agent.mcp_client.__aexit__(None, None, None)
+                    await self.agent.knowledge_mcp_client.__aexit__(None, None, None)
                 except Exception:
                     pass
-                self.agent.mcp_client = None
+                self.agent.knowledge_mcp_client = None
 
             # サブプロセスの停止
             self._knowledge_server_proc.terminate()
@@ -455,3 +467,60 @@ class Orchestrator:
             logger.error(f"Knowledge MCP Server の停止に失敗: {e}")
         finally:
             self._knowledge_server_proc = None
+
+    # --- Workspace MCP Server ライフサイクル管理 (Phase 3) ---
+
+    async def _start_workspace_server(self, repo_path: str, reference_path: str, user_id: int, group_id: int):
+        """Workspace MCP Server を stdio サブプロセスとして起動し、Agent に MCP クライアントを注入"""
+        try:
+            logger.info(f"Starting Workspace MCP Server: workspace={repo_path}")
+
+            self._workspace_server_proc = subprocess.Popen(
+                [sys.executable, "-m", "src.mcp.workspace_server", repo_path, reference_path, str(user_id), str(group_id)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.project_root,
+                env={**os.environ, "BROWNIE_WORKSPACE_ROOT": repo_path, "BROWNIE_REFERENCE_ROOT": reference_path}
+            )
+
+            try:
+                from fastmcp import Client
+                ws_client = Client(self._workspace_server_proc)
+                await ws_client.__aenter__()
+                self.agent.workspace_mcp_client = ws_client
+                logger.info("Workspace MCP Server connected successfully")
+            except ImportError:
+                logger.warning("fastmcp パッケージが見つかりません。Workspace MCP クライアント無しで動作を継続します。")
+            except Exception as e:
+                logger.warning(f"Workspace MCP クライアント接続に失敗。フォールバックモードで動作します: {e}")
+
+        except Exception as e:
+            logger.error(f"Workspace MCP Server の起動に失敗しました: {e}")
+            logger.info("Agent はフォールバックモード（self.sandbox 直接呼び出し）で動作を継続します。")
+
+    async def _stop_workspace_server(self):
+        """Workspace MCP Server のサブプロセスを安全に終了"""
+        if self._workspace_server_proc is None:
+            return
+
+        try:
+            if self.agent.workspace_mcp_client:
+                try:
+                    await self.agent.workspace_mcp_client.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self.agent.workspace_mcp_client = None
+
+            self._workspace_server_proc.terminate()
+            try:
+                self._workspace_server_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._workspace_server_proc.kill()
+                self._workspace_server_proc.wait(timeout=3)
+
+            logger.info("Workspace MCP Server stopped.")
+        except Exception as e:
+            logger.error(f"Workspace MCP Server の停止に失敗: {e}")
+        finally:
+            self._workspace_server_proc = None
