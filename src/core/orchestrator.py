@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import logging
 import yaml
 import time
@@ -15,7 +16,6 @@ from src.version import get_footer
 from src.workspace.analyzer.core import CodeAnalyzer
 from src.llm.model_manager import OllamaModelManager
 import json
-import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ class Orchestrator:
         self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, 
                                http_client=self.http_client, model_manager=self.model_manager)
         self.is_running = True
+        self._knowledge_server_proc = None  # MCP サブプロセス (Phase 2)
 
     async def start(self):
         """オーケストレーターの起動"""
@@ -68,7 +69,19 @@ class Orchestrator:
             await analyzer.scan_project()
             analyzer.close()
             
-        logger.info("BOOT SEQUENCE COMPLETED. Entering main polling loop.")
+        logger.info("BOOT SEQUENCE COMPLETED. Starting Knowledge MCP Server...")
+
+        # Knowledge MCP Server の起動 (Phase 2)
+        # 最初のリポジトリを対象として起動（複数リポ対応は将来の拡張）
+        if repo_list:
+            first_repo = repo_list[0]
+            first_repo_path = os.path.join(workspace_base, first_repo.replace("/", "_"))
+            memory_path = os.path.expanduser(self.config['database'].get('memory_path', '~/.local/share/brownie/vector_db'))
+            os.makedirs(memory_path, exist_ok=True)
+
+            await self._start_knowledge_server(first_repo_path, memory_path, first_repo)
+
+        logger.info("Knowledge MCP Server initialized. Entering main polling loop.")
 
         # メインポーリングループ
         while self.is_running:
@@ -114,6 +127,9 @@ class Orchestrator:
         
         # 終了時にクライアントを閉じる
         await self.http_client.aclose()
+
+        # Knowledge MCP Server の停止 (Phase 2)
+        await self._stop_knowledge_server()
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする"""
@@ -378,3 +394,64 @@ class Orchestrator:
             await asyncio.sleep(10)
         except Exception:
             pass
+
+    # --- Knowledge MCP Server ライフサイクル管理 (Phase 2) ---
+
+    async def _start_knowledge_server(self, repo_path: str, memory_path: str, repo_name: str):
+        """Knowledge MCP Server を stdio サブプロセスとして起動し、Agent に MCP クライアントを注入"""
+        try:
+            logger.info(f"Starting Knowledge MCP Server for {repo_name}...")
+
+            # サブプロセスとして起動
+            self._knowledge_server_proc = subprocess.Popen(
+                [sys.executable, "-m", "src.mcp.knowledge_server", repo_path, memory_path, repo_name],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=self.project_root,
+                env={**os.environ, "BROWNIE_TARGET_REPO": repo_name, "BROWNIE_REPO_PATH": repo_path, "BROWNIE_MEMORY_PATH": memory_path}
+            )
+
+            # MCP クライアントの接続
+            try:
+                from fastmcp import Client
+                mcp_client = Client(self._knowledge_server_proc)
+                await mcp_client.__aenter__()
+                self.agent.mcp_client = mcp_client
+                logger.info(f"Knowledge MCP Server connected successfully for {repo_name}")
+            except ImportError:
+                logger.warning("fastmcp パッケージが見つかりません。MCP クライアント無しで動作を継続します。")
+            except Exception as e:
+                logger.warning(f"MCP クライアント接続に失敗しました。フォールバックモードで動作します: {e}")
+
+        except Exception as e:
+            logger.error(f"Knowledge MCP Server の起動に失敗しました: {e}")
+            logger.info("Agent はフォールバックモード（直接呼び出し）で動作を継続します。")
+
+    async def _stop_knowledge_server(self):
+        """Knowledge MCP Server のサブプロセスを安全に終了"""
+        if self._knowledge_server_proc is None:
+            return
+
+        try:
+            # MCP クライアントが存在すればクローズ
+            if self.agent.mcp_client:
+                try:
+                    await self.agent.mcp_client.__aexit__(None, None, None)
+                except Exception:
+                    pass
+                self.agent.mcp_client = None
+
+            # サブプロセスの停止
+            self._knowledge_server_proc.terminate()
+            try:
+                self._knowledge_server_proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._knowledge_server_proc.kill()
+                self._knowledge_server_proc.wait(timeout=3)
+
+            logger.info("Knowledge MCP Server stopped.")
+        except Exception as e:
+            logger.error(f"Knowledge MCP Server の停止に失敗: {e}")
+        finally:
+            self._knowledge_server_proc = None

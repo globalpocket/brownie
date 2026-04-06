@@ -24,13 +24,15 @@ class CoderAgent:
     def __init__(self, config: Dict[str, Any], sandbox: SandboxManager, state: 'StateManager', 
                  gh_client: Optional[GitHubClientWrapper] = None, 
                  http_client: Optional[httpx.AsyncClient] = None,
-                 model_manager: Optional['OllamaModelManager'] = None):
+                 model_manager: Optional['OllamaModelManager'] = None,
+                 mcp_client = None):
         self.config = config
         self.sandbox = sandbox
         self.state = state
         self.gh_client = gh_client
         self.http_client = http_client or httpx.AsyncClient(timeout=300.0)
         self.model_manager = model_manager
+        self.mcp_client = mcp_client  # Knowledge MCP Server クライアント（Phase 2）
         self.llm_endpoint = config['llm']['endpoint']
         # self.model_name は廃止し、随時 model_manager から取得するか config を参照する
         self.max_llm_retries = config['agent'].get('max_llm_retries', 5)
@@ -119,8 +121,14 @@ class CoderAgent:
             "get_repository_flow": {
                 "description": "シンボル名からの処理フローを Mermaid 形式で取得します。",
                 "parameters": {"entry_symbol": "string", "max_depth": "integer"},
-                "handler": self.get_repository_flow,
+                "handler": self._handle_get_code_flow,
                 "arg_mapping": {"entry_symbol": ["entry_symbol", "symbol", "name"], "max_depth": ["max_depth", "depth"]}
+            },
+            "semantic_search": {
+                "description": "コードベースからセマンティック検索を実行します。過去の経験や類似コードを探索します。",
+                "parameters": {"query": "string", "limit": "integer"},
+                "handler": self._handle_semantic_search,
+                "arg_mapping": {"query": ["query", "search", "q"], "limit": ["limit", "count", "n"]}
             }
         }
 
@@ -704,6 +712,38 @@ Reference Code fallback is active.
     async def _handle_merge_pull_request(self, pull_number: int) -> str:
         await self.gh_client.merge_pull_request(self._current_repo_name, int(pull_number))
         return f"Goal achieved: Successfully merged PR #{pull_number}. Please call Finish() now."
+
+    # --- MCP Knowledge Server ラッパー (Phase 2) ---
+
+    async def _handle_get_code_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
+        """MCP 経由で Knowledge Server の get_code_flow を呼び出す。
+        MCP 未接続時は従来の直接呼び出しにフォールバック。"""
+        if self.mcp_client:
+            try:
+                result = await self.mcp_client.call_tool(
+                    "get_code_flow",
+                    {"entry_symbol": entry_symbol, "depth": int(max_depth)}
+                )
+                return result.content[0].text
+            except Exception as e:
+                logger.warning(f"MCP get_code_flow failed, falling back to local: {e}")
+        # フォールバック: 従来の直接呼び出し
+        return await self.get_repository_flow(entry_symbol, int(max_depth))
+
+    async def _handle_semantic_search(self, query: str, limit: int = 5) -> str:
+        """MCP 経由でセマンティック検索を実行する。
+        MCP 未接続時はエラーメッセージを返す。"""
+        if self.mcp_client:
+            try:
+                result = await self.mcp_client.call_tool(
+                    "semantic_search",
+                    {"query": query, "limit": int(limit)}
+                )
+                return result.content[0].text
+            except Exception as e:
+                logger.warning(f"MCP semantic_search failed: {e}")
+                return f"セマンティック検索でエラーが発生しました: {e}"
+        return "Knowledge MCP Server が接続されていません。semantic_search は利用できません。"
 
     async def get_repository_flow(self, entry_symbol: str, max_depth: int = 5) -> str:
         """ 指定されたシンボルから始まる処理シーケンスを Mermaid 形式で取得するツール """
