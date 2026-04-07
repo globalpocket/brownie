@@ -10,6 +10,7 @@ stdio トランスポートで Orchestrator のサブプロセスとして動作
   一切再実装せず、完全に継承する。
 
 公開 Tool:
+  - set_workspace_root(path): ワークスペースのルートディレクトリを動的に変更
   - list_files(path, max_depth): ファイル一覧取得
   - read_file(path): ファイル内容読み取り
   - write_file(path, content): ファイル書き込み（workspace内のみ）

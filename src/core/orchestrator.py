@@ -254,10 +254,19 @@ class Orchestrator:
             if instruction_priority:
                 task_description += f"\n\nAdditional Instructions: {instruction_priority}"
 
+            # ワークスペースサーバーのルートを更新 (要求事項に基づく動的切り替え)
+            if self.agent.workspace_mcp_client:
+                try:
+                    await self.agent.workspace_mcp_client.call_tool("set_workspace_root", {"path": repo_path})
+                    logger.info(f"Workspace MCP root updated to {repo_path}")
+                except Exception as e:
+                    logger.error(f"Failed to set workspace root for tool: {e}")
+
             success = await self.agent.run(
                 task_id=task_id,
                 repo_name=repo_name,
                 issue_number=issue_number,
+                repo_path=repo_path,
                 task_description=task_description
             )
             

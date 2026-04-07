@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+import contextlib
 from typing import Dict, Any, List, Optional
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -117,11 +118,11 @@ class CoderAgent:
                 
                 # パスの正規化 (path 引数がある場合)
                 if 'path' in kwargs and not kwargs['path'].startswith('/'):
-                    workspace_path = getattr(self.sandbox, 'workspace_path', None)
-                    if workspace_path:
+                    workspace_root = getattr(self.sandbox, 'workspace_root', None)
+                    if workspace_root:
                         import os
                         original_path = kwargs['path']
-                        kwargs['path'] = os.path.join(workspace_path, original_path)
+                        kwargs['path'] = os.path.normpath(os.path.join(workspace_root, original_path))
                         logger.debug(f"Normalized path for {tool_name}: {original_path} -> {kwargs['path']}")
 
                 try:
@@ -159,54 +160,63 @@ class CoderAgent:
 
         return adk_tools
 
-    async def run(self, task_id: str, repo_name: str, issue_number: int, task_description: str) -> bool:
-        """タスクを実行する (ADK Agent)"""
-        self._task_id = task_id
-        self._current_repo_name = repo_name
-        self._current_issue_number = issue_number
+    async def run(self, task_id: str, repo_name: str, issue_number: int, repo_path: str = None, **kwargs) -> bool:
+        """エージェントの実行ループ (ADK Runner を使用)"""
+        # 以前のシグネチャとの互換性維持
+        task_description = kwargs.get('task_description', f"Issue #{issue_number} in {repo_name} を解決してください。")
         
-        logger.info(f"[{task_id}] Starting ADK Agent for task: {task_description[:100]}...")
+        logger.info(f"[{task_id}] ADK Agent starting for {repo_name}#{issue_number}")
         
-        try:
-            # ADK Runner を使って実行 (これが 0.0.5 の推奨される実行方法)
-            new_message = types.Content(parts=[types.Part(text=task_description)], role="user")
+        # ユーザー指示: 以降の操作はローカルリポジトリパスを起点にする
+        # 自律ループのスコープ内限定でカレントディレクトリを移動
+        if repo_path and os.path.exists(repo_path):
+            cwd_context = contextlib.chdir(repo_path)
+        else:
+            cwd_context = contextlib.nullcontext()
+
+        with cwd_context:
+            if repo_path:
+                logger.info(f"[{task_id}] Process context anchored to: {os.getcwd()}")
+            
+            new_message = f"GitHub Issue #{issue_number} in {repo_name} を解決または分析してください。\n指示内容: {task_description}"
             
             result = None
-            async for event in self.runner.run_async(
-                user_id="brownie_operator",
-                session_id=task_id,
-                new_message=new_message
-            ):
-                # トレース: AI の思考プロセスやツール呼び出しを可視化
-                event_type = type(event).__name__
-                logger.info(f"[{task_id}] --- ADK Event: {event_type} ---")
-                
-                # 安全なプロパティアクセス
-                model_response = getattr(event, 'model_response', None)
-                if model_response and hasattr(model_response, 'candidates') and model_response.candidates:
-                    try:
-                        content = model_response.candidates[0].content
-                        parts = getattr(content, 'parts', [])
-                        text = "".join([p.text for p in parts if hasattr(p, 'text') and p.text])
-                        if text:
-                            logger.info(f"[{task_id}] AI Response: \n{text}")
-                    except (IndexError, AttributeError) as e:
-                        logger.debug(f"Could not extract text from model_response: {e}")
-                
-                tool_call = getattr(event, 'tool_call', None)
-                if tool_call:
-                    logger.info(f"[{task_id}] Tool Call: {getattr(tool_call, 'name', 'unknown')}({getattr(tool_call, 'args', {})})")
+            try:
+                async for event in self.runner.run_async(
+                    user_id="brownie_operator",
+                    session_id=task_id,
+                    new_message=new_message
+                ):
+                    # トレース: AI の思考プロセスやツール呼び出しを可視化
+                    event_type = type(event).__name__
+                    logger.info(f"[{task_id}] --- ADK Event: {event_type} ---")
+                    
+                    # 安全なプロパティアクセス
+                    model_response = getattr(event, 'model_response', None)
+                    if model_response and hasattr(model_response, 'candidates') and model_response.candidates:
+                        try:
+                            content = model_response.candidates[0].content
+                            parts = getattr(content, 'parts', [])
+                            text = "".join([p.text for p in parts if hasattr(p, 'text') and p.text])
+                            if text:
+                                logger.info(f"[{task_id}] AI Response: \n{text}")
+                        except (IndexError, AttributeError) as e:
+                            logger.debug(f"Could not extract text from model_response: {e}")
+                    
+                    tool_call = getattr(event, 'tool_call', None)
+                    if tool_call:
+                        logger.info(f"[{task_id}] Tool Call: {getattr(tool_call, 'name', 'unknown')}({getattr(tool_call, 'args', {})})")
 
-                tool_response = getattr(event, 'tool_response', None)
-                if tool_response:
-                    # tool_response が文字列でない場合も考慮
-                    res_str = str(tool_response)
-                    logger.info(f"[{task_id}] Tool Response: {res_str[:200]}...")
+                    tool_response = getattr(event, 'tool_response', None)
+                    if tool_response:
+                        # tool_response が文字列でない場合も考慮
+                        res_str = str(tool_response)
+                        logger.info(f"[{task_id}] Tool Response: {res_str[:200]}...")
 
-                result = event
-            
-            logger.info(f"[{task_id}] ADK Agent finished: {result}")
-            return True
-        except Exception as e:
-            logger.error(f"[{task_id}] ADK Agent error: {e}", exc_info=True)
-            return False
+                    result = event
+                
+                logger.info(f"[{task_id}] ADK Agent finished: {result}")
+                return True
+            except Exception as e:
+                logger.error(f"[{task_id}] ADK Agent error: {e}", exc_info=True)
+                return False
