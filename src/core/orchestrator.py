@@ -14,7 +14,6 @@ from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.version import get_footer
 from src.workspace.analyzer.core import CodeAnalyzer
-from src.llm.model_manager import OllamaModelManager
 import json
 from fastmcp import Client
 from fastmcp.client.transports.stdio import StdioTransport
@@ -36,11 +35,7 @@ class Orchestrator:
                                      self.config['workspace']['sandbox_group_id'])
         self.http_client = httpx.AsyncClient(timeout=300.0)
         
-        # モデル管理の初期化
-        self.model_manager = OllamaModelManager(self.config['llm']['endpoint'].replace("/v1", ""))
-        
-        self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client, 
-                               http_client=self.http_client, model_manager=self.model_manager)
+        self.agent = CoderAgent(self.config, self.sandbox, self.state, self.gh_client)
         self.is_running = True
         self._knowledge_server_proc = None   # Knowledge MCP サブプロセス (Phase 2)
         self._workspace_server_proc = None   # Workspace MCP サブプロセス (Phase 3)
@@ -54,9 +49,6 @@ class Orchestrator:
         # 0. 起動初期化: 全リポジトリの深層解析 (WDCA)
         repo_list = self.config['agent'].get('repositories', [])
         workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
-        
-        # 解析には重量モデル (coder) を使用
-        await self.model_manager.switch_model(self.config['llm']['models']['coder'])
         
         logger.info(f"BOOT SEQUENCE: Initializing Deep Context for {len(repo_list)} repositories...")
         for repo_name in repo_list:
@@ -220,9 +212,6 @@ class Orchestrator:
 
         await self.state.update_task(task_id, "InProgress", repo_name)
         
-        # タスク開始フェーズ: router モデルへ切り替え
-        await self.model_manager.switch_model(self.config['llm']['models']['router'])
-        
         success = False
         stop_heartbeat = asyncio.Event()
         
@@ -239,108 +228,57 @@ class Orchestrator:
             
             # サンドボックスの設定
             self.sandbox.set_workspace_root(repo_path)
-            self.sandbox.set_reference_root(self.project_root) # ローカルリポジトリを参照用として設定
+            self.sandbox.set_reference_root(self.project_root)
             
             target_issue = self.gh_client.g.get_repo(repo_name).get_issue(issue_number)
             issue_title = target_issue.title
             issue_body = target_issue.body or ""
             
             location_type = "ISSUE"
-            location_context = {}
+            instruction_priority = None
             active_label = "in-progress"
             is_mention = False
-            instruction_priority = None
 
             if comment_id:
                 is_mention = True
                 active_label = "ai-active"
-                is_pr = False
-                try:
-                    target_issue.as_pull_request()
-                    is_pr = True
-                    location_type = "PR"
-                except:
-                    is_pr = False
-
-                start_msg = "プルリクエストを確認しました。指示に従います。" if is_pr else "課題を確認しました。作業を開始します。"
-                await self.gh_client.post_comment(repo_name, issue_number, f"🔍 {start_msg}" + get_footer())
-                
                 if comment_id != "body":
-                    if comment_id.startswith("review-"):
-                        location_type = "PR_REVIEW"
-                        review_id = int(comment_id.replace("review-", ""))
-                        review = target_issue.as_pull_request().get_review(review_id)
-                        instruction_priority = review.body
-                        location_context["review_body"] = review.body
-                        location_context["state"] = review.state
-                    elif comment_id.startswith("rc-"):
-                        location_type = "PR_INLINE"
-                        rc_id = int(comment_id.replace("rc-", ""))
-                        ctx = await self.gh_client.get_inline_comment_context(repo_name, rc_id)
-                        if ctx:
-                            instruction_priority = ctx["body"]
-                            location_context.update(ctx)
-                    else:
+                    # 簡易的なメンション指示取得 (詳細はADK側で処理可能だが、ここではタスク文字列に含める)
+                    if not comment_id.startswith(("review-", "rc-")):
                         comment = target_issue.get_comment(int(comment_id))
                         instruction_priority = comment.body
-                
-                issue_body = (issue_body[:5000] + "... (truncated)") if len(issue_body) > 5000 else issue_body
-                if instruction_priority:
-                    instruction_priority = (instruction_priority[:5000] + "... (truncated)") if len(instruction_priority) > 5000 else instruction_priority
 
             await self.gh_client.add_label(repo_name, issue_number, active_label)
-            if not is_mention:
-                trigger_user = target_issue.user.login if hasattr(target_issue, 'user') else ""
-                mention_prefix = f"@{trigger_user} " if trigger_user else ""
-                await self.gh_client.post_comment(repo_name, issue_number, f"{mention_prefix}🔍 課題を確認しました。解析と作業を開始します..." + get_footer())
             
-            branch_name = f"issue-{issue_number}"
-            
-            # 指示通り、実装前に重量モデル (coder) へ切り替える
-            await self.model_manager.switch_model(self.config['llm']['models']['coder'])
+            # タスクの説明を構築 (ADK Agent への入力)
+            task_description = f"Title: {issue_title}\n\nBody: {issue_body}"
+            if instruction_priority:
+                task_description += f"\n\nAdditional Instructions: {instruction_priority}"
 
-            success = await self.agent.plan_and_execute(
+            success = await self.agent.run(
                 task_id=task_id,
                 repo_name=repo_name,
                 issue_number=issue_number,
-                issue_title=issue_title,
-                issue_body=issue_body,
-                is_mention=is_mention,
-                location_type=location_type,
-                location_context=location_context,
-                instruction_priority=instruction_priority
+                task_description=task_description
             )
-                
+            
             if success == True:
                 has_changes = git_ops.has_changes()
-                if is_mention and not has_changes:
-                    pass # Summary will be handled in finally
-                elif has_changes:
-                    # サンドボックス上で変更が生じた場合のみ、ここで初めてブランチを切ってコミットする
+                if has_changes:
+                    branch_name = f"issue-{issue_number}"
                     git_ops.create_and_checkout_branch(branch_name)
-                    
-                    commit_msg = f"feat: automated implementation for {location_type} #{issue_number}"
+                    commit_msg = f"feat: automated implementation for #{issue_number}"
                     git_ops.commit_and_push(branch_name, commit_msg)
                     
                     pr_title = f"Fix #{issue_number}: {issue_title}"
-                    pr_body = f"## 概要\n{location_type} #{issue_number} に対する自動実装PRです。\n\n## 変更点\n{issue_body}"
-                    pr = await self.gh_client.create_pull_request(
+                    pr_body = f"## 概要\n#{issue_number} に対する自動実装PRです。"
+                    await self.gh_client.create_pull_request(
                         repo_name=repo_name,
                         title=pr_title,
                         body=pr_body,
                         head=branch_name,
                         base="main"
                     )
-                    if pr:
-                        logger.info(f"[{task_id}] PR created: {pr.html_url}")
-                else:
-                    # メンションでない通常実行で、変更が発生しなかった場合
-                    pass
-
-            elif success == "SUSPENDED":
-                pass # The summary will be posted in finally block
-            else:
-                pass # Failed case is handled by agent's error reporter
 
         except Exception as e:
             logger.error(f"Task {task_id} failed with exception: {e}", exc_info=True)
