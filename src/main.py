@@ -26,16 +26,27 @@ log_level = logging.DEBUG if os.environ.get("BROWNIE_DEBUG") == "1" else logging
 
 root_logger = logging.getLogger()
 root_logger.setLevel(log_level)
+
+# Set standard formatter
 formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
 
-# ファイルハンドラ
-file_handler = RotatingFileHandler(log_file, maxBytes=10*1024*1024, backupCount=5)
-file_handler.setFormatter(formatter)
-root_logger.addHandler(file_handler)
+# Suppress noise from external libraries
+logging.getLogger("httpcore").setLevel(logging.INFO)
+logging.getLogger("urllib3").setLevel(logging.INFO)
+logging.getLogger("docker").setLevel(logging.INFO)
+logging.getLogger("aiosqlite").setLevel(logging.INFO)
 
-# コンソールハンドラ
-console_handler = logging.StreamHandler(sys.stdout)
+# Create console handler with INFO level
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(formatter)
+
+# Create file handler with rotation (Harden: 5MB x 3 backups instead of 10x5)
+file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(formatter)
+
+root_logger.addHandler(file_handler)
 root_logger.addHandler(console_handler)
 
 logger = logging.getLogger("brownie.main")
