@@ -58,7 +58,7 @@ if [ -f "$HOME/.zshrc" ]; then
 fi
 
 # 7. LLM モデルキャッシュの削除 (MLX/HuggingFace)
-read -p "Do you want to remove the MLX models (HuggingFace cache) used by Brownie? [y/N]: " REMOVE_MODELS
+read -p "Do you want to remove the MLX models (HuggingFace cache, e.g., Qwen3.5) used by Brownie? [y/N]: " REMOVE_MODELS
 if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
     echo "Removing MLX model cache..."
     rm -rf "$HOME/.cache/huggingface/hub/models--mlx-community*"

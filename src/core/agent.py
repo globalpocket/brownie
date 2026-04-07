@@ -26,7 +26,7 @@ class CoderAgent:
         
         # モデルの設定 (LiteLLM 形式)
         # 例: ollama/llama3, openai/gpt-4
-        raw_model = config['llm']['models'].get('coder', 'mlx-community/Qwen2.5-Coder-32B-Instruct-4bit')
+        raw_model = config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-35B-A3B-4bit')
         # MLX server is OpenAI compatible, so LiteLLM needs the 'openai/' prefix
         if not raw_model.startswith("openai/"):
             self.model_name = f"openai/{raw_model}"

@@ -347,7 +347,7 @@ class Orchestrator:
             pass
         
         try:
-            model_name = self.config['llm']['models']['coder']
+            model_name = self.config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-35B-A3B-4bit')
             logger.info(f"Starting MLX Server with model: {model_name}")
             # MLX server startup command
             subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 

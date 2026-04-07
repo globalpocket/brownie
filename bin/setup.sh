@@ -109,6 +109,10 @@ echo "Syncing Python dependencies (including Pydantic)..."
 $UV_CMD sync
 $UV_CMD pip install mlx-lm
 
+# 4. LLM モデルの事前ダウンロード (MLX 用)
+echo "Downloading Qwen 3.5 (MoE) model for MLX. This may take a while..."
+$UV_CMD run huggingface-cli download mlx-community/Qwen3.5-35B-A3B-4bit
+
 # 4. ディレクトリ初期化
 echo "Initializing directories..."
 mkdir -p ~/.local/share/brownie/
@@ -149,8 +153,7 @@ else
 fi
 
 # 7. LLM 推奨モデルの準備 (MLX)
-# MLX は初回起動時に huggingface_hub を通じてモデルを自動的にダウンロード・キャッシュします。
-# 事前の pull 処理は不要です。
+# 上記のセクション 4 で Qwen 3.5 モデルの事前ダウンロードが実行されています。
 
 # 8. 高度な解析エンジンのセットアップ (Tree-sitter Grammars)
 echo "Setting up advanced analysis engine (Tree-sitter)..."

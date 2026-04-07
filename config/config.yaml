@@ -17,7 +17,7 @@ llm:
   tokenizer: "auto"
   models:
     router: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
-    coder: "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit"  # 32B-Instruct-4bit for implementation/self-correction
+    coder: "mlx-community/Qwen3.5-35B-A3B-4bit"  # Qwen 3.5 (MoE) for implementation/self-correction
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000
