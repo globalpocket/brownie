@@ -114,6 +114,16 @@ class CoderAgent:
                     return f"Error: Tool {tool_name} is currently unavailable because the MCP server is not connected."
                 
                 logger.info(f"Calling MCP tool: {tool_name} with {kwargs}")
+                
+                # パスの正規化 (path 引数がある場合)
+                if 'path' in kwargs and not kwargs['path'].startswith('/'):
+                    workspace_path = getattr(self.sandbox, 'workspace_path', None)
+                    if workspace_path:
+                        import os
+                        original_path = kwargs['path']
+                        kwargs['path'] = os.path.join(workspace_path, original_path)
+                        logger.debug(f"Normalized path for {tool_name}: {original_path} -> {kwargs['path']}")
+
                 try:
                     result = await client.call_tool(tool_name, kwargs)
                     if hasattr(result, 'content'):
