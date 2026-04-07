@@ -114,8 +114,15 @@ class CoderAgent:
                     return f"Error: Tool {tool_name} is currently unavailable because the MCP server is not connected."
                 
                 logger.info(f"Calling MCP tool: {tool_name} with {kwargs}")
-                result = await client.call_tool(tool_name, kwargs)
-                return result.content[0].text
+                try:
+                    result = await client.call_tool(tool_name, kwargs)
+                    if hasattr(result, 'content'):
+                        return result.content[0].text
+                    return str(result)
+                except Exception as e:
+                    logger.warning(f"Error calling MCP tool {tool_name}: {e}")
+                    # エラーを文字列として返して、AI に自己修正を促す
+                    return f"Error executing {tool_name}: {str(e)}. Please check your arguments and try again."
             wrapper.__name__ = tool_name
             wrapper.__doc__ = description
             return wrapper
