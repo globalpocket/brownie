@@ -169,9 +169,8 @@ class Orchestrator:
         labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
         
         # 完了または失敗ラベルがついている場合は、原則としてキューイングしない
-        # ただし、メンションベースのトリガー（指示あり）の場合は許容することも検討できるが、
-        # 現状は一度 Failed になったら手動でラベルを消す運用とする（無限ループ防止を優先）
-        if "completed" in labels or "failed" in labels:
+        # ただし、'ai-active' ラベルが明示的に付与されている場合は、再実行の意思表示とみなして許可する
+        if ("completed" in labels or "failed" in labels) and "ai-active" not in labels:
             if user_login != "mention_trigger":
                 # アサインベースの定期実行は完全停止
                 return

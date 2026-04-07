@@ -57,10 +57,9 @@ class CodeAnalyzer:
                 last_scanned TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        self.conn.execute("CREATE SEQUENCE IF NOT EXISTS symbol_id_seq")
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS symbols (
-                id INTEGER PRIMARY KEY DEFAULT nextval('symbol_id_seq'),
+                id INTEGER PRIMARY KEY,
                 file_path TEXT,
                 name TEXT,
                 type TEXT, -- 'class', 'function', 'method'
