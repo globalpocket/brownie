@@ -2,10 +2,6 @@ import docker
 import os
 import yaml
 import logging
-import re
-from typing import Dict, Any, List, Optional
-
-from src.workspace.linter import LinterEngine
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +11,6 @@ class SandboxManager:
         self.group_id = group_id
         self.workspace_root = None
         self.reference_root = None
-        self.linter = None
         try:
             self.client = docker.from_env()
             self.client.ping()
@@ -82,7 +77,6 @@ class SandboxManager:
     def set_workspace_root(self, root_path: str):
         """ワークスペースのルートパスを設定する"""
         self.workspace_root = os.path.realpath(root_path)
-        self.linter = LinterEngine(self.workspace_root)
         logger.info(f"Sandbox workspace root set to: {self.workspace_root}")
 
     def set_reference_root(self, ref_path: str):
@@ -104,7 +98,7 @@ class SandboxManager:
         if rw:
             if not full_path.startswith(self.workspace_root):
                 logger.error(f"Write operation denied outside workspace: {full_path}")
-                raise PermissionError(f"Write access denied outside the workspace area.")
+                raise PermissionError("Write access denied outside the workspace area.")
             return full_path
 
         # 3. 読み込み操作の場合、ワークスペースになければ参照用リポジトリ(Local)を探す
@@ -123,8 +117,7 @@ class SandboxManager:
         """指定されたパスのファイル一覧を取得する (max_depth で制御可能)"""
         full_path = self._get_full_path(path, rw=False)
         if not os.path.exists(full_path):
-            # パスが見つからない場合、例外を投げずに AI へのヒントを返して自律復旧を促す
-            parent_dir = os.path.dirname(path) or "."
+            # パスが見わからない場合、例外を投げずに AI へのヒントを返して自律復旧を促す
             return f"Error: Path '{path}' not found. Please check the directory structure (e.g., did you mean 'src/{path}'?)."
         
         output = []
@@ -179,92 +172,6 @@ class SandboxManager:
         with open(full_path, "w", encoding="utf-8") as f:
             f.write(content)
         return f"Successfully written to {path}."
-
-    async def run_semgrep(self, task_id: str) -> dict:
-        """コンテナ内でSemgrepを実行し、静的解析の指摘事項を取得する"""
-        command = "semgrep scan --config=auto --json /workspace"
-        try:
-            result = await self.run_in_sandbox(task_id, command)
-            return {"status": "success", "logs": result["logs"]}
-        except Exception as e:
-            return {"status": "failed", "logs": str(e)}
-    async def run_command(self, command: str, image: str = "ubuntu:22.04") -> Dict[str, Any]:
-        """run_in_sandbox のラッパー。タスクIDは呼び出し元で制御が必要だが、一旦共通IDを使用"""
-        return await self.run_in_sandbox("active_task", command, image)
-
-    async def run_in_sandbox(self, task_id: str, command: str, image: str = "ubuntu:22.04") -> Dict[str, Any]:
-        """Docker 経由でコマンドを実行。ログマスキング適用。 (設計書 7.1)"""
-        if not self.workspace_root:
-            raise RuntimeError("Workspace root not set.")
-
-        container = self.client.containers.run(
-            image=image,
-            command=command,
-            user=f"{self.user_id}:{self.group_id}",
-            volumes={self.workspace_root: {'bind': '/workspace', 'mode': 'rw'}},
-            working_dir='/workspace',
-            detach=True,
-            labels={"brownie_task_id": task_id}
-        )
-        
-        result = container.wait()
-        logs = container.logs().decode("utf-8", errors="replace")
-        
-        # ログマスキング (設計書 7.1: ログスクラビング)
-        masked_logs = self._mask_sensitive_data(logs)
-        
-        container.remove()
-        
-        # コマンドが失敗した場合、例外を投げてPythonレベルでエラー処理させる
-        if result["StatusCode"] != 0:
-            raise RuntimeError(f"Command execution failed with exit code {result['StatusCode']}.\nLogs:\n{masked_logs}")
-            
-        return {
-            "exit_code": result["StatusCode"],
-            "logs": masked_logs
-        }
-
-    def _mask_sensitive_data(self, text: str) -> str:
-        """機密情報のマスキング (設計書 7.1: ログスクラビング)"""
-        # APIキー、パスワード等のパターンにマッチする箇所を *** に置換
-        patterns = [
-            r"ghp_[a-zA-Z0-9]{36}", # GitHub Token
-            r"(password|secret)=\S+",
-            r"Bearer \S+"
-        ]
-        for p in patterns:
-            text = re.sub(p, r"\1=***" if "=" in p else "***", text, flags=re.IGNORECASE)
-        return text
-
-    async def lint_code(self, path: str = ".") -> str:
-        """Semgrep とリンターによるコード品質診断を実行"""
-        if not self.linter: return "Linter not initialized."
-        
-        # 1. Semgrep Scan (Semantic Rules)
-        semgrep_data = await self.linter.scan_semgrep(path)
-        report = []
-        if "findings" in semgrep_data:
-            for f in semgrep_data["findings"]:
-                report.append(f"[{f['severity']}] {f['path']}:{f['line']} - {f['message']}")
-        
-        # 2. Standard Linter (Ruff/ESLint)
-        lint_output = await self.linter.run_lint(path)
-        
-        summary = "--- Lint / Scan Results ---\n"
-        if report:
-            summary += "Semgrep (Semantic Rules):\n" + "\n".join(report) + "\n\n"
-        summary += "Standard Linter:\n" + lint_output
-        return summary
-
-    async def format_code(self, path: str = ".") -> str:
-        """Black / Prettier によるコード整形を実行"""
-        if not self.linter: return "Linter not initialized."
-        return await self.linter.run_format(path)
-
-    async def scan_security(self, path: str = ".") -> str:
-        """Bandit 等によるセキュリティ診断を実行"""
-        if not self.linter: return "Linter not initialized."
-        return await self.linter.scan_security(path)
 
     def cleanup_orphans(self):
         """オーファンコンテナ・ボリュームの定期GC (設計書 8.4 浄化)"""

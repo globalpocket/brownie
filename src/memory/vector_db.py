@@ -1,14 +1,14 @@
 import chromadb
-from chromadb.config import Settings
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any
 import time
 
 logger = logging.getLogger(__name__)
 
 class MemoryManager:
     def __init__(self, persist_directory: str):
-        self.client = chromadb.PersistentClient(path=persist_directory)
+        # 今後のスケーラビリティのため、Docker上で動く ChromaDB に接続
+        self.client = chromadb.HttpClient(host="localhost", port=8000)
         self.collection = self.client.get_or_create_collection(
             name="brownie_memories",
             metadata={"hnsw:space": "cosine"}

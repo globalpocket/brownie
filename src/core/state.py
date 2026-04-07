@@ -132,6 +132,13 @@ class StateManager:
                 }
         return None
 
+    async def reset_orphaned_tasks(self):
+        """起動時に InProgress または InQueue のまま残っているタスクを Failed にリセットする (リカバリー)"""
+        query = "UPDATE tasks SET status = 'Failed' WHERE status IN ('InProgress', 'InQueue')"
+        await self.conn.execute(query)
+        await self.conn.commit()
+        logger.info("Orphaned tasks reset to Failed during startup recovery.")
+
     async def close(self):
         if self.conn:
             await self.conn.close()

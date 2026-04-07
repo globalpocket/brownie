@@ -41,8 +41,6 @@ case $OS in
     
     # git-lfs
     if ! check_tool "git-lfs"; then TOOLS_TO_INSTALL+=("git-lfs"); fi
-    # gh (GitHub CLI)
-    if ! check_tool "gh"; then TOOLS_TO_INSTALL+=("gh"); fi
     # Docker (Application または CLI)
     if ! check_tool "docker" "Docker.app"; then TOOLS_TO_INSTALL+=("docker" "docker-compose"); fi
     # Ollama (Application または CLI)
@@ -70,7 +68,7 @@ case $OS in
     sudo apt update
     # Linux では基本的にパッケージマネージャ経由で一括管理
     # build-essential: Cコンパイラ, nodejs/npm: Repomix実行用
-    sudo apt install -y git-lfs gh docker.io docker-compose-v2 curl build-essential nodejs npm
+    sudo apt install -y git-lfs docker.io docker-compose-v2 curl build-essential nodejs npm
     
     # ast-grep (Semantic search/replace) - Linux 用
     if ! check_tool "sg"; then

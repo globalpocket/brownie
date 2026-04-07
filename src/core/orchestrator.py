@@ -48,6 +48,7 @@ class Orchestrator:
     async def start(self):
         """オーケストレーターの起動"""
         await self.state.connect()
+        await self.state.reset_orphaned_tasks()
         asyncio.create_task(self.worker_pool.run()) # ワーカープール起動
         
         # 0. 起動初期化: 全リポジトリの深層解析 (WDCA)
@@ -169,9 +170,7 @@ class Orchestrator:
 
         # 2. 個別タスクIDの状態チェック
         existing_task = await self.state.get_task(task_id)
-        if existing_task:
-            # 既にDBに登録されているタスク（特定のメンションやIssue作成イベントなど）は
-            # 成功・失敗にかかわらずポーリングループからの自動再実行は行わない（無限ループ防止）
+        if existing_task and existing_task.get("status") != "Failed":
             return
 
         # 2. GitHub ラベルチェック (重複・完了・失敗ガード)

@@ -2,7 +2,7 @@ import subprocess
 import json
 import os
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +59,47 @@ class LinterEngine:
         except Exception as e:
             return {"error": f"Exception during semgrep scan: {e}"}
 
+    async def scan_astgrep(self, query: str = None, path: str = ".") -> Dict[str, Any]:
+        """ast-grep (sg) による構造的スキャンを実行"""
+        target_path = os.path.join(self.repo_root, path)
+        try:
+            # デフォルトの sg scan --report-style json を実行
+            cmd = ["sg", "scan", "--report-style", "json"]
+            if query:
+                # パターン指定がある場合は sg run -p ... --json
+                cmd = ["sg", "run", "-p", query, "--json"]
+
+            result = subprocess.run(
+                cmd,
+                cwd=target_path,
+                capture_output=True,
+                text=True
+            )
+            
+            if result.returncode != 0:
+                # 0 以外でも findings がある場合があるので、stdout が JSON か確認
+                try:
+                    data = json.loads(result.stdout)
+                except json.JSONDecodeError:
+                    return {"error": f"ast-grep failed: {result.stderr or result.stdout}"}
+            else:
+                data = json.loads(result.stdout)
+            
+            findings = []
+            # sg scan の出力形式 (list of findings) を想定
+            # query指定時(sg run)はフラットなリスト、scan時はルールごとの場合があるので適宜調整
+            items = data if isinstance(data, list) else data.get("results", [])
+            for item in items:
+                findings.append({
+                    "path": item.get("file", "unknown"),
+                    "line": item.get("range", {}).get("start", {}).get("line", 0) + 1,
+                    "message": item.get("message", "Pattern matched"),
+                    "severity": "info" # sg はルールにより異なるが、一旦 info
+                })
+            return {"findings": findings}
+        except Exception as e:
+            return {"error": f"Exception during ast-grep scan: {e}"}
+
     def _get_tool_cmd(self, tool_name: str) -> str:
         """仮想環境 (.venv) 内のツールパスを優先して取得する"""
         venv_bin = os.path.join(self.repo_root, ".venv", "bin", tool_name)
@@ -95,7 +136,8 @@ class LinterEngine:
             elif self._detect_js(target_path):
                 cmd = "npx eslint"
         
-        if not cmd: return "No linter found for this path."
+        if not cmd:
+            return "No linter found for this path."
 
         try:
             # 引数としてパスを渡す
@@ -116,7 +158,8 @@ class LinterEngine:
             elif self._detect_js(target_path):
                 cmd = "prettier --write"
         
-        if not cmd: return "No formatter found for this path."
+        if not cmd:
+            return "No formatter found for this path."
 
         try:
             full_cmd = cmd.split() + [target_path]
@@ -134,7 +177,8 @@ class LinterEngine:
             if self._detect_py(target_path):
                 cmd = f"{self._get_tool_cmd('bandit')} -r -f txt"
         
-        if not cmd: return "No security scanner found for this path."
+        if not cmd:
+            return "No security scanner found for this path."
 
         try:
             full_cmd = cmd.split() + [target_path]

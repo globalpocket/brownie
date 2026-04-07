@@ -57,6 +57,9 @@ sequenceDiagram
         ORC->>WS: 工具実行: write_file / run_command
         Note over WS: 4層防御サンドボックス内
         WS-->>ORC: テスト結果 / Linter 結果
+        
+        Note right of WS: ファイル変更検知 (Watcher)
+        WS-->>WS: バックグラウンド解析実行 (Semgrep / ast-grep)
     end
 
     ORC->>WS: Git push
