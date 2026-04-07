@@ -25,7 +25,12 @@ class CoderAgent:
         
         # モデルの設定 (LiteLLM 形式)
         # 例: ollama/llama3, openai/gpt-4
-        self.model_name = config['llm']['models'].get('coder', 'ollama/llama3')
+        raw_model = config['llm']['models'].get('coder', 'ollama/llama3:latest')
+        if "/" not in raw_model:
+            self.model_name = f"ollama/{raw_model}"
+        else:
+            self.model_name = raw_model
+            
         self.base_url = config['llm']['endpoint'] # 例: http://localhost:11434/v1
         
         # プロンプトの読み込み
@@ -155,7 +160,32 @@ class CoderAgent:
                 session_id=task_id,
                 new_message=new_message
             ):
-                # 必要に応じて進捗を記録
+                # トレース: AI の思考プロセスやツール呼び出しを可視化
+                event_type = type(event).__name__
+                logger.info(f"[{task_id}] --- ADK Event: {event_type} ---")
+                
+                # 安全なプロパティアクセス
+                model_response = getattr(event, 'model_response', None)
+                if model_response and hasattr(model_response, 'candidates') and model_response.candidates:
+                    try:
+                        content = model_response.candidates[0].content
+                        parts = getattr(content, 'parts', [])
+                        text = "".join([p.text for p in parts if hasattr(p, 'text') and p.text])
+                        if text:
+                            logger.info(f"[{task_id}] AI Response: \n{text}")
+                    except (IndexError, AttributeError) as e:
+                        logger.debug(f"Could not extract text from model_response: {e}")
+                
+                tool_call = getattr(event, 'tool_call', None)
+                if tool_call:
+                    logger.info(f"[{task_id}] Tool Call: {getattr(tool_call, 'name', 'unknown')}({getattr(tool_call, 'args', {})})")
+
+                tool_response = getattr(event, 'tool_response', None)
+                if tool_response:
+                    # tool_response が文字列でない場合も考慮
+                    res_str = str(tool_response)
+                    logger.info(f"[{task_id}] Tool Response: {res_str[:200]}...")
+
                 result = event
             
             logger.info(f"[{task_id}] ADK Agent finished: {result}")
