@@ -106,32 +106,24 @@ class CoderAgent:
         
         # 汎用 MCP ツール呼び出しアダプター (指示に基づきシンプルに実装)
         def create_mcp_wrapper(client_getter, tool_name, description):
-            async def wrapper(**kwargs):
-                client = client_getter() if callable(client_getter) else client_getter
-                if not client:
-                    logger.error(f"MCP client for tool {tool_name} is not initialized.")
-                    return f"Error: Tool {tool_name} is currently unavailable because the MCP server is not connected."
-                
-                logger.info(f"Calling MCP tool: {tool_name} with {kwargs}")
-                
-                # パスの正規化 (path 引数がある場合)
-                if 'path' in kwargs and not kwargs['path'].startswith('/'):
-                    workspace_root = getattr(self.sandbox, 'workspace_root', None)
-                    if workspace_root:
-                        import os
-                        original_path = kwargs['path']
-                        kwargs['path'] = os.path.normpath(os.path.join(workspace_root, original_path))
-                        logger.debug(f"Normalized path for {tool_name}: {original_path} -> {kwargs['path']}")
-
-                try:
-                    result = await client.call_tool(tool_name, kwargs)
-                    if hasattr(result, 'content'):
-                        return result.content[0].text
-                    return str(result)
-                except Exception as e:
-                    logger.warning(f"Error calling MCP tool {tool_name}: {e}")
-                    # エラーを文字列として返して、AI に自己修正を促す
-                    return f"Error executing {tool_name}: {str(e)}. Please check your arguments and try again."
+            # ADK が型ヒントを検知してパラメータを正しくマップできるよう、
+            # 特によく使われるツールには明示的なシグネチャを持たせる
+            if tool_name == "read_file":
+                async def wrapper(path: str = None, **kwargs):
+                    return await self._execute_mcp_tool(client_getter, tool_name, {"path": path, **kwargs})
+            elif tool_name == "write_file":
+                async def wrapper(path: str = None, content: str = None, **kwargs):
+                    return await self._execute_mcp_tool(client_getter, tool_name, {"path": path, "content": content, **kwargs})
+            elif tool_name == "run_command":
+                async def wrapper(command: str = None, **kwargs):
+                    return await self._execute_mcp_tool(client_getter, tool_name, {"command": command, **kwargs})
+            elif tool_name == "list_files":
+                async def wrapper(path: str = None, **kwargs):
+                    return await self._execute_mcp_tool(client_getter, tool_name, {"path": path, **kwargs})
+            else:
+                async def wrapper(**kwargs):
+                    return await self._execute_mcp_tool(client_getter, tool_name, kwargs)
+            
             wrapper.__name__ = tool_name
             wrapper.__doc__ = description
             return wrapper
@@ -157,6 +149,41 @@ class CoderAgent:
             adk_tools.append(create_mcp_wrapper(lambda: self.knowledge_mcp_client, name, desc))
 
         return adk_tools
+
+    async def _execute_mcp_tool(self, client_getter, tool_name: str, kwargs: dict):
+        """MCP ツールの実行コアロジック (バリデーション、パス正規化、エラーハンドリング)"""
+        client = client_getter() if callable(client_getter) else client_getter
+        if not client:
+            logger.error(f"MCP client for tool {tool_name} is not initialized.")
+            return f"Error: Tool {tool_name} is currently unavailable because the MCP server is not connected."
+        
+        logger.info(f"Calling MCP tool: {tool_name} with {kwargs}")
+        
+        # パラメータ不足のチェック (モデルへのフィードバック用)
+        if tool_name == "read_file" and not kwargs.get('path'):
+            return f"Error executing {tool_name}: Missing required argument 'path'. Please provide the file path as a string in the 'path' argument."
+
+        # パスの正規化 (path 引数がある場合)
+        if 'path' in kwargs and isinstance(kwargs['path'], str) and kwargs['path'] and not kwargs['path'].startswith('/'):
+            workspace_root = getattr(self.sandbox, 'workspace_root', None)
+            if workspace_root:
+                import os
+                original_path = kwargs['path']
+                kwargs['path'] = os.path.normpath(os.path.join(workspace_root, original_path))
+                logger.debug(f"Normalized path for {tool_name}: {original_path} -> {kwargs['path']}")
+
+        try:
+            result = await client.call_tool(tool_name, kwargs)
+            if hasattr(result, 'content'):
+                return result.content[0].text
+            return str(result)
+        except Exception as e:
+            logger.warning(f"Error calling MCP tool {tool_name}: {e}")
+            # エラーをメッセージとして返して、AI に自己修正を促す
+            error_msg = str(e)
+            if "validation error" in error_msg.lower():
+                return f"Error executing {tool_name}: Argument validation failed. Details: {error_msg}. Please ensure your JSON arguments match the tool's schema."
+            return f"Error executing {tool_name}: {error_msg}. Please check your arguments and try again."
 
     async def run(self, task_id: str, repo_name: str, issue_number: int, repo_path: str = None, **kwargs) -> bool:
         """エージェントの実行ループ (ADK Runner を使用)"""
@@ -187,7 +214,8 @@ class CoderAgent:
                 ):
                     # トレース: AI の思考プロセスやツール呼び出しを可視化
                     event_type = type(event).__name__
-                    logger.info(f"[{task_id}] --- ADK Event: {event_type} ---")
+                    # 生のイベントデータを詳細にデバッグ出力
+                    logger.debug(f"[{task_id}] Raw Event Object: {event}")
                     
                     # 安全なプロパティアクセス
                     model_response = getattr(event, 'model_response', None)
@@ -198,16 +226,28 @@ class CoderAgent:
                             text = "".join([p.text for p in parts if hasattr(p, 'text') and p.text])
                             if text:
                                 logger.info(f"[{task_id}] AI Response: \n{text}")
+                            
+                            # 関数呼び出しの生データを candidates から直接確認
+                            for part in parts:
+                                if hasattr(part, 'function_call'):
+                                    logger.info(f"[{task_id}] Raw Function Call (Parts): {part.function_call.name}({part.function_call.args})")
                         except (IndexError, AttributeError) as e:
-                            logger.debug(f"Could not extract text from model_response: {e}")
+                            logger.debug(f"Could not extract text or function_call from model_response: {e}")
                     
                     tool_call = getattr(event, 'tool_call', None)
                     if tool_call:
-                        logger.info(f"[{task_id}] Tool Call: {getattr(tool_call, 'name', 'unknown')}({getattr(tool_call, 'args', {})})")
+                        # 生の引数データを確認するためのデバッグログ
+                        args = getattr(tool_call, 'args', {})
+                        logger.info(f"[{task_id}] Tool Call (from Event): {getattr(tool_call, 'name', 'unknown')}")
+                        logger.debug(f"[{task_id}] Raw Tool Args: {args}")
 
+                    # ツール応答の取得とログ出力
                     tool_response = getattr(event, 'tool_response', None)
+                    if not tool_response:
+                        # 他のプロパティ名で存在するか確認 (ADK のバージョンによる差分対策)
+                        tool_response = getattr(event, 'response', None)
+                    
                     if tool_response:
-                        # tool_response が文字列でない場合も考慮
                         res_str = str(tool_response)
                         logger.info(f"[{task_id}] Tool Response: {res_str[:200]}...")
 
