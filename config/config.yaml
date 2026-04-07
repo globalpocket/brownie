@@ -12,12 +12,12 @@ agent:
   repositories:
     - "globalpocket/brownie"
 llm:
-  endpoint: "http://localhost:11434/v1"
+  endpoint: "http://localhost:8080/v1"
   timeout_sec: 180
   tokenizer: "auto"
   models:
-    router: "llama3:latest"     # インストール済みモデルに変更
-    coder: "qwen3-coder:30b"  # 実装・自己修正ループ用（重量）
+    router: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+    coder: "mlx-community/Qwen2.5-Coder-32B-Instruct-4bit"  # 32B-Instruct-4bit for implementation/self-correction
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000

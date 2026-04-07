@@ -41,10 +41,8 @@ case $OS in
     
     # git-lfs
     if ! check_tool "git-lfs"; then TOOLS_TO_INSTALL+=("git-lfs"); fi
-    # Docker (Application または CLI)
+    # Docker (Application or CLI)
     if ! check_tool "docker" "Docker.app"; then TOOLS_TO_INSTALL+=("docker" "docker-compose"); fi
-    # Ollama (Application または CLI)
-    if ! check_tool "ollama" "Ollama.app"; then TOOLS_TO_INSTALL+=("ollama"); fi
     # Node.js (for Repomix & Prettier)
     if ! check_tool "node"; then TOOLS_TO_INSTALL+=("node"); fi
     # ast-grep (Semantic search/replace)
@@ -76,9 +74,7 @@ case $OS in
         sudo npm install -g @ast-grep/cli || true
     fi
     
-    if ! check_tool "ollama"; then
-        curl -fsSL https://ollama.com/install.sh | sh
-    fi
+    sudo apt install -y git-lfs docker.io docker-compose-v2 curl build-essential nodejs npm
     ;;
   *)
     echo "Unsupported OS: $OS"
@@ -111,6 +107,7 @@ fi
 
 echo "Syncing Python dependencies (including Pydantic)..."
 $UV_CMD sync
+$UV_CMD pip install mlx-lm
 
 # 4. ディレクトリ初期化
 echo "Initializing directories..."
@@ -151,16 +148,9 @@ else
     echo "Warning: Docker not found. Skipping service initialization."
 fi
 
-# 7. LLM 推奨モデルの事前プル (Role-based Routing 用)
-if command -v ollama &> /dev/null; then
-    echo "Pulling recommended models for dynamic routing..."
-    # Router: 軽量モデル (8B)
-    ollama pull llama3.1:8b
-    # Coder: 重量モデル (30B)
-    ollama pull qwen3-coder:30b
-else
-    echo "Warning: Ollama not found. Skipping model pull."
-fi
+# 7. LLM 推奨モデルの準備 (MLX)
+# MLX は初回起動時に huggingface_hub を通じてモデルを自動的にダウンロード・キャッシュします。
+# 事前の pull 処理は不要です。
 
 # 8. 高度な解析エンジンのセットアップ (Tree-sitter Grammars)
 echo "Setting up advanced analysis engine (Tree-sitter)..."

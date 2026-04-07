@@ -26,9 +26,10 @@ class CoderAgent:
         
         # モデルの設定 (LiteLLM 形式)
         # 例: ollama/llama3, openai/gpt-4
-        raw_model = config['llm']['models'].get('coder', 'ollama/llama3:latest')
-        if "/" not in raw_model:
-            self.model_name = f"ollama/{raw_model}"
+        raw_model = config['llm']['models'].get('coder', 'mlx-community/Qwen2.5-Coder-32B-Instruct-4bit')
+        # MLX server is OpenAI compatible, so LiteLLM needs the 'openai/' prefix
+        if not raw_model.startswith("openai/"):
+            self.model_name = f"openai/{raw_model}"
         else:
             self.model_name = raw_model
             
@@ -64,14 +65,11 @@ class CoderAgent:
         # MCP ツールを ADK が扱える形式にラップする
         tools = self._get_mcp_tools()
         
-        # LiteLLM が Ollama 等のカスタムエンドポイントを認識できるように環境変数を設定
+        # LiteLLM/MLX 接続用の設定 (OpenAI 互換サーバー)
         if self.base_url:
-            # LiteLLM/Ollama 接続用の標準的な設定
             os.environ["OPENAI_API_BASE"] = self.base_url
-            os.environ["OLLAMA_API_BASE"] = self.base_url.replace("/v1", "")
             os.environ["LITELLM_API_BASE"] = self.base_url
-            # Ollama 直接指定時のための追加設定
-            os.environ["OLLAMA_HOST"] = os.environ["OLLAMA_API_BASE"]
+            os.environ["OPENAI_API_KEY"] = "EMPTY"
 
         agent = LlmAgent(
             name="BROWNIE_Coder",

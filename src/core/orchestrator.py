@@ -336,23 +336,28 @@ class Orchestrator:
             await asyncio.sleep(10)
 
     async def _check_llm_health(self):
-        """LLMサーバーの死活監視と自動起動"""
-        base_url = self.config['llm']['endpoint'].replace("/v1", "")
+        """LLMサーバーの死活監視と自動起動 (MLX版)"""
+        # MLX server (OpenAI compatible) endpoint
+        base_url = self.config['llm']['endpoint']
         try:
-            resp = await self.http_client.get(base_url + "/api/tags", timeout=5.0)
+            resp = await self.http_client.get(f"{base_url}/models", timeout=5.0)
             if resp.status_code == 200:
                 return
         except Exception:
             pass
         
         try:
-            subprocess.Popen(["ollama", "serve"], 
+            model_name = self.config['llm']['models']['coder']
+            logger.info(f"Starting MLX Server with model: {model_name}")
+            # MLX server startup command
+            subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
                              stdout=subprocess.DEVNULL, 
                              stderr=subprocess.DEVNULL,
                              start_new_session=True)
-            await asyncio.sleep(10)
-        except Exception:
-            pass
+            # MLXはモデルのメモリ展開に時間がかかるため長めに待機
+            await asyncio.sleep(20)
+        except Exception as e:
+            logger.error(f"Failed to start MLX server: {e}")
 
     # --- Knowledge MCP Server ライフサイクル管理 (Phase 2) ---
 

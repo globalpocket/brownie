@@ -57,18 +57,11 @@ if [ -f "$HOME/.zshrc" ]; then
     fi
 fi
 
-# 7. LLM モデルの削除 (Ollama)
-if command -v ollama &> /dev/null; then
-    read -p "Do you want to remove the Ollama models used by Brownie (qwen3-coder)? [y/N]: " REMOVE_MODELS
-    if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
-        echo "Removing Ollama models..."
-        ollama rm llama3.1:8b || true
-        ollama rm qwen3-coder:30b || true
-        # --- Clean up legacy models ---
-        ollama rm qwen2.5-coder:7b || true
-        ollama rm qwen2.5-coder:14b || true
-        ollama rm qwen2.5-coder:32b || true
-    fi
+# 7. LLM モデルキャッシュの削除 (MLX/HuggingFace)
+read -p "Do you want to remove the MLX models (HuggingFace cache) used by Brownie? [y/N]: " REMOVE_MODELS
+if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
+    echo "Removing MLX model cache..."
+    rm -rf "$HOME/.cache/huggingface/hub/models--mlx-community*"
 fi
 
 # 8. システムツール (brew/aptで入れたもの) について
