@@ -185,7 +185,7 @@ class CoderAgent:
                 async for event in self.runner.run_async(
                     user_id="brownie_operator",
                     session_id=task_id,
-                    new_message=new_message
+                    new_message=types.Content(parts=[types.Part(text=new_message)], role="user")
                 ):
                     # トレース: AI の思考プロセスやツール呼び出しを可視化
                     event_type = type(event).__name__
