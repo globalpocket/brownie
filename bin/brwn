@@ -12,6 +12,12 @@ from pathlib import Path
 base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(base_dir)
 
+# macOS で Docker Desktop を使用している場合の DOCKER_HOST 自動設定
+if sys.platform == 'darwin' and 'DOCKER_HOST' not in os.environ:
+    default_sock = os.path.expanduser("~/.docker/run/docker.sock")
+    if os.path.exists(default_sock):
+        os.environ['DOCKER_HOST'] = f"unix://{default_sock}"
+
 # 仮想環境 (uv) の Python を強制使用する再実行ロジック
 venv_python = os.path.join(base_dir, ".venv", "bin", "python")
 if os.path.exists(venv_python) and sys.executable != venv_python:
