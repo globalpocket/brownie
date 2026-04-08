@@ -22,3 +22,8 @@
     - Before finishing or committing, you MUST run `format_code` to ensure code style consistency.
     - If you introduce sensitive logic, run `scan_security` to check for vulnerabilities.
     - Use the feedback from these tools to self-correct your code.
+14. **GitHub Wiki Synchronization (MANDATORY)**: 
+    - If a task involves changing files in the `docs/` directory, you MUST synchronize these changes to the GitHub Wiki after committing/pushing to the main repository.
+    - **Methodology**:
+        1. Attempt `git subtree push --prefix docs wiki master`.
+        2. If consistent errors (e.g., "no new revisions found") occur, you MUST perform a manual sync: clone the wiki to a temporary directory, copy all `.md` files from `docs/` to the wiki root, commit, and push.
