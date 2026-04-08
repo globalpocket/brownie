@@ -2,6 +2,7 @@ import docker
 import os
 import yaml
 import logging
+from .context import WorkspaceContext
 
 logger = logging.getLogger(__name__)
 
@@ -9,8 +10,7 @@ class SandboxManager:
     def __init__(self, user_id: int, group_id: int):
         self.user_id = user_id
         self.group_id = group_id
-        self.workspace_root = None
-        self.reference_root = None
+        self.context = None
         try:
             self.client = docker.from_env()
             self.client.ping()
@@ -76,42 +76,36 @@ class SandboxManager:
 
     def set_workspace_root(self, root_path: str):
         """ワークスペースのルートパスを設定する"""
-        self.workspace_root = os.path.realpath(root_path)
-        logger.info(f"Sandbox workspace root set to: {self.workspace_root}")
+        if self.context:
+            self.context.root_path = os.path.realpath(root_path)
+        else:
+            self.context = WorkspaceContext(root_path)
+        logger.info(f"Sandbox workspace root set via context: {self.context.root_path}")
 
     def set_reference_root(self, ref_path: str):
         """参照用（ローカル）ルートを設定する"""
-        self.reference_root = os.path.realpath(ref_path)
-        logger.info(f"Sandbox reference root set to: {self.reference_root}")
+        if not self.context:
+            # root がない状態で ref だけ設定されるケースは想定外だが一応対応
+            self.context = WorkspaceContext(".", ref_path)
+        else:
+            self.context.reference_path = os.path.realpath(ref_path)
+        logger.info(f"Sandbox reference root set via context: {self.context.reference_path}")
 
     def _get_full_path(self, path: str, rw: bool = False) -> str:
-        """パスの正規化とセキュリティチェック (設計書 4.2)"""
-        if not self.workspace_root:
-            raise RuntimeError("Workspace root is not set.")
+        """パスの解決を WorkspaceContext に委譲する"""
+        if not self.context:
+            raise RuntimeError("WorkspaceContext (root) is not set.")
         
-        # ワークスペース内として解決を試みる。
-        # Pythonの os.path.join は絶対パスが与えられた場合後ろの引数のみを返す。
-        # ユーザー環境の実パスを許容するため、そのまま結合・解決し、後続のスコープ検証に委ねる。
-        full_path = os.path.normpath(os.path.join(self.workspace_root, path))
+        # WorkspaceContext.resolve_path は Path オブジェクトを返す
+        full_path = self.context.resolve_path(path, strict=True)
         
-        # 書き込み操作(rw=True)の場合、必ずワークスペース内であることを強制
+        # 書き込み操作の場合、root_path 内であることを追加確認（Context側でも strict なら弾かれるが念押し）
         if rw:
-            if not full_path.startswith(self.workspace_root):
+            if not str(full_path).startswith(str(self.context.root_path)):
                 logger.error(f"Write operation denied outside workspace: {full_path}")
                 raise PermissionError("Write access denied outside the workspace area.")
-            return full_path
-
-        # 3. 読み込み操作の場合、ワークスペースになければ参照用リポジトリ(Local)を探す
-        if os.path.exists(full_path):
-            return full_path
         
-        if self.reference_root:
-            ref_path = os.path.normpath(os.path.join(self.reference_root, path))
-            # 参照ルート内かつ実在する場合のみ許可
-            if ref_path.startswith(self.reference_root) and os.path.exists(ref_path):
-                return ref_path
-            
-        return full_path
+        return str(full_path)
 
     async def list_files(self, path: str = ".", max_depth: int = 1) -> str:
         """指定されたパスのファイル一覧を取得する (max_depth で制御可能)"""

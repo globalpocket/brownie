@@ -111,7 +111,7 @@ $UV_CMD pip install mlx-lm
 
 # 4. LLM モデルの事前ダウンロード (MLX 用)
 echo "Downloading Qwen 3.5 (MoE) model for MLX. This may take a while..."
-$UV_CMD run python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3.5-35B-A3B-4bit')"
+$UV_CMD run python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3.5-27B-4bit')"
 
 # 4. ディレクトリ初期化
 echo "Initializing directories..."
