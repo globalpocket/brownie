@@ -16,6 +16,7 @@ llm:
   executor_endpoint: "http://localhost:8081/v1"
   timeout_sec: 180
   tokenizer: "auto"
+  model_dir: "~/.local/share/brownie/models"
   models:
     planner: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
     executor: "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"

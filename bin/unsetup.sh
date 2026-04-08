@@ -12,6 +12,18 @@ if command -v docker-compose &> /dev/null || docker compose version &> /dev/null
     fi
 fi
 
+# 1. 設定の読み込み (削除前に実施)
+MODEL_DIR="~/.local/share/brownie/models"
+if [ -f "config/config.yaml" ]; then
+    # uv が使える場合は優先使用、使えない場合は grep で簡易取得
+    if command -v uv &> /dev/null && [ -d ".venv" ]; then
+        MODEL_DIR=$(uv run python -c "import yaml; print(yaml.safe_load(open('config/config.yaml'))['llm'].get('model_dir', '~/.local/share/brownie/models'))" 2>/dev/null || echo "~/.local/share/brownie/models")
+    else
+        MODEL_DIR=$(grep 'model_dir:' config/config.yaml | awk '{print $2}' | tr -d '"' | tr -d "'" || echo "~/.local/share/brownie/models")
+    fi
+fi
+EXPANDED_MODEL_DIR=$(echo $MODEL_DIR | sed "s|^~|$HOME|")
+
 # 1. Python 仮想環境の削除
 if [ -d ".venv" ]; then
     echo "Removing Python virtual environment (.venv)..."
@@ -60,10 +72,10 @@ if [ -f "$HOME/.zshrc" ]; then
 fi
 
 # 7. Persistent Model Storage (永続化モデル) の削除
-read -p "Do you want to remove all AI models stored in ~/.local/share/brownie/models/? [y/N]: " REMOVE_MODELS
+read -p "Do you want to remove all AI models stored in $MODEL_DIR? [y/N]: " REMOVE_MODELS
 if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
     echo "Removing persistent model directory..."
-    rm -rf "$HOME/.local/share/brownie/models"
+    rm -rf "$EXPANDED_MODEL_DIR"
     
     # 以前のキャッシュディレクトリが残っている場合も念のため削除
     echo "Cleaning up legacy cache directories if exist..."

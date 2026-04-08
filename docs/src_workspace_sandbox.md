@@ -1,46 +1,32 @@
 # Blueprint: `src/workspace/sandbox.py`
 
 ## 1. 責務 (Responsibility)
-ワークスペース内での安全なファイル操作とコード実行環境（サンドボックス）を提供する。`Docker` を利用した実行環境の管理と、`WorkspaceContext` を通じたセキュリティ境界の維持を担当する。AI（エージェント）が直接ホストのファイルシステムを破壊したり、不適切なプロセスを起動したりすることを防ぐガードレールとして機能する。
+`SandboxManager` は、コードの実行やファイル操作を行うための安全なコンテキストを提供します。Docker を使用したプロセス分離（将来の拡張）と、`WorkspaceContext` を活用した「ワークスペース外への書き込み防止」というセキュリティ境界の維持を担います。
 
 ## 2. 復元要件 (Recreation Requirements for AI)
-本モジュールを再実装する場合、以下のコントラクトを厳格に守ること。
 
 ### クラス: `SandboxManager`
-**初期化引数:**
-- `user_id` (int): サンドボックス内での実行ユーザーID。
-- `group_id` (int): 同グループID。
 
-**コンストラクタの挙動:**
-- `docker.from_env()` で接続を試み、失敗した場合は Mac/Linux の標準的なソケットパス (`~/.docker/run/docker.sock`, `/var/run/docker.sock`) を順次試行して `DockerClient` を確立する。
+**初期化引数:**
+- `user_id` (int), `group_id` (int): サンドボックス内およびファイル操作で使用する UID/GID。
 
 **公開メソッド:**
-1. `sanitize_compose_yaml(yaml_content: str) -> str`
-   - **入力**: LLM が生成した `docker-compose.yml` 文字列。
-   - **振る舞い**:
-     1. `privileged` フラグを削除。
-     2. ホストパスをマウントする `volumes` をチェックし、`/etc`, `/root`, `/` などの機密パスであれば削除。
-     3. `user` フィールドに `user_id:group_id` を強制設定。
-   - **出力**: セキュリティ加工済みの YAML 文字列。
 
-2. `async list_files(path: str = ".", max_depth: int = 1) -> str`
-   - **振る舞い**: `os.walk` を使用。ディレクトリは `[DIR]`, ファイルは `[FILE]` のプレフィックスを付ける。ドットファイルは除外する。パスが存在しない場合は AI への修正ヒントを返す。
+1. `set_workspace_root(root_path) -> None`
+   - **振る舞い**: `WorkspaceContext` にルートパスを設定（または初期化）します。
+2. `read_file(path) -> str` (Async)
+   - **振る舞い**: `WorkspaceContext.resolve_path` を使用してパスを解決し、ファイルを読み込みます。ディレクトリの場合はエラーを返し、存在しない場合は AI への修正ヒントを返します。
+3. `write_file(path, content) -> str` (Async)
+   - **入力**: ファイルパス、書き込む内容。
+   - **振る舞い**: パスを安全に解決し、ディレクトリを自動作成して書き込みます。
+   - **例外発生**: 解決されたパスがワークスペース外を指す場合、`PermissionError` を投げます。
+4. `list_files(path, max_depth) -> str` (Async)
+   - **振る舞い**: 指定された深さまで再帰的にファイルリストを生成します。
 
-3. `async read_file(path: str) -> str`
-   - **安全性**: `_get_full_path` で境界外アクセスを遮断。
-   - **追加チェック**: 大文字小文字を区別しない OS 対策として `os.listdir` による実名存在チェック（Case-sensitive check）を行う。
-
-4. `async write_file(path: str, content: str) -> str`
-   - **振る舞い**: 親ディレクトリを自動生成 (`os.makedirs`)。`rw=True` 付きでパス解決し、境界外書き込みを構造的に遮断する。
-
-5. `cleanup_orphans()`
-   - **振る舞い**: `brownie_task_id` ラベルを持つコンテナのうち、実行中ではないものを一括削除する。また Docker ボリュームの `prune` を実行。
-
-**内部補助メソッド:**
-- `_get_full_path(path: str, rw: bool = False) -> str`
-  - `self.context (WorkspaceContext)` に解決を委譲。`rw=True` の場合は、結果が `root_path` の配下にあることを `startswith` で再検証し、違反時は `PermissionError` を投げる。
+### セキュリティコントラクト (Agent-Friendly)
+- 全てのファイル操作前に `_get_full_path` を通じてパスを検証します。
+- `sanitize_compose_yaml` メソッドにより、サンドボックス定義の特権昇格や不正なマウントを事前にブロックします。
 
 ## 3. 依存関係 (Dependencies)
-- 標準ライブラリ: `os`, `yaml`, `logging`
-- 外部依存: `docker` (SDK)
-- 内部モジュール: `src.workspace.context.WorkspaceContext`
+- **コアモジュール**: `src.workspace.context`
+- **外部**: `docker` (docker-py), `pyyaml`, `os`

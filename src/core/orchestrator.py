@@ -248,7 +248,8 @@ class Orchestrator:
                     logger.warning(f"Failed to cleanup processes on port {port}: {e}")
 
                 env = os.environ.copy()
-                env["HF_HOME"] = os.path.expanduser("~/.local/share/brownie/models")
+                model_dir = self.config.get('llm', {}).get('model_dir', '~/.local/share/brownie/models')
+                env["HF_HOME"] = os.path.expanduser(model_dir)
                 
                 subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name, "--port", str(port)], 
                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 

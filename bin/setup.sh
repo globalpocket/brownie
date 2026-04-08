@@ -111,8 +111,9 @@ $UV_CMD pip install mlx-lm
 
 # 4. LLM モデルの事前ダウンロード (MLX 用)
 echo "Downloading models dynamically from config.yaml..."
-# モデルの保存先を永続化ディレクトリに設定
-export HF_HOME="$HOME/.local/share/brownie/models"
+# モデルの保存先を config/config.yaml から取得 (デフォルト: ~/.local/share/brownie/models)
+MODEL_DIR=$($UV_CMD run python -c "import yaml; print(yaml.safe_load(open('config/config.yaml'))['llm'].get('model_dir', '~/.local/share/brownie/models'))")
+export HF_HOME=$(echo $MODEL_DIR | sed "s|^~|$HOME|")
 mkdir -p "$HF_HOME"
 
 $UV_CMD run python -c "

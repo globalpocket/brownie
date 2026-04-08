@@ -1,43 +1,39 @@
 # Blueprint: `src/core/orchestrator.py`
 
 ## 1. 責務 (Responsibility)
-Brownie システムのセントラルエンジン。設定の読み込み、各コンポーネント（State, WorkerPool, GitHub, Sandbox, MCP）の統合、リポジトリの監視（ポーリング）、およびタスク実行のオーケストレーションを担う。システムのブートシーケンスから自律的なループの管理までを全うする。
+`Orchestrator` は BROWNIE システムの司令塔であり、GitHub リポジトリの監視、MLX サーバー（Planner/Executor）のライフサイクル管理、およびエージェントの実行コーディネーションを担います。
+
+最新のアーキテクチャでは、**Multi-Agent（マルチエージェント）アーキテクチャ**における **Planner-Executor（計画者と実行者）パターン**をサポートするため、2つの異なるポート (8080, 8081) で MLX サーバーを並行稼働・監視する責務を持ちます。
 
 ## 2. 復元要件 (Recreation Requirements for AI)
-本モジュールを再実装する場合、以下のコントラクトを厳格に守ること。
 
 ### クラス: `Orchestrator`
+
 **初期化引数:**
 - `config_path` (str): `config.yaml` へのパス。
 
-**主要メソッド:**
-1. `async start()`
-   - **振る舞い**:
-     1. DB接続、Orphaned Task（孤立タスク）のリセット、WorkerPool の実行開始。
-     2. WDCA (Whole Directory Context Awareness) シーケンスの実行: 全対象リポジトリをクローンし、`CodeAnalyzer` でシンボルマップを事前構築。
-     3. メイン終了まで `_poll_repository` と `_check_llm_health` を一定間隔でループ実行。
-   - **例外処理**: `GitHubRateLimitException` 発生時はリセット時刻までスリープ。
+**公開メソッド:**
 
-2. `async _poll_repository(repo_name: str)`
-   - **振る舞い**: GitHub API を通じて Issue と Mention を取得し、`_queue_if_needed` を呼び出す。
+1. `start() -> None` (Async)
+   - **振る舞い**: データベースの初期化、リポジトリの同期（クローン）、およびメインのポーリングループを開始します。
+   - **ループ内容**:GitHub の Issue/Mention 監視、LLM ヘルスチェック (`_check_llm_health`)、サンドボックスの定期掃除を実行。
 
-3. `async _queue_if_needed(...)`
-   - **安全性チェック**: すでに同一 Issue に対してアクティブなタスクがある場合や、完了ラベルが付与されている場合はキューイングをスキップする。
-   - **タスク投入**: `State.update_task` で状態を `InQueue` にし、`WorkerPool.add_task` に `_execute_task` を登録。
+**内部主要メソッド (契約):**
 
-4. `async _execute_task(task_id: str, repo_name: str, issue_number: int)`
-   - **フロー**:
-     1. `MCPServerManager` のコンテキストを開始。
-     2. `WorkspaceContext` を生成し、最新のソースコードを同期。
-     3. Workspace/Knowledge MCP サーバーを起動。
-     4. `CoderAgent` を依存注入（Dependency Injection）で初期化。
-     5. GitHub Issue/Comment から命令を抽出し、`agent.run` を実行。
-     6. **成功時**: `GitOperations` を用いて変更をコミットし、GitHub 上で Pull Request を作成。
-     7. **事後処理**: ハートビートの停止、状態の更新（Completed/Failed/Suspended）、GitHub への報告コメント投稿。
+1. `_check_llm_health() -> None` (Async)
+   - **振る舞い**: 
+     - Port 8080 (Planner) と Port 8081 (Executor) の両方の `/models` エンドポイントをチェックします。
+     - 応答がない場合、`lsof -ti :port` を使用して該当ポートの PID を特定し、`kill -9` で強制終了させてから再起動します。
+     - `mlx_lm.server` を起動する際、`--port` 引数でポートを指定し、`HF_HOME` 環境変数でモデルパスを固定します。
+   - **制約**: デュアルモデル展開のため、M1 Pro 32GB 以上のメモリリソースを前提とします。
 
-5. `async _check_llm_health()`
-   - **副作用**: LLMサーバー（MLX等）への疎通確認を行い、応答がない場合は `subprocess.Popen` を用いてバックグラウンドでサーバーを再起動する。
+2. `_execute_task(task_id, repo_name, issue_number) -> None` (Async)
+   - **振る舞い**: 
+     - 各タスク専用の `MCPServerManager` と `WorkspaceContext` を生成。
+     - `CoderAgent` (Planner) を初期化し、Issue の内容に基づいてタスクを実行。
+     - 実行結果（成功・中断・失敗）に応じて、GitHub へのラベル付与とサマリーの投稿を行います。
 
 ## 3. 依存関係 (Dependencies)
-- 内部モジュール: `StateManager`, `WorkerPool`, `CoderAgent`, `GitHubClientWrapper`, `SandboxManager`, `WorkspaceContext`, `MCPServerManager`, `CodeAnalyzer`, `GitOperations`
-- 外部依存: `yaml`, `httpx`, `asyncio`
+- **コアモジュール**: `src.core.agent`, `src.core.state`, `src.core.worker_pool`
+- **インフラ**: `src.gh_platform.client`, `src.workspace.sandbox`, `src.mcp_server.manager`
+- **外部**: `httpx`, `subprocess`, `asyncio`, `pyyaml`

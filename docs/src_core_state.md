@@ -1,39 +1,30 @@
 # Blueprint: `src/core/state.py`
 
 ## 1. 責務 (Responsibility)
-Brownie システムの永続的な状態管理を担当する。`SQLite` (aiosqlite) をバックエンドに使用し、タスクの進捗、実行結果、メタデータ（context）を管理する。システムのクラッシュ時や再起動時における「整合性の担保」と「リカバリー」を主要な役割とし、セントラルデーモンとしての信頼性を支える。
+`StateManager` は、BROWNIE の長期記憶と実行状態を管理します。SQLite をバックエンドに使用し、アプリケーションのクラッシュや再起動を跨いでタスクの整合性を維持することを目的としています。
 
 ## 2. 復元要件 (Recreation Requirements for AI)
-本モジュールを再実装する場合、以下のコントラクトを厳格に守ること。
 
 ### クラス: `StateManager`
+
 **初期化引数:**
-- `db_path` (str): SQLite データベースファイルへのパス（自動で `expanduser` とディレクトリ作成を行うこと）。
+- `db_path` (str): SQLite データベースファイルへのパス。
 
-**主要メソッド:**
-1. `async connect()`
-   - **振る舞い**:
-     1. DB接続を確立。
-     2. パフォーマンスと堅牢性の両立のため `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL` を設定。
-     3. `_check_integrity` 実行後、`_init_tables` で初期化。
+**公開メソッド:**
 
-2. `async _init_tables()`
-   - **スキーマ**:
-     - `tasks` テーブル: `id` (PK), `repo_full_name`, `issue_number`, `pr_number`, `status`, `context` (JSON), `updated_at`, `created_at`。
-     - `metrics` テーブル: `key` (PK), `value`, `updated_at`。
+1. `connect() -> None` (Async)
+   - **振る舞い**: データベースに接続し、` journal_mode=WAL` を有効化して並行性を高めます。初回起動時はテーブル作成と整合性チェック (`_check_integrity`) を行います。
+2. `update_task(task_id, status, repo_name, ...) -> None` (Async)
+   - **振る舞い**: `INSERT OR REPLACE` ロジックを用いて、タスクのメイン状態 (InProgress, Completed 等) を更新します。
+3. `update_task_context(task_id, context_delta) -> None` (Async)
+   - **入力**: タスクID、更新したいコンテキストの差分 (Dict)。
+   - **振る舞い**: 保存されている JSON 型の `context` を読み込み、新しい値をマージしてから保存し直します。
+4. `reset_orphaned_tasks() -> None` (Async)
+   - **振る舞い**: 起動時に実行中だったタスク (未完了のもの) を一括して `Failed` 状態へ遷移させ、システムの健全性を回復します。
 
-3. `async update_task(task_id: str, status: str, repo_name: str, ...)`
-   - **振る舞い**: `INSERT ... ON CONFLICT(id) DO UPDATE` を使用し、既存タスクの状態をアトミックに更新する。`context` 引数が渡された場合は JSON 形式にシリアライズして保存する。
-
-4. `async get_task(task_id: str) -> Optional[Dict]`
-   - **出力**: タスク情報を Python 辞書形式で返す。`context` カラムの内容は自動的に `json.loads` でパースすること。
-
-5. `async get_active_tasks_for_issue(repo_name: str, issue_number: int) -> List[Dict]`
-   - **振る舞い**: 同一リポジトリ/Issue 番号で status が `InProgress` または `InQueue` のタスクを全て取得する。多重実行の防止に利用される。
-
-6. `async reset_orphaned_tasks()`
-   - **リカバリー要件**: 起動時に実行される。`Completed`, `Failed`, `Suspended` 以外の（＝中断された可能性がある）全てのタスク状態を強制的に `Failed` にリセットする。
+### データコントラクト
+- `tasks` テーブル: `id`, `status`, `context` (JSON), `updated_at` 等。
+- `status` 定義: `InQueue`, `InProgress`, `Completed`, `Failed`, `Suspended`。
 
 ## 3. 依存関係 (Dependencies)
-- 標準ライブラリ: `os`, `logging`, `json`, `pathlib`
-- 外部依存: `aiosqlite`
+- **外部**: `aiosqlite`, `json`, `pathlib`, `logging`
