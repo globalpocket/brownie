@@ -27,3 +27,6 @@
     - **Methodology**:
         1. Attempt `git subtree push --prefix docs wiki master`.
         2. If consistent errors (e.g., "no new revisions found") occur, you MUST perform a manual sync: clone the wiki to a temporary directory, copy all `.md` files from `docs/` to the wiki root, commit, and push.
+15. **Communication Language (MANDATORY)**:
+    - All generated outputs (Markdown files, GitHub comments, issue summaries, and responses to the user) MUST be written in the language specified by the `BROWNIE_LANGUAGE` environment variable in the `.env` file.
+    - Before generating text, you MUST check the `.env` file for this setting. If not found, default to Japanese.

@@ -109,7 +109,55 @@ echo "Syncing Python dependencies (including Pydantic)..."
 $UV_CMD sync
 $UV_CMD pip install mlx-lm
 
-# 4. LLM モデルの事前ダウンロード (MLX 用)
+# 4. ディレクトリ初期化
+echo "Initializing directories..."
+mkdir -p ~/.local/share/brownie/
+mkdir -p ~/.cache/brownie/
+mkdir -p logs
+
+# 5. 環境設定 (.env)
+if [ ! -f ".env" ]; then
+    touch .env
+fi
+
+if ! grep -q "GITHUB_TOKEN=" .env; then
+    echo "Configuring GitHub Access Token..."
+    read -p "Enter your GitHub Personal Access Token (classic, repo scope): " TOKEN
+    if [[ -n "$TOKEN" ]]; then
+        echo "GITHUB_TOKEN=$TOKEN" >> .env
+        echo "GITHUB_TOKEN added to .env."
+    else
+        echo "Warning: GITHUB_TOKEN was not provided. You will need to set it manually in .env."
+    fi
+fi
+
+if ! grep -q "BROWNIE_LANGUAGE=" .env; then
+    echo "Select your preferred communication language:"
+    echo "1) Japanese (日本語)"
+    echo "2) English"
+    echo "3) Chinese (简体中文)"
+    echo "4) Chinese (繁體中文)"
+    echo "5) Korean (한국어)"
+    echo "6) French (Français)"
+    echo "7) German (Deutsch)"
+    echo "8) Spanish (Español)"
+    read -p "Enter Choice [1-8, default: 1]: " LANG_CHOICE
+    case $LANG_CHOICE in
+        1) LANG="Japanese";;
+        2) LANG="English";;
+        3) LANG="Chinese (Simplified)";;
+        4) LANG="Chinese (Traditional)";;
+        5) LANG="Korean";;
+        6) LANG="French";;
+        7) LANG="German";;
+        8) LANG="Spanish";;
+        *) LANG="Japanese";;
+    esac
+    echo "BROWNIE_LANGUAGE=$LANG" >> .env
+    echo "Communication language set to: $LANG"
+fi
+
+# 6. LLM モデルの事前ダウンロード (MLX 用)
 echo "Downloading models dynamically from config.yaml..."
 # モデルの保存先を config/config.yaml から取得 (デフォルト: ~/.local/share/brownie/models)
 MODEL_DIR=$($UV_CMD run python -c "import yaml; print(yaml.safe_load(open('config/config.yaml'))['llm'].get('model_dir', '~/.local/share/brownie/models'))")
@@ -128,26 +176,6 @@ for role, model_name in models.items():
     print(f'Downloading {role} model: {model_name} (This may take a while)...')
     snapshot_download(model_name)
 "
-
-# 4. ディレクトリ初期化
-echo "Initializing directories..."
-mkdir -p ~/.local/share/brownie/
-mkdir -p ~/.cache/brownie/
-mkdir -p logs
-
-# 5. 環境設定 (.env)
-if [ ! -f ".env" ]; then
-    echo "Configuring GitHub Access Token..."
-    read -p "Enter your GitHub Personal Access Token (classic, repo scope): " TOKEN
-    if [[ -n "$TOKEN" ]]; then
-        echo "GITHUB_TOKEN=$TOKEN" > .env
-        echo ".env file created with GITHUB_TOKEN."
-    else
-        echo "Warning: GITHUB_TOKEN was not provided. You will need to set it manually in .env."
-    fi
-else
-    echo ".env file already exists. Skipping GitHub token configuration."
-fi
 
 # 6. 保守・保護設定
 if ! grep -q "alias brownie=" ~/.zshrc 2>/dev/null; then
