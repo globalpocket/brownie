@@ -49,10 +49,10 @@ BROWNIE は以下の統合されたコンポーネントで構成されていま
 BROWNIE の各モジュールに関する詳細な設計書は `docs/` ディレクトリに格納されています。
 
 - **Blueprints**: AI がシステムを完全にリバースエンジニアリング・再構築するために最適化された「厳密な設計図」です。
-  - [StateManager 設計書](docs/src_core_state.md)
-  - [MCPServerManager 設計書](docs/src_mcp_server_manager.md)
-  - [SandboxManager 設計書](docs/src_workspace_sandbox.md)
-  - [Orchestrator 設計書](docs/src_core_orchestrator.md)
+  - [StateManager 設計書](https://github.com/globalpocket/brownie/wiki/src_core_state)
+  - [MCPServerManager 設計書](https://github.com/globalpocket/brownie/wiki/src_mcp_server_manager)
+  - [SandboxManager 設計書](https://github.com/globalpocket/brownie/wiki/src_workspace_sandbox)
+  - [Orchestrator 設計書](https://github.com/globalpocket/brownie/wiki/src_core_orchestrator)
 
 ---
 
