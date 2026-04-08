@@ -37,6 +37,9 @@ class Orchestrator:
         self.http_client = httpx.AsyncClient(timeout=300.0)
         self.mcp_manager = MCPServerManager(self.project_root)
         
+        # LLM サーバーの重複起動を防ぐためのロックとフラグ
+        self._llm_startup_lock = asyncio.Lock()
+        
         # エージェントはタスク実行時に最新のコンテキストを取得して再構成するため、ここでは雛形として保持
         self.agent = None 
         self.is_running = True
@@ -214,14 +217,40 @@ class Orchestrator:
             await asyncio.sleep(10)
 
     async def _check_llm_health(self):
-        base_url = self.config['llm']['endpoint']
-        try:
-            resp = await self.http_client.get(f"{base_url}/models", timeout=5.0)
-            if resp.status_code == 200: return
-        except Exception: pass
-        
-        model_name = self.config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-27B-4bit')
-        logger.info(f"LLM Server down. Restarting MLX: {model_name}")
-        subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        # 起動待機 (省略可だが実運用では必要)
+        async with self._llm_startup_lock:
+            base_url = self.config['llm']['endpoint']
+            try:
+                resp = await self.http_client.get(f"{base_url}/models", timeout=5.0)
+                if resp.status_code == 200:
+                    return
+            except Exception:
+                pass
+            
+            model_name = self.config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-27B-4bit')
+            logger.info(f"LLM Server down or unresponsive. Cleaning up and restarting MLX: {model_name}")
+            
+            # 既存の MLX サーバープロセスをクリーンアップ (重複起動防止)
+            try:
+                subprocess.run(["pkill", "-f", "mlx_lm.server"], check=False)
+                await asyncio.sleep(2) # プロセス終了を待つ
+            except Exception as e:
+                logger.warning(f"Failed to cleanup MLX processes: {e}")
+
+            # サーバー起動 (バックグラウンドで開始)
+            subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+            
+            # 起動完了まで待機 (最大120秒)
+            max_retries = 120
+            for i in range(max_retries):
+                try:
+                    logger.info(f"Waiting for MLX Server to be ready... ({i+1}/{max_retries})")
+                    resp = await self.http_client.get(f"{base_url}/models", timeout=2.0)
+                    if resp.status_code == 200:
+                        logger.info("MLX Server is now ready.")
+                        return
+                except Exception:
+                    pass
+                await asyncio.sleep(1)
+            
+            logger.error("MLX Server failed to start within the timeout period.")
