@@ -32,6 +32,7 @@ class CoderAgent:
         self.knowledge_mcp_client = knowledge_mcp_client
         self.workspace_mcp_client = workspace_mcp_client
         self.workspace_context = workspace_context
+        self.language = os.getenv("BROWNIE_LANGUAGE", "Japanese")
         
         # モデルの設定 (Planner)
         raw_model = config['llm']['models'].get('planner', 'mlx-community/Meta-Llama-3.1-8B-Instruct-4bit')
@@ -67,6 +68,8 @@ class CoderAgent:
         if os.path.exists(common_rules_path):
             with open(common_rules_path, "r", encoding="utf-8") as f:
                 instructions.append(f.read())
+        
+        instructions.append(f"\n## Language Setting\n思考 (thought) およびユーザーへの報告は、原則として {self.language} で行ってください。\n")
         
         return "\n".join(instructions)
 
