@@ -139,6 +139,26 @@ class StateManager:
         await self.conn.commit()
         logger.info("Orphaned or stale tasks reset to Failed during startup recovery.")
 
+    async def update_task_context(self, task_id: str, context: Dict[str, Any]):
+        """タスクのcontext（サマリー等）のみを部分更新する"""
+        import json
+        
+        # 現在のコンテキストを取得
+        current_task = await self.get_task(task_id)
+        if current_task is None:
+            return
+
+        # 既存のコンテキストとマージ
+        current_context = (current_task.get("context") or {})
+        current_context.update(context)
+
+        await self.conn.execute("""
+            UPDATE tasks 
+            SET context = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (json.dumps(current_context), task_id))
+        await self.conn.commit()
+
     async def close(self):
         if self.conn:
             await self.conn.close()

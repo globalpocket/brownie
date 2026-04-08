@@ -110,8 +110,23 @@ $UV_CMD sync
 $UV_CMD pip install mlx-lm
 
 # 4. LLM モデルの事前ダウンロード (MLX 用)
-echo "Downloading Qwen 3.5 (MoE) model for MLX. This may take a while..."
-$UV_CMD run python -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/Qwen3.5-27B-4bit')"
+echo "Downloading models dynamically from config.yaml..."
+# モデルの保存先を永続化ディレクトリに設定
+export HF_HOME="$HOME/.local/share/brownie/models"
+mkdir -p "$HF_HOME"
+
+$UV_CMD run python -c "
+import yaml
+from huggingface_hub import snapshot_download
+
+with open('config/config.yaml', 'r') as f:
+    config = yaml.safe_load(f)
+
+models = config.get('llm', {}).get('models', {})
+for role, model_name in models.items():
+    print(f'Downloading {role} model: {model_name} (This may take a while)...')
+    snapshot_download(model_name)
+"
 
 # 4. ディレクトリ初期化
 echo "Initializing directories..."

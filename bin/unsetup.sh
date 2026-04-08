@@ -57,10 +57,14 @@ if [ -f "$HOME/.zshrc" ]; then
     fi
 fi
 
-# 7. LLM モデルキャッシュの削除 (MLX/HuggingFace)
-read -p "Do you want to remove the MLX models (HuggingFace cache, e.g., Qwen3.5) used by Brownie? [y/N]: " REMOVE_MODELS
+# 7. Persistent Model Storage (永続化モデル) の削除
+read -p "Do you want to remove all AI models stored in ~/.local/share/brownie/models/? [y/N]: " REMOVE_MODELS
 if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
-    echo "Removing MLX model cache..."
+    echo "Removing persistent model directory..."
+    rm -rf "$HOME/.local/share/brownie/models"
+    
+    # 以前のキャッシュディレクトリが残っている場合も念のため削除
+    echo "Cleaning up legacy cache directories if exist..."
     rm -rf "$HOME/.cache/huggingface/hub/models--mlx-community*"
 fi
 

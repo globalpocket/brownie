@@ -236,9 +236,14 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"Failed to cleanup MLX processes: {e}")
 
-            # サーバー起動 (バックグラウンドで開始)
+            # --- 変更: サーバー起動時に永続化ディレクトリ (HF_HOME) を指定 ---
+            env = os.environ.copy()
+            env["HF_HOME"] = os.path.expanduser("~/.local/share/brownie/models")
+            
             subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                             start_new_session=True, env=env)
+            # ---------------------------------------------------------------
             
             # 起動完了まで待機 (最大120秒)
             max_retries = 120

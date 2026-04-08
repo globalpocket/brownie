@@ -7,6 +7,7 @@ import subprocess
 import logging
 from logging.handlers import RotatingFileHandler
 import shutil
+import glob
 from typing import Optional
 
 # プロジェクトルートをパスに追加
@@ -36,9 +37,13 @@ class Watchdog:
         self.survival_file = survival_file
         self.process: Optional[subprocess.Popen] = None
         self.last_survival_time = time.time()
-        self.crash_count = 0
         self.max_crashes = 5
         self.is_running = True
+        
+        # --- 追加: ホットリロード用の監視設定 ---
+        self.watch_dirs = [os.path.join(base_dir, "src"), os.path.join(base_dir, "config")]
+        self.file_mtimes = self._get_all_mtimes()
+        # ----------------------------------------
 
         # シグナルハンドラの設定 (設計書 4.2 運用監視)
         signal.signal(signal.SIGINT, self._handle_exit_signal)
@@ -62,6 +67,33 @@ class Watchdog:
         
         sys.exit(0)
 
+    # --- 追加: ファイル更新日時取得メソッド ---
+    def _get_all_mtimes(self):
+        mtimes = {}
+        for d in self.watch_dirs:
+            for root, _, files in os.walk(d):
+                for f in files:
+                    if f.endswith(('.py', '.yaml', '.yml')):
+                        p = os.path.join(root, f)
+                        try:
+                            mtimes[p] = os.path.getmtime(p)
+                        except FileNotFoundError:
+                            pass
+        return mtimes
+
+    def _check_file_changes(self):
+        """ファイルの変更を検知してプロセスを再起動する"""
+        current_mtimes = self._get_all_mtimes()
+        for p, mtime in current_mtimes.items():
+            if p not in self.file_mtimes or self.file_mtimes[p] < mtime:
+                logger.info(f"Hot-reload triggered: File changed -> {p}")
+                self.file_mtimes = current_mtimes
+                if self.process:
+                    self.process.terminate() # メインプロセスをキルして再起動を誘発
+                return True
+        return False
+    # ------------------------------------------
+
     def start(self):
         """Watchdogの実行 (設計書 3.2)"""
         logger.info("Starting Brownie Watchdog...")
@@ -74,14 +106,13 @@ class Watchdog:
             # 2. 生存信号の確認
             self._check_survival()
             
-            # 3. リソース監視
-            self._monitor_resources()
+            # --- 追加: ファイル変更検知の呼び出し ---
+            self._check_file_changes()
             
-            # 終了フラグが立っていたらループを抜ける
             if not self.is_running:
                 break
                 
-            time.sleep(30)
+            time.sleep(15) # 反応速度を上げるために 30s -> 15s に短縮推奨
 
     def _handle_restart(self):
         """プロセス再起動と CrashLoopBackOff"""
