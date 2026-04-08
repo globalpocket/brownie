@@ -308,6 +308,39 @@ class GitHubClientWrapper:
             subprocess.run(["git", "checkout", "main"], cwd=repo_path, check=True)
             subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, check=True)
 
+    async def get_comment_body(self, repo_name: str, issue_number: int, comment_id: str) -> Optional[str]:
+        """各種 ID 形式（body, 数値, review-, rc-）からコメント本文を取得する"""
+        try:
+            await self._throttle(is_write=False)
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            
+            if comment_id == "body":
+                return issue.body
+                
+            if comment_id.startswith("review-"):
+                review_id = int(comment_id.split("-")[1])
+                # PullRequest オブジェクトを取得
+                pr = issue.as_pull_request()
+                # 特定の Review を ID で直接取得するメソッドがないため、一覧から探す
+                for r in pr.get_reviews():
+                    if r.id == review_id:
+                        return r.body
+                return None
+                
+            if comment_id.startswith("rc-"):
+                rc_id = int(comment_id.split("-")[1])
+                # レビューコメント（インラインコメント）を取得
+                comment = repo.get_pull_review_comment(rc_id)
+                return comment.body
+                
+            # 通常の Issue/PR コメント (数値文字列)
+            comment = issue.get_comment(int(comment_id))
+            return comment.body
+        except Exception as e:
+            logger.error(f"Failed to get comment body for {comment_id}: {e}")
+            return None
+
     async def get_mentions_to_process(self, repo_name: str) -> List[Dict[str, Any]]:
         """@mentions を含む未処理の通知/コメントを取得する"""
         try:

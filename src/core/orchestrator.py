@@ -89,11 +89,6 @@ class Orchestrator:
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする"""
-        issues = await self.gh_client.get_issues_to_process(repo_name)
-        for issue in issues:
-            task_id = f"{repo_name}#{issue.number}"
-            await self._queue_if_needed(task_id, repo_name, issue.number, issue.user.login)
-
         mentions = await self.gh_client.get_mentions_to_process(repo_name)
         for m in mentions:
             task_id = f"{repo_name}#{m['number']}:{m['comment_id']}"
@@ -166,9 +161,8 @@ class Orchestrator:
                 await self.gh_client.add_label(repo_name, issue_number, active_label)
                 
                 instruction_priority = None
-                if comment_id and comment_id != "body" and not comment_id.startswith(("review-", "rc-")):
-                    comment = target_issue.get_comment(int(comment_id))
-                    instruction_priority = comment.body
+                if comment_id and comment_id != "body":
+                    instruction_priority = await self.gh_client.get_comment_body(repo_name, issue_number, comment_id)
 
                 task_description = f"Title: {target_issue.title}\n\nBody: {target_issue.body or ''}"
                 if instruction_priority:
