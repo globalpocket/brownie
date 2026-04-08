@@ -21,8 +21,10 @@ fi
 # 2. ローカルデータの削除 (データベース, ベクトルDB 等)
 DATA_DIR="$HOME/.local/share/brownie"
 if [ -d "$DATA_DIR" ]; then
-    echo "Removing local data directory ($DATA_DIR)..."
-    rm -rf "$DATA_DIR"
+    echo "Removing local databases and memory from $DATA_DIR..."
+    # モデル以外のデータを選択的に削除
+    rm -f "$DATA_DIR/brownie.db"
+    rm -rf "$DATA_DIR/vector_db"
 fi
 
 # 3. キャッシュの削除 (Tree-sitter 文法ファイル等)
