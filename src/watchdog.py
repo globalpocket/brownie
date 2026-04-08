@@ -38,6 +38,7 @@ class Watchdog:
         self.process: Optional[subprocess.Popen] = None
         self.last_survival_time = time.time()
         self.max_crashes = 5
+        self.crash_count = 0
         self.is_running = True
         
         # --- 追加: ホットリロード用の監視設定 ---
