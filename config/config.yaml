@@ -12,12 +12,13 @@ agent:
   repositories:
     - "globalpocket/brownie"
 llm:
-  endpoint: "http://localhost:8080/v1"
+  planner_endpoint: "http://localhost:8080/v1"
+  executor_endpoint: "http://localhost:8081/v1"
   timeout_sec: 180
   tokenizer: "auto"
   models:
-    router: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
-    coder: "mlx-community/Qwen3.5-27B-4bit"  # Qwen 3.5 (MoE) for implementation/self-correction
+    planner: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+    executor: "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
 workspace:
   sandbox_user_id: 1000
   sandbox_group_id: 1000

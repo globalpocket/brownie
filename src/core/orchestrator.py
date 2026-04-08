@@ -218,44 +218,56 @@ class Orchestrator:
 
     async def _check_llm_health(self):
         async with self._llm_startup_lock:
-            base_url = self.config['llm']['endpoint']
-            try:
-                resp = await self.http_client.get(f"{base_url}/models", timeout=5.0)
-                if resp.status_code == 200:
-                    return
-            except Exception:
-                pass
+            models_config = [
+                ("planner", self.config['llm']['planner_endpoint'], 8080),
+                ("executor", self.config['llm']['executor_endpoint'], 8081)
+            ]
             
-            model_name = self.config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-27B-4bit')
-            logger.info(f"LLM Server down or unresponsive. Cleaning up and restarting MLX: {model_name}")
-            
-            # 既存の MLX サーバープロセスをクリーンアップ (重複起動防止)
-            try:
-                subprocess.run(["pkill", "-f", "mlx_lm.server"], check=False)
-                await asyncio.sleep(2) # プロセス終了を待つ
-            except Exception as e:
-                logger.warning(f"Failed to cleanup MLX processes: {e}")
-
-            # --- 変更: サーバー起動時に永続化ディレクトリ (HF_HOME) を指定 ---
-            env = os.environ.copy()
-            env["HF_HOME"] = os.path.expanduser("~/.local/share/brownie/models")
-            
-            subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
-                             start_new_session=True, env=env)
-            # ---------------------------------------------------------------
-            
-            # 起動完了まで待機 (最大120秒)
-            max_retries = 120
-            for i in range(max_retries):
+            for role, endpoint, port in models_config:
                 try:
-                    logger.info(f"Waiting for MLX Server to be ready... ({i+1}/{max_retries})")
-                    resp = await self.http_client.get(f"{base_url}/models", timeout=2.0)
+                    resp = await self.http_client.get(f"{endpoint}/models", timeout=5.0)
                     if resp.status_code == 200:
-                        logger.info("MLX Server is now ready.")
-                        return
+                        continue
                 except Exception:
                     pass
-                await asyncio.sleep(1)
-            
-            logger.error("MLX Server failed to start within the timeout period.")
+                
+                model_name = self.config['llm']['models'].get(role)
+                logger.info(f"LLM Server ({role}) down on port {port}. Restarting MLX: {model_name}")
+                
+                # ポートに基づいた特定プロセスのクリーンアップ
+                try:
+                    # lsof -ti :port で PID を取得して kill する
+                    result = subprocess.run(["lsof", "-ti", f":{port}"], capture_output=True, text=True, check=False)
+                    pids = result.stdout.strip().split("\n")
+                    for pid in pids:
+                        if pid:
+                            logger.info(f"Killing process {pid} using port {port}")
+                            subprocess.run(["kill", "-9", pid], check=False)
+                    await asyncio.sleep(1)
+                except Exception as e:
+                    logger.warning(f"Failed to cleanup processes on port {port}: {e}")
+
+                env = os.environ.copy()
+                env["HF_HOME"] = os.path.expanduser("~/.local/share/brownie/models")
+                
+                subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name, "--port", str(port)], 
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, 
+                                 start_new_session=True, env=env)
+                
+                # 起動待機
+                max_retries = 90
+                ready = False
+                for i in range(max_retries):
+                    try:
+                        resp = await self.http_client.get(f"{endpoint}/models", timeout=2.0)
+                        if resp.status_code == 200:
+                            logger.info(f"MLX Server ({role}) is now ready on port {port}.")
+                            ready = True
+                            break
+                    except Exception:
+                        pass
+                    await asyncio.sleep(1)
+                
+                if not ready:
+                    logger.error(f"MLX Server ({role}) failed to start on port {port} within timeout.")
+

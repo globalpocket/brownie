@@ -2,6 +2,8 @@ import os
 import logging
 import asyncio
 import contextlib
+import httpx
+import json
 from typing import Dict, Any, List, Optional, Union
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
@@ -31,14 +33,18 @@ class CoderAgent:
         self.workspace_mcp_client = workspace_mcp_client
         self.workspace_context = workspace_context
         
-        # モデルの設定
-        raw_model = config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-27B-4bit')
+        # モデルの設定 (Planner)
+        raw_model = config['llm']['models'].get('planner', 'mlx-community/Meta-Llama-3.1-8B-Instruct-4bit')
         if not raw_model.startswith("openai/"):
             self.model_name = f"openai/{raw_model}"
         else:
             self.model_name = raw_model
             
-        self.base_url = config['llm']['endpoint']
+        self.base_url = config['llm']['planner_endpoint']
+        
+        # Executor の設定
+        self.executor_endpoint = config['llm']['executor_endpoint']
+        self.executor_model = config['llm']['models'].get('executor', 'mlx-community/Qwen2.5-Coder-7B-Instruct-4bit')
         
         # プロンプトの読み込み
         self.instructions = self._load_instructions()
@@ -103,7 +109,8 @@ class CoderAgent:
             self.list_files,
             self.run_command,
             self.get_code_flow,
-            self.semantic_search
+            self.semantic_search,
+            self.ask_coding_expert
         ]
 
     # --- ツール定義 (明示的な型ヒントとDocstring) ---
@@ -198,6 +205,41 @@ class CoderAgent:
             query: 検索クエリ。
         """
         return await self._call_mcp_tool(self.knowledge_mcp_client, "semantic_search", {"query": query})
+
+    async def ask_coding_expert(self, code_context: str, instruction: str) -> str:
+        """コーディングの専門家（Executor）に高度なコード分析や実装案の作成を依頼します。
+        複雑なロジックの実装、バグの原因究明、リファクタリング案の提示などに使用してください。
+        
+        Args:
+            code_context: 関連するソースコード、エラーログ、これまでの調査結果などのコンテキスト。
+            instruction: 専門家への具体的な指示。
+        """
+        logger.info(f"Delegating task to Coding Expert (Executor): {instruction[:50]}...")
+        
+        prompt = f"Context:\n{code_context}\n\nInstruction: {instruction}\n\nPlease provide your analysis and implementation proposal in a clear markdown format."
+        
+        payload = {
+            "model": self.executor_model,
+            "messages": [
+                {"role": "system", "content": "You are an expert software engineer specializing in high-quality code implementation and debugging. Your task is to provide clear, correct, and professional code analysis and proposals based on the given context and instructions. Return only the text response without calling any tools."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=180.0) as client:
+                response = await client.post(
+                    f"{self.executor_endpoint}/chat/completions",
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                data = response.json()
+                return data['choices'][0]['message']['content']
+        except Exception as e:
+            logger.error(f"Error calling Coding Expert: {e}")
+            return f"Error: Failed to contact coding expert. {e}"
 
     # --- ヘルパーメソッド ---
 
