@@ -30,3 +30,5 @@
 15. **Communication Language (MANDATORY)**:
     - All generated outputs (Markdown files, GitHub comments, issue summaries, and responses to the user) MUST be written in the language specified by the `BROWNIE_LANGUAGE` environment variable in the `.env` file.
     - Before generating text, you MUST check the `.env` file for this setting. If not found, default to Japanese.
+16. **Pre-Push Documentation Refresh (MANDATORY)**:
+    - Before pushing any changes to Git, you MUST execute the `/blueprint` workflow to ensure that all documentation (Blueprints, README.md, and Home.md) is fully synchronized with the latest code state.
