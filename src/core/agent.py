@@ -33,6 +33,7 @@ class CoderAgent:
         self.workspace_mcp_client = workspace_mcp_client
         self.workspace_context = workspace_context
         self.language = os.getenv("BROWNIE_LANGUAGE", "Japanese")
+        self._status = "running"
         
         # モデルの設定 (Planner)
         raw_model = config['llm']['models'].get('planner', 'mlx-community/Meta-Llama-3.1-8B-Instruct-4bit')
@@ -133,6 +134,7 @@ class CoderAgent:
         Args:
             summary: ユーザーへの最終的な報告内容。どのような修正を行ったか、何を確認したかを詳しく含めてください。
         """
+        self._status = "finished"
         task_id = f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": summary})
         return "Task completed and summary saved."
@@ -143,6 +145,7 @@ class CoderAgent:
         Args:
             summary: ユーザーへの質問や確認事項。具体的に何を答えてほしいかを記述してください。
         """
+        self._status = "suspended"
         task_id = f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": summary})
         return "Task suspended. Waiting for user response."
@@ -284,22 +287,34 @@ class CoderAgent:
             cwd_context = contextlib.nullcontext()
 
         with cwd_context:
+            self._status = "running"
             new_message = f"GitHub Issue #{issue_number} in {repo_name} を解決または分析してください。\n指示内容: {task_description}"
             max_llm_retries = self.config['agent'].get('max_llm_retries', 3)
             
             for attempt in range(max_llm_retries):
                 try:
-                    result = None
                     async for event in self.runner.run_async(
                         user_id="brownie_operator",
                         session_id=task_id,
                         new_message=types.Content(parts=[types.Part(text=new_message)], role="user")
                     ):
-                        # ログ出力 (省略)
-                        result = event
-                    
-                    logger.info(f"[{task_id}] ADK Agent finished successfully.")
-                    return True
+                        # 進捗ログの強化: ADKイベントから思考やツール呼び出しを抽出してログ出力
+                        if hasattr(event, 'model_response') and event.model_response:
+                            for part in event.model_response.parts:
+                                if part.text:
+                                    logger.info(f"[{task_id}] Agent Thought: {part.text}")
+                                if part.function_call:
+                                    logger.info(f"[{task_id}] Tool Call: {part.function_call.name}({part.function_call.args})")
+
+                    if self._status == "finished":
+                        logger.info(f"[{task_id}] ADK Agent finished successfully.")
+                        return True
+                    elif self._status == "suspended":
+                        logger.info(f"[{task_id}] ADK Agent suspended.")
+                        return "SUSPENDED"
+                    else:
+                        logger.warning(f"[{task_id}] ADK Agent exited without calling finish or suspend.")
+                        return False
                 except Exception as e:
                     logger.error(f"[{task_id}] LLM Error: {e}")
                     if attempt < max_llm_retries - 1:

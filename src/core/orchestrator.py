@@ -173,8 +173,12 @@ class Orchestrator:
                     repo_path=repo_path, task_description=task_description
                 )
                 
-                # 5. Git 操作 (成功時)
-                if success == True:
+                # エージェントが False を返した場合（finish/suspendを呼ばずに終了）、エラーとして扱う
+                if success is False:
+                    raise Exception("Agent exited without completing the task (finish() was not called).")
+
+                # 5. Git 操作 (成功時のみ)
+                if success is True:
                     from src.workspace.git_ops import GitOperations
                     git_ops = GitOperations(repo_path)
                     if git_ops.has_changes():
