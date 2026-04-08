@@ -158,11 +158,13 @@ class Orchestrator:
         # 1. 広範な重複実行防止チェック (同一Issueに対する二重起動防止)
         active_tasks = await self.state.get_active_tasks_for_issue(repo_name, issue_number)
         if active_tasks:
+            logger.debug(f"Skipping {task_id}: Active task(s) already exist for this issue: {[t['id'] for t in active_tasks]}")
             return
 
         # 2. 個別タスクIDの状態チェック
         existing_task = await self.state.get_task(task_id)
         if existing_task and existing_task.get("status") != "Failed":
+            logger.debug(f"Skipping {task_id}: Task already exists in database with status '{existing_task.get('status')}'")
             return
 
         # 2. GitHub ラベルチェック (重複・完了・失敗ガード)
@@ -182,6 +184,7 @@ class Orchestrator:
 
         if user_login != "mention_trigger":
             if "in-progress" in labels:
+                logger.info(f"Skipping task {task_id} because 'in-progress' label is present.")
                 return
 
         # 3. RBAC確認
@@ -311,7 +314,7 @@ class Orchestrator:
             # 最終要約の投稿 (Success or Suspended 時)
             if success in [True, "SUSPENDED"]:
                 latest_task = await self.state.get_task(task_id)
-                summary = latest_task.get('context', {}).get('final_summary') if latest_task else None
+                summary = (latest_task.get('context') or {}).get('final_summary') if latest_task else None
                 if summary:
                     status_icon = "⏳ 一時中断（回答待ち）" if success == "SUSPENDED" else "✅ タスク完了"
                     msg = f"### {status_icon}\n\n{summary}"
@@ -348,14 +351,28 @@ class Orchestrator:
         
         try:
             model_name = self.config['llm']['models'].get('coder', 'mlx-community/Qwen3.5-35B-A3B-4bit')
-            logger.info(f"Starting MLX Server with model: {model_name}")
+            logger.info(f"LLM Server is down. Starting MLX Server with model: {model_name}...")
+            
             # MLX server startup command
             subprocess.Popen([sys.executable, "-m", "mlx_lm.server", "--model", model_name], 
                              stdout=subprocess.DEVNULL, 
                              stderr=subprocess.DEVNULL,
                              start_new_session=True)
-            # MLXはモデルのメモリ展開に時間がかかるため長めに待機
-            await asyncio.sleep(20)
+            
+            # MLXはモデルのメモリ展開に時間がかかるため、起動をポーリング待機する
+            max_retries = 36 # 5s * 36 = 180s (3min)
+            for i in range(max_retries):
+                logger.info(f"Waiting for MLX Server to be ready... ({i+1}/{max_retries})")
+                await asyncio.sleep(5)
+                try:
+                    resp = await self.http_client.get(f"{base_url}/models", timeout=3.0)
+                    if resp.status_code == 200:
+                        logger.info("MLX Server is now ready and accepting connections.")
+                        return
+                except Exception:
+                    continue
+            
+            logger.error("MLX Server failed to start within the timeout period (180s).")
         except Exception as e:
             logger.error(f"Failed to start MLX server: {e}")
 

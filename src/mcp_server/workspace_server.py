@@ -45,6 +45,21 @@ def _get_sandbox():
 
 
 # ============================================================
+# MCP Tool: set_workspace_root
+# ============================================================
+@mcp.tool()
+async def set_workspace_root(path: str) -> str:
+    """ワークスペースのルートディレクトリを動的に変更します。
+
+    Args:
+        path: 新しいワークスペースのルートパス
+    """
+    sandbox = _get_sandbox()
+    sandbox.set_workspace_root(path)
+    return f"Workspace root updated to: {path}"
+
+
+# ============================================================
 # MCP Tool: list_files
 # ============================================================
 @mcp.tool()

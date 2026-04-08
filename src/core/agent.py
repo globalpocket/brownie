@@ -100,11 +100,24 @@ class CoderAgent:
 
         adk_tools.append(post_comment)
 
+        async def finish(summary: str):
+            """タスクを正常に完了し、最終回答を投稿します。summary にはユーザーへの最終的な回答内容を含めてください。"""
+            task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+            await self.state.update_task_context(task_id, {"final_summary": summary})
+            return "Task completed and summary saved. This is the end of your current run."
+
+        async def suspend(summary: str):
+            """タスクを一時中断し、ユーザーに確認や情報の入力を求めます。summary には質問や確認事項を具体的に含めてください。"""
+            task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+            await self.state.update_task_context(task_id, {"final_summary": summary})
+            return "Task suspended and information request saved. You will be resumed when the user responds."
+
+        adk_tools.append(finish)
+        adk_tools.append(suspend)
+
         # Workspace/Knowledge MCP サーバーのツールを動的にバインド
-        # 本来は MCP インスペクションで取得すべきだが、初期化タイミングの都合上、
-        # ここでは指示通りの「薄いラッパー」を個別に用意、または汎用ラッパーを通す。
         
-        # 汎用 MCP ツール呼び出しアダプター (指示に基づきシンプルに実装)
+        # 汎用 MCP ツール呼び出しアダプター
         def create_mcp_wrapper(client_getter, tool_name, description):
             # ADK が型ヒントを検知してパラメータを正しくマップできるよう、
             # 特によく使われるツールには明示的なシグネチャを持たせる
@@ -128,7 +141,7 @@ class CoderAgent:
             wrapper.__doc__ = description
             return wrapper
 
-        # 主要な Workspace ツールの登録 (クライアントの状態に関わらずスキーマを定義)
+        # 主要な Workspace ツールの登録
         ws_tool_names = [
             ("list_files", "指定パスのファイル一覧を表示します。"),
             ("read_file", "指定したファイルの内容を読み取ります。"),
@@ -159,7 +172,7 @@ class CoderAgent:
         
         logger.info(f"Calling MCP tool: {tool_name} with {kwargs}")
         
-        # パラメータ不足のチェック (モデルへのフィードバック用)
+        # パラメータ不足のチェック
         if tool_name == "read_file" and not kwargs.get('path'):
             return f"Error executing {tool_name}: Missing required argument 'path'. Please provide the file path as a string in the 'path' argument."
 
@@ -167,7 +180,6 @@ class CoderAgent:
         if 'path' in kwargs and isinstance(kwargs['path'], str) and kwargs['path'] and not kwargs['path'].startswith('/'):
             workspace_root = getattr(self.sandbox, 'workspace_root', None)
             if workspace_root:
-                import os
                 original_path = kwargs['path']
                 kwargs['path'] = os.path.normpath(os.path.join(workspace_root, original_path))
                 logger.debug(f"Normalized path for {tool_name}: {original_path} -> {kwargs['path']}")
@@ -179,7 +191,6 @@ class CoderAgent:
             return str(result)
         except Exception as e:
             logger.warning(f"Error calling MCP tool {tool_name}: {e}")
-            # エラーをメッセージとして返して、AI に自己修正を促す
             error_msg = str(e)
             if "validation error" in error_msg.lower():
                 return f"Error executing {tool_name}: Argument validation failed. Details: {error_msg}. Please ensure your JSON arguments match the tool's schema."
@@ -189,10 +200,11 @@ class CoderAgent:
         """エージェントの実行ループ (ADK Runner を使用)"""
         # 以前のシグネチャとの互換性維持
         task_description = kwargs.get('task_description', f"Issue #{issue_number} in {repo_name} を解決してください。")
+        self._current_repo_name = repo_name
+        self._current_issue_number = issue_number
         
         logger.info(f"[{task_id}] ADK Agent starting for {repo_name}#{issue_number}")
         
-        # ユーザー指示: 以降の操作はローカルリポジトリパスを起点にする
         # 自律ループのスコープ内限定でカレントディレクトリを移動
         if repo_path and os.path.exists(repo_path):
             cwd_context = contextlib.chdir(repo_path)
@@ -205,56 +217,51 @@ class CoderAgent:
             
             new_message = f"GitHub Issue #{issue_number} in {repo_name} を解決または分析してください。\n指示内容: {task_description}"
             
-            result = None
-            try:
-                async for event in self.runner.run_async(
-                    user_id="brownie_operator",
-                    session_id=task_id,
-                    new_message=types.Content(parts=[types.Part(text=new_message)], role="user")
-                ):
-                    # トレース: AI の思考プロセスやツール呼び出しを可視化
-                    event_type = type(event).__name__
-                    # 生のイベントデータを詳細にデバッグ出力
-                    logger.debug(f"[{task_id}] Raw Event Object: {event}")
-                    
-                    # 安全なプロパティアクセス
-                    model_response = getattr(event, 'model_response', None)
-                    if model_response and hasattr(model_response, 'candidates') and model_response.candidates:
-                        try:
-                            content = model_response.candidates[0].content
-                            parts = getattr(content, 'parts', [])
-                            text = "".join([p.text for p in parts if hasattr(p, 'text') and p.text])
-                            if text:
-                                logger.info(f"[{task_id}] AI Response: \n{text}")
-                            
-                            # 関数呼び出しの生データを candidates から直接確認
-                            for part in parts:
-                                if hasattr(part, 'function_call'):
-                                    logger.info(f"[{task_id}] Raw Function Call (Parts): {part.function_call.name}({part.function_call.args})")
-                        except (IndexError, AttributeError) as e:
-                            logger.debug(f"Could not extract text or function_call from model_response: {e}")
-                    
-                    tool_call = getattr(event, 'tool_call', None)
-                    if tool_call:
-                        # 生の引数データを確認するためのデバッグログ
-                        args = getattr(tool_call, 'args', {})
-                        logger.info(f"[{task_id}] Tool Call (from Event): {getattr(tool_call, 'name', 'unknown')}")
-                        logger.debug(f"[{task_id}] Raw Tool Args: {args}")
+            # リトライ設定
+            max_llm_retries = self.config['agent'].get('max_llm_retries', 3)
+            
+            for attempt in range(max_llm_retries):
+                try:
+                    result = None
+                    async for event in self.runner.run_async(
+                        user_id="brownie_operator",
+                        session_id=task_id,
+                        new_message=types.Content(parts=[types.Part(text=new_message)], role="user")
+                    ):
+                        # トレースログ出力
+                        model_response = getattr(event, 'model_response', None)
+                        if model_response and hasattr(model_response, 'candidates') and model_response.candidates:
+                            try:
+                                content = model_response.candidates[0].content
+                                text = "".join([p.text for p in content.parts if hasattr(p, 'text') and p.text])
+                                if text: logger.info(f"[{task_id}] AI Response: \n{text}")
+                            except Exception: pass
+                        
+                        tool_call = getattr(event, 'tool_call', None)
+                        if tool_call:
+                            logger.info(f"[{task_id}] Tool Call: {getattr(tool_call, 'name', 'unknown')}")
 
-                    # ツール応答の取得とログ出力
-                    tool_response = getattr(event, 'tool_response', None)
-                    if not tool_response:
-                        # 他のプロパティ名で存在するか確認 (ADK のバージョンによる差分対策)
-                        tool_response = getattr(event, 'response', None)
-                    
-                    if tool_response:
-                        res_str = str(tool_response)
-                        logger.info(f"[{task_id}] Tool Response: {res_str[:200]}...")
+                        tool_response = getattr(event, 'tool_response', None)
+                        if tool_response:
+                            logger.info(f"[{task_id}] Tool Response: {str(tool_response)[:200]}...")
 
-                    result = event
-                
-                logger.info(f"[{task_id}] ADK Agent finished: {result}")
-                return True
-            except Exception as e:
-                logger.error(f"[{task_id}] ADK Agent error: {e}", exc_info=True)
-                return False
+                        result = event
+                    
+                    logger.info(f"[{task_id}] ADK Agent finished successfully.")
+                    return True
+
+                except Exception as e:
+                    error_msg = str(e).lower()
+                    # 接続エラーやサーバーエラーの場合はリトライを検討
+                    is_transient = any(kw in error_msg for kw in ["connection error", "internal server error", "refused", "timeout"])
+                    
+                    if is_transient and attempt < max_llm_retries - 1:
+                        wait_sec = (attempt + 1) * 10
+                        logger.warning(f"[{task_id}] Transient LLM error (Attempt {attempt+1}/{max_llm_retries}): {e}. Retrying in {wait_sec}s...")
+                        await asyncio.sleep(wait_sec)
+                        continue
+                    else:
+                        logger.error(f"[{task_id}] ADK Agent fatal error: {e}", exc_info=True)
+                        break
+            
+            return False

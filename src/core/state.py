@@ -1,7 +1,7 @@
 import os
 import aiosqlite
 import logging
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -133,11 +133,11 @@ class StateManager:
         return None
 
     async def reset_orphaned_tasks(self):
-        """起動時に InProgress または InQueue のまま残っているタスクを Failed にリセットする (リカバリー)"""
-        query = "UPDATE tasks SET status = 'Failed' WHERE status IN ('InProgress', 'InQueue')"
+        """起動時に終了ステータス ('Completed', 'Failed', 'Suspended') 以外で残っているタスクを Failed にリセットする (リカバリー)"""
+        query = "UPDATE tasks SET status = 'Failed' WHERE status NOT IN ('Completed', 'Failed', 'Suspended')"
         await self.conn.execute(query)
         await self.conn.commit()
-        logger.info("Orphaned tasks reset to Failed during startup recovery.")
+        logger.info("Orphaned or stale tasks reset to Failed during startup recovery.")
 
     async def close(self):
         if self.conn:

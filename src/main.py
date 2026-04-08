@@ -91,7 +91,7 @@ class BrownieApp:
     async def _send_survival_signals(self):
         """Watchdogへの生存信号の送信 (設計書 3.2: 生存信号)"""
         pid = os.getpid()
-        signal_file = f"/tmp/brownie_{pid}.signal"
+        signal_file = "/tmp/brownie_survival.signal"
         logger.info(f"Starting survival signal: {signal_file}")
         try:
             while not self.stop_event.is_set():

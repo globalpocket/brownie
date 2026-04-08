@@ -267,7 +267,10 @@ def run_command(args):
     elif args.action == "logs" or args.action == "log":
         log_file = os.path.join(base_dir, "logs", "brownie.log")
         if os.path.exists(log_file):
-            subprocess.run(["tail", "-f", log_file])
+            try:
+                subprocess.run(["tail", "-f", log_file])
+            except KeyboardInterrupt:
+                print("\nStopped viewing logs.")
         else:
             print("No log file found.")
 
