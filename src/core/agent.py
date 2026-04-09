@@ -392,7 +392,7 @@ class TruncatingSessionService(InMemorySessionService):
         self.max_tokens = max_tokens
         self.model = model
 
-    async def get_session(self, session_id: str) -> Any:
+    async def get_session(self, session_id: str, **kwargs) -> Any:
         session = await super().get_session(session_id)
         if session and session.events:
             session.events = self._truncate_events(session.events)

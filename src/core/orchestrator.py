@@ -134,15 +134,18 @@ class Orchestrator:
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (新アーキテクチャ統合版)"""
+        # 初期化 (UnboundLocalError 防止のため関数の冒頭で確実に行う)
+        active_label = None
+        success = False
+        repo_path = None
         comment_id = None
+        
         if ":" in task_id:
             _, suffix = task_id.split(":", 1)
             comment_id = suffix
 
         await self.state.update_task(task_id, "InProgress", repo_name)
         stop_heartbeat = asyncio.Event()
-        active_label = None
-        success = False
         
         # 各タスクごとにクリーンな MCP マネージャーとコンテキストを使用
         async with MCPServerManager(self.project_root) as task_mcp_manager:
