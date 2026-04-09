@@ -296,15 +296,18 @@ class CoderAgent:
                     async for event in self.runner.run_async(
                         user_id="brownie_operator",
                         session_id=task_id,
-                        new_message=types.Content(parts=[types.Part(text=new_message)], role="user")
+                        new_message=types.Content(parts=[types.Part(text=new_message)], role="user") if new_message else None
                     ):
-                        # 進捗ログの強化: ADKイベントから思考やツール呼び出しを抽出してログ出力
-                        if hasattr(event, 'model_response') and event.model_response:
-                            for part in event.model_response.parts:
+                        # 進捗ログの抽出と出力
+                        if event.content and event.content.parts:
+                            for part in event.content.parts:
                                 if part.text:
                                     logger.info(f"[{task_id}] Agent Thought: {part.text}")
                                 if part.function_call:
                                     logger.info(f"[{task_id}] Tool Call: {part.function_call.name}({part.function_call.args})")
+
+                        if self._status != "running":
+                            break
 
                     if self._status == "finished":
                         logger.info(f"[{task_id}] ADK Agent finished successfully.")
@@ -313,8 +316,9 @@ class CoderAgent:
                         logger.info(f"[{task_id}] ADK Agent suspended.")
                         return "SUSPENDED"
                     else:
-                        logger.warning(f"[{task_id}] ADK Agent exited without calling finish or suspend.")
-                        return False
+                        logger.warning(f"[{task_id}] ADK Agent exited prematurely (Attempt {attempt + 1}/{max_llm_retries}).")
+                        new_message = "作業が完了していません。必ずツールを呼び出して作業を継続するか、または finish/suspend ツールを呼び出して終了してください。テキストのみの応答は許可されていません。"
+                        continue
                 except Exception as e:
                     logger.error(f"[{task_id}] LLM Error: {e}")
                     if attempt < max_llm_retries - 1:
