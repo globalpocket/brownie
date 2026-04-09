@@ -8,7 +8,9 @@ from typing import Dict, Any, List, Optional, Union
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
+import litellm
 
 from src.workspace.sandbox import SandboxManager
 from src.workspace.context import WorkspaceContext
@@ -52,6 +54,7 @@ class CoderAgent:
         self.instructions = self._load_instructions()
         
         # エージェントの初期化
+        self.max_context_tokens = config['llm'].get('max_context_tokens', 12000)
         self.agent = self._init_agent()
 
     def _load_instructions(self) -> str:
@@ -85,21 +88,71 @@ class CoderAgent:
             os.environ["LITELLM_API_BASE"] = self.base_url
             os.environ["OPENAI_API_KEY"] = "EMPTY"
 
+        # 構造化生成と KV キャッシュ制限の設定
+        # Gemma 4 向けに native tool calling / response_format を最適化
+        model_obj = LiteLlm(
+            model=self.model_name,
+            extra_body={
+                "response_format": {"type": "json_object"} if "Gemma" in self.model_name else None,
+                "max_tokens": 4096, # 生成トークン上限
+            }
+        )
+
         agent = LlmAgent(
             name="BROWNIE_Coder",
-            model=self.model_name,
+            model=model_obj,
             instruction=self.instructions,
             tools=tools
         )
         
+        # コンテキスト制限(12k)を適用したセッションサービス
+        session_service = TruncatingSessionService(max_tokens=self.max_context_tokens, model=self.model_name)
+        
         self.runner = Runner(
             app_name="BROWNIE",
             agent=agent,
-            session_service=InMemorySessionService(),
+            session_service=session_service,
             auto_create_session=True
         )
         
         return agent
+
+class TruncatingSessionService(InMemorySessionService):
+    def __init__(self, max_tokens: int = 12000, model: str = ""):
+        super().__init__()
+        self.max_tokens = max_tokens
+        self.model = model
+
+    async def get_session(self, session_id: str) -> Any:
+        session = await super().get_session(session_id)
+        if session and session.events:
+            session.events = self._truncate_events(session.events)
+        return session
+
+    def _truncate_events(self, events: List[Any]) -> List[Any]:
+        if not events:
+            return events
+        
+        # 簡易的なトークン計算
+        try:
+            # Event リストを LiteLLM 用のメッセージリストに変換してカウント
+            # (ADK 内部の _session_util.py 等のロジックを簡略化)
+            total_tokens = sum(len(str(e)) for e in events) // 4 # 概算
+        except Exception:
+            total_tokens = sum(len(str(e)) for e in events) // 4
+
+        if total_tokens <= self.max_tokens:
+            return events
+
+        logger.info(f"Context overflow detected ({total_tokens} > {self.max_tokens}). Truncating events...")
+        
+        # 古い履歴から順に削除。ただし直近の User メッセージ等は維持するため、後ろから残す。
+        # システムプロンプト等は Agent オブジェクト側で保持されるため、Session のイベントを削る。
+        while len(events) > 2 and total_tokens > self.max_tokens:
+            events.pop(0)
+            total_tokens = sum(len(str(e)) for e in events) // 4
+        
+        return events
 
     def _get_defined_tools(self) -> List[Any]:
         """ADK に登録する明示的ツール一覧を返す"""

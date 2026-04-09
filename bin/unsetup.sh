@@ -80,6 +80,7 @@ if [[ "$REMOVE_MODELS" =~ ^[Yy]$ ]]; then
     # 以前のキャッシュディレクトリが残っている場合も念のため削除
     echo "Cleaning up legacy cache directories if exist..."
     rm -rf "$HOME/.cache/huggingface/hub/models--mlx-community*"
+    rm -rf "$HOME/.cache/huggingface/hub/models--google--gemma*"
 fi
 
 # 8. システムツール (brew/aptで入れたもの) について

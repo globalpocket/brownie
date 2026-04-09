@@ -107,7 +107,7 @@ fi
 
 echo "Syncing Python dependencies (including Pydantic)..."
 $UV_CMD sync
-$UV_CMD pip install mlx-lm
+$UV_CMD pip install mlx-lm outlines xgrammar
 
 # 4. ディレクトリ初期化
 echo "Initializing directories..."

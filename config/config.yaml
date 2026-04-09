@@ -16,9 +16,10 @@ llm:
   executor_endpoint: "http://localhost:8081/v1"
   timeout_sec: 180
   tokenizer: "auto"
+  max_context_tokens: 12000
   model_dir: "~/.local/share/brownie/models"
   models:
-    planner: "mlx-community/Meta-Llama-3.1-8B-Instruct-4bit"
+    planner: "mlx-community/gemma-4-26b-a4b-it-4bit"
     executor: "mlx-community/Qwen2.5-Coder-7B-Instruct-4bit"
 workspace:
   sandbox_user_id: 1000
