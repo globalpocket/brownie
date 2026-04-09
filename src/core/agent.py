@@ -117,43 +117,6 @@ class CoderAgent:
         
         return agent
 
-class TruncatingSessionService(InMemorySessionService):
-    def __init__(self, max_tokens: int = 12000, model: str = ""):
-        super().__init__()
-        self.max_tokens = max_tokens
-        self.model = model
-
-    async def get_session(self, session_id: str) -> Any:
-        session = await super().get_session(session_id)
-        if session and session.events:
-            session.events = self._truncate_events(session.events)
-        return session
-
-    def _truncate_events(self, events: List[Any]) -> List[Any]:
-        if not events:
-            return events
-        
-        # 簡易的なトークン計算
-        try:
-            # Event リストを LiteLLM 用のメッセージリストに変換してカウント
-            # (ADK 内部の _session_util.py 等のロジックを簡略化)
-            total_tokens = sum(len(str(e)) for e in events) // 4 # 概算
-        except Exception:
-            total_tokens = sum(len(str(e)) for e in events) // 4
-
-        if total_tokens <= self.max_tokens:
-            return events
-
-        logger.info(f"Context overflow detected ({total_tokens} > {self.max_tokens}). Truncating events...")
-        
-        # 古い履歴から順に削除。ただし直近の User メッセージ等は維持するため、後ろから残す。
-        # システムプロンプト等は Agent オブジェクト側で保持されるため、Session のイベントを削る。
-        while len(events) > 2 and total_tokens > self.max_tokens:
-            events.pop(0)
-            total_tokens = sum(len(str(e)) for e in events) // 4
-        
-        return events
-
     def _get_defined_tools(self) -> List[Any]:
         """ADK に登録する明示的ツール一覧を返す"""
         return [
@@ -379,3 +342,40 @@ class TruncatingSessionService(InMemorySessionService):
                         continue
                     break
             return False
+
+class TruncatingSessionService(InMemorySessionService):
+    def __init__(self, max_tokens: int = 12000, model: str = ""):
+        super().__init__()
+        self.max_tokens = max_tokens
+        self.model = model
+
+    async def get_session(self, session_id: str) -> Any:
+        session = await super().get_session(session_id)
+        if session and session.events:
+            session.events = self._truncate_events(session.events)
+        return session
+
+    def _truncate_events(self, events: List[Any]) -> List[Any]:
+        if not events:
+            return events
+        
+        # 簡易的なトークン計算
+        try:
+            # Event リストを LiteLLM 用のメッセージリストに変換してカウント
+            # (ADK 内部の _session_util.py 等のロジックを簡略化)
+            total_tokens = sum(len(str(e)) for e in events) // 4 # 概算
+        except Exception:
+            total_tokens = sum(len(str(e)) for e in events) // 4
+
+        if total_tokens <= self.max_tokens:
+            return events
+
+        logger.info(f"Context overflow detected ({total_tokens} > {self.max_tokens}). Truncating events...")
+        
+        # 古い履歴から順に削除。ただし直近の User メッセージ等は維持するため、後ろから残す。
+        # システムプロンプト等は Agent オブジェクト側で保持されるため、Session のイベントを削る。
+        while len(events) > 2 and total_tokens > self.max_tokens:
+            events.pop(0)
+            total_tokens = sum(len(str(e)) for e in events) // 4
+        
+        return events

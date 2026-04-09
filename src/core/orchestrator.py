@@ -122,6 +122,8 @@ class Orchestrator:
 
         await self.state.update_task(task_id, "InProgress", repo_name)
         stop_heartbeat = asyncio.Event()
+        active_label = None
+        success = False
         
         # 各タスクごとにクリーンな MCP マネージャーとコンテキストを使用
         async with MCPServerManager(self.project_root) as task_mcp_manager:
@@ -207,7 +209,8 @@ class Orchestrator:
                         await self.gh_client.post_comment(repo_name, issue_number, f"### {status_icon}\n\n{summary}" + get_footer())
                 
                 await self.state.update_task(task_id, final_status, repo_name)
-                await self.gh_client.remove_label(repo_name, issue_number, active_label)
+                if active_label:
+                    await self.gh_client.remove_label(repo_name, issue_number, active_label)
                 await self.gh_client.add_label(repo_name, issue_number, final_status.lower())
 
     async def _send_heartbeat(self, stop_event: asyncio.Event):
