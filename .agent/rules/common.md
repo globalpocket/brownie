@@ -28,7 +28,6 @@
         1. Attempt `git subtree push --prefix docs wiki master`.
         2. If consistent errors (e.g., "no new revisions found") occur, you MUST perform a manual sync: clone the wiki to a temporary directory, copy all `.md` files from `docs/` to the wiki root, commit, and push.
 15. **Communication Language (MANDATORY)**:
-    - All generated outputs (GitHub comments, task summaries, and responses to the user) MUST be written in the language specified in the system prompt.
-    - Do not attempt to read the `.env` file for language settings; follow the system-provided instructions instead.
+    - 遵守状況: システムプロンプトおよびユーザー様との対話（Antigravity:貴方を含む）、全ての回答、タスクの概要、および GitHub コメントは .env ファイルの BROWNIE_LANGUAGE 設定で確認した言語でアウトプットを行います。
 16. **Pre-Push Documentation Refresh (MANDATORY)**:
     - Before pushing any changes to Git, you MUST execute the `/blueprint` workflow to ensure that all documentation (Blueprints, README.md, and Home.md) is fully synchronized with the latest code state.
