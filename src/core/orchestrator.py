@@ -96,10 +96,29 @@ class Orchestrator:
 
     async def _queue_if_needed(self, task_id: str, repo_name: str, issue_number: int, user_login: str):
         active_tasks = await self.state.get_active_tasks_for_issue(repo_name, issue_number)
-        if active_tasks: return
+        
+        # すでに実行中またはキューにある場合はスキップ
+        if any(t['status'] in ['InProgress', 'InQueue'] for t in active_tasks):
+            return
 
+        # 待機中のタスクがある場合、新しいメンションがあれば「再開」として処理する
+        waiting_task = next((t for t in active_tasks if t['status'] == 'WaitingForClarification'), None)
+        
         existing_task = await self.state.get_task(task_id)
-        if existing_task and existing_task.get("status") != "Failed": return
+        if existing_task and existing_task.get("status") != "Failed":
+             # ただし、すでにそのコメントIDでの処理が成功/待機中の場合はスキップ
+             return
+
+        # 再開（Resurrection）ロジック
+        if waiting_task:
+            logger.info(f"Resurrecting task {waiting_task['id']} for issue {repo_name}#{issue_number} due to new comment {task_id}")
+            # 待機中のタスクを InQueue に戻す (IDは元のままでよいが、新しい指示を含めるために更新)
+            await self.state.update_task(waiting_task['id'], "InQueue", repo_name)
+            priority = self.config['agent']['inference_priority']['manual_issue']
+            # 新しいコメントIDを context に保存して再開時に読めるようにする
+            await self.state.update_task_context(waiting_task['id'], {"resume_comment_id": task_id.split(":")[-1]})
+            await self.worker_pool.add_task(waiting_task['id'], priority, self._execute_task, waiting_task['id'], repo_name, issue_number)
+            return
 
         labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
         if ("completed" in labels or "failed" in labels) and "ai-active" not in labels: return
@@ -162,8 +181,16 @@ class Orchestrator:
                 active_label = "ai-active" if comment_id else "in-progress"
                 await self.gh_client.add_label(repo_name, issue_number, active_label)
                 
+                # コンテキストから再開用コメントIDを取得
+                current_task_row = await self.state.get_task(task_id)
+                resume_comment_id = (current_task_row.get('context') or {}).get('resume_comment_id')
+                
                 instruction_priority = None
-                if comment_id and comment_id != "body":
+                if resume_comment_id:
+                    # 再開時の指示
+                    instruction_priority = await self.gh_client.get_comment_body(repo_name, issue_number, resume_comment_id)
+                    instruction_priority = f"【再開指示】ユーザーから以下の回答がありました。不確実性が解消されたか評価し、完了していればブループリントを出力してください:\n\n{instruction_priority}"
+                elif comment_id and comment_id != "body":
                     instruction_priority = await self.gh_client.get_comment_body(repo_name, issue_number, comment_id)
 
                 task_description = f"Title: {target_issue.title}\n\nBody: {target_issue.body or ''}"
@@ -172,7 +199,8 @@ class Orchestrator:
 
                 success = await task_agent.run(
                     task_id=task_id, repo_name=repo_name, issue_number=issue_number,
-                    repo_path=repo_path, task_description=task_description
+                    repo_path=repo_path, task_description=task_description,
+                    is_resume=bool(resume_comment_id)
                 )
                 
                 # エージェントが False を返した場合（finish/suspendを呼ばずに終了）、エラーとして扱う
@@ -199,13 +227,14 @@ class Orchestrator:
                 await self.gh_client.post_comment(repo_name, issue_number, f"❌ エラーが発生しました: {e}" + get_footer())
             finally:
                 stop_heartbeat.set()
-                final_status = "Suspended" if success == "SUSPENDED" else ("Completed" if success else "Failed")
+                final_status = "WaitingForClarification" if success == "WAITING" else ("Suspended" if success == "SUSPENDED" else ("Completed" if success is True else "Failed"))
                 
-                if success in [True, "SUSPENDED"]:
+                if success in [True, "SUSPENDED", "WAITING"]:
                     latest_task = await self.state.get_task(task_id)
                     summary = (latest_task.get('context') or {}).get('final_summary') if latest_task else None
                     if summary:
-                        status_icon = "⏳ 中断" if success == "SUSPENDED" else "✅ 完了"
+                        status_icons = {"WAITING": "⏳ 確認待ち", "SUSPENDED": "⏳ 中断", True: "✅ 完了"}
+                        status_icon = status_icons.get(success, "✅ 完了")
                         await self.gh_client.post_comment(repo_name, issue_number, f"### {status_icon}\n\n{summary}" + get_footer())
                 
                 await self.state.update_task(task_id, final_status, repo_name)

@@ -94,8 +94,8 @@ class StateManager:
         return None
 
     async def get_active_tasks_for_issue(self, repo_name: str, issue_number: int) -> List[Dict[str, Any]]:
-        """指定された Issue に対して実行中または待機中のタスクをすべて取得する (設計書 4. 状態管理)"""
-        query = "SELECT * FROM tasks WHERE repo_full_name = ? AND issue_number = ? AND status IN ('InProgress', 'InQueue')"
+        """指定された Issue に対して実行中、待機中、または確認待ちのタスクをすべて取得する (設計書 4. 状態管理)"""
+        query = "SELECT * FROM tasks WHERE repo_full_name = ? AND issue_number = ? AND status IN ('InProgress', 'InQueue', 'WaitingForClarification')"
         async with self.conn.execute(query, (repo_name, issue_number)) as cursor:
             rows = await cursor.fetchall()
             results = []
@@ -133,8 +133,8 @@ class StateManager:
         return None
 
     async def reset_orphaned_tasks(self):
-        """起動時に終了ステータス ('Completed', 'Failed', 'Suspended') 以外で残っているタスクを Failed にリセットする (リカバリー)"""
-        query = "UPDATE tasks SET status = 'Failed' WHERE status NOT IN ('Completed', 'Failed', 'Suspended')"
+        """起動時に終了ステータス ('Completed', 'Failed', 'Suspended', 'WaitingForClarification') 以外で残っているタスクを Failed にリセットする (リカバリー)"""
+        query = "UPDATE tasks SET status = 'Failed' WHERE status NOT IN ('Completed', 'Failed', 'Suspended', 'WaitingForClarification')"
         await self.conn.execute(query)
         await self.conn.commit()
         logger.info("Orphaned or stale tasks reset to Failed during startup recovery.")

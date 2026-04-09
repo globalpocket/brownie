@@ -130,7 +130,8 @@ class CoderAgent:
             self.run_command,
             self.get_code_flow,
             self.semantic_search,
-            self.ask_coding_expert
+            self.ask_user,
+            self.delegate_to_executor
         ]
 
     # --- ツール定義 (明示的な型ヒントとDocstring) ---
@@ -156,15 +157,27 @@ class CoderAgent:
         return "Task completed and summary saved."
 
     async def suspend(self, summary: str) -> str:
-        """タスクを一時中断し、ユーザーに確認や情報の入力を求めます。
+        """タスクを一時中断し、現在の進捗を保存して終了します。
         
         Args:
-            summary: ユーザーへの質問や確認事項。具体的に何を答えてほしいかを記述してください。
+            summary: 中断理由や現在の進捗の概要。
         """
         self._status = "suspended"
         task_id = f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": summary})
-        return "Task suspended. Waiting for user response."
+        return "Task suspended."
+
+    async def ask_user(self, question: str) -> str:
+        """ユーザーに質問や確認を求め、回答が得られるまで処理を待機（Suspend）させます。
+        不確実性がある場合、推測で進めず必ずこのツールを使用してください。
+        
+        Args:
+            question: ユーザーへの具体的な質問内容。
+        """
+        self._status = "waiting_for_clarification"
+        task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+        await self.state.update_task_context(task_id, {"final_summary": question})
+        return "Waiting for user clarification."
 
     async def get_agent_context(self) -> str:
         """エージェントの現在のステータス、カレントディレクトリ、接続されているMCPサーバーの情報を取得します。
@@ -228,29 +241,49 @@ class CoderAgent:
         """
         return await self._call_mcp_tool(self.knowledge_mcp_client, "semantic_search", {"query": query})
 
-    async def ask_coding_expert(self, code_context: str, instruction: str) -> str:
-        """コーディングの専門家（Executor）に高度なコード分析や実装案の作成を依頼します。
-        複雑なロジックの実装、バグの原因究明、リファクタリング案の提示などに使用してください。
+    async def delegate_to_executor(self, blueprint: str) -> str:
+        """厳密な設計図（Blueprint）を専門家（Executor）に渡し、具体的な実装コード案の作成を依頼します。
         
         Args:
-            code_context: 関連するソースコード、エラーログ、これまでの調査結果などのコンテキスト。
-            instruction: 専門家への具体的な指示。
+            blueprint: 以下のキーを含む JSON 形式の文字列。
+                - target_files: [{ "path": "相対パス", "purpose": "目的" }]
+                - logic_constraints: [ "実装すべきロジックの定義" ]
+                - prohibited_actions: [ "禁止事項、変更不可な箇所" ]
+                - context_snippets: [ { "file": "path", "snippet": "コード" } ] (任意)
         """
-        logger.info(f"Delegating task to Coding Expert (Executor): {instruction[:50]}...")
+        logger.info(f"Delegating task to Executor with Blueprint...")
         
-        prompt = f"Context:\n{code_context}\n\nInstruction: {instruction}\n\nPlease provide your analysis and implementation proposal in a clear markdown format."
+        try:
+            # バリデーション
+            bp_data = json.loads(blueprint)
+            required_keys = ["target_files", "logic_constraints", "prohibited_actions"]
+            if not all(k in bp_data for k in required_keys):
+                return f"Error: Blueprint must contain {required_keys}"
+        except Exception as e:
+            return f"Error: Invalid JSON format for blueprint. {e}"
+
+        prompt = f"### STRICT BLUEPRINT ###\n{blueprint}\n\n上記設計図に基づき、最適なコード実装案を Markdown 形式（ファイルパスとコードブロック）で提供してください。"
         
         payload = {
             "model": self.executor_model,
             "messages": [
-                {"role": "system", "content": "You are an expert software engineer specializing in high-quality code implementation and debugging. Your task is to provide clear, correct, and professional code analysis and proposals based on the given context and instructions. Return only the text response without calling any tools."},
+                {
+                    "role": "system", 
+                    "content": (
+                        "あなたは高度なソフトウェアエンジニア（Executor）です。\n"
+                        "Planner から渡される「Strict Blueprint（厳密な設計図）」は絶対のルールです。\n"
+                        "設計図に記載されていない独自の解釈、機能追加、リファクタリングは厳禁です。\n"
+                        "prohibited_actions に記載された事項は 1 ミリも逸脱しないでください。\n"
+                        "回答は実装コード案のみとし、ツール呼び出しは一切行わず、純粋なテキスト/Markdown で返してください。"
+                    )
+                },
                 {"role": "user", "content": prompt}
             ],
-            "temperature": 0.1
+            "temperature": 0.0 # 決定論的な生成
         }
         
         try:
-            async with httpx.AsyncClient(timeout=180.0) as client:
+            async with httpx.AsyncClient(timeout=300.0) as client:
                 response = await client.post(
                     f"{self.executor_endpoint}/chat/completions",
                     json=payload,
@@ -260,8 +293,8 @@ class CoderAgent:
                 data = response.json()
                 return data['choices'][0]['message']['content']
         except Exception as e:
-            logger.error(f"Error calling Coding Expert: {e}")
-            return f"Error: Failed to contact coding expert. {e}"
+            logger.error(f"Error calling Executor: {e}")
+            return f"Error: Failed to contact executor. {e}"
 
     # --- ヘルパーメソッド ---
 
@@ -304,7 +337,14 @@ class CoderAgent:
 
         with cwd_context:
             self._status = "running"
-            new_message = f"GitHub Issue #{issue_number} in {repo_name} を解決または分析してください。\n指示内容: {task_description}"
+            is_resume = kwargs.get('is_resume', False)
+            
+            if is_resume:
+                # 再開時は追加メッセージのみを送信（Runner が過去のセッションを維持していることが前提）
+                new_message_content = task_description
+            else:
+                new_message_content = f"GitHub Issue #{issue_number} in {repo_name} を解決または分析してください。\n指示内容: {task_description}"
+            
             max_llm_retries = self.config['agent'].get('max_llm_retries', 3)
             
             for attempt in range(max_llm_retries):
@@ -312,7 +352,7 @@ class CoderAgent:
                     async for event in self.runner.run_async(
                         user_id="brownie_operator",
                         session_id=task_id,
-                        new_message=types.Content(parts=[types.Part(text=new_message)], role="user") if new_message else None
+                        new_message=types.Content(parts=[types.Part(text=new_message_content)], role="user") if new_message_content else None
                     ):
                         # 進捗ログの抽出と出力
                         if event.content and event.content.parts:
@@ -331,9 +371,12 @@ class CoderAgent:
                     elif self._status == "suspended":
                         logger.info(f"[{task_id}] ADK Agent suspended.")
                         return "SUSPENDED"
+                    elif self._status == "waiting_for_clarification":
+                        logger.info(f"[{task_id}] ADK Agent waiting for clarification.")
+                        return "WAITING"
                     else:
                         logger.warning(f"[{task_id}] ADK Agent exited prematurely (Attempt {attempt + 1}/{max_llm_retries}).")
-                        new_message = "作業が完了していません。必ずツールを呼び出して作業を継続するか、または finish/suspend ツールを呼び出して終了してください。テキストのみの応答は許可されていません。"
+                        new_message_content = "作業が完了していません。必ずツールを呼び出して作業を継続するか、または finish/suspend/ask_user ツールを呼び出して終了してください。テキストのみの応答は許可されていません。"
                         continue
                 except Exception as e:
                     logger.error(f"[{task_id}] LLM Error: {e}")
