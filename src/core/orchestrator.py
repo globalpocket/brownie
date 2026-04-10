@@ -185,11 +185,6 @@ class Orchestrator:
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (新アーキテクチャ統合版)"""
-        from src.version import get_build_id
-        if get_build_id() != self.process_build_id:
-            logger.warning(f"ZOMBIE TASK PREVENTED: Task {task_id} belongs to a stale process. Aborting.")
-            return
-
         # リポジトリのオンデマンド構成 (Lazy Initialization)
         await self._ensure_repo_context(repo_name)
 
