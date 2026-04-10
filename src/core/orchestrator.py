@@ -138,9 +138,24 @@ class Orchestrator:
         waiting_task = next((t for t in active_tasks if t['status'] == 'WaitingForClarification'), None)
         
         existing_task = await self.state.get_task(task_id)
-        if existing_task and existing_task.get("status") != "Failed":
-             # ただし、すでにそのコメントIDでの処理が成功/待機中の場合はスキップ
-             return
+        if existing_task:
+            status = existing_task.get("status")
+            if status == "Failed":
+                # バージョン比較による再開ロジック
+                from src.version import get_build_id
+                context = existing_task.get("context") or {}
+                recorded_version = context.get("version")
+                current_version = get_build_id()
+                
+                if recorded_version != current_version:
+                    logger.info(f"RESUMING: Task {task_id} failed on version {recorded_version}. Retrying on {current_version}")
+                    # Failed なので、そのまま新規タスクとしてキューイング（後続の処理へ）
+                else:
+                    logger.info(f"SKIP: Task {task_id} already failed on current version {current_version}")
+                    return
+            else:
+                 # すでにそのコメントIDでの処理が成功/待機中/実行中の場合はスキップ
+                 return
 
         # 再開（Resurrection）ロジック
         if waiting_task:
@@ -157,7 +172,7 @@ class Orchestrator:
             return
 
         labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
-        if ("completed" in labels or "failed" in labels) and "ai-active" not in labels: return
+        if "completed" in labels and "ai-active" not in labels: return
 
         if user_login != "mention_trigger":
             if "in-progress" in labels: return
@@ -285,9 +300,62 @@ class Orchestrator:
                         )
 
             except Exception as e:
+                import traceback
+                from src.version import get_build_id
+                
                 logger.error(f"Task {task_id} failed: {e}", exc_info=True)
                 success = False
-                await self.gh_client.post_comment(repo_name, issue_number, f"❌ エラーが発生しました: {e}" + get_footer())
+                current_version = get_build_id()
+                stack_trace = traceback.format_exc()
+                
+                # エラー報告用の詳細ログ作成
+                repo_url = f"https://github.com/{repo_name}"
+                issue_url = f"{repo_url}/issues/{issue_number}"
+                error_report_repo = os.getenv("BROWNIE_REPO_NAME", "globalpocket/brownie")
+                
+                # スタックトレースから関連ファイルを抽出（簡易版）
+                related_files = list(set([line.split('"')[1] for line in stack_trace.splitlines() if 'File "' in line and "python" not in line.lower()]))
+                files_str = "\n".join([f"- `{f}`" for f in related_files])
+
+                error_body = f"""## エラー概要
+- **対象タスク**: `{task_id}`
+- **発生バージョン**: `{current_version}`
+- **実行リポジトリ**: [{repo_name}]({repo_url})
+- **対応Issue**: [#{issue_number}]({issue_url})
+
+## 原因と詳細説明
+```text
+{str(e)}
+```
+
+### スタックトレース
+```python
+{stack_trace}
+```
+
+## 関連ソースファイル
+{files_str if files_str else "不詳"}
+
+## 対応策（推論）
+コードの修正、あるいは環境の再構築が必要な可能性があります。
+
+---
+**エラーログ全文:**
+{stack_trace}
+"""
+                try:
+                    await self.gh_client.create_issue(
+                        repo_name=error_report_repo,
+                        title=f"[BUG] Task Failure: {repo_name}#{issue_number} ({current_version})",
+                        body=error_body
+                    )
+                except Exception as ie:
+                    logger.error(f"Failed to report error issue: {ie}")
+
+                await self.gh_client.post_comment(
+                    repo_name, issue_number, 
+                    f"❌ 予期せぬエラーが発生したため作業を中断しました。エラーの詳細は `{error_report_repo}` に報告されました。" + get_footer()
+                )
             finally:
                 stop_heartbeat.set()
                 final_status = "WaitingForClarification" if success == "WAITING" else ("Suspended" if success == "SUSPENDED" else ("Completed" if success is True else "Failed"))
@@ -326,7 +394,10 @@ class Orchestrator:
                 await self.state.update_task(task_id, final_status, repo_name)
                 if active_label:
                     await self.gh_client.remove_label(repo_name, issue_number, active_label)
-                await self.gh_client.add_label(repo_name, issue_number, final_status.lower())
+                
+                # failed ラベルの自動付与はスキップ（再開ロジックのため）
+                if final_status.lower() != "failed":
+                    await self.gh_client.add_label(repo_name, issue_number, final_status.lower())
 
     async def _send_heartbeat(self, stop_event: asyncio.Event):
         while not stop_event.is_set():

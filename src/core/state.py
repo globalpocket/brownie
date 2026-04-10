@@ -3,6 +3,7 @@ import aiosqlite
 import logging
 from typing import Optional, Dict, Any, List
 from pathlib import Path
+from src.version import get_build_id
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,9 @@ class StateManager:
                         context: Optional[Dict[str, Any]] = None):
         """タスク状態の更新"""
         import json
+        if context is None:
+            context = {}
+        context["version"] = get_build_id()
         await self.conn.execute("""
             INSERT INTO tasks (id, repo_full_name, issue_number, pr_number, status, context, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -151,6 +155,7 @@ class StateManager:
         # 既存のコンテキストとマージ
         current_context = (current_task.get("context") or {})
         current_context.update(context)
+        current_context["version"] = get_build_id()
 
         await self.conn.execute("""
             UPDATE tasks 
