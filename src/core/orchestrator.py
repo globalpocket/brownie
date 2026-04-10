@@ -12,7 +12,7 @@ from typing import Optional, Dict, Any, List
 from src.core.state import StateManager
 from src.core.worker_pool import WorkerPool
 from src.core.agent import CoderAgent
-from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
+from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException, GitHubConnectionException
 from src.workspace.sandbox import SandboxManager
 from src.workspace.context import WorkspaceContext
 from src.mcp_server.manager import MCPServerManager
@@ -52,9 +52,13 @@ class Orchestrator:
         self.process_build_id = get_build_id()
         logger.info(f"Orchestrator starting. Build ID: {self.process_build_id}")
         
-        # 起動時に仕掛品タスクがあれば異常終了としてマーク（リカバリロジック）
+        # 起動時に仕掛品タスクがあれば異常終了ではなく「中断」としてマーク（再起動後の自動復旧対応）
         await self.state.reset_orphaned_tasks()
+        
         self.worker_task = asyncio.create_task(self.worker_pool.run())
+        
+        # 中断中のタスクがあれば自動的に再開
+        asyncio.create_task(self._resurrect_suspended_tasks())
         
         logger.info("BOOT SEQUENCE COMPLETED. Dynamic Repo Management enabled. Entering main polling loop.")
 
@@ -80,9 +84,14 @@ class Orchestrator:
                     # config で指定された間隔で待機
                     await asyncio.sleep(self.config['agent']['polling_interval_sec'])
                 except GitHubRateLimitException as e:
+                    await self._update_hibernation_status("RateLimit", e.reset_at)
                     wait_seconds = int(e.reset_at - time.time()) + 60
                     logger.warning(f"HIBERNATION MODE: Captured GitHub rate limit. Sleeping for {wait_seconds}s...")
                     await asyncio.sleep(wait_seconds)
+                    await self._update_hibernation_status(None)
+                except GitHubConnectionException as e:
+                    logger.error(f"Network error detected: {e}")
+                    await self._hibernate_network()
                 except Exception as e:
                     logger.error(f"Orchestrator error: {e}", exc_info=True)
                     await asyncio.sleep(10)
@@ -100,7 +109,84 @@ class Orchestrator:
             await self.mcp_manager.stop_all()
             logger.info("Orchestrator cleanup completed.")
 
-    async def _ensure_repo_context(self, repo_name: str):
+    async def _update_hibernation_status(self, reason: Optional[str], reset_at: float = 0):
+        """冬眠状態を外部ファイルに保存する (CLI表示用)"""
+        status_file = "/tmp/brownie_hibernation.json"
+        if reason is None:
+            if os.path.exists(status_file):
+                try: os.remove(status_file)
+                except: pass
+            return
+
+        try:
+            with open(status_file, "w") as f:
+                json.dump({
+                    "reason": reason,
+                    "wake_up_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(reset_at)) if reset_at > 0 else "Network Recovery",
+                    "reset_at": reset_at,
+                    "timestamp": time.time()
+                }, f)
+        except Exception as e:
+            logger.error(f"Failed to write hibernation status: {e}")
+
+    async def _hibernate_network(self):
+        """ネットワークエラーによる一時中断モード"""
+        logger.warning("Entering NETWORK HIBERNATION MODE. Waiting for connectivity...")
+        await self._update_hibernation_status("NetworkError")
+        
+        wait_interval = 300 # 5分
+        while self.is_running:
+            try:
+                # ヘルスチェック: 自分のユーザー名が取れれば復旧とみなす
+                logger.info("Network Health Check: Contacting GitHub API...")
+                self.gh_client.get_my_username() 
+                logger.info("Network connectivity RESTORED. Resuming operations.")
+                break
+            except Exception:
+                logger.warning(f"Network still down. Retrying health check in {wait_interval}s...")
+                await asyncio.sleep(wait_interval)
+        
+        await self._update_hibernation_status(None)
+        # 接続復旧時に中断中のタスクを即座に再開
+        await self._resurrect_suspended_tasks()
+
+    async def _resurrect_suspended_tasks(self):
+        """Suspended 状態のタスクを自動的に WorkPool に再投入する (レジューム)"""
+        try:
+            # DBから現在 Suspended なタスクの一覧を直接取得したいが、StateManager に専用メソッドがないため簡易的に全検索またはステータスベースで処理
+            # 今回は get_task をループするのではなく、SQLを直接叩くか、state.py を拡張するのがスマート。
+            # ひとまず state.py に get_tasks_by_status を追加する。
+            suspended_tasks = await self._get_pending_tasks_for_resurrection()
+            if not suspended_tasks:
+                return
+
+            logger.info(f"RESUME: Found {len(suspended_tasks)} suspended tasks. Resurrecting...")
+            for t in suspended_tasks:
+                task_id = t['id']
+                repo_name = t['repo_full_name']
+                issue_number = t['issue_number']
+                
+                await self.state.update_task_status(task_id, "InQueue")
+                priority = self.config['agent']['inference_priority']['manual_issue']
+                await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
+                logger.info(f"  - Task {task_id} re-queued.")
+        except Exception as e:
+            logger.error(f"Failed to resurrect suspended tasks: {e}")
+
+    async def _get_pending_tasks_for_resurrection(self) -> List[Dict[str, Any]]:
+        """再開待ちのタスクをDBから取得する"""
+        query = "SELECT * FROM tasks WHERE status = 'Suspended'"
+        async with self.state.conn.execute(query) as cursor:
+            rows = await cursor.fetchall()
+            results = []
+            for row in rows:
+                results.append({
+                    "id": row[0],
+                    "repo_full_name": row[1],
+                    "issue_number": row[2],
+                    "status": row[4]
+                })
+            return results
         """リポジトリのオンデマンド構成（クローン・解析）を実行する"""
         if repo_name in self._initialized_repos:
             return
@@ -266,11 +352,14 @@ class Orchestrator:
 
                 # 4. タスク実行
                 active_label = "ai-active" if comment_id else "in-progress"
-                await self.gh_client.add_label(repo_name, issue_number, active_label)
                 
-                # パターン1: メンション認識時の受付確認
-                # すでに active_label が付いている場合は再受理コメントを避ける（オプション）
-                await self.gh_client.post_comment(repo_name, issue_number, "承知いたしました。作業を開始します。" + get_footer())
+                # ラベル取得と開始コメントの制御
+                labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
+                is_first_start = (active_label not in labels) and (not resume_comment_id)
+                
+                await self.gh_client.add_label(repo_name, issue_number, active_label)
+                if is_first_start:
+                    await self.gh_client.post_comment(repo_name, issue_number, "承知いたしました。作業を開始します。" + get_footer())
                 
                 # コンテキストから再開用コメントIDを取得
                 current_task_row = await self.state.get_task(task_id)
@@ -312,6 +401,9 @@ class Orchestrator:
                             head=branch_name, base=default_branch
                         )
 
+            except GitHubConnectionException as e:
+                logger.warning(f"Task {task_id} suspended due to connection failure: {e}")
+                success = "SUSPENDED"
             except Exception as e:
                 import traceback
                 from src.version import get_build_id
@@ -345,16 +437,6 @@ class Orchestrator:
 ```python
 {stack_trace}
 ```
-
-## 関連ソースファイル
-{files_str if files_str else "不詳"}
-
-## 対応策（推論）
-コードの修正、あるいは環境の再構築が必要な可能性があります。
-
----
-**エラーログ全文:**
-{stack_trace}
 """
                 try:
                     await self.gh_client.create_issue(

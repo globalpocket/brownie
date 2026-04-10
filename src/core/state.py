@@ -150,11 +150,11 @@ class StateManager:
         return None
 
     async def reset_orphaned_tasks(self):
-        """起動時に終了ステータス ('Completed', 'Failed', 'Suspended', 'WaitingForClarification') 以外で残っているタスクを Failed にリセットする (リカバリー)"""
-        query = "UPDATE tasks SET status = 'Failed' WHERE status NOT IN ('Completed', 'Failed', 'Suspended', 'WaitingForClarification')"
+        """起動時に終了ステータス ('Completed', 'Failed', 'Suspended', 'WaitingForClarification') 以外で残っているタスクを Suspended にリセットする (リカバリー)"""
+        query = "UPDATE tasks SET status = 'Suspended' WHERE status NOT IN ('Completed', 'Failed', 'Suspended', 'WaitingForClarification')"
         await self.conn.execute(query)
         await self.conn.commit()
-        logger.info("Orphaned or stale tasks reset to Failed during startup recovery.")
+        logger.info("Orphaned or stale tasks transitioned to Suspended status for automatic recovery.")
 
     async def update_task_context(self, task_id: str, context: Dict[str, Any]):
         """タスクのcontext（サマリー等）のみを部分更新する"""

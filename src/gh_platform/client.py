@@ -18,6 +18,10 @@ class GitHubRateLimitException(Exception):
         super().__init__(message)
         self.reset_at = reset_at
 
+class GitHubConnectionException(Exception):
+    """GitHubへの接続エラー（リトライ上限到達）を示す例外"""
+    pass
+
 class GitHubClientWrapper:
     def __init__(self, token: str):
         if not token:
@@ -52,11 +56,14 @@ class GitHubClientWrapper:
                     return await func(self, *args, **kwargs)
                 except (GithubException, requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError) as e:
                     is_retryable = False
+                    is_connection_error = False
+                    
                     # 接続エラーの場合はクライアントをリフレッシュ
                     if isinstance(e, (requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError)):
                         logger.warning(f"Connection error detected ({type(e).__name__}). Refreshing GitHub client...")
                         self._init_client(self._token)
                         is_retryable = True
+                        is_connection_error = True
                     else:
                         # 429 (Too Many Requests) または 403 (Secondary Rate Limit) はリトライ可能
                         is_retryable = (e.status == 429) or (e.status == 403 and "secondary" in str(e).lower())
@@ -67,6 +74,10 @@ class GitHubClientWrapper:
                         logger.warning(f"Retrying GitHub API call in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
                         await asyncio.sleep(delay)
                         continue
+                    
+                    # リトライ上限に達した接続エラーは GitHubConnectionException として送出し、上位でレジューム制御させる
+                    if is_connection_error:
+                        raise GitHubConnectionException(f"Persistent connection failure after {max_retries} attempts: {e}")
                     
                     if isinstance(e, GithubException):
                         self._handle_exception(e)
@@ -106,6 +117,7 @@ class GitHubClientWrapper:
                 self._handle_exception(e)
         return self._my_username
 
+    @github_retry
     async def get_all_accessible_repositories(self) -> List[str]:
         """ユーザーがアクセス可能なすべてのリポジトリ名を動的に取得する（ページネーション対応）"""
         try:
@@ -125,6 +137,7 @@ class GitHubClientWrapper:
             self._handle_exception(e)
             return []
 
+    @github_retry
     async def get_repo_owner(self, repo_name: str) -> str:
         """ リポジトリのオーナー名を取得する """
         try:
@@ -135,6 +148,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to get repo owner for {repo_name}: {e}")
             return ""
 
+    @github_retry
     async def get_issues_to_process(self, repo_name: str) -> List[Any]:
         """自分（アサイニ）に割り当てられたIssue/PRを取得する。"""
         try:
@@ -157,6 +171,7 @@ class GitHubClientWrapper:
             self._handle_exception(e)
             return []
 
+    @github_retry
     async def check_rbac(self, repo_name: str, username: str) -> bool:
         """ユーザーがリポジトリの Collaborator または Owner かを検証する"""
         try:
@@ -248,6 +263,7 @@ class GitHubClientWrapper:
         except GithubException as e:
             logger.error(f"Failed to close PR #{pull_number}: {e}")
 
+    @github_retry
     async def create_issue(self, repo_name: str, title: str, body: str) -> int:
         """新しいIssueを作成する"""
         try:
@@ -261,6 +277,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to create issue in {repo_name}: {e}")
             raise
 
+    @github_retry
     async def close_issue(self, repo_name: str, issue_number: int):
         """Issueをクローズする"""
         try:
@@ -274,6 +291,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to close issue in {repo_name}: {e}")
             raise
 
+    @github_retry
     async def merge_pull_request(self, repo_name: str, pull_number: int, commit_message: str = ""):
         """プルリクエストをマージする"""
         try:
@@ -286,6 +304,7 @@ class GitHubClientWrapper:
         except GithubException as e:
             logger.error(f"Failed to merge PR #{pull_number}: {e}")
 
+    @github_retry
     async def get_inline_comment_context(self, repo_name: str, comment_id: int):
         """インラインコメント（Diffコメント）から対象ファイルと行番号、コード断片を取得する"""
         try:
@@ -302,6 +321,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to get inline context for comment {comment_id}: {e}")
             return None
 
+    @github_retry
     async def get_issue_labels(self, repo_name: str, issue_number: int) -> List[str]:
         """Issue のラベル一覧を取得する"""
         try:
@@ -312,6 +332,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to get labels: {e}")
             return []
 
+    @github_retry
     async def add_label(self, repo_name: str, issue_number: int, label_name: str):
         """Issue にラベルを付与する"""
         try:
@@ -323,6 +344,7 @@ class GitHubClientWrapper:
         except GithubException as e:
             logger.error(f"Failed to add label: {e}")
 
+    @github_retry
     async def remove_label(self, repo_name: str, issue_number: int, label_name: str):
         """Issue からラベルを削除する"""
         try:
@@ -334,6 +356,7 @@ class GitHubClientWrapper:
             # ラベルが元々付いていない場合のエラーは無視
             logger.debug(f"Label '{label_name}' not found on Issue #{issue_number}, skipping remove.")
 
+    @github_retry
     async def ensure_repo_cloned(self, repo_name: str, repo_path: str, branch_name: Optional[str] = None):
         """設計書 7.2: リポジトリをクローンまたは最新状態にする"""
         import subprocess
@@ -388,6 +411,7 @@ class GitHubClientWrapper:
             if target_branch:
                 subprocess.run(["git", "checkout", target_branch], cwd=repo_path, check=False)
 
+    @github_retry
     async def get_last_bot_comment(self, repo_name: str, issue_number: int) -> Optional[str]:
         """GitHub 上での自分（Bot）の最新コメントを取得する"""
         try:
@@ -405,6 +429,7 @@ class GitHubClientWrapper:
             logger.warning(f"Failed to get last bot comment for {repo_name}#{issue_number}: {e}")
             return None
 
+    @github_retry
     async def get_comment_body(self, repo_name: str, issue_number: int, comment_id: str) -> Optional[str]:
         """各種 ID 形式（body, 数値, review-, rc-）からコメント本文を取得する"""
         try:
@@ -438,6 +463,7 @@ class GitHubClientWrapper:
             logger.error(f"Failed to get comment body for {comment_id}: {e}")
             return None
 
+    @github_retry
     async def get_mentions_to_process(self, repo_name: Optional[str] = None) -> List[Dict[str, Any]]:
         """通知 API を使用して @mentions を含む未処理の通知/コメントを取得する。"""
         try:
