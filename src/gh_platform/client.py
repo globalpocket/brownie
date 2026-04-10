@@ -295,18 +295,38 @@ class GitHubClientWrapper:
         """設計書 7.2: リポジトリをクローンまたは最新状態にする"""
         import subprocess
         import os
-        if not os.path.exists(os.path.join(repo_path, ".git")):
-            # クローン (OAuthトークンを含ませる)
+        import shutil
+        
+        # PyGithubを利用してリポジトリのデフォルトブランチを動的に取得
+        try:
+            repo = self.g.get_repo(repo_name)
+            default_branch = repo.default_branch
+        except Exception as e:
+            logger.warning(f"Failed to get default branch for {repo_name}: {e}. Falling back to 'main'.")
+            default_branch = "main"
+
+        def do_clone():
             token = os.getenv("GITHUB_TOKEN", "")
             clone_url = f"https://x-access-token:{token}@github.com/{repo_name}.git"
             logger.info(f"Cloning {repo_name} to {repo_path}...")
             subprocess.run(["git", "clone", clone_url, "."], cwd=repo_path, check=True)
-        else:
-            # 最新化 (mainブランチであることを前提)
-            logger.info(f"Updating {repo_name} in {repo_path}...")
-            subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
-            subprocess.run(["git", "checkout", "main"], cwd=repo_path, check=True)
-            subprocess.run(["git", "reset", "--hard", "origin/main"], cwd=repo_path, check=True)
+
+        try:
+            if not os.path.exists(os.path.join(repo_path, ".git")):
+                do_clone()
+            else:
+                # 最新化 (動的に取得したデフォルトブランチを使用)
+                logger.info(f"Updating {repo_name} in {repo_path} (branch: {default_branch})...")
+                subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
+                subprocess.run(["git", "checkout", default_branch], cwd=repo_path, check=True)
+                subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=repo_path, check=True)
+        except subprocess.CalledProcessError as e:
+            logger.warning(f"Git operation failed for {repo_name} at {repo_path}. Attempting repair by re-cloning. Error: {e}")
+            # ディレクトリが破損している可能性があるため、一度削除して再クローン
+            if os.path.exists(repo_path):
+                shutil.rmtree(repo_path)
+            os.makedirs(repo_path, exist_ok=True)
+            do_clone()
 
     async def get_comment_body(self, repo_name: str, issue_number: int, comment_id: str) -> Optional[str]:
         """各種 ID 形式（body, 数値, review-, rc-）からコメント本文を取得する"""
@@ -342,25 +362,42 @@ class GitHubClientWrapper:
             return None
 
     async def get_mentions_to_process(self, repo_name: Optional[str] = None) -> List[Dict[str, Any]]:
-        """@mentions を含む未処理の通知/コメントを取得する。repo_name が None の場合は全リポジトリから検索する。"""
+        """通知 API を使用して @mentions を含む未処理の通知/コメントを取得する。"""
         try:
             import os
             my_username = os.getenv("USER_NAME") or self.get_my_username()
             
-            if repo_name:
-                query = f"repo:{repo_name} \"@{my_username}\" is:open"
-            else:
-                # 全プロジェクトを対象としたメンション検索
-                query = f"mentions:{my_username} is:open"
-            
-            issues = self.g.search_issues(query, sort="updated", order="desc")
+            # Search API の不安定さを回避するため、Notifications API を使用
+            # all=True にすることで既読の通知も取得（StateManagerで重複排除されるため安全）
+            # participating=True で自分が関与しているものに限定
+            notifications = self.g.get_user().get_notifications(all=True, participating=True)
             
             results = []
-            # 検索で見つかったIssue/PRごとに、最新のメンションコメントを特定する
-            for issue in issues:
+            count = 0
+            max_notifications = 50 # 負荷軽減のため最新50件に限定
+            
+            for n in notifications:
+                if count >= max_notifications:
+                    break
+                
+                # メンションかつ、Issue または PullRequest の通知のみを対象とする
+                if n.reason != "mention" or n.subject.type not in ["Issue", "PullRequest"]:
+                    continue
+                
+                issue_repo_name = n.repository.full_name
+                
+                # 特定のリポジトリ指定がある場合はフィルタリング
+                if repo_name and issue_repo_name != repo_name:
+                    continue
+                
                 try:
+                    # subject.url (https://api.github.com/repos/.../issues/123) から Issue 番号を抽出
+                    issue_number = int(n.subject.url.split("/")[-1])
+                    repo = n.repository
+                    issue = repo.get_issue(issue_number)
+                    
+                    count += 1
                     latest_mention = None
-                    issue_repo_name = issue.repository.full_name
                     
                     # 1. まずIssue本文をチェック (自分自身の投稿は除外)
                     issue_author = issue.user.login if issue.user else None
@@ -375,6 +412,7 @@ class GitHubClientWrapper:
                     
                     # 2. 次にすべてのコメントをチェック
                     try:
+                        # 全コメントを取得（API負荷はかかるが、検索APIよりは安定）
                         comments = issue.get_comments()
                         for comment in comments:
                             comment_author = comment.user.login.lower() if comment.user else None
@@ -388,14 +426,14 @@ class GitHubClientWrapper:
                                         "created_at": comment.created_at
                                     }
                     except Exception as ce:
-                        logger.warning(f"Failed to scan comments for Issue #{issue.number} in {issue_repo_name}: {ce}")
+                        logger.warning(f"Failed to scan comments for Issue #{issue_number} in {issue_repo_name}: {ce}")
 
                     # 3. プルリクエストの場合、レビューとレビューコメントもチェック
                     if issue.pull_request:
                         try:
                             pr = issue.as_pull_request()
                             
-                            # レビューサマリー (承認/却下時のタイトルコメント)
+                            # レビューサマリー
                             reviews = pr.get_reviews()
                             for review in reviews:
                                 review_author = review.user.login.lower() if review.user else None
@@ -409,7 +447,7 @@ class GitHubClientWrapper:
                                             "created_at": review.submitted_at
                                         }
 
-                            # レビューインラインコメント (コードへの直接指摘)
+                            # レビューインラインコメント
                             review_comments = pr.get_review_comments()
                             for r_comment in review_comments:
                                 r_author = r_comment.user.login.lower() if r_comment.user else None
@@ -423,18 +461,15 @@ class GitHubClientWrapper:
                                             "created_at": r_comment.created_at
                                         }
                         except Exception as pe:
-                            logger.warning(f"Failed to scan PR details for Issue #{issue.number} in {issue_repo_name}: {pe}")
+                            logger.warning(f"Failed to scan PR details for Issue #{issue_number} in {issue_repo_name}: {pe}")
                     
                     if latest_mention:
                         results.append(latest_mention)
                 except Exception as ie:
-                    logger.error(f"Error processing Issue in search results: {ie}")
+                    logger.error(f"Error processing notification for {issue_repo_name}: {ie}")
                     continue
             
             return results
-        except GithubException as e:
-            logger.error(f"Failed to get mentions: {e}")
-            return []
-        except GithubException as e:
-            logger.error(f"Failed to get mentions: {e}")
+        except Exception as e:
+            logger.error(f"Failed to get mentions via Notifications API: {e}")
             return []
