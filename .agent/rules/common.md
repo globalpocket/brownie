@@ -31,3 +31,8 @@
     - 遵守状況: システムプロンプトおよびユーザー様との対話（Antigravity:貴方を含む）、全ての回答、タスクの概要、および GitHub コメントは .env ファイルの BROWNIE_LANGUAGE 設定で確認した言語でアウトプットを行います。
 16. **Pre-Push Documentation Refresh (MANDATORY)**:
     - Before pushing any changes to Git, you MUST execute the `/blueprint` workflow to ensure that all documentation (Blueprints, README.md, and Home.md) is fully synchronized with the latest code state.
+17. **Progress Reporting (MANDATORY)**:
+    - 進行状況の透明性を高めるため、以下のタイミングで `post_comment` ツールを使用して GitHub に状況報告を行ってください：
+        - Phase 1（調査）が完了し、設計または実装に移行する際。
+        - 複雑な問題に遭遇し、解決に時間がかかると予想される際。
+        - 最終報告に至るまでの大きな節目（マイルストーン）を完了した際。

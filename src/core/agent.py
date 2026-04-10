@@ -36,6 +36,7 @@ class CoderAgent:
         self.workspace_context = workspace_context
         self.language = os.getenv("BROWNIE_LANGUAGE", "Japanese")
         self._status = "running"
+        self._current_task_id = None
         
         # モデルの設定 (Planner)
         raw_model = config['llm']['models'].get('planner', 'mlx-community/Meta-Llama-3.1-8B-Instruct-4bit')
@@ -152,7 +153,7 @@ class CoderAgent:
             summary: ユーザーへの最終的な報告内容。どのような修正を行ったか、何を確認したかを詳しく含めてください。
         """
         self._status = "finished"
-        task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+        task_id = self._current_task_id or f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": summary})
         return "Task completed and summary saved."
 
@@ -163,7 +164,7 @@ class CoderAgent:
             summary: 中断理由や現在の進捗の概要。
         """
         self._status = "suspended"
-        task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+        task_id = self._current_task_id or f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": summary})
         return "Task suspended."
 
@@ -175,7 +176,7 @@ class CoderAgent:
             question: ユーザーへの具体的な質問内容。
         """
         self._status = "waiting_for_clarification"
-        task_id = f"{self._current_repo_name}#{self._current_issue_number}"
+        task_id = self._current_task_id or f"{self._current_repo_name}#{self._current_issue_number}"
         await self.state.update_task_context(task_id, {"final_summary": question})
         return "Waiting for user clarification."
 
@@ -324,6 +325,7 @@ class CoderAgent:
     async def run(self, task_id: str, repo_name: str, issue_number: int, repo_path: str = None, **kwargs) -> bool:
         """エージェントの実行ループ (ADK Runner を使用)"""
         task_description = kwargs.get('task_description', f"Issue #{issue_number} in {repo_name} を解決してください。")
+        self._current_task_id = task_id
         self._current_repo_name = repo_name
         self._current_issue_number = issue_number
         
