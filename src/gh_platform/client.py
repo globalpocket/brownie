@@ -377,6 +377,7 @@ class GitHubClientWrapper:
             token = os.getenv("GITHUB_TOKEN", "")
             clone_url = f"https://x-access-token:{token}@github.com/{repo_name}.git"
             logger.info(f"Cloning {repo_name} to {repo_path}...")
+            os.makedirs(repo_path, exist_ok=True)
             # クローン直後はデフォルトブランチになるが、後続の checkout で指定ブランチに合わせる
             subprocess.run(["git", "clone", clone_url, "."], cwd=repo_path, check=True)
 

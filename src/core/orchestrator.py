@@ -109,6 +109,21 @@ class Orchestrator:
             await self.mcp_manager.stop_all()
             logger.info("Orchestrator cleanup completed.")
 
+    async def _ensure_repo_context(self, repo_name: str):
+        """リポジトリのオンデマンド構成（クローン・解析）を実行する"""
+        if repo_name in self._initialized_repos:
+            return
+            
+        repo_path = os.path.join(self.project_root, "workspaces", repo_name.replace("/", "_"))
+        await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
+        
+        # 解析の実行 (設計書 6.2)
+        analyzer = CodeAnalyzer(repo_path)
+        # 解析は時間がかかる場合があるため、Orchestratorレベルで一度だけ実行
+        await analyzer.scan_project()
+        
+        self._initialized_repos.add(repo_name)
+
     async def _update_hibernation_status(self, reason: Optional[str], reset_at: float = 0):
         """冬眠状態を外部ファイルに保存する (CLI表示用)"""
         status_file = "/tmp/brownie_hibernation.json"
