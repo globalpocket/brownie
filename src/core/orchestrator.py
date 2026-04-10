@@ -68,24 +68,27 @@ class Orchestrator:
         logger.info("BOOT SEQUENCE COMPLETED. Entering main polling loop.")
 
         # メインポーリングループ
-        while self.is_running:
-            try:
-                for repo_name in repo_list:
-                    await self._poll_repository(repo_name)
-                
-                await self._check_llm_health()
-                self.sandbox.cleanup_orphans()
-                await asyncio.sleep(self.config['agent']['polling_interval_sec'])
-            except GitHubRateLimitException as e:
-                wait_seconds = int(e.reset_at - time.time()) + 60
-                logger.warning(f"HIBERNATION MODE: Captured GitHub rate limit. Sleeping for {wait_seconds}s...")
-                await asyncio.sleep(wait_seconds)
-            except Exception as e:
-                logger.error(f"Orchestrator error: {e}", exc_info=True)
-                await asyncio.sleep(10)
-        
-        await self.http_client.aclose()
-        await self.mcp_manager.stop_all()
+        try:
+            while self.is_running:
+                try:
+                    for repo_name in repo_list:
+                        await self._poll_repository(repo_name)
+                    
+                    await self._check_llm_health()
+                    self.sandbox.cleanup_orphans()
+                    await asyncio.sleep(self.config['agent']['polling_interval_sec'])
+                except GitHubRateLimitException as e:
+                    wait_seconds = int(e.reset_at - time.time()) + 60
+                    logger.warning(f"HIBERNATION MODE: Captured GitHub rate limit. Sleeping for {wait_seconds}s...")
+                    await asyncio.sleep(wait_seconds)
+                except Exception as e:
+                    logger.error(f"Orchestrator error: {e}", exc_info=True)
+                    await asyncio.sleep(10)
+        finally:
+            logger.info("Orchestrator shutting down. Cleaning up resources...")
+            await self.http_client.aclose()
+            await self.mcp_manager.stop_all()
+            logger.info("Orchestrator cleanup completed.")
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする"""
