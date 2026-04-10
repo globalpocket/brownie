@@ -125,7 +125,10 @@ class Orchestrator:
 
         # 再開（Resurrection）ロジック
         if waiting_task:
-            logger.info(f"Resurrecting task {waiting_task['id']} for issue {repo_name}#{issue_number} due to new comment {task_id}")
+            logger.info(f"Resurrecting task {waiting_task['id']} for issue {repo_name}#{issue_number} due to trigger {task_id}")
+            # トリガーとなったタスクID（コメントID）を記録し、同じコメントで何度も再開しないようにする
+            await self.state.update_task(task_id, "TriggeredResurrection", repo_name, issue_num=issue_number)
+            
             # 待機中のタスクを InQueue に戻す (IDは元のままでよいが、新しい指示を含めるために更新)
             await self.state.update_task(waiting_task['id'], "InQueue", repo_name)
             priority = self.config['agent']['inference_priority']['manual_issue']
