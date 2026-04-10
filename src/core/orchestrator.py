@@ -205,6 +205,10 @@ class Orchestrator:
                 active_label = "ai-active" if comment_id else "in-progress"
                 await self.gh_client.add_label(repo_name, issue_number, active_label)
                 
+                # パターン1: メンション認識時の受付確認
+                # すでに active_label が付いている場合は再受理コメントを避ける（オプション）
+                await self.gh_client.post_comment(repo_name, issue_number, "承知いたしました。作業を開始します。" + get_footer())
+                
                 # コンテキストから再開用コメントIDを取得
                 current_task_row = await self.state.get_task(task_id)
                 resume_comment_id = (current_task_row.get('context') or {}).get('resume_comment_id')
@@ -257,9 +261,32 @@ class Orchestrator:
                     latest_task = await self.state.get_task(task_id)
                     summary = (latest_task.get('context') or {}).get('final_summary') if latest_task else None
                     if summary:
-                        status_icons = {"WAITING": "⏳ 確認待ち", "SUSPENDED": "⏳ 中断", True: "✅ 完了"}
-                        status_icon = status_icons.get(success, "✅ 完了")
-                        await self.gh_client.post_comment(repo_name, issue_number, f"### {status_icon}\n\n{summary}" + get_footer())
+                        # 二重投稿防止ガードレール
+                        is_duplicate = False
+                        
+                        # A. メモリ内トラッキング（同一実行サイクル内）
+                        if hasattr(task_agent, 'last_manual_comment') and task_agent.last_manual_comment:
+                            if summary.strip() == task_agent.last_manual_comment.strip():
+                                is_duplicate = True
+                        
+                        # B. GitHub 履歴チェック（表記揺れを許容する正規化比較）
+                        if not is_duplicate:
+                            last_bot_body = await self.gh_client.get_last_bot_comment(repo_name, issue_number)
+                            if last_bot_body:
+                                # フッターとヘッダーを除去して正規化
+                                normalized_last = last_bot_body.split("---")[0].strip()
+                                # 記号や空白を除いて「意味的な文字の並び」だけで比較
+                                import re
+                                def clean(text): return re.sub(r'[^\w\s]', '', text).replace('\n', '').replace(' ', '')
+                                if clean(summary) == clean(normalized_last):
+                                    is_duplicate = True
+                        
+                        if is_duplicate:
+                            logger.info(f"[{task_id}] Skip final comment to avoid duplication.")
+                        else:
+                            status_icons = {"WAITING": "⏳ 確認待ち", "SUSPENDED": "⏳ 中断", True: "✅ 完了"}
+                            status_icon = status_icons.get(success, "✅ 完了")
+                            await self.gh_client.post_comment(repo_name, issue_number, f"### {status_icon}\n\n{summary}" + get_footer())
                 
                 await self.state.update_task(task_id, final_status, repo_name)
                 if active_label:

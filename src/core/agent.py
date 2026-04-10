@@ -37,6 +37,7 @@ class CoderAgent:
         self.language = os.getenv("BROWNIE_LANGUAGE", "Japanese")
         self._status = "running"
         self._current_task_id = None
+        self.last_manual_comment = None
         
         # モデルの設定 (Planner)
         raw_model = config['llm']['models'].get('planner', 'mlx-community/Meta-Llama-3.1-8B-Instruct-4bit')
@@ -144,6 +145,7 @@ class CoderAgent:
             body: コメントの内容。Markdown形式が使用可能です。
         """
         await self.gh_client.post_comment(self._current_repo_name, self._current_issue_number, body + get_footer())
+        self.last_manual_comment = body
         return "Successfully posted comment."
 
     async def finish(self, summary: str) -> str:
@@ -330,6 +332,7 @@ class CoderAgent:
         self._current_issue_number = issue_number
         
         logger.info(f"[{task_id}] ADK Agent starting for {repo_name}#{issue_number}")
+        self.last_manual_comment = None
         
         # 以前のカレントディレクトリ移動を WorkspaceContext 方式に統合（内部で resolve するため chdir 不要にしたいが、一応維持）
         if repo_path and os.path.exists(repo_path):

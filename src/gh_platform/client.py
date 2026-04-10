@@ -328,6 +328,23 @@ class GitHubClientWrapper:
             os.makedirs(repo_path, exist_ok=True)
             do_clone()
 
+    async def get_last_bot_comment(self, repo_name: str, issue_number: int) -> Optional[str]:
+        """GitHub 上での自分（Bot）の最新コメントを取得する"""
+        try:
+            me = self.g.get_user().login
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            # コメントを逆順に取得するために最新から数件取得（大量にある場合を考慮）
+            comments = issue.get_comments()
+            # PaginatedList をリスト化して逆順にする（通常は件数が少ないことを期待）
+            for comment in sorted(comments, key=lambda x: x.created_at, reverse=True):
+                if comment.user.login == me:
+                    return comment.body
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to get last bot comment for {repo_name}#{issue_number}: {e}")
+            return None
+
     async def get_comment_body(self, repo_name: str, issue_number: int, comment_id: str) -> Optional[str]:
         """各種 ID 形式（body, 数値, review-, rc-）からコメント本文を取得する"""
         try:
