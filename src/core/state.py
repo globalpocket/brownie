@@ -64,19 +64,32 @@ class StateManager:
     async def update_task(self, task_id: str, status: str, repo_name: str, 
                         issue_num: Optional[int] = None, pr_num: Optional[int] = None,
                         context: Optional[Dict[str, Any]] = None):
-        """タスク状態の更新"""
+        """タスク状態の更新。contextが提供された場合は既存のものとマージする"""
         import json
-        if context is None:
-            context = {}
-        context["version"] = get_build_id()
+        
+        # 既存タスクを取得してコンテキストをマージ
+        existing = await self.get_task(task_id)
+        current_context = existing.get("context", {}) if existing else {}
+        if context:
+            current_context.update(context)
+            
+        current_context["version"] = get_build_id()
+        
         await self.conn.execute("""
             INSERT INTO tasks (id, repo_full_name, issue_number, pr_number, status, context, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             ON CONFLICT(id) DO UPDATE SET
                 status=excluded.status,
-                context=COALESCE(excluded.context, tasks.context),
+                context=excluded.context,
                 updated_at=CURRENT_TIMESTAMP
-        """, (task_id, repo_name, issue_num, pr_num, status, json.dumps(context) if context else None))
+        """, (task_id, repo_name, issue_num, pr_num, status, json.dumps(current_context)))
+        await self.conn.commit()
+
+    async def update_task_status(self, task_id: str, status: str):
+        """コンテキストを維持したままステータスのみを更新する"""
+        await self.conn.execute("""
+            UPDATE tasks SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?
+        """, (status, task_id))
         await self.conn.commit()
 
     async def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:

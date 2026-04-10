@@ -160,14 +160,18 @@ class Orchestrator:
         # 再開（Resurrection）ロジック
         if waiting_task:
             logger.info(f"Resurrecting task {waiting_task['id']} for issue {repo_name}#{issue_number} due to trigger {task_id}")
-            # トリガーとなったタスクID（コメントID）を記録し、同じコメントで何度も再開しないようにする
+            
+            # トリガーとなったメンションを「処理済み（再起トリガー済み）」として記録
+            # 既存のタスクIDがない場合は新規作成、ある場合はステータス更新のみ
             await self.state.update_task(task_id, "TriggeredResurrection", repo_name, issue_num=issue_number)
             
-            # 待機中のタスクを InQueue に戻す (IDは元のままでよいが、新しい指示を含めるために更新)
-            await self.state.update_task(waiting_task['id'], "InQueue", repo_name)
-            priority = self.config['agent']['inference_priority']['manual_issue']
-            # 新しいコメントIDを context に保存して再開時に読めるようにする
+            # 再開用コメントIDを context に保存して再開時に読めるようにする
             await self.state.update_task_context(waiting_task['id'], {"resume_comment_id": task_id.split(":")[-1]})
+            
+            # 待機中のタスクを InQueue に戻す (ステータスのみ更新して既存コンテキストを維持)
+            await self.state.update_task_status(waiting_task['id'], "InQueue")
+            
+            priority = self.config['agent']['inference_priority']['manual_issue']
             await self.worker_pool.add_task(waiting_task['id'], priority, self._execute_task, waiting_task['id'], repo_name, issue_number)
             return
 
@@ -198,7 +202,8 @@ class Orchestrator:
             _, suffix = task_id.split(":", 1)
             comment_id = suffix
 
-        await self.state.update_task(task_id, "InProgress", repo_name)
+        # コンテキスト（resume_comment_id等）を保持したまま実行中に移行
+        await self.state.update_task_status(task_id, "InProgress")
         stop_heartbeat = asyncio.Event()
         
         # 各タスクごとにクリーンな MCP マネージャーとコンテキストを使用
@@ -211,11 +216,26 @@ class Orchestrator:
                 repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
                 os.makedirs(repo_path, exist_ok=True)
                 
-                # デフォルトブランチを動的に取得
+                # 対象ブランチの特定 (Issue か PR か)
                 repo = self.gh_client.g.get_repo(repo_name)
                 default_branch = repo.default_branch
+                target_issue = repo.get_issue(issue_number)
+                target_branch = default_branch
                 
-                await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
+                if target_issue.pull_request:
+                    try:
+                        pr = target_issue.as_pull_request()
+                        # PR の head ブランチ（最新のコミットがあるブランチ）を取得
+                        # 他のリポジトリからのPR（フォーク）の場合は一旦考慮外とするが、
+                        # 同じリポジトリ内のブランチであれば pr.head.ref で取得可能。
+                        if pr.head.repo and pr.head.repo.full_name == repo_name:
+                            target_branch = pr.head.ref
+                            logger.info(f"Target is a Pull Request. Switching to branch: {target_branch}")
+                    except Exception as e:
+                        logger.warning(f"Failed to get PR details, falling back to default branch: {e}")
+
+                # 最新状態を pull (fetch & reset --hard)
+                await self.gh_client.ensure_repo_cloned(repo_name, repo_path, branch_name=target_branch)
                 
                 # WDCA を強制実行して最新のシンボルマップを構築
                 from src.workspace.analyzer.core import CodeAnalyzer
@@ -246,7 +266,6 @@ class Orchestrator:
                 )
 
                 # 4. タスク実行
-                target_issue = self.gh_client.g.get_repo(repo_name).get_issue(issue_number)
                 active_label = "ai-active" if comment_id else "in-progress"
                 await self.gh_client.add_label(repo_name, issue_number, active_label)
                 

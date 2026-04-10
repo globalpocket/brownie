@@ -334,35 +334,49 @@ class GitHubClientWrapper:
             # ラベルが元々付いていない場合のエラーは無視
             logger.debug(f"Label '{label_name}' not found on Issue #{issue_number}, skipping remove.")
 
-    async def ensure_repo_cloned(self, repo_name: str, repo_path: str):
+    async def ensure_repo_cloned(self, repo_name: str, repo_path: str, branch_name: Optional[str] = None):
         """設計書 7.2: リポジトリをクローンまたは最新状態にする"""
         import subprocess
         import os
         import shutil
         
-        # PyGithubを利用してリポジトリのデフォルトブランチを動的に取得
-        try:
-            repo = self.g.get_repo(repo_name)
-            default_branch = repo.default_branch
-        except Exception as e:
-            logger.warning(f"Failed to get default branch for {repo_name}: {e}. Falling back to 'main'.")
-            default_branch = "main"
+        target_branch = branch_name
+        if not target_branch:
+            # PyGithubを利用してリポジトリのデフォルトブランチを動的に取得
+            try:
+                repo = self.g.get_repo(repo_name)
+                target_branch = repo.default_branch
+            except Exception as e:
+                logger.warning(f"Failed to get default branch for {repo_name}: {e}. Falling back to 'main'.")
+                target_branch = "main"
 
         def do_clone():
             token = os.getenv("GITHUB_TOKEN", "")
             clone_url = f"https://x-access-token:{token}@github.com/{repo_name}.git"
             logger.info(f"Cloning {repo_name} to {repo_path}...")
+            # クローン直後はデフォルトブランチになるが、後続の checkout で指定ブランチに合わせる
             subprocess.run(["git", "clone", clone_url, "."], cwd=repo_path, check=True)
 
         try:
             if not os.path.exists(os.path.join(repo_path, ".git")):
                 do_clone()
-            else:
-                # 最新化 (動的に取得したデフォルトブランチを使用)
-                logger.info(f"Updating {repo_name} in {repo_path} (branch: {default_branch})...")
-                subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
-                subprocess.run(["git", "checkout", default_branch], cwd=repo_path, check=True)
-                subprocess.run(["git", "reset", "--hard", f"origin/{default_branch}"], cwd=repo_path, check=True)
+            
+            # 最新化 (指定されたブランチまたはデフォルトブランチを使用)
+            logger.info(f"Syncing {repo_name} in {repo_path} to latest on branch: {target_branch}...")
+            # origin から最新を取得
+            subprocess.run(["git", "fetch", "origin"], cwd=repo_path, check=True)
+            # 指定ブランチに切り替え（ローカルにない場合は origin から作成）
+            try:
+                subprocess.run(["git", "checkout", target_branch], cwd=repo_path, check=True)
+            except subprocess.CalledProcessError:
+                # 存在しない場合は origin/{target_branch} から作成を試みる
+                subprocess.run(["git", "checkout", "-b", target_branch, f"origin/{target_branch}"], cwd=repo_path, check=True)
+            
+            # origin の状態に強制リセット（クリーンな最新状態を保証）
+            subprocess.run(["git", "reset", "--hard", f"origin/{target_branch}"], cwd=repo_path, check=True)
+            # LFS の同期も追加で行う (設計書 3.2, 5.1)
+            subprocess.run(["git", "lfs", "pull"], cwd=repo_path, check=False)
+            
         except subprocess.CalledProcessError as e:
             logger.warning(f"Git operation failed for {repo_name} at {repo_path}. Attempting repair by re-cloning. Error: {e}")
             # ディレクトリが破損している可能性があるため、一度削除して再クローン
@@ -370,6 +384,9 @@ class GitHubClientWrapper:
                 shutil.rmtree(repo_path)
             os.makedirs(repo_path, exist_ok=True)
             do_clone()
+            # クローン後に再度指定ブランチに合わせる
+            if target_branch:
+                subprocess.run(["git", "checkout", target_branch], cwd=repo_path, check=False)
 
     async def get_last_bot_comment(self, repo_name: str, issue_number: int) -> Optional[str]:
         """GitHub 上での自分（Bot）の最新コメントを取得する"""
