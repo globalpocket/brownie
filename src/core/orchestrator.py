@@ -71,11 +71,22 @@ class Orchestrator:
         try:
             while self.is_running:
                 try:
-                    for repo_name in repo_list:
-                        await self._poll_repository(repo_name)
+                    # 全プロジェクトを対象としたグローバルメンション検索
+                    exclude_list = self.config['agent'].get('exclude_repositories', [])
+                    all_mentions = await self.gh_client.get_mentions_to_process()
+                    
+                    for m in all_mentions:
+                        target_repo = m['repo_name']
+                        if target_repo in exclude_list:
+                            logger.info(f"SKIP: Mention in excluded repository: {target_repo}")
+                            continue
+                            
+                        task_id = f"{target_repo}#{m['number']}:{m['comment_id']}"
+                        await self._queue_if_needed(task_id, target_repo, m['number'], "mention_trigger")
                     
                     await self._check_llm_health()
                     self.sandbox.cleanup_orphans()
+                    # config で指定された間隔で待機
                     await asyncio.sleep(self.config['agent']['polling_interval_sec'])
                 except GitHubRateLimitException as e:
                     wait_seconds = int(e.reset_at - time.time()) + 60
@@ -91,7 +102,7 @@ class Orchestrator:
             logger.info("Orchestrator cleanup completed.")
 
     async def _poll_repository(self, repo_name: str):
-        """リポジトリの最新状態を確認し、タスクをキューイングする"""
+        """リポジトリの最新状態を確認し、タスクをキューイングする (DEPRECATED: start内でのグローバル検索に移行)"""
         mentions = await self.gh_client.get_mentions_to_process(repo_name)
         for m in mentions:
             task_id = f"{repo_name}#{m['number']}:{m['comment_id']}"
@@ -155,11 +166,18 @@ class Orchestrator:
             try:
                 asyncio.create_task(self._send_heartbeat(stop_heartbeat))
                 
-                # 1. コンテキスト作成
+                # 1. コンテキスト作成 (オンデマンド・クローン)
                 workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
                 repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
                 os.makedirs(repo_path, exist_ok=True)
                 await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
+                
+                # WDCA を強制実行して最新のシンボルマップを構築
+                from src.workspace.analyzer.core import CodeAnalyzer
+                logger.info(f"WDCA: Refreshing symbol map for {repo_name}...")
+                analyzer = CodeAnalyzer(repo_path)
+                await analyzer.scan_project()
+                analyzer.close()
                 
                 ws_context = WorkspaceContext(repo_path, self.project_root)
                 self.sandbox.context = ws_context # Sandboxも新コンテキストを共有

@@ -341,12 +341,18 @@ class GitHubClientWrapper:
             logger.error(f"Failed to get comment body for {comment_id}: {e}")
             return None
 
-    async def get_mentions_to_process(self, repo_name: str) -> List[Dict[str, Any]]:
-        """@mentions を含む未処理の通知/コメントを取得する"""
+    async def get_mentions_to_process(self, repo_name: Optional[str] = None) -> List[Dict[str, Any]]:
+        """@mentions を含む未処理の通知/コメントを取得する。repo_name が None の場合は全リポジトリから検索する。"""
         try:
             import os
             my_username = os.getenv("USER_NAME") or self.get_my_username()
-            query = f"repo:{repo_name} \"@{my_username}\" is:open"
+            
+            if repo_name:
+                query = f"repo:{repo_name} \"@{my_username}\" is:open"
+            else:
+                # 全プロジェクトを対象としたメンション検索
+                query = f"mentions:{my_username} is:open"
+            
             issues = self.g.search_issues(query, sort="updated", order="desc")
             
             results = []
@@ -354,11 +360,13 @@ class GitHubClientWrapper:
             for issue in issues:
                 try:
                     latest_mention = None
+                    issue_repo_name = issue.repository.full_name
                     
                     # 1. まずIssue本文をチェック (自分自身の投稿は除外)
                     issue_author = issue.user.login if issue.user else None
                     if f"@{my_username}" in (issue.body or "") and issue_author != my_username:
                         latest_mention = {
+                            "repo_name": issue_repo_name,
                             "number": issue.number,
                             "comment_id": "body",
                             "body": issue.body,
@@ -371,14 +379,16 @@ class GitHubClientWrapper:
                         for comment in comments:
                             comment_author = comment.user.login.lower() if comment.user else None
                             if f"@{my_username.lower()}" in (comment.body or "").lower() and comment_author != my_username.lower():
-                                latest_mention = {
-                                    "number": issue.number,
-                                    "comment_id": str(comment.id),
-                                    "body": comment.body,
-                                    "created_at": comment.created_at
-                                }
+                                if not latest_mention or comment.created_at > latest_mention["created_at"]:
+                                    latest_mention = {
+                                        "repo_name": issue_repo_name,
+                                        "number": issue.number,
+                                        "comment_id": str(comment.id),
+                                        "body": comment.body,
+                                        "created_at": comment.created_at
+                                    }
                     except Exception as ce:
-                        logger.warning(f"Failed to scan comments for Issue #{issue.number}: {ce}")
+                        logger.warning(f"Failed to scan comments for Issue #{issue.number} in {issue_repo_name}: {ce}")
 
                     # 3. プルリクエストの場合、レビューとレビューコメントもチェック
                     if issue.pull_request:
@@ -392,6 +402,7 @@ class GitHubClientWrapper:
                                 if review.body and f"@{my_username.lower()}" in review.body.lower() and review_author != my_username.lower():
                                     if not latest_mention or review.submitted_at > latest_mention["created_at"]:
                                         latest_mention = {
+                                            "repo_name": issue_repo_name,
                                             "number": issue.number,
                                             "comment_id": f"review-{review.id}",
                                             "body": review.body,
@@ -405,21 +416,25 @@ class GitHubClientWrapper:
                                 if f"@{my_username.lower()}" in (r_comment.body or "").lower() and r_author != my_username.lower():
                                     if not latest_mention or r_comment.created_at > latest_mention["created_at"]:
                                         latest_mention = {
+                                            "repo_name": issue_repo_name,
                                             "number": issue.number,
                                             "comment_id": f"rc-{r_comment.id}",
                                             "body": r_comment.body,
                                             "created_at": r_comment.created_at
                                         }
                         except Exception as pe:
-                            logger.warning(f"Failed to scan PR details for Issue #{issue.number}: {pe}")
+                            logger.warning(f"Failed to scan PR details for Issue #{issue.number} in {issue_repo_name}: {pe}")
                     
                     if latest_mention:
                         results.append(latest_mention)
                 except Exception as ie:
-                    logger.error(f"Error processing Issue #{getattr(issue, 'number', 'unknown')}: {ie}")
+                    logger.error(f"Error processing Issue in search results: {ie}")
                     continue
             
             return results
+        except GithubException as e:
+            logger.error(f"Failed to get mentions: {e}")
+            return []
         except GithubException as e:
             logger.error(f"Failed to get mentions: {e}")
             return []

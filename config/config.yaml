@@ -1,5 +1,5 @@
 agent:
-  polling_interval_sec: 15
+  polling_interval_sec: 30
   max_auto_retries: 30
   max_llm_retries: 5
   max_history_steps: 15 # 履歴保持件数。DB肥大化防止。
@@ -11,6 +11,7 @@ agent:
     auto_wiki: 3
   repositories:
     - "globalpocket/brownie"
+  exclude_repositories: [] # 監視から除外するリポジトリ (owner/repo 形式)
 llm:
   planner_endpoint: "http://localhost:8080/v1"
   executor_endpoint: "http://localhost:8081/v1"
