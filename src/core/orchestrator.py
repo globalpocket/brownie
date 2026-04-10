@@ -368,6 +368,10 @@ class Orchestrator:
                 # 4. タスク実行
                 active_label = "ai-active" if comment_id else "in-progress"
                 
+                # コンテキストから再開用コメントIDを取得
+                current_task_row = await self.state.get_task(task_id)
+                resume_comment_id = (current_task_row.get('context') or {}).get('resume_comment_id') if current_task_row else None
+
                 # ラベル取得と開始コメントの制御
                 labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
                 is_first_start = (active_label not in labels) and (not resume_comment_id)
@@ -375,10 +379,6 @@ class Orchestrator:
                 await self.gh_client.add_label(repo_name, issue_number, active_label)
                 if is_first_start:
                     await self.gh_client.post_comment(repo_name, issue_number, "承知いたしました。作業を開始します。" + get_footer())
-                
-                # コンテキストから再開用コメントIDを取得
-                current_task_row = await self.state.get_task(task_id)
-                resume_comment_id = (current_task_row.get('context') or {}).get('resume_comment_id')
                 
                 instruction_priority = None
                 if resume_comment_id:
