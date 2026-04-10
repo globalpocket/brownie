@@ -175,9 +175,8 @@ class Orchestrator:
             await self.worker_pool.add_task(waiting_task['id'], priority, self._execute_task, waiting_task['id'], repo_name, issue_number)
             return
 
-        labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
-        if "completed" in labels and "ai-active" not in labels: return
 
+        labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
         if user_login != "mention_trigger":
             if "in-progress" in labels: return
             if not await self.gh_client.check_rbac(repo_name, user_login): return
