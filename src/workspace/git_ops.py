@@ -31,12 +31,12 @@ class GitOperations:
         self._run_git(["lfs", "install"])
         self._run_git(["lfs", "pull"])
 
-    def fetch_rebase(self, branch: str = "main"):
+    def fetch_rebase(self, branch: str):
         """Git Fetch & Rebase (設計書 7.1)"""
         self._run_git(["fetch", "origin"])
         self._run_git(["rebase", f"origin/{branch}"])
 
-    def pull_rebase(self, branch: str = "main"):
+    def pull_rebase(self, branch: str):
         """Resume時の Pull-Rebase 同期 (設計書 3.2, 6)"""
         # 設計書では、人間が解決した最新状態を取り込むため必須。
         self._run_git(["pull", "--rebase", "origin", branch])
@@ -61,19 +61,19 @@ class GitOperations:
         with open(full_path, 'w') as f:
             f.write(new_content)
 
-    def verify_remote_sha(self, branch: str = "main") -> bool:
+    def verify_remote_sha(self, branch: str) -> bool:
         """Race Condition 回避のための SHA 検証 (設計書 7.1)"""
         local_sha = self._run_git(["rev-parse", "HEAD"])
         remote_sha = self._run_git(["rev-parse", f"origin/{branch}"])
         return local_sha == remote_sha
 
-    def create_and_checkout_branch(self, branch_name: str):
+    def create_and_checkout_branch(self, branch_name: str, base_branch: str):
         """トピックブランチの作成と切り替え (設計書 7.1)"""
-        logger.info(f"Creating and switching to branch: {branch_name}")
-        # 最新の main からブランチを切る
-        self._run_git(["checkout", "main"])
-        self._run_git(["fetch", "origin", "main"])
-        self._run_git(["reset", "--hard", "origin/main"])
+        logger.info(f"Creating and switching to branch: {branch_name} from {base_branch}")
+        # 最新のベースブランチからブランチを切る
+        self._run_git(["checkout", base_branch])
+        self._run_git(["fetch", "origin", base_branch])
+        self._run_git(["reset", "--hard", f"origin/{base_branch}"])
         
         # 既存ブランチがあれば削除
         try:

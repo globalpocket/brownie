@@ -173,6 +173,11 @@ class Orchestrator:
                 workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
                 repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
                 os.makedirs(repo_path, exist_ok=True)
+                
+                # デフォルトブランチを動的に取得
+                repo = self.gh_client.g.get_repo(repo_name)
+                default_branch = repo.default_branch
+                
                 await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
                 
                 # WDCA を強制実行して最新のシンボルマップを構築
@@ -244,12 +249,12 @@ class Orchestrator:
                     git_ops = GitOperations(repo_path)
                     if git_ops.has_changes():
                         branch_name = f"issue-{issue_number}"
-                        git_ops.create_and_checkout_branch(branch_name)
+                        git_ops.create_and_checkout_branch(branch_name, default_branch)
                         git_ops.commit_and_push(branch_name, f"feat: automated implementation for #{issue_number}")
                         await self.gh_client.create_pull_request(
                             repo_name=repo_name, title=f"Fix #{issue_number}: {target_issue.title}",
                             body=f"## 概要\n#{issue_number} に対する自動実装PRです。",
-                            head=branch_name, base="main"
+                            head=branch_name, base=default_branch
                         )
 
             except Exception as e:
