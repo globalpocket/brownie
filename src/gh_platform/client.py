@@ -7,6 +7,8 @@ from github import Github, GithubException, Auth
 import re
 import json
 import asyncio
+import requests
+import urllib3
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +22,19 @@ class GitHubClientWrapper:
     def __init__(self, token: str):
         if not token:
             raise ValueError("GITHUB_TOKEN is not set. Please set it as an environment variable (e.g., export GITHUB_TOKEN=...).")
-        self.auth = Auth.Token(token)
-        self.g = Github(auth=self.auth)
+        self._token = token
+        self._init_client(token)
         self.etags: Dict[str, str] = {}
         self.last_api_call_time = 0
         self._my_username: Optional[str] = None
+
+    def _init_client(self, token: str):
+        """Githubクライアントの初期化 (コネクションプールのリフレッシュ)"""
+        self.auth = Auth.Token(token)
+        # 内部リトライを無効化（または最小化）し、デコレータでのリフレッシュ制御に委ねる
+        self.g = Github(auth=self.auth, retry=None, timeout=30)
+        self._last_refresh_time = time.time()
+        logger.info("GitHub API client re-initialized (Connection pool refreshed).")
 
     def github_retry(func):
         """GitHub API の一時的なエラーに対するリトライデコレータ"""
@@ -34,20 +44,34 @@ class GitHubClientWrapper:
             base_delay = 5  # 秒
             for attempt in range(max_retries):
                 try:
+                    # 定期的な強制リフレッシュ (30分以上経過していたらリフレッシュ)
+                    if time.time() - self._last_refresh_time > 1800:
+                        logger.info("Proactive GitHub client refresh...")
+                        self._init_client(self._token)
+                        
                     return await func(self, *args, **kwargs)
-                except GithubException as e:
-                    # 429 (Too Many Requests) または 403 (Secondary Rate Limit) はリトライ可能
-                    is_retryable = (e.status == 429) or (e.status == 403 and "secondary" in str(e).lower())
+                except (GithubException, requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError) as e:
+                    is_retryable = False
+                    # 接続エラーの場合はクライアントをリフレッシュ
+                    if isinstance(e, (requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError)):
+                        logger.warning(f"Connection error detected ({type(e).__name__}). Refreshing GitHub client...")
+                        self._init_client(self._token)
+                        is_retryable = True
+                    else:
+                        # 429 (Too Many Requests) または 403 (Secondary Rate Limit) はリトライ可能
+                        is_retryable = (e.status == 429) or (e.status == 403 and "secondary" in str(e).lower())
                     
                     if is_retryable and attempt < max_retries - 1:
                         # Exponential Backoff + Jitter (揺らぎ)
                         delay = (base_delay ** (attempt + 1)) + (random.random() * 5)
-                        logger.warning(f"Retryable GitHub API error {e.status}. Retrying in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
+                        logger.warning(f"Retrying GitHub API call in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
                         await asyncio.sleep(delay)
                         continue
                     
-                    # リトライ不可、または最大回数到達時は通常の例外ハンドラへ
-                    self._handle_exception(e)
+                    if isinstance(e, GithubException):
+                        self._handle_exception(e)
+                    else:
+                        raise e
             return None
         return wrapper
 
@@ -81,6 +105,25 @@ class GitHubClientWrapper:
             except GithubException as e:
                 self._handle_exception(e)
         return self._my_username
+
+    async def get_all_accessible_repositories(self) -> List[str]:
+        """ユーザーがアクセス可能なすべてのリポジトリ名を動的に取得する（ページネーション対応）"""
+        try:
+            await self._throttle(is_write=False)
+            # 自分が所有、あるいは参加しているリポジトリを取得 (type='all' or 'owner')
+            # 負荷軽減のため、まず自分が関わっているものに限定
+            repos = self.g.get_user().get_repos(sort='updated', direction='desc')
+            
+            repo_names = []
+            # 最初の100件程度で十分（あまりに多い場合は通知ベースの発見に任せる）
+            for i, repo in enumerate(repos):
+                if i >= 100: break 
+                repo_names.append(repo.full_name)
+            
+            return repo_names
+        except GithubException as e:
+            self._handle_exception(e)
+            return []
 
     async def get_repo_owner(self, repo_name: str) -> str:
         """ リポジトリのオーナー名を取得する """
@@ -383,38 +426,42 @@ class GitHubClientWrapper:
         try:
             import os
             my_username = os.getenv("USER_NAME") or self.get_my_username()
+            results = []
             
-            # Search API の不安定さを回避するため、Notifications API を使用
-            # all=True にすることで既読の通知も取得（StateManagerで重複排除されるため安全）
-            # participating=True で自分が関与しているものに限定
+            # 通知 API を使用してメンション等を補足
             notifications = self.g.get_user().get_notifications(all=True, participating=True)
             
-            results = []
             count = 0
-            max_notifications = 50 # 負荷軽減のため最新50件に限定
+            max_notifications = 50 # 負荷軽減
             
             for n in notifications:
                 if count >= max_notifications:
                     break
                 
-                # メンションかつ、Issue または PullRequest の通知のみを対象とする
-                if n.reason != "mention" or n.subject.type not in ["Issue", "PullRequest"]:
+                # Issue または PullRequest の通知を対象とする
+                if n.subject.type not in ["Issue", "PullRequest"]:
                     continue
                 
                 issue_repo_name = n.repository.full_name
                 
-                # 特定のリポジトリ指定がある場合はフィルタリング
                 if repo_name and issue_repo_name != repo_name:
                     continue
                 
                 try:
-                    # subject.url (https://api.github.com/repos/.../issues/123) から Issue 番号を抽出
+                    # subject.url から Issue 番号を抽出
                     issue_number = int(n.subject.url.split("/")[-1])
+                    
+                    # 既にアサイン済みとして捕捉されている場合はスキップ（重複排除）
+                    if any(r["repo_name"] == issue_repo_name and r["number"] == issue_number for r in results):
+                        continue
+
                     repo = n.repository
                     issue = repo.get_issue(issue_number)
                     
                     count += 1
                     latest_mention = None
+                    
+                    # 以降、メンション詳細の特定（既存ロジック）
                     
                     # 1. まずIssue本文をチェック (自分自身の投稿は除外)
                     issue_author = issue.user.login if issue.user else None

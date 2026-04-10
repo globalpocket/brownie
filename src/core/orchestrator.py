@@ -43,29 +43,20 @@ class Orchestrator:
         # エージェントはタスク実行時に最新のコンテキストを取得して再構成するため、ここでは雛形として保持
         self.agent = None 
         self.is_running = True
+        self._initialized_repos = set()
 
     async def start(self):
         """オーケストレーターの起動"""
         await self.state.connect()
+        from src.version import get_build_id
+        self.process_build_id = get_build_id()
+        logger.info(f"Orchestrator starting. Build ID: {self.process_build_id}")
+        
+        # 起動時に仕掛品タスクがあれば異常終了としてマーク（リカバリロジック）
         await self.state.reset_orphaned_tasks()
-        asyncio.create_task(self.worker_pool.run())
+        self.worker_task = asyncio.create_task(self.worker_pool.run())
         
-        # リポジトリの初期化 (WDCA)
-        repo_list = self.config['agent'].get('repositories', [])
-        workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
-        
-        logger.info(f"BOOT SEQUENCE: Initializing Deep Context for {len(repo_list)} repositories...")
-        for repo_name in repo_list:
-            repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
-            os.makedirs(repo_path, exist_ok=True)
-            await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
-            
-            logger.info(f"WDCA: Building symbol map for {repo_name}...")
-            analyzer = CodeAnalyzer(repo_path)
-            await analyzer.scan_project()
-            analyzer.close()
-            
-        logger.info("BOOT SEQUENCE COMPLETED. Entering main polling loop.")
+        logger.info("BOOT SEQUENCE COMPLETED. Dynamic Repo Management enabled. Entering main polling loop.")
 
         # メインポーリングループ
         try:
@@ -97,9 +88,37 @@ class Orchestrator:
                     await asyncio.sleep(10)
         finally:
             logger.info("Orchestrator shutting down. Cleaning up resources...")
+            self.worker_pool.stop()
+            if hasattr(self, 'worker_task'):
+                self.worker_task.cancel()
+                try:
+                    await self.worker_task
+                except asyncio.CancelledError:
+                    pass
+            
             await self.http_client.aclose()
             await self.mcp_manager.stop_all()
             logger.info("Orchestrator cleanup completed.")
+
+    async def _ensure_repo_context(self, repo_name: str):
+        """リポジトリのオンデマンド構成（クローン・解析）を実行する"""
+        if repo_name in self._initialized_repos:
+            return
+
+        workspace_base = self.config['workspace'].get('base_dir', "/tmp/brownie_workspace")
+        repo_path = os.path.join(workspace_base, repo_name.replace("/", "_"))
+        
+        logger.info(f"DYNAMIC DISCOVERY: Initializing context for {repo_name}...")
+        os.makedirs(repo_path, exist_ok=True)
+        await self.gh_client.ensure_repo_cloned(repo_name, repo_path)
+        
+        logger.info(f"WDCA: Building symbol map for {repo_name}...")
+        analyzer = CodeAnalyzer(repo_path)
+        await analyzer.scan_project()
+        analyzer.close()
+        
+        self._initialized_repos.add(repo_name)
+        logger.info(f"DYNAMIC DISCOVERY: Context for {repo_name} is now ready.")
 
     async def _poll_repository(self, repo_name: str):
         """リポジトリの最新状態を確認し、タスクをキューイングする (DEPRECATED: start内でのグローバル検索に移行)"""
@@ -151,6 +170,14 @@ class Orchestrator:
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (新アーキテクチャ統合版)"""
+        from src.version import get_build_id
+        if get_build_id() != self.process_build_id:
+            logger.warning(f"ZOMBIE TASK PREVENTED: Task {task_id} belongs to a stale process. Aborting.")
+            return
+
+        # リポジトリのオンデマンド構成 (Lazy Initialization)
+        await self._ensure_repo_context(repo_name)
+
         # 初期化 (UnboundLocalError 防止のため関数の冒頭で確実に行う)
         active_label = None
         success = False
