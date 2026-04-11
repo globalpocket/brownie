@@ -78,7 +78,7 @@ class Orchestrator:
         logger.info("Orchestrator cleanup completed.")
 
     async def _poll_mentions(self):
-        """GitHub からのメンションを取得し、Huey キューに投入する"""
+        """GitHub からのメンションを取得し、Huey キューに投入またはワークフローを再開する"""
         try:
             exclude_list = self.config['agent'].get('exclude_repositories', [])
             all_mentions = await self.gh_client.get_mentions_to_process()
@@ -89,13 +89,35 @@ class Orchestrator:
                     continue
                     
                 task_id = f"{target_repo}#{m['number']}"
-                await self._queue_task(task_id, target_repo, m['number'], comment_id=str(m['comment_id']))
+                body = m.get('body', '').lower()
+                
+                # 承認・却下の判定 (HITL 再開ロジック)
+                if "/approve" in body:
+                    await self._resume_workflow(task_id, "Approve")
+                elif "/reject" in body:
+                    await self._resume_workflow(task_id, "Reject")
+                else:
+                    # 通常のタスク投入
+                    await self._queue_task(task_id, target_repo, m['number'], comment_id=str(m['comment_id']))
+                    
         except GitHubRateLimitException as e:
             wait_seconds = int(e.reset_at - time.time()) + 60
             logger.warning(f"Rate limit hit. Sleeping for {wait_seconds}s...")
             await asyncio.sleep(wait_seconds)
         except Exception as e:
             logger.error(f"Polling error: {e}")
+
+    async def _resume_workflow(self, task_id: str, decision: str):
+        """承認/却下を受けて、特定のスレッドのワークフローを再開する"""
+        logger.info(f"Resuming workflow for {task_id} with decision: {decision}")
+        config = {"configurable": {"thread_id": task_id}}
+        
+        # 1. 状態の更新 (決定を反映)
+        await self._workflow_app.aupdate_state(config, {"governance_decision": decision, "status": "InQueue"})
+        
+        # 2. Huey 経由で再開シグナルを送るか、ここで直接 astream を走らせる
+        # 本来はワーカー側で astream を回す方が Pull 型に忠実
+        await self.worker_pool.add_task(task_id, 1, task_id.split("#")[0], int(task_id.split("#")[1]))
 
     async def _queue_task(self, task_id: str, repo_name: str, issue_number: int, comment_id: Optional[str] = None):
         """タスクの状態を確認し、必要であれば Huey キューに投入する"""

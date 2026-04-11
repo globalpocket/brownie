@@ -15,7 +15,7 @@ async def execution_delegation_node(state: TaskState) -> Dict[str, Any]:
         print(f"Enqueuing execution_task for {state['task_id']}...")
         # 実際は Phase 2 で生成されたプランを渡す
         plan = state.get("validated_plan", "No plan provided.")
-        execution_task(state['task_id'], str(plan))
+        execution_task(state['task_id'], state['repo_path'], str(plan))
         
         return {
             "status": "Waiting_Execution",

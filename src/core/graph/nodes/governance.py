@@ -1,11 +1,14 @@
 from typing import Dict, Any, Optional
+import os
 from src.core.graph.state import TaskState
 from src.core.workers.tasks import repair_task
+from src.gh_platform.client import GitHubClientWrapper
+from src.version import get_footer
 
 async def governance_node(state: TaskState) -> Dict[str, Any]:
     """
     Phase 4: Governance & Fail-Safe
-    実行失敗時は修復ワーカーをキックし、稟議書（Ringi-sho）を提示する。
+    実行失敗時は修復ワーカーをキックし、成功時は稟議書（Ringi-sho）を GitHub に投稿して中断する。
     """
     print(f"--- Phase 4: Governance & Ringi ({state['task_id']}) ---")
     
@@ -18,18 +21,53 @@ async def governance_node(state: TaskState) -> Dict[str, Any]:
             "history": [{"node": "governance", "status": "repair_enqueued"}]
         }
 
+    # すでに Ringi を投稿済みかチェック (二重投稿防止)
+    if not state.get("governance_decision") and state.get("status") != "WaitingForApproval":
+        # 稟議書の作成
+        ringi_content = state.get("ringi_document")
+        if not ringi_content:
+            has_changes = state.get("has_changes", False)
+            branch = state.get("topic_branch", "None")
+            test_results = state.get("test_results", {})
+            
+            ringi_content = f"""## ⚖️ Brownie 実行稟議書 (Ringi-sho)
+
+### 📊 実行サマリー
+- **タスクID**: `{state['task_id']}`
+- **修正の有無**: {"✅ あり" if has_changes else "ℹ️ なし (調査のみ)"}
+- **トピックブランチ**: `{branch}`
+
+### 🧪 検証結果 (Sandbox)
+```text
+{test_results.get('stdout', 'No test output available.') if test_results else 'N/A'}
+```
+
+### 🛠 次のアクション
+承認（ `/approve` ）が得られた場合、{"プルリクエストを作成します。" if has_changes else "タスクを完了報告します。"}
+"""
+        
+        # GitHub に投稿
+        gh = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""))
+        # task_id は "repo#number" 形式
+        repo_name = state['task_id'].split("#")[0]
+        issue_number = int(state['task_id'].split("#")[1])
+        
+        await gh.post_comment(repo_name, issue_number, ringi_content + get_footer())
+        
+        return {
+            "status": "WaitingForApproval",
+            "ringi_document": ringi_content,
+            "history": [{"node": "governance", "status": "ringi_posted"}]
+        }
+
     # 承認済みかどうかをチェック
     if state.get("governance_decision") == "Approve":
         return {
-            "status": "Completed",
+            "status": "Approved",
             "history": [{"node": "governance", "status": "approved"}]
         }
     
-    # 稟議書（Ringi）が作成されているか、再考が必要な状態
-    ringi = state.get("ringi_document") or "【稟議書】タスクの実行準備が整いました。実施してよろしいでしょうか？"
-    
     return {
         "status": "WaitingForApproval",
-        "ringi_document": ringi,
-        "history": [{"node": "governance", "status": "waiting_ringi"}]
+        "history": [{"node": "governance", "status": "waiting_decision"}]
     }

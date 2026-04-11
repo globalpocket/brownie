@@ -5,6 +5,7 @@ from src.core.graph.nodes.analysis import core_analysis_node
 from src.core.graph.nodes.handshake import dynamic_handshake_node
 from src.core.graph.nodes.execution import execution_delegation_node
 from src.core.graph.nodes.governance import governance_node
+from src.core.graph.nodes.completion import completion_node # 追加
 
 def create_brownie_graph():
     """
@@ -18,6 +19,7 @@ def create_brownie_graph():
     builder.add_node("dynamic_handshake", dynamic_handshake_node)
     builder.add_node("execution_delegation", execution_delegation_node)
     builder.add_node("governance", governance_node)
+    builder.add_node("completion", completion_node) # 追加
 
     # エッジと遷移ロジック
     builder.set_entry_point("intent_alignment")
@@ -54,30 +56,35 @@ def create_brownie_graph():
     # Phase 4 からの条件分岐
     def route_after_governance(state: TaskState) -> str:
         status = state.get("status")
-        if state.get("governance_decision") == "Approve":
-            return END
-        elif state.get("governance_decision") == "Reject":
-            return "intent_alignment"
+        decision = state.get("governance_decision")
+        
+        if decision == "Approve":
+            return "completion" # 承認時は完了ノード（PR作成）へ
+        elif decision == "Reject":
+            return "intent_alignment" # 却下時は最初に戻る
         elif status == "Waiting_Repair" or status == "Repair_Completed":
-            return "governance" # 稟議準備中または確認待機
+            return "governance"
         return "governance"
 
     builder.add_conditional_edges(
         "governance",
         route_after_governance,
         {
-            END: END,
+            "completion": "completion",
             "intent_alignment": "intent_alignment",
             "governance": "governance"
         }
     )
+    
+    # Completion -> END
+    builder.add_edge("completion", END)
 
     return builder
 
 def compile_workflow(checkpointer=None):
     """
     ワークフローのコンパイル。
-    Phase 4 (Governance) の直前で割り込むことで、稟議の Human-in-the-loop を実現。
+    Phase 4 (Governance) の直前で割り込む。
     """
     builder = create_brownie_graph()
     return builder.compile(

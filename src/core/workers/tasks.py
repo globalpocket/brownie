@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import time
 from src.core.workers.pool import huey
 from src.core.validation.bridge import InstructorBridge
 from src.core.validation.schemas import RingiDocument
@@ -46,30 +47,71 @@ def analysis_task(task_id: str, repo_path: str):
     logger.info(f"Worker: Analysis completed for {task_id}")
 
 @huey.task()
-def execution_task(task_id: str, plan: str):
+def execution_task(task_id: str, repo_path: str, plan: str):
     """
-    Phase 3: 専門的実行ワーカー
+    Phase 3: 専門的実行ワーカー (Strict Prompt v2)
+    1. 修正が必要か判定 (現在は簡易判定)
+    2. 必要に応じてトピックブランチを作成 (Lazy Branching)
+    3. コード修正の実行
+    4. サンドボックスでの検証 (pytest 等)
     """
+    from src.workspace.git_ops import GitOperations
+    from src.workspace.sandbox import SandboxManager
+    import os
+    
     logger.info(f"Worker: Starting execution for {task_id}")
-    time.sleep(3)
     
-    # 失敗をシミュレート (自己修復の禁止を検証するため)
-    success = False 
+    # モジュール初期化
+    git = GitOperations(repo_path)
+    # 本来は config から取得。ここでは簡易化
+    sandbox = SandboxManager(user_id=1000, group_id=1000) 
+    sandbox.set_workspace_root(repo_path)
     
-    if not success:
-        logger.error(f"Worker: Execution failed for {task_id}. Emitting error logs.")
+    has_changes = False
+    topic_branch = None
+    test_results = None
+    
+    try:
+        # 1. 修正が必要か判定 (ここではプランの内容を見て擬似的に判定)
+        # 本来は分析結果や LLM の判定に基づきます
+        if "MODIFICATION_REQUIRED" in plan or "FIX" in plan.upper():
+            has_changes = True
+            topic_branch = f"brwn-fix-{int(time.time())}"
+            
+            # 2. 遅延ブランチ作成 (Lazy Branching)
+            logger.info(f"Worker: Modifications required. Creating branch {topic_branch}")
+            git.create_and_checkout_branch(topic_branch, "main") # 仮のベースブランチ
+            
+            # 3. コード修正 (モック: 実際はエージェントが実施)
+            # 例として README.md を更新
+            sandbox.write_file("README.md", f"# Updated by Brownie\nPlan: {plan}")
+            
+            # 4. サンドボックス内検証 (pytest 等)
+            logger.info("Worker: Running sandbox tests...")
+            # asyncio ループを一時的に作成して非同期メソッドを呼ぶ
+            import asyncio
+            test_results = asyncio.run(sandbox.run_command("ls -R")) # 本来は "pytest" 等
+        else:
+            logger.info("Worker: No modifications required for this task.")
+
         result = {
-            "execution_status": "failed",
-            "error_context": "Permission denied during file write in main.py",
-            "status": "Execution_Failed"
+            "status": "Execution_Completed",
+            "has_changes": has_changes,
+            "topic_branch": topic_branch,
+            "test_results": test_results,
+            "execution_status": "success"
         }
-    else:
+        
+    except Exception as e:
+        logger.error(f"Worker: Execution failed for {task_id}: {e}")
         result = {
-            "execution_status": "success",
-            "status": "Execution_Completed"
+            "status": "Execution_Failed",
+            "error_context": str(e),
+            "execution_status": "failed"
         }
         
     update_langgraph_state(task_id, result)
+    logger.info(f"Worker: Execution processed for {task_id}")
 
 @huey.task()
 def repair_task(task_id: str, error_context: str):

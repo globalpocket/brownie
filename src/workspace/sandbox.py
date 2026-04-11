@@ -167,6 +167,58 @@ class SandboxManager:
             f.write(content)
         return f"Successfully written to {path}."
 
+    async def run_command(self, command: str, image: str = "python:3.11-slim") -> Dict[str, Any]:
+        """
+        サンドボックス（Dockerコンテナ）内でコマンドを実行する。
+        """
+        if not self.context or not self.context.root_path:
+            raise RuntimeError("Workspace root is not set. Cannot run sandbox command.")
+
+        logger.info(f"Running sandbox command: {command} in image: {image}")
+        
+        try:
+            # ワークスペースをコンテナ内の /workspace にマウント
+            volumes = {
+                str(self.context.root_path): {"bind": "/workspace", "mode": "rw"}
+            }
+            
+            # 非特権ユーザーで実行
+            container = self.client.containers.run(
+                image,
+                command,
+                volumes=volumes,
+                working_dir="/workspace",
+                user=f"{self.user_id}:{self.group_id}",
+                detach=False,
+                stdout=True,
+                stderr=True,
+                remove=True, # 実行後にコンテナを削除
+                network_disabled=True # ネットワーク隔離（必要に応じて）
+            )
+            
+            # 同期的実行の場合、戻り値は bytes 型の stdout/stderr
+            output = container.decode("utf-8") if isinstance(container, bytes) else str(container)
+            
+            return {
+                "exit_code": 0,
+                "stdout": output,
+                "stderr": ""
+            }
+        except docker.errors.ContainerError as e:
+            logger.error(f"Sandbox command failed with exit code {e.exit_status}")
+            return {
+                "exit_code": e.exit_status,
+                "stdout": e.stdout.decode("utf-8") if e.stdout else "",
+                "stderr": e.stderr.decode("utf-8") if e.stderr else ""
+            }
+        except Exception as e:
+            logger.error(f"Failed to run sandbox command: {e}")
+            return {
+                "exit_code": -1,
+                "stdout": "",
+                "stderr": str(e)
+            }
+
     def cleanup_orphans(self):
         """オーファンコンテナ・ボリュームの定期GC (設計書 8.4 浄化)"""
         containers = self.client.containers.list(all=True, filters={"label": "brownie_task_id"})

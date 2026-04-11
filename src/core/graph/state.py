@@ -37,6 +37,12 @@ class TaskState(TypedDict):
     ringi_document: Optional[str] # 稟議書 (Human-in-the-loop 用)
     governance_decision: Optional[str] # 'Approve', 'Reject', 'NeedsRevision'
     
+    # Phase 5: 実行・完了情報
+    topic_branch: Optional[str]
+    has_changes: bool
+    test_results: Optional[Dict[str, Any]]
+    pr_url: Optional[str]
+    
     # 履歴とログ
     history: Annotated[List[Dict[str, Any]], operator.add]
     metadata: Dict[str, Any]
