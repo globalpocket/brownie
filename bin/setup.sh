@@ -114,6 +114,11 @@ echo "Initializing directories..."
 mkdir -p ~/.local/share/brownie/
 mkdir -p ~/.cache/brownie/
 mkdir -p logs
+mkdir -p src/mcp_server/plugins/
+
+echo "Pre-downloading Semgrep rules..."
+sg --help >/dev/null 2>&1 || true # ignore if not fully valid
+bandit --help >/dev/null 2>&1 || true
 
 # 5. 環境設定 (.env)
 if [ ! -f ".env" ]; then

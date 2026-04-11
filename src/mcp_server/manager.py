@@ -3,7 +3,7 @@ import sys
 import logging
 import asyncio
 import anyio
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from fastmcp import Client
 from fastmcp.client.transports.stdio import StdioTransport
 
@@ -11,19 +11,34 @@ logger = logging.getLogger(__name__)
 
 class MCPServerManager:
     """
-    MCP サーバー (Knowledge, Workspace, SQLite) のライフサイクルを管理する。
+    MCP サーバーのライフサイクルを管理する。
+    コアサーバー（Workspace, Knowledge）と、タスクごとにJITロードされる解析用プラグインを管理する。
     AnyIO の TaskGroup を用いて、プロセスの確実なクリーンアップを保証する。
     """
     def __init__(self, project_root: str):
         self.project_root = project_root
+        
+        # コアサーバークライアント
         self.workspace_client: Optional[Client] = None
         self.knowledge_client: Optional[Client] = None
-        self.sqlite_client: Optional[Client] = None
+        
+        # JIT ロードされるプラグインサーバークライアント
+        self.plugin_clients: Dict[str, Client] = {}
+        
         self._task_group: Optional[anyio.abc.TaskGroup] = None
-        self._exit_stack: Optional[asyncio.ExitStack] = None
+        self._exit_stack: Optional[asyncio.AsyncExitStack] = None
+        
+        # 追加環境変数や実行時のコンテキスト
+        self._repo_path: str = ""
+        self._reference_path: str = ""
+        self._memory_path: str = ""
+        self._repo_name: str = ""
 
     async def start_workspace_server(self, repo_path: str, reference_path: str, user_id: int, group_id: int):
-        """Workspace MCP Server を起動し、クライアントを返す"""
+        """Workspace MCP Server を起動し、クライアントを返す（コア）"""
+        self._repo_path = repo_path
+        self._reference_path = reference_path
+        
         logger.info(f"Starting Workspace MCP Server: workspace={repo_path}")
         env = {
             **os.environ, 
@@ -47,7 +62,10 @@ class MCPServerManager:
         return client
 
     async def start_knowledge_server(self, repo_path: str, memory_path: str, repo_name: str):
-        """Knowledge MCP Server を起動し、クライアントを返す"""
+        """Knowledge MCP Server を起動し、クライアントを返す（コア）"""
+        self._memory_path = memory_path
+        self._repo_name = repo_name
+        
         logger.info(f"Starting Knowledge MCP Server for {repo_name}...")
         env = {
             **os.environ, 
@@ -71,39 +89,76 @@ class MCPServerManager:
         logger.info(f"Knowledge MCP Server connected successfully for {repo_name}")
         return client
 
-    async def start_sqlite_server(self, db_path: str):
-        """SQLite MCP Server を起動し、クライアントを返す"""
-        logger.info(f"Starting SQLite MCP Server: db={db_path}")
-        db_path = os.path.expanduser(db_path)
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    async def provision_servers(self, server_names: List[str]):
+        """
+        要求されたJITロードMCPサーバー群をオンデマンドで起動する。
+        既に起動中の不要なプラグインは停止（リソース解放）し、必要なものだけを起動。
+        """
+        if not self._exit_stack:
+            logger.error("AsyncExitStack is not initialized. Call within `async with manager:` block.")
+            return
+
+        logger.info(f"Provisioning JIT MCP Servers: {server_names}")
+        
+        current_plugins = set(self.plugin_clients.keys())
+        requested_plugins = set(server_names)
+        
+        to_remove = current_plugins - requested_plugins
+        to_add = requested_plugins - current_plugins
+        
+        # 削除対象は今回は簡易的に辞書から外すだけ（PythonのGCとプロセス管理に委ねる、
+        # または完全に機能させるなら AsyncExitStack を個別プラグイン単位で管理する必要がある）
+        for name in to_remove:
+            logger.info(f"De-provisioning JIT Server: {name}")
+            del self.plugin_clients[name]
+            
+        for name in to_add:
+            try:
+                await self._start_plugin_server(name)
+            except Exception as e:
+                logger.error(f"Failed to start plugin server '{name}': {e}")
+                
+    async def _start_plugin_server(self, name: str):
+        logger.info(f"Starting Plugin MCP Server: {name}")
+        env = {
+            **os.environ, 
+            "BROWNIE_WORKSPACE_ROOT": self._repo_path, 
+            "PYTHONPATH": "."
+        }
         
         transport = StdioTransport(
-            command="uvx",
-            args=["mcp-server-sqlite", "--db-path", db_path],
+            command=sys.executable,
+            args=["-m", f"src.mcp_server.plugins.{name}"],
+            env=env,
+            cwd=self.project_root,
             keep_alive=False
         )
         
         client = Client(transport)
+        # 本来は個別の ExitStack で管理し、停止時に aclose するのが望ましいが
+        # 今回はライフサイクルの範囲内で enter_async_context で管理
         await self._exit_stack.enter_async_context(client)
-        self.sqlite_client = client
-        logger.info("SQLite MCP Server connected successfully.")
-        return client
+        self.plugin_clients[name] = client
+        logger.info(f"Plugin MCP Server '{name}' connected successfully.")
+
 
     async def get_langchain_tools(self) -> List[Any]:
         """
-        全サーバーから提供されるツールを LangChain 形式に変換して取得する。
-        (Pydantic AI での利用を見据えた標準化)
+        全アクティブサーバーから提供されるツールを LangChain 形式に変換して取得する。
         """
         from langchain_mcp_adapters.tools import load_mcp_tools
         
-        # 各クライアントのトランスポートからツールをロード
         all_tools = []
-        clients = [self.workspace_client, self.knowledge_client, self.sqlite_client]
+        clients = []
+        if self.workspace_client:
+            clients.append(self.workspace_client)
+        if self.knowledge_client:
+            clients.append(self.knowledge_client)
+            
+        clients.extend(self.plugin_clients.values())
         
         for client in clients:
             if client and client.session:
-                # langchain-mcp-adapters を使用してセッションからツールを抽出
-                # 内部的には client.session (mcp.ClientSession) を使用
                 tools = await load_mcp_tools(client.session)
                 all_tools.extend(tools)
         
@@ -111,13 +166,13 @@ class MCPServerManager:
         return all_tools
 
     async def stop_all(self):
-        """全ての MCP サーバーを停止する (ExitStack により自動化されているが、明示的な呼び出しにも対応)"""
+        """全ての MCP サーバーを停止する"""
         if self._exit_stack:
             await self._exit_stack.aclose()
-            self._exit_stack = asyncio.ExitStack()
+            self._exit_stack = asyncio.AsyncExitStack()
+            self.plugin_clients.clear()
 
     async def __aenter__(self):
-        # AsyncExitStack を使用して、タスクグループと各クライアントのライフサイクルを統合管理
         self._exit_stack = asyncio.AsyncExitStack()
         self._task_group = await self._exit_stack.enter_async_context(anyio.create_task_group())
         return self

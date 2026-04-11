@@ -15,6 +15,7 @@ class TaskState(TypedDict):
     intent_confirmed: bool
     evaluation_axes: List[str]
     intent_draft: str
+    required_mcp_servers: List[str]
     
     # Phase 1: Core Analysis
     dependency_tree: Dict[str, Any]

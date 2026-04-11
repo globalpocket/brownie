@@ -52,6 +52,11 @@ if [ -d "logs" ]; then
     rm -rf logs
 fi
 
+# プラグインのキャッシュ等のクリーンアップ
+echo "Cleaning up MCP plugins cache..."
+rm -rf src/mcp_server/plugins/__pycache__
+rm -rf src/mcp_server/__pycache__
+
 # 5. 環境設定ファイルの削除
 if [ -f ".env" ]; then
     read -p "Do you want to remove the .env file (containing GitHub token)? [y/N]: " REMOVE_ENV

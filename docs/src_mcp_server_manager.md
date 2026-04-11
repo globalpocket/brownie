@@ -23,16 +23,21 @@
 
 2. `start_knowledge_server(repo_path, memory_path, repo_name) -> Client` (async)
    - **振る舞い**: 
-     - `src.mcp_server.knowledge_server` を起動。
+     - `src.mcp_server.knowledge_server` を起動（コアサーバー）。
      - リポジトリの AST 解析 DB へのパスやメモリパスを渡す。
 
-3. `get_langchain_tools() -> List[Any]` (async)
+3. `provision_servers(server_names: List[str]) -> None` (async)
    - **振る舞い**: 
-     - 現在接続されているすべての MCP サーバー（Workspace, Knowledge, SQLite）から、`load_mcp_tools` を用いてツール定義を一括取得。
+     - JIT (Just-In-Time) ロード機構。13種類の高度解析プラグイン（`web_fetch`, `design_pattern_oracle`等）のうち、要求されたサーバーのみをオンデマンドで起動する。
+     - 不要になった別タスクのプラグインは停止・破棄し、常に必要最小限のリソースとコンテキストのみを保つ。
 
-4. `stop_all() -> None` (async)
+4. `get_langchain_tools() -> List[Any]` (async)
    - **振る舞い**: 
-     - `AsyncExitStack` をクローズし、すべての子プロセスを正常終了させる。
+     - 現在接続されているすべての MCP サーバー（コアおよびアクティブなJITプラグイン）から、`load_mcp_tools` を用いてツール定義を一括取得。
+
+5. `stop_all() -> None` (async)
+   - **振る舞い**: 
+     - `AsyncExitStack` をクローズし、すべてのコア・プラグインプロセスを正常終了させる。
 
 ## 3. 依存関係 (Dependencies)
 - **標準ライブラリ**: `asyncio`, `os`, `sys`

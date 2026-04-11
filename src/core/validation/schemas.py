@@ -6,6 +6,10 @@ class IntentDraft(BaseModel):
     intent_summary: str = Field(..., description="ユーザーの意図を簡潔にまとめたもの")
     evaluation_axes: List[str] = Field(..., description="評価軸（評価の観点）のリスト")
     draft_comment: str = Field(..., description="ユーザーへ提示するドラフトコメント")
+    required_mcp_servers: List[str] = Field(
+        default_factory=list,
+        description="このタスクの解決に必要なJITロードMCPサーバーのリスト（最大3〜5個）。利用可能なサーバー: web_fetch, graph_memory, meta_search, design_pattern_oracle, arch_diagram, api_analyzer, security_analyzer, clone_detector, test_coverage, git_archeology, db_profiler, dep_audit, trace_analyzer"
+    )
 
 class AnalysisProposal(BaseModel):
     """Phase 1: 分析計画"""
