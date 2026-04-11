@@ -7,9 +7,9 @@ import time
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from langgraph.checkpoint.sqlite import SqliteSaver
-from src.core.worker_pool import WorkerPool, execute_task_wrapper
-from src.core.workflow import TaskWorkflow
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from src.core.workers.pool import WorkerPool # 修正後のパス
+# from src.core.workflow import TaskWorkflow # 古いワークフローは使用しない
 from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.mcp_server.manager import MCPServerManager
@@ -41,17 +41,19 @@ class Orchestrator:
         """オーケストレーター（メンション監視プロセス）の起動"""
         logger.info(f"Orchestrator starting. Build ID: {get_build_id()}")
         
-        # 1. LangGraph Checkpointer の初期化
+        # 1. LangGraph Checkpointer の初期化 (Async 版)
         checkpoint_path = os.path.join(self.project_root, ".brwn", "checkpoints.db")
         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
-        self._checkpointer = SqliteSaver.from_conn_string(checkpoint_path)
+        self._checkpointer = AsyncSqliteSaver.from_conn_string(checkpoint_path)
         
         # 2. ワークフローの準備
-        workflow = TaskWorkflow(self.config, self.project_root)
-        self._workflow_app = workflow.compile(checkpointer=self._checkpointer)
+        from src.core.graph.builder import compile_workflow
+        self._workflow_app = compile_workflow(checkpointer=self._checkpointer)
         
-        # 3. Huey ワーカープロセスの起動 (別プロセスでの自律実行)
-        await self.worker_pool.run()
+        # 3. 消去: 既存の WorkerPool.run は以前のアーキテクチャ用なので、必要に応じて調整
+        # 本アーキテクチャでは、ユーザーが別途 huey consumer を起動することを想定するか、
+        # ここで新しく再定義する。
+        # await self.worker_pool.run()
         
         logger.info("BOOT SEQUENCE COMPLETED. Entering polling loop.")
 

@@ -25,23 +25,42 @@ def create_brownie_graph():
     # Phase 0 -> Phase 1
     builder.add_edge("intent_alignment", "core_analysis")
     
-    # Phase 1 -> Phase 2 (簡易化のため。実際は非同期待機が必要)
-    builder.add_edge("core_analysis", "dynamic_handshake")
+    # Phase 1: Analysis Waiting Loop
+    def route_after_analysis(state: TaskState) -> str:
+        if state.get("status") == "Phase1_Completed":
+            return "dynamic_handshake"
+        return "core_analysis" # ループして待機
+    
+    builder.add_conditional_edges("core_analysis", route_after_analysis, {
+        "dynamic_handshake": "dynamic_handshake",
+        "core_analysis": "core_analysis"
+    })
     
     # Phase 2 -> Phase 3
     builder.add_edge("dynamic_handshake", "execution_delegation")
     
-    # Phase 3 -> Phase 4
-    builder.add_edge("execution_delegation", "governance")
+    # Phase 3: Execution Waiting Loop
+    def route_after_execution(state: TaskState) -> str:
+        status = state.get("status")
+        if status in ["Execution_Completed", "Execution_Failed"]:
+            return "governance"
+        return "execution_delegation"
+        
+    builder.add_conditional_edges("execution_delegation", route_after_execution, {
+        "governance": "governance",
+        "execution_delegation": "execution_delegation"
+    })
     
     # Phase 4 からの条件分岐
     def route_after_governance(state: TaskState) -> str:
+        status = state.get("status")
         if state.get("governance_decision") == "Approve":
             return END
         elif state.get("governance_decision") == "Reject":
-            return "intent_alignment" # 最初からやり直し
-        else:
-            return "governance" # 承認待ち継続
+            return "intent_alignment"
+        elif status == "Waiting_Repair" or status == "Repair_Completed":
+            return "governance" # 稟議準備中または確認待機
+        return "governance"
 
     builder.add_conditional_edges(
         "governance",
