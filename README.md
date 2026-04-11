@@ -1,7 +1,5 @@
 <div align="center">
 
-![BROWNIE Banner](file:///Users/satoshitanaka/.gemini/antigravity/brain/d6b5cc59-c155-40c3-ad36-d7a6967bf15e/brownie_banner_modern_1775898089950.png)
-
 # 🍪 BROWNIE
 ### The Autonomous Engineering Environment Built for Agents
 
