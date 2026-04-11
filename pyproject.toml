@@ -41,10 +41,9 @@ dependencies = [
     "xgrammar>=0.1.0",
     "networkx>=3.4.2",
     "langgraph>=1.1.6",
-    "taskiq[fs]>=0.12.1",
-    "apscheduler>=3.10.1",
-    "anyio>=4.3.0",
-    "sqlalchemy>=2.0.29",
+    "huey>=2.5.0",
+    "pydantic-ai>=0.0.14",
+    "langchain-mcp-adapters>=0.1.0",
     "langchain-core>=1.2.28",
 ]
 

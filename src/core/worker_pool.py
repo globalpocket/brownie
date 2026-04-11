@@ -1,100 +1,94 @@
-import asyncio
+import os
 import logging
-from typing import Dict, Any, Optional
-from taskiq import TaskiqWorker, Context, TaskiqDepends
-from taskiq_fs import AsyncFSBroker
+from huey import SqliteHuey
 
 logger = logging.getLogger(__name__)
 
-# 設計書課題: Pull型アーキテクチャの徹底 & Taskiq FSBroker による永続キューの実現
-broker = AsyncFSBroker(".brwn/task_queue")
+# 設計書課題: Huey (SQLite) による軽量な非同期タスクキューの実現
+# project_root からの相対パスで DB ファイルを指定
+db_path = os.path.join(os.getcwd(), ".brwn", "huey.db")
+os.makedirs(os.path.dirname(db_path), exist_ok=True)
+
+# Huey インスタンスの初期化
+huey = SqliteHuey(filename=db_path)
+
+@huey.task()
+def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int):
+    """
+    Huey ワーカープロセスで実行されるタスクの実体。
+    Orchestrator とは別プロセスで動作するため、ここで必要なコンテキストを再構成し、
+    LangGraph ワークフローを実行する。
+    """
+    import asyncio
+    from src.core.orchestrator import global_orchestrator
+    
+    logger.info(f"Huey Worker: Starting task {task_id} for {repo_name}#{issue_number}")
+    
+    # 実際の実装では、Orchestrator のインスタンスを取得（またはシリアライズされた設定から再構築）
+    # し、非同期ループ内で実行する。
+    try:
+        loop = asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+    
+    # 実行実体 (Orchestrator._execute_task_internal) を非同期実行
+    # NOTE: global_orchestrator はワーカープロセス側では通常 None になるため、
+    # ワーカー自身が Orchestrator 相当の最小限のコンテキストを持つ必要がある。
+    # ここでは概念設計に基づき、Orchestrator 経由で実行をキックする構造を示す。
+    if global_orchestrator:
+        loop.run_until_complete(global_orchestrator._execute_task(task_id, repo_name, issue_number))
+    else:
+        # ワーカー用に Orchestrator を最小構成で初期化（または共有設定からロード）
+        # 実際には config ファイルパスなどを引数で渡すのがより堅牢
+        from src.core.orchestrator import Orchestrator
+        config_path = os.environ.get("BROWNIE_CONFIG", "config/config.yaml")
+        worker_orchestrator = Orchestrator(config_path)
+        # state.py 廃止に伴い、状態はすべて LangGraph の Checkpointer から復元される
+        loop.run_until_complete(worker_orchestrator._execute_task(task_id, repo_name, issue_number))
 
 class WorkerPool:
-    def __init__(self, project_root: str, max_concurrent_inference: int = 1):
+    """
+    Huey へのブリッジ。Orchestrator からタスクを投入するために使用。
+    """
+    def __init__(self, project_root: str):
         self.project_root = project_root
-        self.broker = broker
-        
-        # 推論の直列実行 (VRAM保護)
-        self.inference_semaphore = asyncio.Semaphore(max_concurrent_inference)
-        self.active_tasks: Dict[str, Dict[str, Any]] = {}
-        self.is_running = False
-        self._worker: Optional[TaskiqWorker] = None
+        self.huey = huey
 
-    async def add_task(self, task_id: str, priority: int, 
-                    repo_name: str, issue_number: int):
+    async def add_task(self, task_id: str, priority: int, repo_name: str, issue_number: int):
         """
-        タスクを Taskiq ブローカーに追加する。
+        タスクを Huey のキュー（SQLite）に投入する。
         """
-        logger.info(f"Task {task_id} received. Queueing via Taskiq.")
-        
-        task_data = {
-            "task_id": task_id,
-            "priority": priority,
-        }
-        
-        from src.core.worker_pool import execute_agent_task
-        await execute_agent_task.kick(task_id, repo_name, issue_number)
-        
-        self.active_tasks[task_id] = task_data
-        return task_data
+        logger.info(f"Queueing task {task_id} via Huey...")
+        # Huey は同期ライブラリだが、キューへの投入は軽量なため、
+        # 必要に応じて thread でラップするか、そのまま呼び出す。
+        execute_task_wrapper(task_id, repo_name, issue_number)
+        return {"task_id": task_id, "status": "queued"}
 
     async def run(self):
-        """Taskiq ワーカーを同一プロセス内で起動する"""
-        logger.info("WorkerPool: Starting Taskiq Worker in-process...")
-        self.is_running = True
+        """
+        Orchestrator 起動時にワーカープロセスを自動起動する（ユーザー指示 1）。
+        """
+        import subprocess
+        import sys
         
-        self._worker = TaskiqWorker(self.broker, modules=["src.core.worker_pool"])
+        logger.info("WorkerPool: Starting Huey consumer process...")
+        # python -m huey.bin.consumer src.core.worker_pool.huey 形式で起動
+        cmd = [
+            sys.executable, "-m", "huey.bin.consumer", 
+            "src.core.worker_pool.huey", 
+            "-w", "1" # 推論 VRAM 保護のため、デフォルトはシングルワーカー
+        ]
         
-        if not self.broker.is_startup:
-             await self.broker.startup()
-
-        try:
-            await self._worker.run()
-        except asyncio.CancelledError:
-            logger.info("WorkerPool received CancelledError.")
-        except Exception as e:
-            logger.error(f"WorkerPool run error: {e}", exc_info=True)
-        finally:
-            self.is_running = False
+        # バックグラウンドプロセスとして起動
+        process = subprocess.Popen(
+            cmd, 
+            stdout=subprocess.PIPE, 
+            stderr=subprocess.PIPE,
+            cwd=self.project_root
+        )
+        logger.info(f"Huey consumer started with PID: {process.pid}")
+        return process
 
     async def stop(self):
-        self.is_running = False
-        if self._worker:
-            await self._worker.shutdown()
-        await self.broker.shutdown()
-
-    def get_queue_status(self) -> Dict[str, Any]:
-        return {
-            "queue_size": "Check .brwn/task_queue",
-            "active_tasks": list(self.active_tasks.values())
-        }
-
-# --- Taskiq Task Definitions ---
-
-@broker.task(task_name="execute_agent_task")
-async def execute_agent_task(
-    task_id: str, 
-    repo_name: str, 
-    issue_number: int,
-    context: Context = TaskiqDepends()
-):
-    """
-    Taskiq によって Pull される実行実体。
-    broker.state 経由で Orchestrator インスタンスを取得する透明性の高い DI 構成。
-    """
-    orchestrator = context.state.orchestrator
-    
-    if orchestrator is None:
-        logger.error(f"Task {task_id} failed: orchestrator is not found in broker state.")
-        return
-
-    # VRAM保護セマフォ（Orchestrator側で管理）による制御
-    async with orchestrator.worker_pool.inference_semaphore:
-        logger.info(f"Taskiq PULL: Starting task {task_id}")
-        try:
-            await orchestrator._execute_task(task_id, repo_name, issue_number)
-        except Exception as e:
-            logger.error(f"Error in task {task_id}: {e}", exc_info=True)
-        finally:
-            if task_id in orchestrator.worker_pool.active_tasks:
-                del orchestrator.worker_pool.active_tasks[task_id]
+        logger.info("WorkerPool: Huey is managed as a separate process. Manual cleanup may be required if not handled by OS signals.")
