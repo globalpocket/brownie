@@ -8,6 +8,9 @@ from typing import Dict, Any, List, Optional, Union
 from google.adk.agents import LlmAgent
 from google.adk.runners import Runner
 from google.adk.sessions.in_memory_session_service import InMemorySessionService
+from google.adk.sessions.session_service import SessionService
+from google.adk.sessions.session import Session
+from google.adk.sessions.event import Event
 from google.adk.models.lite_llm import LiteLlm
 from google.genai import types
 import litellm
@@ -26,6 +29,7 @@ class CoderAgent:
                  gh_client: Optional['GitHubClientWrapper'] = None, 
                  knowledge_mcp_client = None,
                  workspace_mcp_client = None,
+                 sqlite_mcp_client = None,
                  workspace_context: Optional[WorkspaceContext] = None):
         self.config = config
         self.sandbox = sandbox
@@ -33,6 +37,7 @@ class CoderAgent:
         self.gh_client = gh_client
         self.knowledge_mcp_client = knowledge_mcp_client
         self.workspace_mcp_client = workspace_mcp_client
+        self.sqlite_mcp_client = sqlite_mcp_client
         self.workspace_context = workspace_context
         self.language = os.getenv("BROWNIE_LANGUAGE", "Japanese")
         self._status = "running"
@@ -107,8 +112,11 @@ class CoderAgent:
             tools=tools
         )
         
-        # コンテキスト制限(12k)を適用したセッションサービス
-        session_service = TruncatingSessionService(max_tokens=self.max_context_tokens, model=self.model_name)
+        # MCP SQLite を使用した永続的なセッションサービス
+        if self.sqlite_mcp_client:
+            session_service = McpRawSqliteSessionService(self.sqlite_mcp_client)
+        else:
+            session_service = InMemorySessionService()
         
         self.runner = Runner(
             app_name="BROWNIE",
@@ -391,39 +399,74 @@ class CoderAgent:
                     break
             return False
 
-class TruncatingSessionService(InMemorySessionService):
-    def __init__(self, max_tokens: int = 12000, model: str = ""):
+class McpRawSqliteSessionService(SessionService):
+    """
+    MCP SQLite を使用して会話履歴を永続化するセッションサービス。
+    要約や切り詰めを行わず、すべてのイベントを完璧に保存（ロスレス）します。
+    """
+    def __init__(self, sqlite_mcp_client: Any):
         super().__init__()
-        self.max_tokens = max_tokens
-        self.model = model
+        self.sqlite_client = sqlite_mcp_client
+        self._table_ensured = False
 
-    async def get_session(self, **kwargs) -> Any:
-        session = await super().get_session(**kwargs)
-        if session and session.events:
-            session.events = self._truncate_events(session.events)
-        return session
+    async def _ensure_table(self):
+        if self._table_ensured:
+            return
+        # カラム名をユーザーの指定通り (session_id, events) に設定
+        query = "CREATE TABLE IF NOT EXISTS raw_sessions (session_id TEXT PRIMARY KEY, events JSON)"
+        await self.sqlite_client.call_tool("write_query", {"query": query})
+        self._table_ensured = True
 
-    def _truncate_events(self, events: List[Any]) -> List[Any]:
-        if not events:
-            return events
+    async def get_session(self, session_id: str, **kwargs) -> Session:
+        await self._ensure_table()
         
-        # 簡易的なトークン計算
+        # シングルクォートをエスケープして SQL インジェクションを防ぐ
+        safe_session_id = session_id.replace("'", "''")
+        query = f"SELECT events FROM raw_sessions WHERE session_id = '{safe_session_id}'"
+        res_str = await self.sqlite_client.call_tool("read_query", {"query": query})
+        
         try:
-            # Event リストを LiteLLM 用のメッセージリストに変換してカウント
-            # (ADK 内部の _session_util.py 等のロジックを簡略化)
-            total_tokens = sum(len(str(e)) for e in events) // 4 # 概算
-        except Exception:
-            total_tokens = sum(len(str(e)) for e in events) // 4
+            # mcp-server-sqlite の read_query は JSON 文字列の配列を返す想定
+            rows = json.loads(res_str)
+            if rows and len(rows) > 0:
+                events_raw = json.loads(rows[0]["events"])
+                events = []
+                for e in events_raw:
+                    # ADK Event オブジェクトの復元
+                    if hasattr(Event, 'from_dict'):
+                        events.append(Event.from_dict(e))
+                    else:
+                        events.append(Event(**e))
+                return Session(session_id=session_id, events=events)
+        except Exception as e:
+            logger.debug(f"No existing session found for {session_id} or parse error: {e}")
+            
+        return Session(session_id=session_id, events=[])
 
-        if total_tokens <= self.max_tokens:
-            return events
+    async def save_event(self, session_id: str, event: Any, **kwargs):
+        await self._ensure_table()
+        
+        # 現在のセッションを取得して新しいイベントを追加
+        session = await self.get_session(session_id)
+        session.events.append(event)
+        
+        # Event オブジェクトをシリアライズ
+        def serialize_event(e):
+            if hasattr(e, 'to_dict'): return e.to_dict()
+            if hasattr(e, 'model_dump'): return e.model_dump()
+            return e.__dict__
 
-        logger.info(f"Context overflow detected ({total_tokens} > {self.max_tokens}). Truncating events...")
+        events_dict = [serialize_event(e) for e in session.events]
+        events_json = json.dumps(events_dict)
         
-        # 古い履歴から順に削除。ただし直近の User メッセージ等は維持するため、後ろから残す。
-        # システムプロンプト等は Agent オブジェクト側で保持されるため、Session のイベントを削る。
-        while len(events) > 2 and total_tokens > self.max_tokens:
-            events.pop(0)
-            total_tokens = sum(len(str(e)) for e in events) // 4
+        # SQL インジェクション対策としてシングルクォートをエスケープ
+        events_json_escaped = events_json.replace("'", "''")
+        safe_session_id = session_id.replace("'", "''")
         
-        return events
+        query = f"""
+            INSERT INTO raw_sessions (session_id, events) 
+            VALUES ('{safe_session_id}', '{events_json_escaped}') 
+            ON CONFLICT(session_id) DO UPDATE SET events = excluded.events
+        """
+        await self.sqlite_client.call_tool("write_query", {"query": query})
+        logger.debug(f"Session {session_id} saved to MCP SQLite (Events: {len(session.events)})")

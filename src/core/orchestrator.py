@@ -76,8 +76,8 @@ class Orchestrator:
                             logger.info(f"SKIP: Mention in excluded repository: {target_repo}")
                             continue
                             
-                        task_id = f"{target_repo}#{m['number']}:{m['comment_id']}"
-                        await self._queue_if_needed(task_id, target_repo, m['number'], "mention_trigger")
+                        task_id = f"{target_repo}#{m['number']}"
+                        await self._queue_if_needed(task_id, target_repo, m['number'], "mention_trigger", comment_id=str(m['comment_id']))
                     
                     await self._check_llm_health()
                     self.sandbox.cleanup_orphans()
@@ -225,57 +225,29 @@ class Orchestrator:
         """リポジトリの最新状態を確認し、タスクをキューイングする (DEPRECATED: start内でのグローバル検索に移行)"""
         mentions = await self.gh_client.get_mentions_to_process(repo_name)
         for m in mentions:
-            task_id = f"{repo_name}#{m['number']}:{m['comment_id']}"
-            await self._queue_if_needed(task_id, repo_name, m['number'], "mention_trigger")
+            task_id = f"{repo_name}#{m['number']}"
+            await self._queue_if_needed(task_id, repo_name, m['number'], "mention_trigger", comment_id=str(m['comment_id']))
 
-    async def _queue_if_needed(self, task_id: str, repo_name: str, issue_number: int, user_login: str):
-        active_tasks = await self.state.get_active_tasks_for_issue(repo_name, issue_number)
-        
-        # すでに実行中またはキューにある場合はスキップ
-        if any(t['status'] in ['InProgress', 'InQueue'] for t in active_tasks):
-            return
-
-        # 待機中のタスクがある場合、新しいメンションがあれば「再開」として処理する
-        waiting_task = next((t for t in active_tasks if t['status'] == 'WaitingForClarification'), None)
-        
+    async def _queue_if_needed(self, task_id: str, repo_name: str, issue_number: int, user_login: str, comment_id: Optional[str] = None):
         existing_task = await self.state.get_task(task_id)
+        
         if existing_task:
             status = existing_task.get("status")
-            if status == "Failed":
-                # バージョン比較による再開ロジック
-                from src.version import get_build_id
-                context = existing_task.get("context") or {}
-                recorded_version = context.get("version")
-                current_version = get_build_id()
-                
-                if recorded_version != current_version:
-                    logger.info(f"RESUMING: Task {task_id} failed on version {recorded_version}. Retrying on {current_version}")
-                    # Failed なので、そのまま新規タスクとしてキューイング（後続の処理へ）
-                else:
-                    logger.info(f"SKIP: Task {task_id} already failed on current version {current_version}")
-                    return
-            else:
-                 # すでにそのコメントIDでの処理が成功/待機中/実行中の場合はスキップ
-                 return
+            # すでに実行中またはキューにある場合はスキップ
+            if status in ['InProgress', 'InQueue']:
+                return
 
-        # 再開（Resurrection）ロジック
-        if waiting_task:
-            logger.info(f"Resurrecting task {waiting_task['id']} for issue {repo_name}#{issue_number} due to trigger {task_id}")
-            
-            # トリガーとなったメンションを「処理済み（再起トリガー済み）」として記録
-            # 既存のタスクIDがない場合は新規作成、ある場合はステータス更新のみ
-            await self.state.update_task(task_id, "TriggeredResurrection", repo_name, issue_num=issue_number)
+            # 再開（Resurrection）ロジック: Completed, WaitingForClarification, Failed 等から InQueue に戻す
+            logger.info(f"Resurrecting task {task_id} for issue {repo_name}#{issue_number} due to new trigger (Status: {status})")
             
             # 再開用コメントIDを context に保存して再開時に読めるようにする
-            await self.state.update_task_context(waiting_task['id'], {"resume_comment_id": task_id.split(":")[-1]})
+            if comment_id:
+                await self.state.update_task_context(task_id, {"resume_comment_id": comment_id})
             
-            # 待機中のタスクを InQueue に戻す (ステータスのみ更新して既存コンテキストを維持)
-            await self.state.update_task_status(waiting_task['id'], "InQueue")
-            
+            await self.state.update_task_status(task_id, "InQueue")
             priority = self.config['agent']['inference_priority']['manual_issue']
-            await self.worker_pool.add_task(waiting_task['id'], priority, self._execute_task, waiting_task['id'], repo_name, issue_number)
+            await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
             return
-
 
         labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
         if user_login != "mention_trigger":
@@ -284,6 +256,9 @@ class Orchestrator:
 
         logger.info(f"Queueing new task: {task_id}")
         await self.state.update_task(task_id, "InQueue", repo_name, issue_num=issue_number)
+        if comment_id:
+            await self.state.update_task_context(task_id, {"trigger_comment_id": comment_id})
+            
         priority = self.config['agent']['inference_priority']['manual_issue']
         await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
 
@@ -298,9 +273,13 @@ class Orchestrator:
         repo_path = None
         comment_id = None
         
-        if ":" in task_id:
-            _, suffix = task_id.split(":", 1)
-            comment_id = suffix
+        # task_id は {repo}#{issue} 形式。トリガーとなったコメントIDはコンテキストから取得。
+        current_task_row = await self.state.get_task(task_id)
+        task_context = current_task_row.get('context') or {} if current_task_row else {}
+        
+        resume_comment_id = task_context.get('resume_comment_id')
+        trigger_comment_id = task_context.get('trigger_comment_id')
+        comment_id = resume_comment_id or trigger_comment_id or "body"
 
         # コンテキスト（resume_comment_id等）を保持したまま実行中に移行
         await self.state.update_task_status(task_id, "InProgress")
@@ -349,7 +328,10 @@ class Orchestrator:
                 
                 # 2. MCP サーバー起動
                 memory_path = os.path.expanduser(self.config['database'].get('memory_path', '~/.local/share/brownie/vector_db'))
+                # AIの記憶用 SQLite MCP サーバー (memory.db)
+                memory_db_path = os.path.expanduser(self.config['database'].get('memory_db_path', '~/.local/share/brownie/memory.db'))
                 
+                sqlite_client = await task_mcp_manager.start_sqlite_server(memory_db_path)
                 kn_client = await task_mcp_manager.start_knowledge_server(repo_path, memory_path, repo_name)
                 ws_client = await task_mcp_manager.start_workspace_server(
                     repo_path, self.project_root, 
@@ -362,15 +344,12 @@ class Orchestrator:
                     self.config, self.sandbox, self.state, self.gh_client,
                     knowledge_mcp_client=kn_client,
                     workspace_mcp_client=ws_client,
+                    sqlite_mcp_client=sqlite_client,
                     workspace_context=ws_context
                 )
 
                 # 4. タスク実行
-                active_label = "ai-active" if comment_id else "in-progress"
-                
-                # コンテキストから再開用コメントIDを取得
-                current_task_row = await self.state.get_task(task_id)
-                resume_comment_id = (current_task_row.get('context') or {}).get('resume_comment_id') if current_task_row else None
+                active_label = "ai-active" if comment_id and comment_id != "body" else "in-progress"
 
                 # ラベル取得と開始コメントの制御
                 labels = await self.gh_client.get_issue_labels(repo_name, issue_number)

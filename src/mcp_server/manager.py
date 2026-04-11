@@ -17,6 +17,7 @@ class MCPServerManager:
         self.project_root = project_root
         self.workspace_client: Optional[Client] = None
         self.knowledge_client: Optional[Client] = None
+        self.sqlite_client: Optional[Client] = None
 
     async def start_workspace_server(self, repo_path: str, reference_path: str, user_id: int, group_id: int):
         """Workspace MCP Server を起動し、クライアントを返す"""
@@ -77,6 +78,29 @@ class MCPServerManager:
             self.knowledge_client = None
             return None
 
+    async def start_sqlite_server(self, db_path: str):
+        """SQLite MCP Server を起動し、クライアントを返す"""
+        try:
+            logger.info(f"Starting SQLite MCP Server: db={db_path}")
+            db_path = os.path.expanduser(db_path)
+            os.makedirs(os.path.dirname(db_path), exist_ok=True)
+            
+            transport = StdioTransport(
+                command="uvx",
+                args=["mcp-server-sqlite", "--db-path", db_path],
+                keep_alive=False
+            )
+            
+            client = Client(transport)
+            await client.__aenter__()
+            self.sqlite_client = client
+            logger.info("SQLite MCP Server connected successfully.")
+            return client
+        except Exception as e:
+            logger.error(f"Failed to start SQLite MCP Server: {e}")
+            self.sqlite_client = None
+            return None
+
     async def stop_all(self):
         """全ての MCP サーバーを停止する"""
         if self.workspace_client:
@@ -94,6 +118,14 @@ class MCPServerManager:
             except Exception as e:
                 logger.error(f"Error stopping Knowledge MCP Client: {e}")
             self.knowledge_client = None
+
+        if self.sqlite_client:
+            logger.info("Stopping SQLite MCP Server...")
+            try:
+                await self.sqlite_client.__aexit__(None, None, None)
+            except Exception as e:
+                logger.error(f"Error stopping SQLite MCP Client: {e}")
+            self.sqlite_client = None
 
     async def __aenter__(self):
         return self
