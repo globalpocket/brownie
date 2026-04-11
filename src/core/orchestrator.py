@@ -30,7 +30,7 @@ class Orchestrator:
         self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         
         self.state = StateManager(self.config['database']['db_path'])
-        self.worker_pool = WorkerPool()
+        self.worker_pool = WorkerPool(self.project_root)
         self.gh_client = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""))
         self.sandbox = SandboxManager(self.config['workspace']['sandbox_user_id'], 
                                      self.config['workspace']['sandbox_group_id'])
@@ -324,11 +324,59 @@ class Orchestrator:
                 analyzer.close()
                 
                 ws_context = WorkspaceContext(repo_path, self.project_root)
-                self.sandbox.context = ws_context # Sandboxも新コンテキストを共有
+                self.sandbox.context = ws_context
+                
+                # --- LangGraph ワークフローの反映 (Step 2: 稟議モデル) ---
+                from src.core.workflow import TaskWorkflow
+                from langgraph.checkpoint.sqlite import SqliteSaver
+                
+                checkpoint_path = os.path.join(self.project_root, ".brwn", "checkpoints.db")
+                os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
+                
+                async with SqliteSaver.from_conn_string(checkpoint_path) as checkpointer:
+                    workflow = TaskWorkflow(self.config, self.project_root)
+                    app = workflow.compile(checkpointer=checkpointer)
+                    config = {"configurable": {"thread_id": task_id}}
+                    
+                    state = await app.aget_state(config)
+                    
+                    if not state.values:
+                        # 初回: 分析とプラン策定まで実行 (approve_wait の直前で interrupt)
+                        initial_state = {
+                            "task_id": task_id,
+                            "repo_name": repo_name,
+                            "issue_number": issue_number,
+                            "repo_path": repo_path,
+                            "instruction": target_issue.body or "",
+                            "history": []
+                        }
+                        async for _ in app.astream(initial_state, config=config): pass
+                    else:
+                        # 再開: ユーザーからの回答を反映
+                        resume_body = ""
+                        if resume_comment_id:
+                            resume_body = await self.gh_client.get_comment_body(repo_name, issue_number, resume_comment_id)
+                        
+                        await app.aupdate_state(config, {
+                            "is_approved": any(kw in resume_body.lower() for kw in ["承認", "ok", "proceed", "go"]),
+                            "user_feedback": resume_body if not any(kw in resume_body.lower() for kw in ["承認", "ok", "proceed", "go"]) else None
+                        })
+                        async for _ in app.astream(None, config=config): pass
+
+                    # 状態確認: 中断中か完了か
+                    state = await app.aget_state(config)
+                    if state.next and "approve_wait" in state.next:
+                        # 稟議書を GitHub に投稿
+                        plan_msg = f"## 🛠 実行計画（稟議）\n\n分析に基づき、以下のプランを策定しました。承認される場合は「承認」または「OK」とコメントしてください。\n\n{state.values.get('plan', '')}\n\n### コード構造解析結果 (NetworkX)\n```mermaid\n{state.values.get('context_mermaid', '')}\n```"
+                        await self.gh_client.post_comment(repo_name, issue_number, plan_msg + get_footer())
+                        success = "WAITING"
+                        return 
+
+                # 実行フェーズへの移行 (app.astream完了後)
+                task_description = f"Plan: {state.values.get('plan')}\n\nIssue Body: {target_issue.body}"
                 
                 # 2. MCP サーバー起動
                 memory_path = os.path.expanduser(self.config['database'].get('memory_path', '~/.local/share/brownie/vector_db'))
-                # AIの記憶用 SQLite MCP サーバー (memory.db)
                 memory_db_path = os.path.expanduser(self.config['database'].get('memory_db_path', '~/.local/share/brownie/memory.db'))
                 
                 sqlite_client = await task_mcp_manager.start_sqlite_server(memory_db_path)
@@ -339,7 +387,6 @@ class Orchestrator:
                     self.config['workspace']['sandbox_group_id']
                 )
 
-                # 3. エージェントの初期化 (Dependency Injection)
                 task_agent = CoderAgent(
                     self.config, self.sandbox, self.state, self.gh_client,
                     knowledge_mcp_client=kn_client,
@@ -348,38 +395,14 @@ class Orchestrator:
                     workspace_context=ws_context
                 )
 
-                # 4. タスク実行
-                active_label = "ai-active" if comment_id and comment_id != "body" else "in-progress"
-
-                # ラベル取得と開始コメントの制御
-                labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
-                is_first_start = (active_label not in labels) and (not resume_comment_id)
-                
-                await self.gh_client.add_label(repo_name, issue_number, active_label)
-                if is_first_start:
-                    await self.gh_client.post_comment(repo_name, issue_number, "承知いたしました。作業を開始します。" + get_footer())
-                
-                instruction_priority = None
-                if resume_comment_id:
-                    # 再開時の指示
-                    instruction_priority = await self.gh_client.get_comment_body(repo_name, issue_number, resume_comment_id)
-                    instruction_priority = f"【再開指示】ユーザーから以下の回答がありました。不確実性が解消されたか評価し、完了していればブループリントを出力してください:\n\n{instruction_priority}"
-                elif comment_id and comment_id != "body":
-                    instruction_priority = await self.gh_client.get_comment_body(repo_name, issue_number, comment_id)
-
-                task_description = f"Title: {target_issue.title}\n\nBody: {target_issue.body or ''}"
-                if instruction_priority:
-                    task_description += f"\n\nAdditional Instructions: {instruction_priority}"
-
                 success = await task_agent.run(
                     task_id=task_id, repo_name=repo_name, issue_number=issue_number,
                     repo_path=repo_path, task_description=task_description,
                     is_resume=bool(resume_comment_id)
                 )
                 
-                # エージェントが False を返した場合（finish/suspendを呼ばずに終了）、エラーとして扱う
                 if success is False:
-                    raise Exception("Agent exited without completing the task (finish() was not called).")
+                    raise Exception("Agent exited without completing the task.")
 
                 # 5. Git 操作 (成功時のみ)
                 if success is True:
