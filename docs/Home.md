@@ -1,122 +1,113 @@
-# 自律AIエージェント「BROWNIE」システム設計書
+# Brownie システム全体全体図 (Home)
 
-## 1. システム概要
-
-BROWNIE は、GitHub をハブとした完全疎結合・MCP ベースの自律 AI ソフトウェアエンジニアリング環境である。人間と AI は GitHub Issue および PR 上で自然言語を用いて協働し、AI は要件定義から実装、テスト、PR作成、Wiki更新までの全ライフサイクルを自動で完結させる。
-
-最新のアーキテクチャでは **Model Context Protocol (MCP)** を採用。推論、記憶、実行の 3 つのプレーンを分離し、標準プロトコル (stdio) で通信するマイクロサービス構成へと進化した。これにより、最小権限の原則 (Least Privilege) に基づく最高水準のセキュリティと、リポジトリ単位での高度な並列処理を実現している。
+BROWNIE は、Model Context Protocol (MCP) を基盤とし、推論・知覚・実行を完全に分離した **「Agent-Friendly Architecture」** を採用する自律型 AI 開発環境です。
 
 ---
 
-## 2. 動作環境と技術スタック
+## 1. 3つのプレーン (The 3-Plane Design)
 
-### 2.1. ハードウェア要件
-- **Mac**: 32GB Unified Memory 以上推奨
-- **Linux**: Ryzen AI / NVidia 推論環境 (RAM 64GB 以上推奨)
-- **ストレージ**: 1TB 以上の高速 NVMe SSD (LLM モデル、Docker イメージ、Vector DB 用)
+BROWNIE は、権限と責務を物理的・プロトコルレベルで分離することで、安全性と自律性を両立させています。
 
-### 2.2. ソフトウェアスタック (MCP 構成)
+### 🧠 Control Plane (制御層)
+- **Orchestrator**: 全体のライフサイクル管理、GitHub 監視。
+- **Agent (Planner)**: Pydantic AI による意思決定。動的なツールディスパッチ。
+- **Workflow (LangGraph)**: 状態の永続化とチェックポイント管理。
 
-| カテゴリ | ツール / サーバー | 役割 |
-| :--- | :--- | :--- |
-| **Control Plane** | Orchestrator & CoderAgent | 推論エンジン (Ollama / vLLM 互換) と連携した意思決定。 |
-| **Perception Plane** | Knowledge MCP Server | ChromaDB (ベクトルDB) と DuckDB (AST解析) による記憶と知覚。 |
-| **Execution Plane** | Workspace MCP Server | Docker 隔離サンドボックス内でのファイル操作・検証・実行。 |
-| **主要ライブラリ** | fastmcp, PyGithub, tree-sitter | MCP プロトコル通信、GitHub 操作、コード構造解析。 |
+### 💾 Perception Plane (知覚層)
+- **Knowledge MCP Server**: 
+    - **WDCA (Wide-area Deep Context Awareness)**: DuckDB による AST 解析と NetworkX による依存関係グラフ。
+    - **Memory**: ChromaDB による RAG。過去の修正パターンの検索。
+
+### 🛠 Execution Plane (実行層)
+- **Workspace MCP Server**: ファイル操作、Linter/Formatter の実行。
+- **Sandbox (Docker)**: 破壊的コード実行と検証のための完全隔離環境。
 
 ---
 
-## 3. システム・アーキテクチャ (The 3-Plane Design)
+## 2. 主要シーケンス (Core Sequences)
 
-BROWNIE は、権限と責務を 3 つの層に分離し、相互の依存関係を最小化している。
+BROWNIE の強みを支える 3 つの主要な協調フローです。
 
-### 3.1. アーキテクチャ・シーケンス (Mermaid)
+### 2.1. Planner-Executor 連携フロー
+司令塔 (Planner) と職人 (Executor) を分担させることで、ハルシネーションを抑制しつつ高精度な実装を実現します。
 
 ```mermaid
 sequenceDiagram
-    participant GH as GitHub API
-    participant ORC as Orchestrator (MCP Client)
-    participant KNO as Knowledge MCP (Memory)
-    participant WS as Workspace MCP (Hands)
-    participant LLM as LLM (Ollama)
-
-    Note over ORC: bin/brwn start
-    Note over ORC: Watchdog (Hot-reload) active
-    ORC->>GH: Issue / PR 監視 (ETag)
-    GH-->>ORC: 新規タスク検知
+    participant P as Planner (Llama 8B)
+    participant E as Executor (Qwen 7B)
+    participant MLX as Dual MLX Servers
     
-    ORC->>KNO: 起動 (stdio)
-    ORC->>WS: 起動 (stdio)
+    P->>MLX: get_repo_summary (知覚取得)
+    MLX-->>P: シンボル関係・急所情報の返却
     
-    ORC->>KNO: 検索: 関連コード & 過去事例 (RAG)
-    KNO-->>ORC: AST解析フロー + 記憶コンテキスト
+    Note over P: 修正戦略の決定
+    P->>P: Strict Blueprint (JSON) の構成
     
-    loop 自律実装・検証ループ
-        ORC->>LLM: 推論 (要件 + 記憶 + コード)
-        LLM-->>ORC: 実装案 / 修正案
-        
-        ORC->>WS: 工具実行: write_file / run_command
-        Note over WS: 4層防御サンドボックス内
-        WS-->>ORC: テスト結果 / Linter 結果
-        
-        Note right of WS: ファイル変更検知 (Watcher)
-        WS-->>WS: バックグラウンド解析実行 (Semgrep / ast-grep)
-    end
-
-    ORC->>WS: Git push
-    ORC->>GH: Pull Request 作成
-    ORC->>KNO: 成功体験の保存
-    Note over ORC: サーバー停止
+    P->>E: delegate_to_executor(Blueprint)
+    Note over E: 副作用なしのコード生成に専念
+    E->>E: インライン解析 & 実装案作成
+    E-->>P: 修正済みコード片の返却
+    
+    P->>MLX: write_file / run_command (検証実行)
 ```
 
-### 3.2. コア・コンポーネント詳細
+### 2.2. 自己診断・自己修復ループ (Self-Healing)
+実行中のエラーや環境の不整合を自律的に検知し、自ら修正してタスクを完結させます。
 
-#### 🧠 THE BRAIN (Control Plane)
-- **Orchestrator**: 全体のライフサイクル管理。監視、MCP サーバーの起動・終了、OAuth/PAT 認可。
-- **CoderAgent (`agent.py`)**: 動的ツールレジストリを持つ MCP クライアント。どのツールがどの MCP サーバーにあるかを管理し、Hallucination を抑制しながらツールをディスパッチする。
-- **Watchdog (`watchdog.py`)**: `src/` や `config/` の変更を検知するホットリロード機能と、CrashLoopBackOff による自動復旧を提供。
-- **Persistent Model Storage**: モデルを `~/.local/share/brownie/models` に永続化し、起動時に `config.yaml` から動的にロード。
+```mermaid
+sequenceDiagram
+    participant AGT as Agent
+    participant CTX as get_agent_context
+    participant WS as Workspace MCP
+    participant LOG as Error/Diff Log
+    
+    AGT->>WS: run_command (テスト実行)
+    WS-->>AGT: ❌ ExitCode: 1 (Error: ModuleNotFound)
+    
+    AGT->>LOG: 解析: なぜ失敗したか？
+    AGT->>CTX: 現在の全状況を客観視
+    Note over AGT: 「setup.sh が未実行だった」と自己診断
+    
+    AGT->>WS: run_command (./bin/setup.sh)
+    WS-->>AGT: ✅ 環境修復完了
+    
+    AGT->>WS: run_command (再度テスト実行)
+    WS-->>AGT: ✅ Test Passed
+```
 
-#### 💾 THE MEMORY (Perception Plane)
-- **Knowledge Server**:
-  - **ベクトル検索**: ChromaDB を使用し、過去の成功事例やドキュメントを RAG (Retrieval-Augmented Generation) として提供。
-  - **AST フロー解析**: DuckDB を背面エンジンとし、プロジェクト全体のシンボル依存関係、複雑な関数呼び出しフローを瞬時に Agent へ伝える。
+### 2.3. ヒューマンインザループ (HITL Flow)
+重要な決定や PR 作成前に、人間のレビューを仰ぎ、合意形成を行う安全装置です。
 
-#### 🛠 THE HANDS (Execution Plane)
-- **Workspace Server**:
-  - **4層防御システム**: Docker 隔離、DNS Proxy、YAML サニタイザ、User ID マッピングを完全に継承。
-  - **ツール提供**: ファイル操作 (`read`/`write`)、コマンド実行 (`run`)、Linter/Formatter、セキュアスキャン、Semgrep 解析を MCP ツールとして公開。
+```mermaid
+sequenceDiagram
+    participant AGT as Agent
+    participant GOV as Governance Node
+    participant GH as GitHub API
+    participant USR as User (Human)
+    
+    Note over AGT: 実装フェーズ完了
+    AGT->>GOV: 成果物の報告依頼
+    
+    GOV->>GH: 稟議書 (Ringi-sho) をコメント投稿
+    Note over GOV: ワークフロー中断 (Pause)
+    
+    USR->>GH: コメント回答: /approve
+    
+    loop ポーリング
+        GH-->>GOV: "/approve" を検知
+    end
+    
+    Note over GOV: ワークフロー再開 (Resume)
+    GOV->>GH: Pull Request 作成
+```
 
 ---
 
-## 4. サンドボックス & セキュリティ (The Least Privilege Principle)
+## 3. アーキテクチャの原則 (Principles)
 
-BROWNIE のセキュリティ設計は、**「推論プロセスに権限を与えない」**ことに集約される。
+1.  **High Locality**: `WorkspaceContext` による境界の集約。
+2.  **Explicit Tools**: 厳格な型定義と Docstring による「明示的な手」。
+3.  **Robust Infrastructure**: 確実なプロセス管理とクリーンアップ。
+4.  **Meta-Cognition**: 自己の状態を客観視可能な知覚。
 
-1.  **認可 (Protocol-level Auth)**: 推論エンジン (Agent) は Workspace MCP Server が提供するインターフェース経由でしかファイルにアクセスできない。
-2.  **隔離 (Containerization)**: すべての破壊的操作（コマンド実行、コード変更）は、ホストから論理的に切り離された Docker コンテナ内で完結する。
-3.  **浄化 (Log Scrubbing)**: 出力ログから機密情報 (API Keys, Tokens) を自動検知し、エージェントに戻す前にマスク処理を行う。
-
----
-
-## 5. 自己修復・運用シーケンス
-- **Watchdog (ホットリロード)**: `src/` 配下のソースコードや `config/` の設定が変更されると、即座にメインプロセスを安全に再起動し、変更を即時反映する。
-
-- **自己修復メタ・ループ**: `SystemInternalError` 発生時、自分自身のリポジトリに Issue を起票し、解決するための PR を自ら発行する。
-- **Resume (同期再開)**: 停止・クラッシュ後の再開時は、必ず `git pull --rebase` を実行し、クリーンな履歴を維持。
-- **Wiki 同期**: 生成された `/docs` 内のドキュメントを `git subtree push` で Wiki リポジトリへ自動同期。
-
----
-
-## 6. 詳細設計書 (Blueprints)
-
-AIがシステムを深く理解し、コードを復元・拡張するための厳密な設計図です。
-
-- [StateManager 設計書](https://github.com/globalpocket/brownie/wiki/src_core_state)
-- [MCPServerManager 設計書](https://github.com/globalpocket/brownie/wiki/src_mcp_server_manager)
-- [SandboxManager 設計書](https://github.com/globalpocket/brownie/wiki/src_workspace_sandbox)
-- [Orchestrator 設計書](https://github.com/globalpocket/brownie/wiki/src_core_orchestrator)
-
----
-
-BROWNIE は、「信頼できない AI 推論」を「信頼できるインフラ設計」で包むことにより、実戦レベルの自律エンジニアリングを実現している。
+詳細な各モジュールの設計書については、[README](../README.md) の Blueprint セクションを参照してください。

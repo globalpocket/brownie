@@ -1,32 +1,32 @@
 # Blueprint: `src/workspace/sandbox.py`
 
 ## 1. 責務 (Responsibility)
-`SandboxManager` は、コードの実行やファイル操作を行うための安全なコンテキストを提供します。Docker を使用したプロセス分離（将来の拡張）と、`WorkspaceContext` を活用した「ワークスペース外への書き込み防止」というセキュリティ境界の維持を担います。
+`SandboxManager` は、コードの実装、テスト、シェルコマンドの実行を、ホスト環境から安全に分離された **Docker サンドボックス** 内で実行・管理します。
+- **実行環境の隔離**: ホストのファイルシステムや環境変数を直接触らせず、コンテナを介した間接操作を保証。
+- **リソース制限と権限管理**: 最小権限の原則に基づき、指定された UID/GID でコマンドを実行し、破壊的変更の影響をファイルシステム境界内に留める。
 
 ## 2. 復元要件 (Recreation Requirements for AI)
 
 ### クラス: `SandboxManager`
 
 **初期化引数:**
-- `user_id` (int), `group_id` (int): サンドボックス内およびファイル操作で使用する UID/GID。
+- `user_id` (int): コンテナ内でコマンドを実行する際の UID。
+- `group_id` (int): コンテナ内でコマンドを実行する際の GID。
 
 **公開メソッド:**
 
-1. `set_workspace_root(root_path) -> None`
-   - **振る舞い**: `WorkspaceContext` にルートパスを設定（または初期化）します。
-2. `read_file(path) -> str` (Async)
-   - **振る舞い**: `WorkspaceContext.resolve_path` を使用してパスを解決し、ファイルを読み込みます。ディレクトリの場合はエラーを返し、存在しない場合は AI への修正ヒントを返します。
-3. `write_file(path, content) -> str` (Async)
-   - **入力**: ファイルパス、書き込む内容。
-   - **振る舞い**: パスを安全に解決し、ディレクトリを自動作成して書き込みます。
-   - **例外発生**: 解決されたパスがワークスペース外を指す場合、`PermissionError` を投げます。
-4. `list_files(path, max_depth) -> str` (Async)
-   - **振る舞い**: 指定された深さまで再帰的にファイルリストを生成します。
+1. `run_command(command, cwd, env=None) -> Dict` (async)
+   - **振る舞い**: 
+     - 実行中の Docker コンテナに対し、`docker exec` を実行。
+     - 指定された `cwd`（コンテナ内のパス）でコマンドを走らせる。
+     - 標準出力・標準エラーをキャプチャし、終了コードと併せて返却。
+   - **例外発生**: Docker 自体の接続エラーやコンテナ停止時にエラーを記録。
 
-### セキュリティコントラクト (Agent-Friendly)
-- 全てのファイル操作前に `_get_full_path` を通じてパスを検証します。
-- `sanitize_compose_yaml` メソッドにより、サンドボックス定義の特権昇格や不正なマウントを事前にブロックします。
+2. `start_container(image_name, volumes) -> str` (async)
+   - **振る舞い**: 
+     - ワークスペースディレクトリをマウントした状態で Docker コンテナをバックグラウンド起動。
+     - **セキュリティ要件**: 外部通信（ネットワーク）の制限、メモリ/CPU 制限を課した状態で起動。
+   - **出力**: 起動したコンテナの ID。
 
 ## 3. 依存関係 (Dependencies)
-- **コアモジュール**: `src.workspace.context`
-- **外部**: `docker` (docker-py), `pyyaml`, `os`
+- **外部依存**: `docker-py` (Python Docker SDK)
