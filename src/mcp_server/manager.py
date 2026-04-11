@@ -89,6 +89,27 @@ class MCPServerManager:
         logger.info("SQLite MCP Server connected successfully.")
         return client
 
+    async def get_langchain_tools(self) -> List[Any]:
+        """
+        全サーバーから提供されるツールを LangChain 形式に変換して取得する。
+        (Pydantic AI での利用を見据えた標準化)
+        """
+        from langchain_mcp_adapters.tools import load_mcp_tools
+        
+        # 各クライアントのトランスポートからツールをロード
+        all_tools = []
+        clients = [self.workspace_client, self.knowledge_client, self.sqlite_client]
+        
+        for client in clients:
+            if client and client.session:
+                # langchain-mcp-adapters を使用してセッションからツールを抽出
+                # 内部的には client.session (mcp.ClientSession) を使用
+                tools = await load_mcp_tools(client.session)
+                all_tools.extend(tools)
+        
+        logger.info(f"Loaded {len(all_tools)} MCP tools via LangChain Adapter.")
+        return all_tools
+
     async def stop_all(self):
         """全ての MCP サーバーを停止する (ExitStack により自動化されているが、明示的な呼び出しにも対応)"""
         if self._exit_stack:
