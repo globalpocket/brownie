@@ -25,9 +25,6 @@ from src.version import get_footer
 
 logger = logging.getLogger(__name__)
 
-# Taskiq ワーカーからアクセスするためのグローバル参照
-global_orchestrator = None
-
 class Orchestrator:
     def __init__(self, config_path: str):
         with open(config_path, 'r') as f:
@@ -55,9 +52,6 @@ class Orchestrator:
         # APScheduler の初期化
         self.scheduler = AsyncIOScheduler()
         self.polling_job_id = "github_mention_polling"
-        
-        global global_orchestrator
-        global_orchestrator = self
 
     async def start(self):
         """オーケストレーターの起動"""
@@ -68,6 +62,9 @@ class Orchestrator:
         
         # 起動時に仕掛品タスクがあれば異常終了ではなく「中断」としてマーク（再起動後の自動復旧対応）
         await self.state.reset_orphaned_tasks()
+        
+        # Taskiq ブローカーのステートに自身を登録 (Transparent DI)
+        self.worker_pool.broker.state.orchestrator = self
         
         self.worker_task = asyncio.create_task(self.worker_pool.run())
         
