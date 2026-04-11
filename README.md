@@ -1,60 +1,96 @@
-# BROWNIE: Agent-Friendly Engineering Environment
+<div align="center">
 
-BROWNIE（ブラウニー）は、AI エージェントが自律的にソフトウェア開発の全工程（調査・設計・実装・検証・PR作成）を完結させるために最適化された、次世代のエンジニアリング環境です。
+![BROWNIE Banner](file:///Users/satoshitanaka/.gemini/antigravity/brain/d6b5cc59-c155-40c3-ad36-d7a6967bf15e/brownie_banner_modern_1775898089950.png)
 
-GitHub Issue をハブとし、人間と AI が自然言語で協働する **「Pull-based Autonomous Engineering」** を実現します。
+# 🍪 BROWNIE
+### The Autonomous Engineering Environment Built for Agents
 
----
+[![Status](https://img.shields.io/badge/status-active-success.svg)]()
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)]()
+[![Version](https://img.shields.io/badge/version-0.1.0--alpha-orange.svg)]()
+[![Powered By](https://img.shields.io/badge/powered%20by-Model%20Context%20Protocol-8A2BE2.svg)]()
 
-## 💎 最大の特徴: Agent-Friendly Architecture
+**BROWNIE** は、AI エージェントが自律的にソフトウェア開発の全工程（調査・設計・実装・検証・PR作成）を完結させるために最適化された、次世代のエンジニアリング基盤です。
 
-BROWNIE の設計思想は、「人間にとっての使いやすさ」を超え、**「AI エージェントが迷わず、安全に、確実な成果を出すこと」** に特化しています。
+[Explore the Docs »](docs/Home.md)
+/
+[View Blueprints »](#-blueprints)
+/
+[Quick Start »](#-getting-started)
 
-### 1. High Locality (境界の集約)
-AI が直面する「複雑なパストラバーサルの恐怖」と「コンテキストの欠如」を構造的に解決しました。`WorkspaceContext` がすべてのパス解決とセキュリティ境界を一元管理。AI はリポジトリルートからの相対パスのみを意識すればよく、環境差異というノイズから解放されます。
-
-### 2. Explicit Tools (明示的なコントラクト)
-ツールの誤用やハルシネーションを極限まで抑制します。すべてのツールは、Pydantic AI を用いた厳格な型定義と、AI 向けの「設計意図」が記述された Docstring を持ち、エージェントは自らの「手」の機能を正確に把握できます。
-
-### 3. Robust Infrastructure (堅牢なプロセス管理)
-`MCPServerManager` による鉄壁のプロセス制御。タスクごとに独立した MCP サーバー群を起動し、AnyIO を用いた確実なクリーンアップを行うことで、ゾンビプロセスやリソース競合を完全に排除します。
-
-### 4. Meta-Cognition (自己診断能力)
-エージェントは自らの実行状態やコンテキストを客観的に把握する能力（`get_agent_context`）を持っています。エラー発生時には自己診断を行い、プロジェクト環境の不整合を自律的に修復するループ（Self-Healing）を回します。
+</div>
 
 ---
 
-## 🏗 アーキテクチャ概要 (Overview)
+## 🌟 Why BROWNIE?
 
-BROWNIE は、以下の 3 つのプレーンに分離された疎結合なマイクロサービス構成を採用しています。
+従来の開発環境は「人間」のために設計されてきました。しかし、AI エージェントが自律的に働くためには、より「構造的」で「堅牢」な基盤が必要です。BROWNIE は、AI が「迷わず、安全に、確実な成果を出すこと」に特化した **Agent-Friendly Architecture** を提供します。
 
-- **🧠 Control Plane (Orchestrator & Agent)**: LangGraph によるワークフロー制御と、Planner-Executor パターンによる高度な意思決定。
-- **💾 Perception Plane (Knowledge MCP Server)**: AST 解析 (DuckDB) と 依存関係グラフ (NetworkX) による、リポジトリの「空間的」把握。
-- **🛠 Execution Plane (Workspace MCP Server & Sandbox)**: Docker 隔離環境内での全副作用の実行と検証。
-
----
-
-## 📚 資産としての設計書 (Blueprints)
-
-BROWNIE の各コンポーネントは、AI がシステムを再構築・拡張できるレベルの **「厳密な設計書（Blueprint）」** を備えています。
-
-- **Core**: [Orchestrator](docs/src_core_orchestrator.md) | [Agent](docs/src_core_agent.md) | [Workflow](docs/src_core_workflow.md)
-- **Workspace**: [Context](docs/src_workspace_context.md) | [Sandbox](docs/src_workspace_sandbox.md) | [GitOps](docs/src_workspace_git_ops.md)
-- **Analysis**: [CodeAnalyzer](docs/src_workspace_analyzer_core.md) | [FlowTracer](docs/src_workspace_analyzer_flow.md)
-- **Infrastructure**: [MCPServerManager](docs/src_mcp_server_manager.md) | [WorkspaceServer](docs/src_mcp_server_workspace_server.md) | [KnowledgeServer](docs/src_mcp_server_knowledge_server.md)
+| 🏎️ **High Locality** | 🎯 **Explicit Tools** | 🛡️ **Robust Infra** | 🧠 **Meta-Cognition** |
+| :--- | :--- | :--- | :--- |
+| パス解決とセキュリティ境界を一元化し、AI の推論ノイズを排除。 | Pydantic AI による厳格な型定義でツールの誤用を構造的に防止。 | 独立した MCP サーバーと Docker 隔離による鉄壁のプロセス管理。 | 実行状態を客観視し、エラーを自律的に修復する Self-Healing ループ。 |
 
 ---
 
-## 🚀 クイックスタート
+## 🏗️ Architecture Layers
 
-### 1. セットアップ
+BROWNIE は 3 つの分離されたプレーンで構成され、高い信頼性と拡張性を実現しています。
+
+### 🧠 Control Plane
+**The Brain.** LangGraph によるワークフロー制御と、Planner-Executor パターンによる高度な意思決定を行います。
+- `Orchestrator` / `Agent` / `Workflow`
+
+### 💾 Perception Plane
+**The Eyes.** DuckDB による AST 解析と NetworkX による依存関係分析により、コードベースの「空間的」把握を支援します。
+- `Knowledge MCP Server` / `Code Analyzer`
+
+### 🛠️ Execution Plane
+**The Hands.** Docker 隔離環境（Sandbox）内での副作用実行と、厳格な検証を担います。
+- `Workspace MCP Server` / `Sandbox Manager`
+
+---
+
+## 📚 Blueprints
+
+BROWNIE は、AI 自身がシステムを理解・再構築できるレベルの「厳格な設計書」として存在します。
+
+| Category | Components |
+| :--- | :--- |
+| **Core** | [Orchestrator](docs/src_core_orchestrator.md) • [Agent](docs/src_core_agent.md) • [Workflow](docs/src_core_workflow.md) |
+| **Workspace** | [Context](docs/src_workspace_context.md) • [Sandbox](docs/src_workspace_sandbox.md) • [GitOps](docs/src_workspace_git_ops.md) |
+| **Analysis** | [Analyzer](docs/src_workspace_analyzer_core.md) • [FlowTracer](docs/src_workspace_analyzer_flow.md) • [Repomix](docs/src_workspace_repomix_runner.md) |
+| **Infra** | [Manager](docs/src_mcp_server_manager.md) • [WorkspaceServer](docs/src_mcp_server_workspace_server.md) • [KnowledgeServer](docs/src_mcp_server_knowledge_server.md) |
+
+---
+
+## 🚀 Getting Started
+
+### 📋 Prerequisites
+- Docker & Docker Compose
+- Python 3.11+
+- GitHub Personal Access Token
+
+### 🔧 Installation
 ```bash
+# クローンとセットアップ
+git clone https://github.com/globalpocket/brownie.git
+cd brownie
 ./bin/setup.sh
 ```
 
-### 2. 起動 (Orchestrator & Worker)
+### 🏃 Running
 ```bash
+# Orchestrator と Worker の起動
 ./bin/brwn start
 ```
 
+---
+
+<div align="center">
+
+### 🤝 Join the Autonomous Revolution
 BROWNIE は、AI が「ただの道具」ではなく「自律的なチームメンバー」として機能するための、最も信頼できる基盤を提供します。
+
+[GitHub](https://github.com/globalpocket/brownie) / [Wiki](docs/Home.md)
+
+</div>
