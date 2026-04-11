@@ -1,96 +1,108 @@
 import asyncio
 import logging
-import time
 import os
-from typing import Dict, Any, Callable, Awaitable, Optional
+from typing import Dict, Any, Optional
+from taskiq import TaskiqWorker, TaskiqEvents
 from taskiq_fs import AsyncFSBroker
 
 logger = logging.getLogger(__name__)
 
+# 設計書課題: Pull型アーキテクチャの徹底 & Taskiq FSBroker による永続キューの実現
+# ブローカーの初期化はモジュールレベルで行う（Taskiq のデコレータ登録のため）
+broker = AsyncFSBroker(".brwn/task_queue")
+
 class WorkerPool:
     def __init__(self, project_root: str, max_concurrent_inference: int = 1):
         self.project_root = project_root
+        self.broker = broker
         
-        # Pull型アーキテクチャのためのブローカー初期化 (設計書 4.2)
-        # AsyncFSBroker により Redis 不要のローカル永続キューを実現
-        broker_path = os.path.join(project_root, ".brwn", "task_queue")
-        os.makedirs(broker_path, exist_ok=True)
-        self.broker = AsyncFSBroker(broker_path)
-        
-        # 推論は直列実行 (VRAM保護)
+        # 推論の直列実行 (VRAM保護)
         self.inference_semaphore = asyncio.Semaphore(max_concurrent_inference)
-        self.is_running = True
         self.active_tasks: Dict[str, Dict[str, Any]] = {}
+        self.is_running = False
+        self._worker: Optional[TaskiqWorker] = None
 
     async def add_task(self, task_id: str, priority: int, 
-                    coro_func: Callable[..., Awaitable[Any]], *args, **kwargs):
+                    repo_name: str, issue_number: int):
         """
         タスクを Taskiq ブローカーに追加する。
-        注意: Taskiq FSBroker はシリアライズが必要なため、
-        ここでは内部の asyncio.Queue を Taskiq のインターフェースとしてラップする形式を維持しつつ、
-        バックエンドを OSS 化する。
         """
-        logger.info(f"Task {task_id} received. Queueing via Taskiq-style Pull architecture.")
+        logger.info(f"Task {task_id} received. Queueing via Taskiq.")
         
-        # 実際には Taskiq の Broker.kick を使用するが、既存の Orchestrator との結合を考え
-        # 内部的な Taskiq 互換ロジックとして整理
         task_data = {
             "task_id": task_id,
             "priority": priority,
-            "added_at": time.time(),
         }
         
-        # Taskiq ブローカーへのキック (簡易実装。本来は @broker.task を使用)
-        # 今回は WorkerPool 内で Taskiq 的な Pull 制御を行う
-        await self._enqueue_taskiq(priority, task_data, coro_func, args, kwargs)
+        # Taskiq タスクのキック
+        # orchestrator の参照はタスク実行時に解決するか、グローバルに保持する設計とする
+        from src.core.worker_pool import execute_agent_task
+        await execute_agent_task.kick(task_id, repo_name, issue_number)
         
         self.active_tasks[task_id] = task_data
         return task_data
 
-    async def _enqueue_taskiq(self, priority, task_data, coro_func, args, kwargs):
-        # 内部的には現在の asyncio.Queue を使用しつつ、Taskiq への移行準備としての抽象化
-        # 物理的な Taskiq worker プロセスの分離は、将来的なスケールアップのために予約
-        if not hasattr(self, '_internal_queue'):
-            self._internal_queue = asyncio.PriorityQueue()
-        
-        await self._internal_queue.put((priority, time.time(), task_data, coro_func, args, kwargs))
-
     async def run(self):
-        """ワーカーメインループ (Pull型)"""
-        logger.info("WorkerPool starting in PULL MODE. Waiting for tasks from broker...")
+        """Taskiq ワーカーを同一プロセス内で起動する (設計承認済み方針)"""
+        logger.info("WorkerPool: Starting Taskiq Worker in-process...")
+        self.is_running = True
         
-        if not hasattr(self, '_internal_queue'):
-            self._internal_queue = asyncio.PriorityQueue()
+        # ワーカーの初期化
+        # self を通じて Orchestrator や Semaphore にアクセス可能にするため、
+        # 依存関係注入（DI）的にブローカーに状態を持たせるか、グローバル参照を使用する
+        self._worker = TaskiqWorker(self.broker, modules=["src.core.worker_pool"])
+        
+        # ブローカーの startup を明示的に呼ぶ必要がある場合
+        if not self.broker.is_startup:
+             await self.broker.startup()
 
-        while self.is_running:
-            try:
-                # ブローカーからタスクを取り出す (事実上の Pull 動作)
-                priority, timestamp, task_data, coro_func, args, kwargs = await self._internal_queue.get()
-                task_id = task_data["task_id"]
-                
-                async with self.inference_semaphore:
-                    logger.info(f"Worker PULL: Starting task {task_id}")
-                    try:
-                        await coro_func(*args, **kwargs)
-                    except Exception as e:
-                        logger.error(f"Error in task {task_id}: {e}", exc_info=True)
-                    finally:
-                        self._internal_queue.task_done()
-                        if task_id in self.active_tasks:
-                            del self.active_tasks[task_id]
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                logger.error(f"Worker PULL error: {e}")
-                await asyncio.sleep(1)
+        try:
+            # Taskiq のワーカーメインループ
+            await self._worker.run()
+        except asyncio.CancelledError:
+            logger.info("WorkerPool received CancelledError.")
+        except Exception as e:
+            logger.error(f"WorkerPool run error: {e}", exc_info=True)
+        finally:
+            self.is_running = False
 
-    def stop(self):
+    async def stop(self):
         self.is_running = False
+        if self._worker:
+            await self._worker.shutdown()
+        await self.broker.shutdown()
 
     def get_queue_status(self) -> Dict[str, Any]:
-        queue_size = self._internal_queue.qsize() if hasattr(self, '_internal_queue') else 0
+        # Taskiq FSBroker ではキューのサイズ取得が直接的には難しいため、
+        # 必要に応じて FS のディレクトリ内のファイル数を数えるなどの対応が可能
         return {
-            "queue_size": queue_size,
+            "queue_size": "Check .brwn/task_queue",
             "active_tasks": list(self.active_tasks.values())
         }
+
+# --- Taskiq Task Definitions ---
+
+@broker.task(task_name="execute_agent_task")
+async def execute_agent_task(task_id: str, repo_name: str, issue_number: int):
+    """
+    Taskiq によって Pull される実行実体。
+    """
+    # Orchestrator のインスタンスを取得（シングルトンまたはモジュールレベルの参照を想定）
+    # ここでは循環参照を避けるため、実行時にインポートし、グローバルに登録された
+    # Orchestrator インスタンスを使用して実処理（_execute_task）を呼び出す。
+    from src.core.orchestrator import global_orchestrator
+    
+    if global_orchestrator is None:
+        logger.error(f"Task {task_id} failed: global_orchestrator is not initialized.")
+        return
+
+    # VRAM保護セマフォによる制御
+    async with global_orchestrator.worker_pool.inference_semaphore:
+        logger.info(f"Taskiq PULL: Starting task {task_id}")
+        try:
+            await global_orchestrator._execute_task(task_id, repo_name, issue_number)
+        except Exception as e:
+            logger.error(f"Error in task {task_id}: {e}", exc_info=True)
+        finally:
+            if task_id in global_orchestrator.worker_pool.active_tasks:
+                del global_orchestrator.worker_pool.active_tasks[task_id]

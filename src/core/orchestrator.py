@@ -8,6 +8,10 @@ import subprocess
 import httpx
 import json
 from typing import Optional, Dict, Any, List
+from datetime import datetime, timedelta
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from src.core.state import StateManager
 from src.core.worker_pool import WorkerPool
@@ -20,6 +24,9 @@ from src.workspace.analyzer.core import CodeAnalyzer
 from src.version import get_footer
 
 logger = logging.getLogger(__name__)
+
+# Taskiq ワーカーからアクセスするためのグローバル参照
+global_orchestrator = None
 
 class Orchestrator:
     def __init__(self, config_path: str):
@@ -44,6 +51,13 @@ class Orchestrator:
         self.agent = None 
         self.is_running = True
         self._initialized_repos = set()
+        
+        # APScheduler の初期化
+        self.scheduler = AsyncIOScheduler()
+        self.polling_job_id = "github_mention_polling"
+        
+        global global_orchestrator
+        global_orchestrator = self
 
     async def start(self):
         """オーケストレーターの起動"""
@@ -58,56 +72,100 @@ class Orchestrator:
         self.worker_task = asyncio.create_task(self.worker_pool.run())
         
         # 中断中のタスクがあれば自動的に再開
-        asyncio.create_task(self._resurrect_suspended_tasks())
+        await self._resurrect_suspended_tasks()
         
-        logger.info("BOOT SEQUENCE COMPLETED. Dynamic Repo Management enabled. Entering main polling loop.")
+        # メンション監視ジョブの登録 (設計書に基づきインターバルジョブ化)
+        self.scheduler.add_job(
+            self._poll_mentions_job,
+            IntervalTrigger(seconds=self.config['agent']['polling_interval_sec']),
+            id=self.polling_job_id,
+            max_instances=1,
+            coalesce=True
+        )
+        self.scheduler.start()
+        
+        logger.info("BOOT SEQUENCE COMPLETED. APScheduler started. Entering idle state.")
 
-        # メインポーリングループ
+        # プロセスを維持するための待機
         try:
             while self.is_running:
-                try:
-                    # 全プロジェクトを対象としたグローバルメンション検索
-                    exclude_list = self.config['agent'].get('exclude_repositories', [])
-                    all_mentions = await self.gh_client.get_mentions_to_process()
-                    
-                    for m in all_mentions:
-                        target_repo = m['repo_name']
-                        if target_repo in exclude_list:
-                            logger.info(f"SKIP: Mention in excluded repository: {target_repo}")
-                            continue
-                            
-                        task_id = f"{target_repo}#{m['number']}"
-                        await self._queue_if_needed(task_id, target_repo, m['number'], "mention_trigger", comment_id=str(m['comment_id']))
-                    
-                    await self._check_llm_health()
-                    self.sandbox.cleanup_orphans()
-                    # config で指定された間隔で待機
-                    await asyncio.sleep(self.config['agent']['polling_interval_sec'])
-                except GitHubRateLimitException as e:
-                    await self._update_hibernation_status("RateLimit", e.reset_at)
-                    wait_seconds = int(e.reset_at - time.time()) + 60
-                    logger.warning(f"HIBERNATION MODE: Captured GitHub rate limit. Sleeping for {wait_seconds}s...")
-                    await asyncio.sleep(wait_seconds)
-                    await self._update_hibernation_status(None)
-                except GitHubConnectionException as e:
-                    logger.error(f"Network error detected: {e}")
-                    await self._hibernate_network()
-                except Exception as e:
-                    logger.error(f"Orchestrator error: {e}", exc_info=True)
-                    await asyncio.sleep(10)
+                await asyncio.sleep(1)
+        except (KeyboardInterrupt, asyncio.CancelledError):
+            pass
         finally:
-            logger.info("Orchestrator shutting down. Cleaning up resources...")
-            self.worker_pool.stop()
-            if hasattr(self, 'worker_task'):
-                self.worker_task.cancel()
-                try:
-                    await self.worker_task
-                except asyncio.CancelledError:
-                    pass
+            await self.shutdown()
+
+    async def shutdown(self):
+        """オーケストレーターのクリーンアップ"""
+        logger.info("Orchestrator shutting down. Cleaning up resources...")
+        self.is_running = False
+        self.scheduler.shutdown()
+        
+        await self.worker_pool.stop()
+        if hasattr(self, 'worker_task'):
+            self.worker_task.cancel()
+            try:
+                await self.worker_task
+            except asyncio.CancelledError:
+                pass
+        
+        await self.http_client.aclose()
+        await self.mcp_manager.stop_all()
+        logger.info("Orchestrator cleanup completed.")
+
+    async def _poll_mentions_job(self):
+        """APScheduler によって実行されるメンションポ−リングジョブ"""
+        try:
+            # 全プロジェクトを対象としたグローバルメンション検索
+            exclude_list = self.config['agent'].get('exclude_repositories', [])
+            all_mentions = await self.gh_client.get_mentions_to_process()
             
-            await self.http_client.aclose()
-            await self.mcp_manager.stop_all()
-            logger.info("Orchestrator cleanup completed.")
+            for m in all_mentions:
+                target_repo = m['repo_name']
+                if target_repo in exclude_list:
+                    logger.info(f"SKIP: Mention in excluded repository: {target_repo}")
+                    continue
+                    
+                task_id = f"{target_repo}#{m['number']}"
+                await self._queue_if_needed(task_id, target_repo, m['number'], "mention_trigger", comment_id=str(m['comment_id']))
+            
+            await self._check_llm_health()
+            self.sandbox.cleanup_orphans()
+        except GitHubRateLimitException as e:
+            await self._handle_rate_limit(e)
+        except GitHubConnectionException as e:
+            logger.error(f"Network error detected: {e}")
+            # ネットワークエラー時はリトライを待機
+        except Exception as e:
+            logger.error(f"Orchestrator job error: {e}", exc_info=True)
+
+    async def _handle_rate_limit(self, e: GitHubRateLimitException):
+        """スケジューラーの機能を用いた GitHub Rate Limit (冬眠) の制御"""
+        wait_seconds = int(e.reset_at - time.time()) + 60
+        logger.warning(f"HIBERNATION MODE: Rate limit hit. Pausing polling job for {wait_seconds}s...")
+        
+        await self._update_hibernation_status("RateLimit", e.reset_at)
+        
+        # ジョブの一時停止
+        self.scheduler.pause_job(self.polling_job_id)
+        
+        # 再開時刻の設定
+        resume_time = datetime.fromtimestamp(e.reset_at + 60)
+        
+        # 一度だけ実行される再開ジョブを登録
+        self.scheduler.add_job(
+            self._resume_polling_job,
+            'date',
+            run_date=resume_time
+        )
+
+    async def _resume_polling_job(self):
+        """冬眠からの復帰"""
+        logger.info("HIBERNATION END: Resuming polling job.")
+        self.scheduler.resume_job(self.polling_job_id)
+        await self._update_hibernation_status(None)
+        # 復旧時に中断タスクをチェック
+        await self._resurrect_suspended_tasks()
 
     async def _ensure_repo_context(self, repo_name: str):
         """リポジトリのオンデマンド構成（クローン・解析）を実行する"""
@@ -183,7 +241,7 @@ class Orchestrator:
                 
                 await self.state.update_task_status(task_id, "InQueue")
                 priority = self.config['agent']['inference_priority']['manual_issue']
-                await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
+                await self.worker_pool.add_task(task_id, priority, repo_name, issue_number)
                 logger.info(f"  - Task {task_id} re-queued.")
         except Exception as e:
             logger.error(f"Failed to resurrect suspended tasks: {e}")
@@ -246,7 +304,7 @@ class Orchestrator:
             
             await self.state.update_task_status(task_id, "InQueue")
             priority = self.config['agent']['inference_priority']['manual_issue']
-            await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
+            await self.worker_pool.add_task(task_id, priority, repo_name, issue_number)
             return
 
         labels = await self.gh_client.get_issue_labels(repo_name, issue_number)
@@ -260,7 +318,7 @@ class Orchestrator:
             await self.state.update_task_context(task_id, {"trigger_comment_id": comment_id})
             
         priority = self.config['agent']['inference_priority']['manual_issue']
-        await self.worker_pool.add_task(task_id, priority, self._execute_task, task_id, repo_name, issue_number)
+        await self.worker_pool.add_task(task_id, priority, repo_name, issue_number)
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int):
         """タスク実行実体 (新アーキテクチャ統合版)"""

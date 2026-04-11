@@ -42,6 +42,9 @@ dependencies = [
     "networkx>=3.4.2",
     "langgraph>=1.1.6",
     "taskiq[fs]>=0.12.1",
+    "apscheduler>=3.10.1",
+    "anyio>=4.3.0",
+    "sqlalchemy>=2.0.29",
     "langchain-core>=1.2.28",
 ]
 
