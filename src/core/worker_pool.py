@@ -80,14 +80,27 @@ class WorkerPool:
             "-w", "1" # 推論 VRAM 保護のため、デフォルトはシングルワーカー
         ]
         
-        # バックグラウンドプロセスとして起動
-        process = subprocess.Popen(
-            cmd, 
-            stdout=subprocess.PIPE, 
-            stderr=subprocess.PIPE,
-            cwd=self.project_root
-        )
-        logger.info(f"Huey consumer started with PID: {process.pid}")
+        # 環境変数の設定 (PYTHONPATH を確実に通す)
+        env = os.environ.copy()
+        env["PYTHONPATH"] = f"{self.project_root}:{env.get('PYTHONPATH', '')}"
+        
+        # ログファイルの準備 (PIPE 詰まりを回避するためファイルへ出力)
+        os.makedirs(os.path.join(self.project_root, "logs"), exist_ok=True)
+        stdout_log = os.path.join(self.project_root, "logs", "huey_stdout.log")
+        stderr_log = os.path.join(self.project_root, "logs", "huey_stderr.log")
+        
+        with open(stdout_log, "a") as out, open(stderr_log, "a") as err:
+            # バックグラウンドプロセスとして起動
+            process = subprocess.Popen(
+                cmd, 
+                stdout=out, 
+                stderr=err,
+                env=env,
+                cwd=self.project_root,
+                start_new_session=True # 親プロセスが死んでも生き残るように設定
+            )
+        
+        logger.info(f"Huey consumer started with PID: {process.pid}. Logs: logs/huey_stderr.log")
         return process
 
     async def stop(self):
