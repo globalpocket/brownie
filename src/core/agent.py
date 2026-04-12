@@ -110,10 +110,11 @@ async def delegate_to_executor(ctx: RunContext[AgentDeps], blueprint: Blueprint)
     # Executor エージェントの実行 (Multi-Agent 構成)
     # Planner と同じ Deps を共有し、モデルのみ Executor 用のものを使用
     executor_model_name = ctx.deps.config['llm']['models'].get('executor', 'Qwen2.5-Coder-7B-Instruct-4bit')
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(base_url=ctx.deps.config['llm']['executor_endpoint'], api_key="EMPTY")
     executor_model = OpenAIModel(
         executor_model_name, 
-        base_url=ctx.deps.config['llm']['executor_endpoint'],
-        api_key="EMPTY"
+        openai_client=client
     )
     
     prompt = f"### STRICT BLUEPRINT ###\n{blueprint.model_dump_json(indent=2)}"
@@ -137,10 +138,11 @@ class CoderAgent:
         
         # モデルの初期化 (Planner)
         planner_model_name = config['llm']['models'].get('planner', 'gemma-4-26b-it-4bit')
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(base_url=config['llm']['planner_endpoint'], api_key="EMPTY")
         self.planner_model = OpenAIModel(
             planner_model_name, 
-            base_url=config['llm']['planner_endpoint'],
-            api_key="EMPTY"
+            openai_client=client
         )
         
         # システムプロンプトの読み込み

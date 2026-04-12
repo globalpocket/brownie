@@ -4,6 +4,7 @@ import random
 import functools
 from typing import Optional, List, Dict, Any
 from github import Github, GithubException, Auth
+from src.core.persistence import PersistenceManager
 import re
 import json
 import asyncio
@@ -24,7 +25,7 @@ class GitHubConnectionException(Exception):
     pass
 
 class GitHubClientWrapper:
-    def __init__(self, token: str):
+    def __init__(self, token: str, persistence: Optional[PersistenceManager] = None):
         if not token:
             raise ValueError("GITHUB_TOKEN is not set. Please set it as an environment variable (e.g., export GITHUB_TOKEN=...).")
         self._token = token
@@ -32,6 +33,7 @@ class GitHubClientWrapper:
         self.etags: Dict[str, str] = {}
         self.last_api_call_time = 0
         self._my_username: Optional[str] = None
+        self.persistence = persistence
 
     def _init_client(self, token: str):
         """Githubクライアントの初期化 (コネクションプールのリフレッシュ)"""
@@ -492,111 +494,196 @@ class GitHubClientWrapper:
                 notifications = first_batch + list(notifications) # 連結して戻す
             except Exception as ne:
                 logger.warning(f"Notification API failed or timed out after {time.time() - start_time:.2f}s: {ne}")
-                return [] # とりあえず空で返す。後でリポジトリ直接スキャンを実装。
+                notifications = [] # 失敗時は通知リストを空にして次に進む
 
             count = 0
             max_notifications = 50 # 負荷軽減
             
-            for n in notifications:
-                if count >= max_notifications:
-                    break
-                
-                # Issue または PullRequest の通知を対象とする
-                if n.subject.type not in ["Issue", "PullRequest"]:
-                    continue
-                
-                issue_repo_name = n.repository.full_name
-                
-                if repo_name and issue_repo_name != repo_name:
-                    continue
-                
-                try:
-                    # subject.url から Issue 番号を抽出
-                    issue_number = int(n.subject.url.split("/")[-1])
+            if notifications:
+                for n in notifications:
+                    if count >= max_notifications:
+                        break
                     
-                    # 既にアサイン済みとして捕捉されている場合はスキップ（重複排除）
-                    if any(r["repo_name"] == issue_repo_name and r["number"] == issue_number for r in results):
+                    # Issue または PullRequest の通知を対象とする
+                    if n.subject.type not in ["Issue", "PullRequest"]:
                         continue
+                    
+                    issue_repo_name = n.repository.full_name
+                    
+                    # 見つかったリポジトリを DB に登録（監視対象リストを動的に構築）
+                    if self.persistence:
+                        self.persistence.upsert_repository(issue_repo_name)
 
-                    repo = n.repository
-                    issue = repo.get_issue(issue_number)
+                    if repo_name and issue_repo_name != repo_name:
+                        continue
                     
-                    count += 1
-                    latest_mention = None
-                    
-                    # 以降、メンション詳細の特定（既存ロジック）
-                    
-                    # 1. まずIssue本文をチェック (自分自身の投稿は除外)
-                    issue_author = issue.user.login if issue.user else None
-                    if f"@{my_username}" in (issue.body or "") and issue_author != my_username:
-                        latest_mention = {
-                            "repo_name": issue_repo_name,
-                            "number": issue.number,
-                            "comment_id": "body",
-                            "body": issue.body,
-                            "created_at": issue.created_at
-                        }
-                    
-                    # 2. 次にすべてのコメントをチェック
                     try:
-                        # 全コメントを取得（API負荷はかかるが、検索APIよりは安定）
-                        comments = issue.get_comments()
-                        for comment in comments:
-                            comment_author = comment.user.login.lower() if comment.user else None
-                            if f"@{my_username.lower()}" in (comment.body or "").lower() and comment_author != my_username.lower():
-                                if not latest_mention or comment.created_at > latest_mention["created_at"]:
-                                    latest_mention = {
-                                        "repo_name": issue_repo_name,
-                                        "number": issue.number,
-                                        "comment_id": str(comment.id),
-                                        "body": comment.body,
-                                        "created_at": comment.created_at
-                                    }
-                    except Exception as ce:
-                        logger.warning(f"Failed to scan comments for Issue #{issue_number} in {issue_repo_name}: {ce}")
+                        # subject.url から Issue 番号を抽出
+                        issue_number = int(n.subject.url.split("/")[-1])
+                        
+                        # 既にアサイン済みとして捕捉されている場合はスキップ（重複排除）
+                        if any(r["repo_name"] == issue_repo_name and r["number"] == issue_number for r in results):
+                            continue
 
-                    # 3. プルリクエストの場合、レビューとレビューコメントもチェック
-                    if issue.pull_request:
+                        repo = n.repository
+                        issue = repo.get_issue(issue_number)
+                        
+                        count += 1
+                        latest_mention = None
+                        
+                        # 以降、メンション詳細の特定（既存ロジック）
+                        
+                        # 1. まずIssue本文をチェック (自分自身の投稿は除外)
+                        issue_author = issue.user.login if issue.user else None
+                        if f"@{my_username}" in (issue.body or "") and issue_author != my_username:
+                            latest_mention = {
+                                "repo_name": issue_repo_name,
+                                "number": issue.number,
+                                "comment_id": "body",
+                                "body": issue.body,
+                                "created_at": issue.created_at
+                            }
+                        
+                        # 2. 次にすべてのコメントをチェック
                         try:
-                            pr = issue.as_pull_request()
-                            
-                            # レビューサマリー
-                            reviews = pr.get_reviews()
-                            for review in reviews:
-                                review_author = review.user.login.lower() if review.user else None
-                                if review.body and f"@{my_username.lower()}" in review.body.lower() and review_author != my_username.lower():
-                                    if not latest_mention or review.submitted_at > latest_mention["created_at"]:
+                            # 全コメントを取得（API負荷はかかるが、検索APIよりは安定）
+                            comments = issue.get_comments()
+                            for comment in comments:
+                                comment_author = comment.user.login.lower() if comment.user else None
+                                if f"@{my_username.lower()}" in (comment.body or "").lower() and comment_author != my_username.lower():
+                                    if not latest_mention or comment.created_at > latest_mention["created_at"]:
                                         latest_mention = {
                                             "repo_name": issue_repo_name,
                                             "number": issue.number,
-                                            "comment_id": f"review-{review.id}",
-                                            "body": review.body,
-                                            "created_at": review.submitted_at
+                                            "comment_id": str(comment.id),
+                                            "body": comment.body,
+                                            "created_at": comment.created_at
                                         }
+                        except Exception as ce:
+                            logger.warning(f"Failed to scan comments for Issue #{issue_number} in {issue_repo_name}: {ce}")
 
-                            # レビューインラインコメント
-                            review_comments = pr.get_review_comments()
-                            for r_comment in review_comments:
-                                r_author = r_comment.user.login.lower() if r_comment.user else None
-                                if f"@{my_username.lower()}" in (r_comment.body or "").lower() and r_author != my_username.lower():
-                                    if not latest_mention or r_comment.created_at > latest_mention["created_at"]:
-                                        latest_mention = {
-                                            "repo_name": issue_repo_name,
-                                            "number": issue.number,
-                                            "comment_id": f"rc-{r_comment.id}",
-                                            "body": r_comment.body,
-                                            "created_at": r_comment.created_at
-                                        }
-                        except Exception as pe:
-                            logger.warning(f"Failed to scan PR details for Issue #{issue_number} in {issue_repo_name}: {pe}")
-                    
-                    if latest_mention:
-                        results.append(latest_mention)
-                except Exception as ie:
-                    logger.error(f"Error processing notification for {issue_repo_name}: {ie}")
-                    continue
+                        # 3. プルリクエストの場合、レビューとレビューコメントもチェック
+                        if issue.pull_request:
+                            try:
+                                pr = issue.as_pull_request()
+                                
+                                # レビューサマリー
+                                reviews = pr.get_reviews()
+                                for review in reviews:
+                                    review_author = review.user.login.lower() if review.user else None
+                                    if review.body and f"@{my_username.lower()}" in review.body.lower() and review_author != my_username.lower():
+                                        if not latest_mention or review.submitted_at > latest_mention["created_at"]:
+                                            latest_mention = {
+                                                "repo_name": issue_repo_name,
+                                                "number": issue.number,
+                                                "comment_id": f"review-{review.id}",
+                                                "body": review.body,
+                                                "created_at": review.submitted_at
+                                            }
+
+                                # レビューインラインコメント
+                                review_comments = pr.get_review_comments()
+                                for r_comment in review_comments:
+                                    r_author = r_comment.user.login.lower() if r_comment.user else None
+                                    if f"@{my_username.lower()}" in (r_comment.body or "").lower() and r_author != my_username.lower():
+                                        if not latest_mention or r_comment.created_at > latest_mention["created_at"]:
+                                            latest_mention = {
+                                                "repo_name": issue_repo_name,
+                                                "number": issue.number,
+                                                "comment_id": f"rc-{r_comment.id}",
+                                                "body": r_comment.body,
+                                                "created_at": r_comment.created_at
+                                            }
+                            except Exception as pe:
+                                logger.warning(f"Failed to scan PR details for Issue #{issue_number} in {issue_repo_name}: {pe}")
+                        
+                        if latest_mention:
+                            results.append(latest_mention)
+                    except Exception as ie:
+                        logger.error(f"Error processing notification for {issue_repo_name}: {ie}")
+                        continue
             
+            # DB に登録されているリポジトリを Search API で補完スキャン
+            if self.persistence:
+                watched_repos = self.persistence.get_watched_repositories()
+                logger.info(f"Scanning {len(watched_repos)} watched repositories for mentions...")
+                for watched_repo in watched_repos:
+                    search_results = await self.search_mentions_in_repo(watched_repo)
+                    for sm in search_results:
+                        # Search API の結果を優先的に追加または更新
+                        existing_idx = next((i for i, r in enumerate(results) if r["repo_name"] == sm["repo_name"] and r["number"] == sm["number"]), None)
+                        if existing_idx is not None:
+                            # 通知 API より Search API の方がコメント ID 等の情報が正確なため更新
+                            results[existing_idx] = sm
+                            logger.debug(f"Updated mention info from search: {sm['repo_name']}#{sm['number']}")
+                        else:
+                            results.append(sm)
+                            logger.debug(f"Added new mention from search: {sm['repo_name']}#{sm['number']}")
+            else:
+                logger.warning("Persistence manager not found. Skipping watched repo search.")
+
             return results
         except Exception as e:
-            # ここで例外を投げ直すことで、@github_retry が補足して再試行・リフレッシュできるようにする
-            raise e
+            logger.error(f"Polling error in get_mentions_to_process: {e}")
+            return []
+
+    @github_retry
+    async def search_mentions_in_repo(self, repo_name: str) -> List[Dict[str, Any]]:
+        """Search API を使用して、特定リポジトリ内の自分へのメンションを検索する"""
+        try:
+            my_username = self.get_my_username()
+            # 過去 24 時間以内の更新に絞って負荷を軽減 (または適切に調整)
+            query = f"repo:{repo_name} mentions:{my_username} is:open"
+            
+            logger.info(f"Searching for mentions in {repo_name} with query: {query}")
+            issues = self.g.search_issues(query=query, sort="updated", order="desc")
+            
+            # 最大 5 件程度に制限
+            found = []
+            for issue in issues[:5]:
+                # Issue 本文またはコメントから最新のメンション箇所を特定
+                latest_mention = None
+                
+                # 1. 本文をチェック
+                issue_author = issue.user.login if issue.user else None
+                if f"@{my_username.lower()}" in (issue.body or "").lower() and issue_author != my_username:
+                    latest_mention = {
+                        "repo_name": repo_name,
+                        "number": issue.number,
+                        "comment_id": "body",
+                        "body": issue.body,
+                        "created_at": issue.created_at
+                    }
+
+                # 2. コメントをチェック
+                try:
+                    comments = issue.get_comments()
+                    for comment in comments:
+                        comment_author = comment.user.login.lower() if comment.user else None
+                        if f"@{my_username.lower()}" in (comment.body or "").lower() and comment_author != my_username.lower():
+                            if not latest_mention or comment.created_at > latest_mention["created_at"]:
+                                latest_mention = {
+                                    "repo_name": repo_name,
+                                    "number": issue.number,
+                                    "comment_id": str(comment.id),
+                                    "body": comment.body,
+                                    "created_at": comment.created_at
+                                }
+                except Exception as ce:
+                    logger.warning(f"Failed to fetch comments for search match #{issue.number} in {repo_name}: {ce}")
+
+                if latest_mention:
+                    found.append(latest_mention)
+                else:
+                    # 見つからなかった場合は（検索自体にはヒットしているので）Issue 情報を最小限で返す
+                    found.append({
+                        "repo_name": repo_name,
+                        "number": issue.number,
+                        "comment_id": "search-match",
+                        "body": issue.body,
+                        "created_at": issue.updated_at
+                    })
+            return found
+        except Exception as e:
+            logger.warning(f"Search failed for {repo_name}: {e}")
+            return []

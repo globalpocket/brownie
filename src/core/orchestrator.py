@@ -13,6 +13,7 @@ from src.core.worker_pool import WorkerPool
 from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
 from src.workspace.sandbox import SandboxManager
 from src.mcp_server.manager import MCPServerManager
+from src.core.persistence import PersistenceManager
 from src.version import get_footer, get_build_id
 
 logger = logging.getLogger(__name__)
@@ -27,11 +28,22 @@ class Orchestrator:
             self.config = yaml.safe_load(f)
         
         self.project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        
+        # Persistence Manager の初期化
+        db_path = self.config['database']['db_path']
+        self.persistence = PersistenceManager(db_path)
+        
         self.worker_pool = WorkerPool(self.project_root)
-        self.gh_client = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""))
+        # gh_client に persistence を渡す
+        self.gh_client = GitHubClientWrapper(os.getenv("GITHUB_TOKEN", ""), persistence=self.persistence)
         self.sandbox = SandboxManager(self.config['workspace']['sandbox_user_id'], 
                                      self.config['workspace']['sandbox_group_id'])
         self.mcp_manager = MCPServerManager(self.project_root)
+
+        # 設定ファイルにあるリポジトリを初期登録
+        initial_repos = self.config['agent'].get('repositories', [])
+        for repo in initial_repos:
+            self.persistence.upsert_repository(repo)
     async def start(self):
         """オーケストレーター（メンション監視プロセス）の起動"""
         logger.info(f"Orchestrator starting. Build ID: {get_build_id()}")
@@ -126,7 +138,7 @@ class Orchestrator:
         config = {"configurable": {"thread_id": task_id}}
         
         # 1. 状態の更新 (決定を反映)
-        await self._workflow_app.aupdate_state(config, {"governance_decision": decision, "status": "InQueue"}, as_node="orchestrator")
+        await self._workflow_app.aupdate_state(config, {"governance_decision": decision, "status": "InQueue"}, as_node="intent_alignment")
         
         # 2. Huey 経由で再開シグナルを送るか、ここで直接 astream を走らせる
         # 本来はワーカー側で astream を回す方が Pull 型に忠実
@@ -146,7 +158,7 @@ class Orchestrator:
             
             # 再開（Resurrection）の場合: resume_comment_id を更新
             if comment_id:
-                await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"}, as_node="orchestrator")
+                await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"}, as_node="intent_alignment")
         else:
             # 新規タスク: 状態を初期化
             initial_values = {
@@ -157,7 +169,7 @@ class Orchestrator:
                 "trigger_comment_id": comment_id,
                 "created_at": datetime.utcnow().isoformat()
             }
-            await self._workflow_app.aupdate_state(config, initial_values, as_node="orchestrator")
+            await self._workflow_app.aupdate_state(config, initial_values, as_node="intent_alignment")
 
         # Huey キューへ投入 (別プロセスワーカーが Pull して実行する)
         await self.worker_pool.add_task(task_id, 0, repo_name, issue_number)
