@@ -45,6 +45,10 @@ class Orchestrator:
         async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as checkpointer:
             self._checkpointer = checkpointer
             
+            # グローバル参照を設定 (ワーカー用)
+            global global_orchestrator
+            global_orchestrator = self
+            
             # 2. ワークフローの準備
             logger.info("Compiling workflow with checkpointer...")
             from src.core.graph.builder import compile_workflow
@@ -60,8 +64,17 @@ class Orchestrator:
             try:
                 self.is_running = True
                 while self.is_running:
-                    await self._poll_mentions()
-                    await asyncio.sleep(self.config['agent']['polling_interval_sec'])
+                    try:
+                        await self._poll_mentions()
+                        logger.debug("Polling cycle completed successfully.")
+                        # 正常終了時は設定された間隔待機
+                        await asyncio.sleep(self.config['agent']['polling_interval_sec'])
+                    except GitHubConnectionException as ce:
+                        logger.error(f"Persistent connection error: {ce}. Waiting 60s before next attempt.")
+                        await asyncio.sleep(60)
+                    except Exception as e:
+                        logger.error(f"Unexpected error in polling loop: {e}")
+                        await asyncio.sleep(30)
             except (KeyboardInterrupt, asyncio.CancelledError):
                 logger.info("Orchestrator stopping...")
             finally:
@@ -113,7 +126,7 @@ class Orchestrator:
         config = {"configurable": {"thread_id": task_id}}
         
         # 1. 状態の更新 (決定を反映)
-        await self._workflow_app.aupdate_state(config, {"governance_decision": decision, "status": "InQueue"})
+        await self._workflow_app.aupdate_state(config, {"governance_decision": decision, "status": "InQueue"}, as_node="orchestrator")
         
         # 2. Huey 経由で再開シグナルを送るか、ここで直接 astream を走らせる
         # 本来はワーカー側で astream を回す方が Pull 型に忠実
@@ -133,7 +146,7 @@ class Orchestrator:
             
             # 再開（Resurrection）の場合: resume_comment_id を更新
             if comment_id:
-                await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"})
+                await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"}, as_node="orchestrator")
         else:
             # 新規タスク: 状態を初期化
             initial_values = {
@@ -144,7 +157,7 @@ class Orchestrator:
                 "trigger_comment_id": comment_id,
                 "created_at": datetime.utcnow().isoformat()
             }
-            await self._workflow_app.aupdate_state(config, initial_values)
+            await self._workflow_app.aupdate_state(config, initial_values, as_node="orchestrator")
 
         # Huey キューへ投入 (別プロセスワーカーが Pull して実行する)
         await self.worker_pool.add_task(task_id, 0, repo_name, issue_number)
@@ -184,7 +197,7 @@ class Orchestrator:
 
         except Exception as e:
             logger.error(f"Task execution error: {e}", exc_info=True)
-            await self._workflow_app.aupdate_state(config, {"status": "Failed"})
+            await self._workflow_app.aupdate_state(config, {"status": "Failed"}, as_node="intent_alignment")
 
 # グローバル参照 (Huey ワーカーからの呼び出し用)
 global_orchestrator: Optional[Orchestrator] = None

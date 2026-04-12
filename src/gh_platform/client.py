@@ -36,10 +36,15 @@ class GitHubClientWrapper:
     def _init_client(self, token: str):
         """Githubクライアントの初期化 (コネクションプールのリフレッシュ)"""
         self.auth = Auth.Token(token)
-        # 内部リトライを無効化（または最小化）し、デコレータでのリフレッシュ制御に委ねる
-        self.g = Github(auth=self.auth, retry=None, timeout=30)
+        # User-Agent を設定して GitHub 側での識別を容易にする
+        # タイムアウトを 60 秒に延長し、標準のリトライメカニズムを有効化
+        self.g = Github(
+            auth=self.auth, 
+            timeout=60, 
+            user_agent="Brownie/1.0 (globalpocket)"
+        )
         self._last_refresh_time = time.time()
-        logger.info("GitHub API client re-initialized (Connection pool refreshed).")
+        logger.info("GitHub API client re-initialized with custom User-Agent and increased timeout.")
 
     def github_retry(func):
         """GitHub API の一時的なエラーに対するリトライデコレータ"""
@@ -474,8 +479,21 @@ class GitHubClientWrapper:
             results = []
             
             # 通知 API を使用してメンション等を補足
-            notifications = self.g.get_user().get_notifications(all=True, participating=True)
-            
+            start_time = time.time()
+            try:
+                notifications = self.g.get_user().get_notifications(all=True, participating=True)
+                # 最初のイテレーションで実際に通信が発生するため、ここで件数を確認
+                first_batch = []
+                for n in notifications:
+                    first_batch.append(n)
+                    if len(first_batch) >= 10: break
+                
+                logger.info(f"Notification pull successful. Found at least {len(first_batch)} items in {time.time() - start_time:.2f}s")
+                notifications = first_batch + list(notifications) # 連結して戻す
+            except Exception as ne:
+                logger.warning(f"Notification API failed or timed out after {time.time() - start_time:.2f}s: {ne}")
+                return [] # とりあえず空で返す。後でリポジトリ直接スキャンを実装。
+
             count = 0
             max_notifications = 50 # 負荷軽減
             

@@ -1,12 +1,16 @@
 import os
 import logging
+import threading
+import asyncio
+import time
 from huey import SqliteHuey
+from huey.consumer import Consumer
 
 logger = logging.getLogger(__name__)
 
 # 設計書課題: Huey (SQLite) による軽量な非同期タスクキューの実現
 # project_root からの相対パスで DB ファイルを指定
-db_path = os.path.join(os.getcwd(), ".brwn", "huey.db")
+db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".brwn", "huey.db"))
 os.makedirs(os.path.dirname(db_path), exist_ok=True)
 
 # Huey インスタンスの初期化
@@ -16,10 +20,22 @@ huey = SqliteHuey(filename=db_path)
 def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int):
     """
     Huey ワーカープロセスで実行されるタスクの実体。
-    Orchestrator とは別プロセスで動作するため、ここで必要なコンテキストを再構成し、
-    LangGraph ワークフローを実行する。
     """
     import asyncio
+    import logging
+    from logging.handlers import RotatingFileHandler
+    
+    # ワーカープロセスでのログ設定 (設計書 3.2 補足: 別プロセスのため再設定が必要)
+    log_file = os.path.join(os.path.dirname(__file__), "..", "..", "logs", "brownie.log")
+    os.makedirs(os.path.dirname(log_file), exist_ok=True)
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        root_logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+        file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+    
     from src.core.orchestrator import global_orchestrator
     
     logger.info(f"Huey Worker: Starting task {task_id} for {repo_name}#{issue_number}")
@@ -67,41 +83,33 @@ class WorkerPool:
 
     async def run(self):
         """
-        Orchestrator 起動時にワーカープロセスを自動起動する（ユーザー指示 1）。
+        Huey 消費タスクを非同期実行スレッドで開始する。
         """
-        import subprocess
-        import sys
+        logger.info("WorkerPool: Starting manual Huey consumer loop in background thread...")
         
-        logger.info("WorkerPool: Starting Huey consumer process...")
-        # python -m huey.consumer src.core.worker_pool.huey 形式で起動
-        cmd = [
-            sys.executable, "-m", "huey.consumer", 
-            "src.core.worker_pool.huey", 
-            "-w", "1" # 推論 VRAM 保護のため、デフォルトはシングルワーカー
-        ]
+        def _run_manual_consumer():
+            logger.info("Huey Worker: Manual consumer thread execution started.")
+            try:
+                while True:
+                    task = self.huey.dequeue()
+                    if task:
+                        try:
+                            # タスクの実行 (signature: task, timestamp)
+                            self.huey._execute(task, time.time())
+                        except Exception as e:
+                            logger.error(f"Huey Worker: Task execution failed: {e}")
+                    else:
+                        # タスクがない場合は少し待機
+                        time.sleep(1)
+            except Exception as e:
+                logger.error(f"Huey Worker: Manual consumer thread crashed: {e}")
+
+        # スレッドを起動
+        self.worker_thread = threading.Thread(target=_run_manual_consumer, daemon=True)
+        self.worker_thread.start()
         
-        # 環境変数の設定 (PYTHONPATH を確実に通す)
-        env = os.environ.copy()
-        env["PYTHONPATH"] = f"{self.project_root}:{env.get('PYTHONPATH', '')}"
-        
-        # ログファイルの準備 (PIPE 詰まりを回避するためファイルへ出力)
-        os.makedirs(os.path.join(self.project_root, "logs"), exist_ok=True)
-        stdout_log = os.path.join(self.project_root, "logs", "huey_stdout.log")
-        stderr_log = os.path.join(self.project_root, "logs", "huey_stderr.log")
-        
-        with open(stdout_log, "a") as out, open(stderr_log, "a") as err:
-            # バックグラウンドプロセスとして起動
-            process = subprocess.Popen(
-                cmd, 
-                stdout=out, 
-                stderr=err,
-                env=env,
-                cwd=self.project_root,
-                start_new_session=True # 親プロセスが死んでも生き残るように設定
-            )
-        
-        logger.info(f"Huey consumer started with PID: {process.pid}. Logs: logs/huey_stderr.log")
-        return process
+        logger.info(f"Huey worker thread triggered (TID: {self.worker_thread.ident}).")
+        return self.worker_thread
 
     async def stop(self):
         logger.info("WorkerPool: Huey is managed as a separate process. Manual cleanup may be required if not handled by OS signals.")

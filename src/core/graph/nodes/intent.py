@@ -21,10 +21,11 @@ async def intent_alignment_node(state: TaskState) -> Dict[str, Any]:
     import os
     os.environ.setdefault("OPENAI_API_KEY", "EMPTY")
 
-    model = OpenAIModel(
-        planner_model_name,
-        base_url=planner_endpoint
-    )
+    # Pydantic AI 1.x では OpenAIModel は内部で OpenAI クライアントを使用する。
+    # base_url を通すために、明示的に AsyncOpenAI クライアントを渡す方式を推奨。
+    from openai import AsyncOpenAI
+    client = AsyncOpenAI(base_url=planner_endpoint, api_key=os.getenv("OPENAI_API_KEY", "EMPTY"))
+    model = OpenAIModel(planner_model_name, openai_client=client)
 
     agent = Agent(
         model,
