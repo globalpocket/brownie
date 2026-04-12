@@ -17,7 +17,7 @@ os.makedirs(os.path.dirname(db_path), exist_ok=True)
 huey = SqliteHuey(filename=db_path)
 
 @huey.task()
-def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int):
+def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int, payload: dict = None):
     """
     Huey ワーカープロセスで実行されるタスクの実体。
     """
@@ -53,15 +53,13 @@ def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int):
     # ワーカー自身が Orchestrator 相当の最小限のコンテキストを持つ必要がある。
     # ここでは概念設計に基づき、Orchestrator 経由で実行をキックする構造を示す。
     if global_orchestrator:
-        loop.run_until_complete(global_orchestrator._execute_task(task_id, repo_name, issue_number))
+        loop.run_until_complete(global_orchestrator._execute_task(task_id, repo_name, issue_number, payload))
     else:
-        # ワーカー用に Orchestrator を最小構成で初期化（または共有設定からロード）
-        # 実際には config ファイルパスなどを引数で渡すのがより堅牢
+        # ワーカー用に Orchestrator を最小構成で初期化
         from src.core.orchestrator import Orchestrator
         config_path = os.environ.get("BROWNIE_CONFIG", "config/config.yaml")
         worker_orchestrator = Orchestrator(config_path)
-        # state.py 廃止に伴い、状態はすべて LangGraph の Checkpointer から復元される
-        loop.run_until_complete(worker_orchestrator._execute_task(task_id, repo_name, issue_number))
+        loop.run_until_complete(worker_orchestrator._execute_task(task_id, repo_name, issue_number, payload))
 
 class WorkerPool:
     """
@@ -71,14 +69,12 @@ class WorkerPool:
         self.project_root = project_root
         self.huey = huey
 
-    async def add_task(self, task_id: str, priority: int, repo_name: str, issue_number: int):
+    async def add_task(self, task_id: str, priority: int, repo_name: str, issue_number: int, payload: dict = None):
         """
         タスクを Huey のキュー（SQLite）に投入する。
         """
         logger.info(f"Queueing task {task_id} via Huey...")
-        # Huey は同期ライブラリだが、キューへの投入は軽量なため、
-        # 必要に応じて thread でラップするか、そのまま呼び出す。
-        execute_task_wrapper(task_id, repo_name, issue_number)
+        execute_task_wrapper(task_id, repo_name, issue_number, payload)
         return {"task_id": task_id, "status": "queued"}
 
     async def run(self):
