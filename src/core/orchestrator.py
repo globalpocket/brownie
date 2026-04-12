@@ -7,7 +7,7 @@ import time
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
-from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from src.core.worker_pool import WorkerPool
 # from src.core.workflow import TaskWorkflow # 古いワークフローは使用しない
 from src.gh_platform.client import GitHubClientWrapper, GitHubRateLimitException
@@ -36,36 +36,36 @@ class Orchestrator:
         """オーケストレーター（メンション監視プロセス）の起動"""
         logger.info(f"Orchestrator starting. Build ID: {get_build_id()}")
         
-        # 1. LangGraph Checkpointer の初期化 (Sync 版で安定性確保)
-        import sqlite3
+        # 1. LangGraph Checkpointer の初期化 (Async 版)
+        # 課題解決: AsyncSqliteSaver は async with 文で適切にコンテキスト管理を行う
         checkpoint_path = os.path.join(self.project_root, ".brwn", "checkpoints.db")
         os.makedirs(os.path.dirname(checkpoint_path), exist_ok=True)
         
-        logger.info(f"Connecting to checkpointer (Sync): {checkpoint_path}")
-        self._conn = sqlite3.connect(checkpoint_path, check_same_thread=False)
-        self._checkpointer = SqliteSaver(self._conn)
-        
-        # 2. ワークフローの準備
-        logger.info("Compiling workflow with checkpointer...")
-        from src.core.graph.builder import compile_workflow
-        self._workflow_app = compile_workflow(checkpointer=self._checkpointer)
-        
-        # 3. WorkerPool.run を有効化
-        logger.info("Starting WorkerPool...")
-        await self.worker_pool.run()
-        
-        logger.info("BOOT SEQUENCE COMPLETED. Entering polling loop.")
+        logger.info(f"Connecting to checkpointer (Async): {checkpoint_path}")
+        async with AsyncSqliteSaver.from_conn_string(checkpoint_path) as checkpointer:
+            self._checkpointer = checkpointer
+            
+            # 2. ワークフローの準備
+            logger.info("Compiling workflow with checkpointer...")
+            from src.core.graph.builder import compile_workflow
+            self._workflow_app = compile_workflow(checkpointer=self._checkpointer)
+            
+            # 3. WorkerPool.run を有効化
+            logger.info("Starting WorkerPool...")
+            await self.worker_pool.run()
+            
+            logger.info("BOOT SEQUENCE COMPLETED. Entering polling loop.")
 
-        # 4. メンション監視ループ
-        try:
-            self.is_running = True
-            while self.is_running:
-                await self._poll_mentions()
-                await asyncio.sleep(self.config['agent']['polling_interval_sec'])
-        except (KeyboardInterrupt, asyncio.CancelledError):
-            logger.info("Orchestrator stopping...")
-        finally:
-            await self.shutdown()
+            # 4. メンション監視ループ
+            try:
+                self.is_running = True
+                while self.is_running:
+                    await self._poll_mentions()
+                    await asyncio.sleep(self.config['agent']['polling_interval_sec'])
+            except (KeyboardInterrupt, asyncio.CancelledError):
+                logger.info("Orchestrator stopping...")
+            finally:
+                await self.shutdown()
 
     async def shutdown(self):
         """オーケストレーターのクリーンアップ"""
