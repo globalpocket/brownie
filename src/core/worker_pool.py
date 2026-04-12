@@ -73,9 +73,9 @@ class WorkerPool:
         import sys
         
         logger.info("WorkerPool: Starting Huey consumer process...")
-        # python -m huey.bin.consumer src.core.worker_pool.huey 形式で起動
+        # python -m huey.consumer src.core.worker_pool.huey 形式で起動
         cmd = [
-            sys.executable, "-m", "huey.bin.consumer", 
+            sys.executable, "-m", "huey.consumer", 
             "src.core.worker_pool.huey", 
             "-w", "1" # 推論 VRAM 保護のため、デフォルトはシングルワーカー
         ]

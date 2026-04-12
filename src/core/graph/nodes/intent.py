@@ -18,15 +18,17 @@ async def intent_alignment_node(state: TaskState) -> Dict[str, Any]:
     planner_model_name = config['llm']['models'].get('planner', 'gemma-4-26b-it-4bit')
     planner_endpoint = config['llm']['planner_endpoint']
     
+    import os
+    os.environ.setdefault("OPENAI_API_KEY", "EMPTY")
+
     model = OpenAIModel(
         planner_model_name,
-        base_url=planner_endpoint,
-        api_key="EMPTY"
+        base_url=planner_endpoint
     )
 
     agent = Agent(
         model,
-        result_type=IntentDraft,
+        output_type=IntentDraft,
         system_prompt=(
             "あなたはシニアソフトウェアエンジニアです。"
             "ユーザーの要求を分析し、意図の要約、成果物を評価するための軸、ユーザーへの確認コメント、"

@@ -51,11 +51,13 @@ class AgentDeps:
 
 # --- Executor エージェント (専門的実行) ---
 
+import os
+os.environ.setdefault("OPENAI_API_KEY", "EMPTY")
+
 executor_agent = Agent(
     # 型定義は行わず、指示に従って Markdown を返す
     'openai:dummy', # 実行時に model が上書きされる
     deps_type=AgentDeps,
-    name="BROWNIE_Executor",
     system_prompt=(
         "あなたは高度なソフトウェアエンジニア（Executor）です。\n"
         "Planner から渡される「Strict Blueprint（厳密な設計図）」は絶対のルールです。\n"
@@ -69,8 +71,7 @@ executor_agent = Agent(
 planner_agent = Agent(
     'openai:dummy', # 実行時に model が上書きされる
     deps_type=AgentDeps,
-    result_type=Union[Blueprint, str], # Blueprint または ユーザーへの回答メッセージ
-    name="BROWNIE_Planner",
+    output_type=Union[Blueprint, str], # Blueprint または ユーザーへの回答メッセージ
 )
 
 # --- ツールの移植とバインディング ---

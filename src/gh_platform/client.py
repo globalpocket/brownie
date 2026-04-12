@@ -9,6 +9,7 @@ import json
 import asyncio
 import requests
 import urllib3
+import http.client
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,7 @@ class GitHubClientWrapper:
                     is_connection_error = False
                     
                     # 接続エラーの場合はクライアントをリフレッシュ
-                    if isinstance(e, (requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError)):
+                    if isinstance(e, (requests.exceptions.ConnectionError, urllib3.exceptions.ProtocolError, http.client.RemoteDisconnected)):
                         logger.warning(f"Connection error detected ({type(e).__name__}). Refreshing GitHub client...")
                         self._init_client(self._token)
                         is_retryable = True
@@ -579,5 +580,5 @@ class GitHubClientWrapper:
             
             return results
         except Exception as e:
-            logger.error(f"Failed to get mentions via Notifications API: {e}")
-            return []
+            # ここで例外を投げ直すことで、@github_retry が補足して再試行・リフレッシュできるようにする
+            raise e

@@ -4,6 +4,7 @@ import logging
 import asyncio
 import anyio
 from typing import Optional, Dict, Any, List
+from contextlib import AsyncExitStack
 from fastmcp import Client
 from fastmcp.client.transports.stdio import StdioTransport
 
@@ -26,7 +27,7 @@ class MCPServerManager:
         self.plugin_clients: Dict[str, Client] = {}
         
         self._task_group: Optional[anyio.abc.TaskGroup] = None
-        self._exit_stack: Optional[asyncio.AsyncExitStack] = None
+        self._exit_stack: Optional[AsyncExitStack] = None
         
         # 追加環境変数や実行時のコンテキスト
         self._repo_path: str = ""
@@ -169,11 +170,11 @@ class MCPServerManager:
         """全ての MCP サーバーを停止する"""
         if self._exit_stack:
             await self._exit_stack.aclose()
-            self._exit_stack = asyncio.AsyncExitStack()
+            self._exit_stack = AsyncExitStack()
             self.plugin_clients.clear()
 
     async def __aenter__(self):
-        self._exit_stack = asyncio.AsyncExitStack()
+        self._exit_stack = AsyncExitStack()
         self._task_group = await self._exit_stack.enter_async_context(anyio.create_task_group())
         return self
 
