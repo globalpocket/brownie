@@ -31,11 +31,12 @@ def create_brownie_graph():
     def route_after_analysis(state: TaskState) -> str:
         if state.get("status") == "Phase1_Completed":
             return "dynamic_handshake"
-        return "core_analysis" # ループして待機
+        # 修正: ループして待機するのではなく、一旦ワークフローを終了して外部からの再開を待つ
+        return END 
     
     builder.add_conditional_edges("core_analysis", route_after_analysis, {
         "dynamic_handshake": "dynamic_handshake",
-        "core_analysis": "core_analysis"
+        END: END
     })
     
     # Phase 2 -> Phase 3
@@ -46,11 +47,12 @@ def create_brownie_graph():
         status = state.get("status")
         if status in ["Execution_Completed", "Execution_Failed"]:
             return "governance"
-        return "execution_delegation"
+        # 修正: 待機時はグラフを抜ける
+        return END
         
     builder.add_conditional_edges("execution_delegation", route_after_execution, {
         "governance": "governance",
-        "execution_delegation": "execution_delegation"
+        END: END
     })
     
     # Phase 4 からの条件分岐

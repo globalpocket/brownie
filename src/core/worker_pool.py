@@ -8,6 +8,17 @@ from huey.consumer import Consumer
 
 logger = logging.getLogger(__name__)
 
+try:
+    import src.core.workers.tasks
+except ImportError as e:
+    logger.warning(f"Could not import worker tasks: {e}")
+
+# 登録されているタスク群を Huey ワーカーに認識させるためにインポート
+try:
+    import src.core.workers.tasks
+except ImportError as e:
+    logger.warning(f"Could not import worker tasks. Worker may not pick up tasks: {e}")
+
 # 設計書課題: Huey (SQLite) による軽量な非同期タスクキューの実現
 # project_root からの相対パスで DB ファイルを指定
 db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".brwn", "huey.db"))

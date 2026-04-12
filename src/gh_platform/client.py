@@ -687,3 +687,19 @@ class GitHubClientWrapper:
         except Exception as e:
             logger.warning(f"Search failed for {repo_name}: {e}")
             return []
+
+    @github_retry
+    async def get_issue(self, repo_name: str, issue_number: int) -> Dict[str, Any]:
+        """Issueの詳細を取得し、辞書形式で返す（Orchestrator向け）"""
+        try:
+            await self._throttle(is_write=False)
+            repo = self.g.get_repo(repo_name)
+            issue = repo.get_issue(issue_number)
+            return {
+                "title": issue.title,
+                "body": issue.body,
+                "state": issue.state
+            }
+        except Exception as e:
+            logger.error(f"Error in get_issue: {e}")
+            return {}
