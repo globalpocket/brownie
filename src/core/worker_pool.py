@@ -1,116 +1,26 @@
-import os
 import logging
-import threading
-import asyncio
-import time
-from huey import SqliteHuey
-from huey.consumer import Consumer
+from src.core.workers.pool import huey
 
 logger = logging.getLogger(__name__)
 
-try:
-    import src.core.workers.tasks
-except ImportError as e:
-    logger.warning(f"Could not import worker tasks: {e}")
-
-# 登録されているタスク群を Huey ワーカーに認識させるためにインポート
-try:
-    import src.core.workers.tasks
-except ImportError as e:
-    logger.warning(f"Could not import worker tasks. Worker may not pick up tasks: {e}")
-
-from src.core.workers.pool import huey
-
-@huey.task()
-def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int, payload: dict = None):
-    """
-    Huey ワーカープロセスで実行されるタスクの実体。
-    """
-    import asyncio
-    import logging
-    from logging.handlers import RotatingFileHandler
-    
-    # ワーカープロセスでのログ設定 (設計書 3.2 補足: 別プロセスのため再設定が必要)
-    log_file = os.path.join(os.path.dirname(__file__), "..", "..", "logs", "brownie.log")
-    os.makedirs(os.path.dirname(log_file), exist_ok=True)
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        root_logger.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
-        file_handler = RotatingFileHandler(log_file, maxBytes=5*1024*1024, backupCount=3)
-        file_handler.setFormatter(formatter)
-        root_logger.addHandler(file_handler)
-    
-    from src.core.orchestrator import global_orchestrator
-    
-    logger.info(f"Huey Worker: Starting task {task_id} for {repo_name}#{issue_number}")
-    
-    # 実際の実装では、Orchestrator のインスタンスを取得（またはシリアライズされた設定から再構築）
-    # し、非同期ループ内で実行する。
-    try:
-        loop = asyncio.get_event_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-    
-    # 実行実体 (Orchestrator._execute_task_internal) を非同期実行
-    # NOTE: global_orchestrator はワーカープロセス側では通常 None になるため、
-    # ワーカー自身が Orchestrator 相当の最小限のコンテキストを持つ必要がある。
-    # ここでは概念設計に基づき、Orchestrator 経由で実行をキックする構造を示す。
-    if global_orchestrator:
-        loop.run_until_complete(global_orchestrator._execute_task(task_id, repo_name, issue_number, payload))
-    else:
-        # ワーカー用に Orchestrator を最小構成で初期化
-        from src.core.orchestrator import Orchestrator
-        config_path = os.environ.get("BROWNIE_CONFIG", "config/config.yaml")
-        worker_orchestrator = Orchestrator(config_path)
-        loop.run_until_complete(worker_orchestrator._execute_task(task_id, repo_name, issue_number, payload))
-
 class WorkerPool:
-    """
-    Huey へのブリッジ。Orchestrator からタスクを投入するために使用。
-    """
-    def __init__(self, project_root: str):
-        self.project_root = project_root
+    def __init__(self, project_root=None):
         self.huey = huey
 
-    async def add_task(self, task_id: str, priority: int, repo_name: str, issue_number: int, payload: dict = None):
-        """
-        タスクを Huey のキュー（SQLite）に投入する。
-        """
-        logger.info(f"Queueing task {task_id} via Huey...")
-        execute_task_wrapper(task_id, repo_name, issue_number, payload)
-        return {"task_id": task_id, "status": "queued"}
-
     async def run(self):
-        """
-        Huey 消費タスクを非同期実行スレッドで開始する。
-        """
-        logger.info("WorkerPool: Starting manual Huey consumer loop in background thread...")
-        
-        def _run_manual_consumer():
-            logger.info("Huey Worker: Manual consumer thread execution started.")
-            try:
-                while True:
-                    task = self.huey.dequeue()
-                    if task:
-                        try:
-                            # タスクの実行 (signature: task, timestamp)
-                            self.huey._execute(task, time.time())
-                        except Exception as e:
-                            logger.error(f"Huey Worker: Task execution failed: {e}")
-                    else:
-                        # タスクがない場合は少し待機
-                        time.sleep(1)
-            except Exception as e:
-                logger.error(f"Huey Worker: Manual consumer thread crashed: {e}")
+        logger.info("WorkerPool: Active.")
 
-        # スレッドを起動
-        self.worker_thread = threading.Thread(target=_run_manual_consumer, daemon=True)
-        self.worker_thread.start()
-        
-        logger.info(f"Huey worker thread triggered (TID: {self.worker_thread.ident}).")
-        return self.worker_thread
+    def stop(self):
+        pass
 
-    async def stop(self):
-        logger.info("WorkerPool: Huey is managed as a separate process. Manual cleanup may be required if not handled by OS signals.")
+    async def add_task(self, task_id, priority, repo_name, issue_number, **kwargs):
+        from src.core.workers.tasks import analysis_task
+        # decorator 経由ではなく、明示的にシグネチャを作成して投入を試みる
+        logger.info(f"Adding task {task_id} to queue...")
+        try:
+            analysis_task(task_id, repo_name, issue_number, kwargs)
+            logger.info("Task enqueued successfully.")
+            return True
+        except Exception as e:
+            logger.error(f"Task enqueue FAILED: {e}")
+            return False
