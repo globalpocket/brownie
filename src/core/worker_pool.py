@@ -19,13 +19,7 @@ try:
 except ImportError as e:
     logger.warning(f"Could not import worker tasks. Worker may not pick up tasks: {e}")
 
-# 設計書課題: Huey (SQLite) による軽量な非同期タスクキューの実現
-# project_root からの相対パスで DB ファイルを指定
-db_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".brwn", "huey.db"))
-os.makedirs(os.path.dirname(db_path), exist_ok=True)
-
-# Huey インスタンスの初期化
-huey = SqliteHuey(filename=db_path)
+from src.core.workers.pool import huey
 
 @huey.task()
 def execute_task_wrapper(task_id: str, repo_name: str, issue_number: int, payload: dict = None):
