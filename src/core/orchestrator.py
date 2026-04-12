@@ -129,19 +129,20 @@ class Orchestrator:
 
         if state.values:
             status = state.values.get("status")
+            # すでに実行中またはキュー待機中なら何もしない
             if status in ['InProgress', 'InQueue']:
                 return
             
-            if comment_id:
-                await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"}, as_node="intent_alignment")
+            # 再開（Resurrection）: resume_comment_id を更新し、キューに再投入
+            logger.info(f"Resurrecting task {task_id} from status: {status}")
+            await self._workflow_app.aupdate_state(config, {"resume_comment_id": comment_id, "status": "InQueue"}, as_node="intent_alignment")
+            payload_to_send = state.values
         else:
             # 新規タスク: 必要情報を GitHub から取得して初期化
             logger.info(f"Adding NEW task {task_id} to Huey queue")
             
-            # リポジトリのローカルパスを構成 (workspaces/<repo_name_suffix>)
             repo_path = os.path.join(self.project_root, "workspaces", repo_name.split("/")[-1])
 
-            # 初期メッセージ取得
             try:
                 issue = await self.gh_client.get_issue(repo_name, issue_number)
                 instruction = f"Title: {issue.get('title', '')}\n\nBody:\n{issue.get('body', '')}"
@@ -163,11 +164,9 @@ class Orchestrator:
                 "trigger_comment_id": comment_id,
                 "created_at": datetime.utcnow().isoformat()
             }
-            # as_node を指定しないことで、グラフの最初（intent_alignment）から開始させる
             await self._workflow_app.aupdate_state(config, initial_values)
             payload_to_send = initial_values
 
-        await self.worker_pool.add_task(task_id, 0, repo_name, issue_number, payload=payload_to_send)
         logger.info(f"Task {task_id} PUSHed to Huey queue.")
 
     async def _execute_task(self, task_id: str, repo_name: str, issue_number: int, payload: dict = None):
