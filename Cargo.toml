@@ -19,7 +19,8 @@ resolver = "2"
 
 [workspace.package]
 edition = "2021"
-license = "TBD"
+license = "UNLICENSED"
+publish = false
 repository = "https://github.com/globalpocket/brownie"
 rust-version = "1.78"
 version = "0.1.0"
