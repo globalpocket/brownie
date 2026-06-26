@@ -1,0 +1,12 @@
+{
+  "name": "brownie-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Brownie Code-OSS extension and Rust runtime workspace.",
+  "scripts": {
+    "build": "pnpm --filter brownie-vsix build",
+    "check": "pnpm --filter brownie-vsix check"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {}
+}
