@@ -62,6 +62,18 @@ pub struct TaskGetParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunResult {
+    pub task_id: String,
+    pub run_id: String,
+    pub status: TaskStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListResult {
     pub tasks: Vec<TaskRecord>,
 }
@@ -80,5 +92,8 @@ pub struct TaskRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     Created,
+    Running,
+    Completed,
     Failed,
+    Cancelled,
 }

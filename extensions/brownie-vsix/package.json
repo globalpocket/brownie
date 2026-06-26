@@ -28,6 +28,10 @@
       {
         "command": "brownie.taskList",
         "title": "Brownie: List Tasks"
+      },
+      {
+        "command": "brownie.taskRun",
+        "title": "Brownie: Run Task"
       }
     ]
   },

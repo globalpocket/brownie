@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Phase 1.0 adds the minimal task lifecycle authority to the Rust runtime. It does not implement the agent loop, LLM calls, tool execution, AgentModes parsing, indexing, Qdrant, or llama-server integration.
+Phase 1.1 extends the minimal task lifecycle authority in the Rust runtime with no-op task execution. It does not implement LLM calls, tool execution, AgentModes parsing, indexing, Qdrant, or llama-server integration.
 
 ## TaskRecord
 
@@ -20,12 +20,15 @@ updated_at: RFC3339 timestamp
 
 ## TaskStatus
 
-Phase 1.0 defines these status values:
+Phase 1.1 defines these status values:
 
 - `Created`: the runtime accepted and persisted the task.
-- `Failed`: reserved for minimal failure reporting.
+- `Running`: `task.run` has started the no-op AgentLoop skeleton.
+- `Completed`: the no-op AgentLoop skeleton completed successfully.
+- `Failed`: reserved for runtime or future AgentLoop failure reporting.
+- `Cancelled`: reserved for future cancellation handling.
 
-No `Running` or `Completed` transitions are performed in Phase 1.0 because the full agent loop is a non-goal.
+In Phase 1.1, only `Created -> Running -> Completed` is implemented.
 
 ## Run storage
 
@@ -41,19 +44,23 @@ The runtime treats the workspace root as `BROWNIE_WORKSPACE_ROOT` when set, othe
 
 ## RunLedger
 
-`ledger.jsonl` is append-only JSON Lines. Phase 1.0 emits one event when a task is created:
+`ledger.jsonl` is append-only JSON Lines. Phase 1.1 emits task lifecycle events:
 
 ```text
 event_id: string
 task_id: string
 run_id: string
-kind: TaskStarted
+kind: TaskStarted | TaskRunning | TaskCompleted | TaskFailed | TaskCancelled
 timestamp: RFC3339 timestamp
 ```
 
 The persisted ledger is separate from any future prompt window truncation behavior.
 
-## Phase 1.0 non-goals
+## `task.run`
+
+`task.run` advances a `Created` task to `Running`, calls the no-op AgentLoop skeleton, then persists `Completed`. The runtime updates `state.json` and appends `TaskRunning` and `TaskCompleted` events to `ledger.jsonl`. Running an unknown task or a task that is not `Created` returns invalid params.
+
+## Phase 1.1 non-goals
 
 - No LLM calls.
 - No full agent loop.

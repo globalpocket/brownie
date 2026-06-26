@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, RuntimeStatusResult, TaskRecord, TaskStartParams, TaskStartResult } from './protocol';
-import { isRuntimeStatusResult, isTaskRecord, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -31,6 +31,16 @@ export class RuntimeClient {
 
     if (!isTaskStartResult(result)) {
       throw new RuntimeProtocolError('task.start returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async runTask(taskId: string): Promise<TaskRunResult> {
+    const result = await this.call<TaskRunResult>('task.run', { task_id: taskId });
+
+    if (!isTaskRunResult(result)) {
+      throw new RuntimeProtocolError('task.run returned an invalid result');
     }
 
     return result;

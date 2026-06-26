@@ -4,7 +4,7 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use brownie_protocol::{TaskRecord, TaskStartParams, TaskStatus};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -67,18 +67,26 @@ impl TaskStore {
         let run_dir = self.run_dir(&run_id);
         fs::create_dir_all(&run_dir)
             .with_context(|| format!("failed to create {}", run_dir.display()))?;
-        let state =
-            serde_json::to_string_pretty(&record).context("failed to serialize task state")?;
-        fs::write(run_dir.join("state.json"), state).context("failed to write task state")?;
+        self.write_task_state(&record)?;
+        self.append_task_event(&record, LedgerEventKind::TaskStarted)?;
 
-        RunLedger::new(run_dir).append(&LedgerEvent {
-            event_id: format!("event_{}", Uuid::new_v4()),
-            task_id,
-            run_id,
-            kind: LedgerEventKind::TaskStarted,
-            timestamp: timestamp()?,
-        })?;
+        Ok(record)
+    }
 
+    pub fn update_task_status(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        event_kind: LedgerEventKind,
+    ) -> Result<TaskRecord> {
+        let Some(mut record) = self.get_task(task_id)? else {
+            bail!("task not found: {task_id}");
+        };
+
+        record.status = status;
+        record.updated_at = timestamp()?;
+        self.write_task_state(&record)?;
+        self.append_task_event(&record, event_kind)?;
         Ok(record)
     }
 
@@ -132,6 +140,25 @@ impl TaskStore {
         self.runs_dir().join(run_id)
     }
 
+    fn write_task_state(&self, record: &TaskRecord) -> Result<()> {
+        let run_dir = self.run_dir(&record.run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        let state =
+            serde_json::to_string_pretty(record).context("failed to serialize task state")?;
+        fs::write(run_dir.join("state.json"), state).context("failed to write task state")
+    }
+
+    fn append_task_event(&self, record: &TaskRecord, kind: LedgerEventKind) -> Result<()> {
+        RunLedger::new(self.run_dir(&record.run_id)).append(&LedgerEvent {
+            event_id: format!("event_{}", Uuid::new_v4()),
+            task_id: record.task_id.clone(),
+            run_id: record.run_id.clone(),
+            kind,
+            timestamp: timestamp()?,
+        })
+    }
+
     fn runs_dir(&self) -> PathBuf {
         self.workspace_root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR)
     }
@@ -175,6 +202,10 @@ pub struct LedgerEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LedgerEventKind {
     TaskStarted,
+    TaskRunning,
+    TaskCompleted,
+    TaskFailed,
+    TaskCancelled,
 }
 
 fn timestamp() -> Result<String> {
@@ -211,6 +242,42 @@ mod tests {
             serde_json::from_str(ledger.lines().next().expect("event")).expect("ledger event");
         assert_eq!(event.kind, LedgerEventKind::TaskStarted);
         assert_eq!(event.task_id, record.task_id);
+    }
+
+    #[test]
+    fn update_task_status_updates_state_and_appends_ledger() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "run me".into(),
+                mode_id: None,
+            })
+            .expect("start task");
+
+        let updated = store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("update task");
+
+        assert_eq!(updated.status, TaskStatus::Running);
+        assert_ne!(updated.updated_at, "");
+        let state: TaskRecord = serde_json::from_str(
+            &fs::read_to_string(store.run_dir(&record.run_id).join("state.json")).expect("state"),
+        )
+        .expect("record");
+        assert_eq!(state.status, TaskStatus::Running);
+        let ledger =
+            fs::read_to_string(store.run_dir(&record.run_id).join("ledger.jsonl")).expect("ledger");
+        let events: Vec<LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        assert_eq!(events[0].kind, LedgerEventKind::TaskStarted);
+        assert_eq!(events[1].kind, LedgerEventKind::TaskRunning);
     }
 
     #[test]
