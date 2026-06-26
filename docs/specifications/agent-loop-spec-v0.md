@@ -31,7 +31,7 @@ Failed
 Cancelled
 ```
 
-The Rust crate `brownie-agent-loop` owns this state model.
+The Rust crate `brownie-agent-loop` owns this state model. Phase 1.1 includes only a no-op skeleton entry point that accepts task metadata and returns `Completed` with a completion summary; it does not build prompts, call an LLM, execute tools, parse AgentModes, index code, use Qdrant, or use llama-server.
 
 ## Runtime authority
 
@@ -85,6 +85,10 @@ A parent receives a compact result:
 - verification evidence
 - unresolved issues
 ```
+
+## Phase 1.1 skeleton
+
+`AgentLoop::run_noop` is the only executable loop path in Phase 1.1. It exists so the Rust runtime calls the AgentLoop crate while advancing task state from `Created` to `Running` to `Completed`.
 
 ## Non-goals for v0
 

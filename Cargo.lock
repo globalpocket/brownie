@@ -67,6 +67,7 @@ name = "brownie-runtime"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "brownie-agent-loop",
  "brownie-protocol",
  "brownie-store",
  "serde",

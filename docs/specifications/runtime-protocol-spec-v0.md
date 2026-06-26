@@ -89,13 +89,31 @@ Expected response result shape:
   "run_id": "run_<uuid>",
   "goal": "Implement something",
   "mode_id": "orchestrator",
-  "status": "Created",
+  "status": "Created | Running | Completed | Failed | Cancelled",
   "created_at": "2026-06-26T00:00:00Z",
   "updated_at": "2026-06-26T00:00:00Z"
 }
 ```
 
 Missing tasks return `-32602` in Phase 1.0.
+
+## `task.run`
+
+Runs a `Created` task through the Phase 1.1 no-op AgentLoop skeleton. The runtime is authoritative for transitions and persists `Running` and `Completed` state changes before returning.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"task.run","params":{"task_id":"task_<uuid>"}}
+```
+
+Expected response line:
+
+```json
+{"jsonrpc":"2.0","id":2,"result":{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Completed"}}
+```
+
+Unknown tasks and tasks whose status is not `Created` return `-32602`. Phase 1.1 does not call an LLM, execute tools, parse AgentModes, use Qdrant, use llama-server, or run an indexer.
 
 ## `task.list`
 

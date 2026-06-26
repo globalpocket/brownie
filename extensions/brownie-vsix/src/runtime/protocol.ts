@@ -23,7 +23,7 @@ export interface RuntimeStatusResult {
   status: string;
 }
 
-export type TaskStatus = 'Created' | 'Failed';
+export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export interface TaskStartParams {
   goal: string;
@@ -31,6 +31,12 @@ export interface TaskStartParams {
 }
 
 export interface TaskStartResult {
+  task_id: string;
+  run_id: string;
+  status: TaskStatus;
+}
+
+export interface TaskRunResult {
   task_id: string;
   run_id: string;
   status: TaskStatus;
@@ -86,6 +92,15 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
   );
 }
 
+export function isTaskRunResult(value: unknown): value is TaskRunResult {
+  return (
+    isRecord(value) &&
+    typeof value.task_id === 'string' &&
+    typeof value.run_id === 'string' &&
+    isTaskStatus(value.status)
+  );
+}
+
 export function isTaskRecord(value: unknown): value is TaskRecord {
   return (
     isRecord(value) &&
@@ -100,7 +115,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-  return value === 'Created' || value === 'Failed';
+  return value === 'Created' || value === 'Running' || value === 'Completed' || value === 'Failed' || value === 'Cancelled';
 }
 
 function isJsonRpcError(value: unknown): value is JsonRpcError {

@@ -1,16 +1,18 @@
 //! Brownie runtime entry points.
 
+use brownie_agent_loop::{AgentLoop, AgentLoopInput, AgentLoopState};
 use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskListResult, TaskStartParams, TaskStartResult,
+    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
 };
-use brownie_store::BrownieStore;
+use brownie_store::{BrownieStore, LedgerEventKind};
 use serde_json::{json, Value};
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
+const METHOD_TASK_RUN: &str = "task.run";
 const METHOD_TASK_LIST: &str = "task.list";
 
 pub fn runtime_status() -> RuntimeStatus {
@@ -44,6 +46,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUNTIME_STATUS => result_response(request.id, json!(runtime_status())),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
+        METHOD_TASK_RUN => handle_task_run(request.id, request.params),
         METHOD_TASK_LIST => handle_task_list(request.id),
         _ => error_response(request.id, -32601, "method not found"),
     }
@@ -91,6 +94,72 @@ fn handle_task_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     match store.tasks().get_task(&params.task_id) {
         Ok(Some(record)) => result_response(id, json!(record)),
         Ok(None) => error_response(id, -32602, "invalid params: task not found"),
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
+fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: TaskRunParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let record = match store.tasks().get_task(&params.task_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    if record.status != TaskStatus::Created {
+        return error_response(id, -32602, "invalid params: task must be Created");
+    }
+
+    let running = match store.tasks().update_task_status(
+        &record.task_id,
+        TaskStatus::Running,
+        LedgerEventKind::TaskRunning,
+    ) {
+        Ok(record) => record,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let result = AgentLoop::run_noop(AgentLoopInput {
+        task_id: running.task_id.clone(),
+        run_id: running.run_id.clone(),
+        goal: running.goal.clone(),
+        mode_id: running.mode_id.clone(),
+    });
+
+    let final_status = match result.final_state {
+        AgentLoopState::Completed => TaskStatus::Completed,
+        AgentLoopState::Cancelled => TaskStatus::Cancelled,
+        AgentLoopState::Failed => TaskStatus::Failed,
+        _ => TaskStatus::Failed,
+    };
+    let event_kind = match final_status {
+        TaskStatus::Completed => LedgerEventKind::TaskCompleted,
+        TaskStatus::Cancelled => LedgerEventKind::TaskCancelled,
+        TaskStatus::Failed => LedgerEventKind::TaskFailed,
+        TaskStatus::Created | TaskStatus::Running => LedgerEventKind::TaskFailed,
+    };
+
+    match store
+        .tasks()
+        .update_task_status(&running.task_id, final_status, event_kind)
+    {
+        Ok(record) => result_response(
+            id,
+            json!(TaskRunResult {
+                task_id: record.task_id,
+                run_id: record.run_id,
+                status: record.status,
+            }),
+        ),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
 }
@@ -219,6 +288,106 @@ mod tests {
                 .len(),
             1
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_changes_created_to_completed_through_jsonrpc() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run no-op","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let result = run.result.expect("run result");
+        assert_eq!(result["task_id"], task_id);
+        assert_eq!(result["run_id"], run_id);
+        assert_eq!(result["status"], "Completed");
+
+        let get = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.get","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let record: TaskRecord =
+            serde_json::from_value(get.result.expect("get result")).expect("task record");
+        assert_eq!(record.status, TaskStatus::Completed);
+
+        let state: TaskRecord = serde_json::from_str(
+            &std::fs::read_to_string(
+                temp.path()
+                    .join(".brownie/runs")
+                    .join(&run_id)
+                    .join("state.json"),
+            )
+            .expect("state"),
+        )
+        .expect("state record");
+        assert_eq!(state.status, TaskStatus::Completed);
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert!(ledger.contains("TaskStarted"));
+        assert!(ledger.contains("TaskRunning"));
+        assert!(ledger.contains("TaskCompleted"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_unknown_task_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.run","params":{"task_id":"task_missing"}}"#,
+        );
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_completed_task_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run once","mode_id":null}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let first = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(first.error.is_none());
+
+        let second = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(second.result.is_none());
+        assert_eq!(second.error.expect("error").code, -32602);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

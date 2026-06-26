@@ -67,6 +67,32 @@ describe('RuntimeClient', () => {
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.start', params: { goal: 'test goal', mode_id: 'orchestrator' } }]);
   });
 
+  it('creates a task.run request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Completed' } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.runTask('task_1')).resolves.toEqual({ task_id: 'task_1', run_id: 'run_1', status: 'Completed' });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
+  });
+
+  it('rejects invalid task.run results', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Unknown' } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.runTask('task_1')).rejects.toThrow('task.run returned an invalid result');
+  });
+
+  it('converts task.run JSON-RPC errors into exceptions', async () => {
+    const transport = new FakeTransport({
+      jsonrpc: '2.0',
+      id: 1,
+      error: { code: -32602, message: 'invalid params: task not found' },
+    });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.runTask('task_missing')).rejects.toBeInstanceOf(RuntimeJsonRpcError);
+  });
+
   it('creates a task.get request', async () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: taskRecord });
     const client = new RuntimeClient(transport);

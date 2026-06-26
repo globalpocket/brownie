@@ -8,6 +8,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+brownie-agent-loop = { path = "../brownie-agent-loop" }
 brownie-protocol = { path = "../brownie-protocol" }
 brownie-store = { path = "../brownie-store" }
 serde.workspace = true

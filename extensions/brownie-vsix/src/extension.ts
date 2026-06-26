@@ -63,7 +63,32 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, taskStartCommand, taskListCommand);
+
+  const taskRunCommand = vscode.commands.registerCommand('brownie.taskRun', async () => {
+    const taskId = await vscode.window.showInputBox({
+      prompt: 'Task ID',
+      placeHolder: 'task_...',
+      ignoreFocusOut: true,
+    });
+
+    if (taskId === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.runTask(taskId.trim());
+      output.appendLine(`task.run: ${JSON.stringify(result)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie task run: ${result.task_id} (${result.status})`,
+      );
+    } catch (error) {
+      output.appendLine(`task.run failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie task run failed: ${formatError(error)}`);
+    }
+  });
+
+  context.subscriptions.push(output, statusCommand, taskStartCommand, taskListCommand, taskRunCommand);
 }
 
 export function deactivate(): void {
