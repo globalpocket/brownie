@@ -1,0 +1,31 @@
+{
+  "name": "brownie-vsix",
+  "displayName": "Brownie",
+  "description": "Code-OSS Custom Agent UI extension for the Brownie Rust runtime.",
+  "version": "0.1.0",
+  "private": true,
+  "publisher": "globalpocket",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onStartupFinished"],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "brownie.runtimeStatus",
+        "title": "Brownie: Runtime Status"
+      }
+    ]
+  },
+  "scripts": {
+    "build": "tsc -p .",
+    "check": "tsc -p . --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.90.0",
+    "typescript": "^5.5.0"
+  }
+}
