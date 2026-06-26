@@ -1,0 +1,16 @@
+# Rust
+/target/
+Cargo.lock
+
+# Node / VSIX
+node_modules/
+extensions/*/dist/
+extensions/*/*.vsix
+.pnpm-store/
+
+# Brownie runtime state
+.brownie/
+
+# OS / editor
+.DS_Store
+.vscode/
