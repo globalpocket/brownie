@@ -1,6 +1,5 @@
 # Rust
 /target/
-Cargo.lock
 
 # Node / VSIX
 node_modules/
