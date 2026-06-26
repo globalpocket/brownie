@@ -35,3 +35,9 @@ jobs:
 
       - name: VSIX check
         run: pnpm --filter brownie-vsix check
+
+      - name: VSIX test
+        run: pnpm --filter brownie-vsix test
+
+      - name: VSIX build
+        run: pnpm --filter brownie-vsix build
