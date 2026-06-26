@@ -20,6 +20,14 @@
       {
         "command": "brownie.runtimeStatus",
         "title": "Brownie: Runtime Status"
+      },
+      {
+        "command": "brownie.taskStart",
+        "title": "Brownie: Start Task"
+      },
+      {
+        "command": "brownie.taskList",
+        "title": "Brownie: List Tasks"
       }
     ]
   },
