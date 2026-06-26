@@ -5,7 +5,8 @@
   "description": "Brownie Code-OSS extension and Rust runtime workspace.",
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
-    "check": "pnpm --filter brownie-vsix check"
+    "check": "pnpm --filter brownie-vsix check",
+    "test": "pnpm --filter brownie-vsix test"
   },
   "packageManager": "pnpm@9.0.0",
   "devDependencies": {}
