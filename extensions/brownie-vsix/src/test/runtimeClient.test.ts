@@ -15,6 +15,16 @@ class FakeTransport implements RuntimeTransport {
   }
 }
 
+const taskRecord = {
+  task_id: 'task_1',
+  run_id: 'run_1',
+  goal: 'test goal',
+  mode_id: 'orchestrator',
+  status: 'Created',
+  created_at: '2026-06-26T00:00:00Z',
+  updated_at: '2026-06-26T00:00:00Z',
+};
+
 describe('protocol validation', () => {
   it('accepts a valid JSON-RPC response', () => {
     expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 1, result: { ok: true } })).toBe(true);
@@ -47,6 +57,30 @@ describe('RuntimeClient', () => {
       status: 'Ready',
     });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'runtime.status' }]);
+  });
+
+  it('creates a task.start request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Created' } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.startTask({ goal: 'test goal', modeId: 'orchestrator' })).resolves.toEqual({ task_id: 'task_1', run_id: 'run_1', status: 'Created' });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.start', params: { goal: 'test goal', mode_id: 'orchestrator' } }]);
+  });
+
+  it('creates a task.get request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: taskRecord });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.getTask('task_1')).resolves.toEqual(taskRecord);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.get', params: { task_id: 'task_1' } }]);
+  });
+
+  it('creates a task.list request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { tasks: [taskRecord] } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.listTasks()).resolves.toEqual([taskRecord]);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.list' }]);
   });
 
   it('converts JSON-RPC error responses into exceptions', async () => {

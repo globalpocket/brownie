@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, RuntimeStatusResult } from './protocol';
-import { isRuntimeStatusResult } from './protocol';
+import type { JsonRpcRequest, RuntimeStatusResult, TaskRecord, TaskStartParams, TaskStartResult } from './protocol';
+import { isRuntimeStatusResult, isTaskRecord, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -14,17 +14,56 @@ export class RuntimeClient {
   ) {}
 
   async status(): Promise<RuntimeStatusResult> {
-    const response = await this.send<RuntimeStatusResult>('runtime.status');
+    const result = await this.call<RuntimeStatusResult>('runtime.status');
+
+    if (!isRuntimeStatusResult(result)) {
+      throw new RuntimeProtocolError('runtime.status returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async startTask(params: TaskStartParams): Promise<TaskStartResult> {
+    const result = await this.call<TaskStartResult>('task.start', {
+      goal: params.goal,
+      mode_id: params.modeId,
+    });
+
+    if (!isTaskStartResult(result)) {
+      throw new RuntimeProtocolError('task.start returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async getTask(taskId: string): Promise<TaskRecord> {
+    const result = await this.call<TaskRecord>('task.get', { task_id: taskId });
+
+    if (!isTaskRecord(result)) {
+      throw new RuntimeProtocolError('task.get returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async listTasks(): Promise<TaskRecord[]> {
+    const result = await this.call<{ tasks: unknown }>('task.list');
+
+    if (!isTaskListResult(result)) {
+      throw new RuntimeProtocolError('task.list returned an invalid result');
+    }
+
+    return result.tasks;
+  }
+
+  private async call<T>(method: string, params?: unknown): Promise<T> {
+    const response = await this.send<T>(method, params);
 
     if (response.error !== undefined) {
       throw new RuntimeJsonRpcError(response.error);
     }
 
-    if (!isRuntimeStatusResult(response.result)) {
-      throw new RuntimeProtocolError('runtime.status returned an invalid result');
-    }
-
-    return response.result;
+    return response.result as T;
   }
 
   private send<T>(method: string, params?: unknown) {
@@ -41,4 +80,13 @@ export class RuntimeClient {
 
     return this.transport.request<T>(request, this.timeoutMs);
   }
+}
+
+function isTaskListResult(value: unknown): value is { tasks: TaskRecord[] } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Array.isArray((value as { tasks?: unknown }).tasks) &&
+    (value as { tasks: unknown[] }).tasks.every(isTaskRecord)
+  );
 }

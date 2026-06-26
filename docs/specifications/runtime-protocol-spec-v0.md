@@ -4,7 +4,7 @@
 
 Brownie VSIX and Brownie Runtime communicate through a stable protocol boundary.
 
-Phase 0.2 uses newline-delimited JSON (NDJSON) JSON-RPC 2.0 messages over stdio as the initial process boundary.
+The runtime uses newline-delimited JSON (NDJSON) JSON-RPC 2.0 messages over stdio as the initial process boundary.
 
 ```text
 Code-OSS / Brownie VSIX
@@ -12,23 +12,34 @@ Code-OSS / Brownie VSIX
 Brownie Runtime
 ```
 
-## Phase 0.2 framing
+## Framing
 
 The runtime reads stdin one line at a time. Each non-empty line is one complete JSON-RPC request. For every request line, the runtime writes exactly one JSON-RPC response line to stdout and flushes stdout before reading the next request.
-
-```text
-stdin line 1  -> stdout response line 1
-stdin line 2  -> stdout response line 2
-stdin line 3  -> stdout response line 3
-```
 
 Empty input lines are ignored. Invalid JSON produces a JSON-RPC parse error response with code `-32700` and a `null` id.
 
 For direct smoke testing without a JSON-RPC request, the runtime binary may still emit the bare status object when stdin is attached to a terminal.
 
-## Phase 0.2 request
+## Workspace root and store path
 
-The first supported request is `runtime.status` over JSON-RPC 2.0.
+The runtime resolves its workspace root in this order:
+
+1. `BROWNIE_WORKSPACE_ROOT`
+2. current working directory
+
+Task run data is stored under:
+
+```text
+.brownie/
+└─ runs/
+   └─ <run_id>/
+      ├─ state.json
+      └─ ledger.jsonl
+```
+
+`state.json` contains the persisted `TaskRecord`. `ledger.jsonl` contains append-only RunLedger events, one JSON object per line.
+
+## `runtime.status`
 
 Request line:
 
@@ -42,28 +53,75 @@ Expected response line:
 {"jsonrpc":"2.0","id":1,"result":{"name":"brownie-runtime","version":"0.1.0","status":"Ready"}}
 ```
 
-Field order is not significant.
+## `task.start`
+
+Creates a persisted task record and appends a `TaskStarted` ledger event. Runtime is the authority for task IDs, run IDs, status, and persistence.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement something","mode_id":"orchestrator"}}
+```
+
+Expected response line:
+
+```json
+{"jsonrpc":"2.0","id":1,"result":{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Created"}}
+```
+
+`goal` must be non-empty after trimming whitespace. Empty goals return `-32602`.
+
+## `task.get`
+
+Returns a persisted task by `task_id`.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"task.get","params":{"task_id":"task_<uuid>"}}
+```
+
+Expected response result shape:
+
+```json
+{
+  "task_id": "task_<uuid>",
+  "run_id": "run_<uuid>",
+  "goal": "Implement something",
+  "mode_id": "orchestrator",
+  "status": "Created",
+  "created_at": "2026-06-26T00:00:00Z",
+  "updated_at": "2026-06-26T00:00:00Z"
+}
+```
+
+Missing tasks return `-32602` in Phase 1.0.
+
+## `task.list`
+
+Returns all persisted tasks discovered in `.brownie/runs/*/state.json`.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"task.list"}
+```
+
+Expected response result shape:
+
+```json
+{"tasks":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","goal":"Implement something","mode_id":"orchestrator","status":"Created","created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}]}
+```
 
 ## Errors
 
-The Phase 0.2 runtime returns JSON-RPC errors for protocol failures that it can report:
+The runtime returns JSON-RPC errors for protocol failures that it can report:
 
 - `-32700` for parse errors.
-- `-32600` for invalid JSON-RPC versions.
+- `-32600` for invalid requests, including invalid JSON-RPC versions.
 - `-32601` for unknown methods.
-
-## Future categories
-
-Later protocol versions should cover:
-
-- runtime lifecycle
-- task lifecycle
-- mode listing and validation
-- Mode Pack operations
-- indexing operations
-- LLM endpoint status
-- Qdrant status
-- event streaming
+- `-32602` for invalid params, including empty task goals and missing task IDs.
+- `-32603` for internal errors.
 
 ## Rule
 

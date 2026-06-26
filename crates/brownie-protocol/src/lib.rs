@@ -42,3 +42,43 @@ pub enum RuntimeState {
     Stopping,
     Error,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskStartResult {
+    pub task_id: String,
+    pub run_id: String,
+    pub status: TaskStatus,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskGetParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListResult {
+    pub tasks: Vec<TaskRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRecord {
+    pub task_id: String,
+    pub run_id: String,
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub status: TaskStatus,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TaskStatus {
+    Created,
+    Failed,
+}
