@@ -6,15 +6,17 @@ use brownie_agentmodes::{
 };
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams, TaskListResult, TaskRunParams,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
+    RunInspectSummary, RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary,
 };
-use brownie_store::{BrownieStore, LedgerEventKind};
+use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
@@ -27,6 +29,7 @@ const METHOD_RUNTIME_STATUS: &str = "runtime.status";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
 const METHOD_TASK_RUN: &str = "task.run";
+const METHOD_TASK_INSPECT: &str = "task.inspect";
 const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
@@ -35,6 +38,8 @@ const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
 const METHOD_TOOL_INTENT_PARSE: &str = "tool.intent.parse";
 const METHOD_TOOL_EXECUTE: &str = "tool.execute";
+const METHOD_RUN_EVENTS: &str = "run.events";
+const METHOD_RUN_INSPECT: &str = "run.inspect";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -68,6 +73,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
+        METHOD_TASK_INSPECT => handle_task_inspect(request.id, request.params),
         METHOD_TASK_LIST => handle_task_list(request.id),
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
@@ -76,6 +82,8 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
         METHOD_TOOL_INTENT_PARSE => handle_tool_intent_parse(request.id, request.params),
         METHOD_TOOL_EXECUTE => handle_tool_execute(request.id, request.params),
+        METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
+        METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -313,6 +321,72 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
 }
 
+fn handle_run_events(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: RunEventsParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id must not be empty");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let events = match read_existing_run_events(&store, &params.run_id) {
+        Ok(events) => events,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    result_response(
+        id,
+        json!(RunEventsResult {
+            run_id: params.run_id,
+            events: events.into_iter().map(ledger_event_summary).collect(),
+        }),
+    )
+}
+
+fn handle_run_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: RunInspectParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id must not be empty");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match inspect_run(&store, &params.run_id) {
+        Ok(run) => result_response(id, json!(RunInspectResult { run })),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
+fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: TaskInspectParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.task_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: task_id must not be empty");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let task = match store.tasks().get_task(&params.task_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match inspect_run(&store, &task.run_id) {
+        Ok(run) => result_response(id, json!(TaskInspectResult { task, run })),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
@@ -473,6 +547,133 @@ fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Some(policy) => result_response(id, json!(mode_summary(policy))),
         None => error_response(id, -32602, "invalid params: unknown mode_id"),
     }
+}
+
+fn read_existing_run_events(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<Vec<LedgerEvent>, String> {
+    match store.tasks().get_task_by_run_id(run_id) {
+        Ok(Some(_)) => {}
+        Ok(None) => return Err("invalid params: run not found".to_string()),
+        Err(error) => return Err(format!("invalid params: {error}")),
+    }
+    store
+        .tasks()
+        .read_ledger_events(run_id)
+        .map_err(|error| format!("invalid params: {error}"))
+}
+
+fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, String> {
+    let events = read_existing_run_events(store, run_id)?;
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    let has_tool_execution_completed = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted);
+    let has_second_pass = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
+    let final_response_preview =
+        latest_content_preview(&events, LedgerEventKind::SecondPassLlmResponseReceived)
+            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived));
+    Ok(RunInspectSummary {
+        run_id: run_id.to_string(),
+        task_id: task.as_ref().map(|task| task.task_id.clone()),
+        status: task.as_ref().map(|task| task.status.clone()),
+        event_count: events.len(),
+        has_tool_execution_completed,
+        has_second_pass,
+        final_response_preview,
+        timeline: events.iter().map(timeline_entry).collect(),
+    })
+}
+
+fn latest_content_preview(events: &[LedgerEvent], kind: LedgerEventKind) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .find(|event| event.kind == kind)
+        .and_then(|event| {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("content_preview"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+}
+
+fn ledger_event_summary(event: LedgerEvent) -> LedgerEventSummary {
+    let kind = format!("{:?}", event.kind);
+    LedgerEventSummary {
+        event_id: event.event_id,
+        task_id: event.task_id,
+        run_id: event.run_id,
+        kind,
+        timestamp: event.timestamp,
+        payload: sanitize_ledger_payload(event.payload),
+    }
+}
+
+fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
+    let Value::Object(map) = payload? else {
+        return None;
+    };
+    const ALLOWED_KEYS: &[&str] = &[
+        "tool_id",
+        "status",
+        "reason",
+        "output_preview",
+        "prompt_preview",
+        "content_preview",
+        "bytes_read",
+        "truncated",
+        "model",
+        "message_count",
+        "mode_id",
+        "display_name",
+        "permissions",
+        "required_action",
+        "allowed",
+        "request_reason",
+        "tool_ids",
+    ];
+    let sanitized = map
+        .into_iter()
+        .filter(|(key, _)| ALLOWED_KEYS.contains(&key.as_str()))
+        .collect::<serde_json::Map<_, _>>();
+    if sanitized.is_empty() {
+        None
+    } else {
+        Some(Value::Object(sanitized))
+    }
+}
+
+fn timeline_entry(event: &LedgerEvent) -> String {
+    let mut parts = vec![format!("{:?}", event.kind)];
+    if let Some(Value::Object(payload)) = sanitize_ledger_payload(event.payload.clone()) {
+        for key in [
+            "tool_id",
+            "status",
+            "bytes_read",
+            "truncated",
+            "reason",
+            "model",
+            "message_count",
+        ] {
+            if let Some(value) = payload.get(key) {
+                let value = value
+                    .as_str()
+                    .map(ToString::to_string)
+                    .unwrap_or_else(|| value.to_string());
+                parts.push(format!("{key}={value}"));
+            }
+        }
+    }
+    parts.join(" ")
 }
 
 fn resolve_task_start_policy(mode_id: Option<&str>) -> Result<CompiledModePolicy, String> {
@@ -1032,6 +1233,106 @@ mod tests {
         assert!(!preview.contains("Workspace read smoke content"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspection_methods_return_sanitized_summaries() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("README.md"),
+            "# Brownie\n\nsecret full content",
+        )
+        .expect("write");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README before final response","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        assert!(events.error.is_none());
+        let events_result = events.result.expect("events result");
+        assert_eq!(events_result["run_id"], run_id);
+        let serialized = serde_json::to_string(&events_result).expect("serialize");
+        assert!(serialized.contains("output_preview"));
+        assert!(serialized.contains("bytes_read"));
+        assert!(serialized.contains("truncated"));
+        assert!(!serialized.contains("secret full content"));
+        assert!(!serialized.contains("\"content\""));
+        assert!(!serialized.contains("full_content"));
+        assert!(!serialized.contains("file_content"));
+        assert!(!serialized.contains("raw_output"));
+
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.inspect","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let summary = inspect.result.expect("inspect result")["run"].clone();
+        assert!(summary["event_count"].as_u64().expect("event_count") > 0);
+        assert_eq!(summary["has_tool_execution_completed"], true);
+        assert_eq!(summary["has_second_pass"], true);
+        assert!(summary["final_response_preview"]
+            .as_str()
+            .expect("preview")
+            .contains("Fake LLM final response"));
+
+        let task_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.inspect","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(
+            task_inspect.result.expect("task inspect result")["task"]["task_id"],
+            task_id
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_unknown_run_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"run.inspect","params":{"run_id":"run_missing"}}"#,
+        );
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, -32602);
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn sanitizer_preserves_allowlisted_metadata_only() {
+        let sanitized = sanitize_ledger_payload(Some(json!({
+            "output_preview": "safe",
+            "bytes_read": 42,
+            "truncated": false,
+            "reason": "ok",
+            "content": "secret",
+            "full_content": "secret",
+            "file_content": "secret",
+            "raw_output": "secret"
+        })))
+        .expect("sanitized");
+        assert_eq!(sanitized["output_preview"], "safe");
+        assert_eq!(sanitized["bytes_read"], 42);
+        assert_eq!(sanitized["truncated"], false);
+        assert_eq!(sanitized["reason"], "ok");
+        assert!(sanitized.get("content").is_none());
+        assert!(sanitized.get("full_content").is_none());
+        assert!(sanitized.get("file_content").is_none());
+        assert!(sanitized.get("raw_output").is_none());
     }
 
     #[test]

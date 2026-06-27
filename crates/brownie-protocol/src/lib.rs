@@ -205,6 +205,21 @@ pub struct TaskRunParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunEventsParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunInspectParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskInspectParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunResult {
     pub task_id: String,
     pub run_id: String,
@@ -214,6 +229,45 @@ pub struct TaskRunResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListResult {
     pub tasks: Vec<TaskRecord>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunEventsResult {
+    pub run_id: String,
+    pub events: Vec<LedgerEventSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunInspectResult {
+    pub run: RunInspectSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskInspectResult {
+    pub task: TaskRecord,
+    pub run: RunInspectSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RunInspectSummary {
+    pub run_id: String,
+    pub task_id: Option<String>,
+    pub status: Option<TaskStatus>,
+    pub event_count: usize,
+    pub has_tool_execution_completed: bool,
+    pub has_second_pass: bool,
+    pub final_response_preview: Option<String>,
+    pub timeline: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LedgerEventSummary {
+    pub event_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub kind: String,
+    pub timestamp: String,
+    pub payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

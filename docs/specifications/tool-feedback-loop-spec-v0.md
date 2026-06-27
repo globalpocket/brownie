@@ -17,3 +17,7 @@ Phase 1.9 adds the first same-run tool feedback loop for `workspace.read`:
 ## Privacy and safety
 
 Full file content is not persisted in the ledger. Tool execution payloads are limited to `output_preview`, `bytes_read`, `truncated`, and failure/denial reasons. Phase 1.9 does not implement workspace writes, patch application, process execution, network access, service control, destructive actions, subtask execution, real LLM API calls, Mode Pack fetching, AgentModes YAML parsing, Qdrant, llama-server, or indexing.
+
+## Phase 1.10 inspection visibility
+
+The tool feedback loop can now be inspected through `run.events` and `run.inspect`. Tool execution payloads are exposed only as sanitized metadata/previews such as `tool_id`, `status`, `output_preview`, `bytes_read`, and `truncated`; full file content is excluded.

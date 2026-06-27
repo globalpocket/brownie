@@ -140,3 +140,7 @@ For approved `workspace.read` intents with explicit `input.path`, the runtime re
 Phase 1.9 introduces a second-pass Fake LLM feedback loop inside `task.run` after an approved `workspace.read` execution completes. The runtime re-reads the task ledger, materializes the tool execution summary into the next prompt, builds a second-pass prompt, and records `SecondPassPromptBuilt`, `SecondPassLlmRequestCreated`, and `SecondPassLlmResponseReceived` ledger events.
 
 The second pass runs only when at least one `ToolExecutionCompleted` event exists. `workspace.read` results are summarized into prompt materialization as metadata such as status, `bytes_read`, and `truncated`; full file content is not persisted in the ledger. Phase 1.9 does not add write, process, network, service-control, destructive, or subtask execution, and it continues to use only the in-process Fake LLM.
+
+## Phase 1.10 task inspection
+
+`task.inspect` is the preferred task-centric inspection method for VSIX clients. It returns the persisted `TaskRecord` plus the associated sanitized `RunInspectSummary` without changing task state or executing additional work.

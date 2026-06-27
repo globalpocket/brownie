@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -92,6 +92,30 @@ describe('protocol validation', () => {
     expect(isToolPlanResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok' }] })).toBe(false);
   });
 
+  it('accepts run inspection summaries and sanitized event payloads', () => {
+    const summary = {
+      run_id: 'run_1',
+      task_id: 'task_1',
+      status: 'Completed',
+      event_count: 3,
+      has_tool_execution_completed: true,
+      has_second_pass: true,
+      final_response_preview: 'done',
+      timeline: ['TaskStarted'],
+    };
+    expect(isRunInspectSummary(summary)).toBe(true);
+    expect(isRunInspectSummary({ ...summary, has_second_pass: 'true' })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, event_count: -1 })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_1',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: { output_preview: 'safe', bytes_read: 4, truncated: false },
+    })).toBe(true);
+  });
+
   it('validates tool.execute results', () => {
     expect(isToolExecuteResult({ tool_id: 'workspace.read', status: 'Completed', output: { content: 'ok' } })).toBe(true);
     expect(isToolExecuteResult({ tool_id: 'workspace.write', status: 'Denied', output: { reason: 'no' } })).toBe(true);
@@ -180,6 +204,36 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.runTask('task_missing')).rejects.toBeInstanceOf(RuntimeJsonRpcError);
+  });
+
+  it('creates a task.inspect request', async () => {
+    const result = {
+      task: { ...taskRecord, status: 'Completed' },
+      run: { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_second_pass: true, final_response_preview: 'done', timeline: ['TaskStarted'] },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.inspectTask('task_1')).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.inspect', params: { task_id: 'task_1' } }]);
+  });
+
+  it('creates a run.inspect request', async () => {
+    const run = { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_second_pass: false, final_response_preview: 'done', timeline: ['TaskStarted'] };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { run } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.inspectRun('run_1')).resolves.toEqual(run);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'run.inspect', params: { run_id: 'run_1' } }]);
+  });
+
+  it('creates a run.events request', async () => {
+    const result = { run_id: 'run_1', events: [{ event_id: 'event_1', task_id: 'task_1', run_id: 'run_1', kind: 'TaskStarted', timestamp: '2026-06-26T00:00:00Z', payload: { reason: 'ok' } }] };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.getRunEvents('run_1')).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'run.events', params: { run_id: 'run_1' } }]);
   });
 
   it('creates a tool.intent.parse request', async () => {

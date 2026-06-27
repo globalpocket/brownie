@@ -38,6 +38,14 @@
         "title": "Brownie: Run Task"
       },
       {
+        "command": "brownie.taskInspect",
+        "title": "Brownie: Inspect Task"
+      },
+      {
+        "command": "brownie.runInspect",
+        "title": "Brownie: Inspect Run"
+      },
+      {
         "command": "brownie.permissionCheck",
         "title": "Brownie: Check Permission"
       },
