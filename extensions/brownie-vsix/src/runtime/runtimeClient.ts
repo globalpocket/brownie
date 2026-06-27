@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, ModeSummary, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isModeListResult, isModeSummary, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -38,6 +38,19 @@ export class RuntimeClient {
 
     if (!isModeSummary(result)) {
       throw new RuntimeProtocolError('mode.get returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async checkPermission(modeId: string, action: RuntimeActionName): Promise<PermissionCheckResult> {
+    const result = await this.call<PermissionCheckResult>('permission.check', {
+      mode_id: modeId,
+      action,
+    });
+
+    if (!isPermissionCheckResult(result)) {
+      throw new RuntimeProtocolError('permission.check returned an invalid result');
     }
 
     return result;

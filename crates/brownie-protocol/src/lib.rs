@@ -73,6 +73,31 @@ pub struct ModeGetParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionCheckParams {
+    pub mode_id: String,
+    pub action: RuntimeActionName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionCheckResult {
+    pub mode_id: String,
+    pub action: RuntimeActionName,
+    pub allowed: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeActionName {
+    ReadWorkspace,
+    WriteWorkspace,
+    ExecuteProcess,
+    AccessNetwork,
+    ControlService,
+    DestructiveOperation,
+    SpawnSubtask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,

@@ -171,3 +171,11 @@ Phase 1.3 adds `mode.list` and `mode.get` JSON-RPC methods backed by the built-i
 `mode.list` returns `{ "modes": ModeSummary[] }`, where each summary includes `mode_id`, `display_name`, `role_definition`, and permission booleans. `mode.get` accepts `{ "mode_id": string }` and returns one `ModeSummary`.
 
 Unknown mode IDs passed to `mode.get` return JSON-RPC `-32602 invalid params`. `task.start` applies the same unknown-mode rejection, while omitted or `null` `mode_id` defaults to `orchestrator`.
+
+## Phase 1.4 permission gate update
+
+Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
+
+Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, and `SpawnSubtask`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
+
+The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.

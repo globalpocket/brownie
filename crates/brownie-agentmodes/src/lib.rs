@@ -25,6 +25,63 @@ pub struct ModePermissions {
     pub can_spawn_subtasks: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum RuntimeAction {
+    ReadWorkspace,
+    WriteWorkspace,
+    ExecuteProcess,
+    AccessNetwork,
+    ControlService,
+    DestructiveOperation,
+    SpawnSubtask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PermissionDecision {
+    pub action: RuntimeAction,
+    pub allowed: bool,
+    pub reason: String,
+}
+
+pub struct RuntimePermissionGate;
+
+impl RuntimePermissionGate {
+    pub fn check(policy: &CompiledModePolicy, action: RuntimeAction) -> PermissionDecision {
+        let allowed = match action {
+            RuntimeAction::ReadWorkspace => true,
+            RuntimeAction::WriteWorkspace => policy.permissions.workspace_write,
+            RuntimeAction::ExecuteProcess => policy.permissions.process_exec,
+            RuntimeAction::AccessNetwork => policy.permissions.network_access,
+            RuntimeAction::ControlService => policy.permissions.service_control,
+            RuntimeAction::DestructiveOperation => policy.permissions.destructive,
+            RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
+        };
+        let reason = permission_reason(policy, &action, allowed);
+        PermissionDecision {
+            action,
+            allowed,
+            reason,
+        }
+    }
+}
+
+fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowed: bool) -> String {
+    let capability = match action {
+        RuntimeAction::ReadWorkspace => "workspace reads",
+        RuntimeAction::WriteWorkspace => "workspace writes",
+        RuntimeAction::ExecuteProcess => "process execution",
+        RuntimeAction::AccessNetwork => "network access",
+        RuntimeAction::ControlService => "service control",
+        RuntimeAction::DestructiveOperation => "destructive operations",
+        RuntimeAction::SpawnSubtask => "subtask spawning",
+    };
+    if allowed {
+        format!("Mode {} allows {capability}.", policy.mode_id)
+    } else {
+        format!("Mode {} does not allow {capability}.", policy.mode_id)
+    }
+}
+
 pub struct BuiltinModeRegistry;
 
 impl BuiltinModeRegistry {
@@ -124,5 +181,33 @@ mod tests {
     #[test]
     fn builtin_registry_unknown_returns_none() {
         assert_eq!(BuiltinModeRegistry::get("unknown-mode"), None);
+    }
+
+    #[test]
+    fn permission_gate_allows_read_workspace_for_all_modes() {
+        for policy in BuiltinModeRegistry::list() {
+            let decision = RuntimePermissionGate::check(&policy, RuntimeAction::ReadWorkspace);
+            assert!(decision.allowed, "{} should read workspace", policy.mode_id);
+        }
+    }
+
+    #[test]
+    fn permission_gate_matches_builtin_capabilities() {
+        let orchestrator = BuiltinModeRegistry::get("orchestrator").expect("orchestrator");
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::WriteWorkspace).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&orchestrator, RuntimeAction::ExecuteProcess).allowed
+        );
+        assert!(RuntimePermissionGate::check(&orchestrator, RuntimeAction::SpawnSubtask).allowed);
+
+        let implementer = BuiltinModeRegistry::get("implementer").expect("implementer");
+        assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::WriteWorkspace).allowed);
+        assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::ExecuteProcess).allowed);
+
+        let verifier = BuiltinModeRegistry::get("verifier").expect("verifier");
+        assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::WriteWorkspace).allowed);
+        assert!(RuntimePermissionGate::check(&verifier, RuntimeAction::ExecuteProcess).allowed);
     }
 }

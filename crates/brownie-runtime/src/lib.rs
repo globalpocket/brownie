@@ -1,12 +1,15 @@
 //! Brownie runtime entry points.
 
 use brownie_agent_loop::{AgentLoop, AgentLoopState};
-use brownie_agentmodes::{BuiltinModeRegistry, CompiledModePolicy};
+use brownie_agentmodes::{
+    BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
+};
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams, TaskListResult, TaskRunParams,
+    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
 };
 use brownie_store::{BrownieStore, LedgerEventKind};
 use serde_json::{json, Value};
@@ -19,6 +22,7 @@ const METHOD_TASK_RUN: &str = "task.run";
 const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
+const METHOD_PERMISSION_CHECK: &str = "permission.check";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -55,6 +59,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TASK_LIST => handle_task_list(request.id),
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
+        METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -153,6 +158,15 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
+    let policy = match resolve_policy_for_task_run(&running, &store) {
+        Ok(policy) => policy,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+
+    if let Err(error) = append_permission_checks(&store, &running, &policy) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+
     let ledger_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -242,6 +256,30 @@ fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
     result_response(id, json!(ModeListResult { modes }))
 }
 
+fn handle_permission_check(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: PermissionCheckParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let policy = match BuiltinModeRegistry::get(&params.mode_id) {
+        Some(policy) => policy,
+        None => return error_response(id, -32602, "invalid params: unknown mode_id"),
+    };
+    let action = runtime_action_from_name(&params.action);
+    let decision = RuntimePermissionGate::check(&policy, action);
+
+    result_response(
+        id,
+        json!(PermissionCheckResult {
+            mode_id: policy.mode_id,
+            action: params.action,
+            allowed: decision.allowed,
+            reason: decision.reason,
+        }),
+    )
+}
+
 fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: ModeGetParams = match parse_params(params) {
         Ok(params) => params,
@@ -284,11 +322,111 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "permissions": {
+            "read_only": policy.permissions.read_only,
             "workspace_write": policy.permissions.workspace_write,
             "process_exec": policy.permissions.process_exec,
+            "network_access": policy.permissions.network_access,
+            "service_control": policy.permissions.service_control,
+            "destructive": policy.permissions.destructive,
             "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
         }
     })
+}
+
+fn resolve_policy_for_task_run(
+    record: &brownie_protocol::TaskRecord,
+    store: &BrownieStore,
+) -> Result<CompiledModePolicy, String> {
+    if let Some(mode_id) = record.mode_id.as_deref() {
+        return BuiltinModeRegistry::get(mode_id)
+            .ok_or_else(|| format!("stored task has unknown mode_id: {mode_id}"));
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    let mode_id = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("mode_id"))
+        .and_then(|value| value.as_str())
+        .unwrap_or(DEFAULT_MODE_ID_FOR_RUN);
+    BuiltinModeRegistry::get(mode_id)
+        .ok_or_else(|| format!("ledger has unknown mode_id: {mode_id}"))
+}
+
+const DEFAULT_MODE_ID_FOR_RUN: &str = "orchestrator";
+
+fn append_permission_checks(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+) -> anyhow::Result<()> {
+    for action in [
+        RuntimeAction::ReadWorkspace,
+        RuntimeAction::SpawnSubtask,
+        RuntimeAction::WriteWorkspace,
+        RuntimeAction::ExecuteProcess,
+    ] {
+        let decision = RuntimePermissionGate::check(policy, action);
+        debug_assert!(
+            decision.allowed || decision.action != RuntimeAction::ReadWorkspace,
+            "ReadWorkspace is a required runtime permission and must always be allowed"
+        );
+        let payload = permission_payload(policy, &decision);
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::PermissionChecked,
+            Some(payload.clone()),
+        )?;
+        if !decision.allowed {
+            store.tasks().append_task_event_with_payload(
+                record,
+                LedgerEventKind::PermissionDenied,
+                Some(payload),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn permission_payload(
+    policy: &CompiledModePolicy,
+    decision: &brownie_agentmodes::PermissionDecision,
+) -> Value {
+    json!({
+        "mode_id": policy.mode_id,
+        "action": runtime_action_name(&decision.action),
+        "allowed": decision.allowed,
+        "reason": decision.reason,
+    })
+}
+
+fn runtime_action_from_name(action: &RuntimeActionName) -> RuntimeAction {
+    match action {
+        RuntimeActionName::ReadWorkspace => RuntimeAction::ReadWorkspace,
+        RuntimeActionName::WriteWorkspace => RuntimeAction::WriteWorkspace,
+        RuntimeActionName::ExecuteProcess => RuntimeAction::ExecuteProcess,
+        RuntimeActionName::AccessNetwork => RuntimeAction::AccessNetwork,
+        RuntimeActionName::ControlService => RuntimeAction::ControlService,
+        RuntimeActionName::DestructiveOperation => RuntimeAction::DestructiveOperation,
+        RuntimeActionName::SpawnSubtask => RuntimeAction::SpawnSubtask,
+    }
+}
+
+fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
+    match action {
+        RuntimeAction::ReadWorkspace => RuntimeActionName::ReadWorkspace,
+        RuntimeAction::WriteWorkspace => RuntimeActionName::WriteWorkspace,
+        RuntimeAction::ExecuteProcess => RuntimeActionName::ExecuteProcess,
+        RuntimeAction::AccessNetwork => RuntimeActionName::AccessNetwork,
+        RuntimeAction::ControlService => RuntimeActionName::ControlService,
+        RuntimeAction::DestructiveOperation => RuntimeActionName::DestructiveOperation,
+        RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
+    }
 }
 
 fn preview_prompt(prompt: &brownie_context::PromptView) -> String {
@@ -493,6 +631,12 @@ mod tests {
                 LedgerEventKind::TaskStarted,
                 LedgerEventKind::ModeResolved,
                 LedgerEventKind::TaskRunning,
+                LedgerEventKind::PermissionChecked,
+                LedgerEventKind::PermissionChecked,
+                LedgerEventKind::PermissionChecked,
+                LedgerEventKind::PermissionDenied,
+                LedgerEventKind::PermissionChecked,
+                LedgerEventKind::PermissionDenied,
                 LedgerEventKind::PromptBuilt,
                 LedgerEventKind::LlmRequestCreated,
                 LedgerEventKind::LlmResponseReceived,
@@ -613,6 +757,88 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
         );
         assert_eq!(get.result.expect("get result")["mode_id"], "orchestrator");
+    }
+
+    #[test]
+    fn permission_check_returns_allowed_and_denied_decisions() {
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"permission.check","params":{"mode_id":"orchestrator","action":"WriteWorkspace"}}"#,
+        );
+        assert!(denied.error.is_none());
+        let result = denied.result.expect("denied result");
+        assert_eq!(result["mode_id"], "orchestrator");
+        assert_eq!(result["action"], "WriteWorkspace");
+        assert_eq!(result["allowed"], false);
+        assert!(result["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("workspace writes"));
+
+        let allowed = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"permission.check","params":{"mode_id":"implementer","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(allowed.result.expect("allowed result")["allowed"], true);
+    }
+
+    #[test]
+    fn permission_check_unknown_mode_returns_invalid_params() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"permission.check","params":{"mode_id":"unknown-mode","action":"WriteWorkspace"}}"#,
+        );
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, -32602);
+    }
+
+    #[test]
+    fn task_run_appends_permission_events() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Permission checks","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::PermissionChecked)
+                .count(),
+            4
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::PermissionDenied)
+                .count(),
+            2
+        );
+        assert!(ledger.contains("WriteWorkspace"));
+        assert!(ledger.contains("ExecuteProcess"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

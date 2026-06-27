@@ -37,6 +37,7 @@ pub struct PromptBuildInput {
     pub goal: String,
     pub mode_id: Option<String>,
     pub mode_policy_summary: Option<String>,
+    pub permission_summary: Vec<String>,
     pub ledger_summary: Vec<String>,
 }
 
@@ -63,6 +64,8 @@ impl ContextMaterializer {
                     .to_string()
             });
 
+        let permission_summary = format_permission_summary(&input.ledger_events);
+
         let ledger_summary = input
             .ledger_events
             .iter()
@@ -75,6 +78,7 @@ impl ContextMaterializer {
             goal: input.task.goal,
             mode_id: input.task.mode_id,
             mode_policy_summary: Some(mode_policy_summary),
+            permission_summary,
             ledger_summary,
         }
     }
@@ -99,11 +103,33 @@ fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
 mode_id: {mode_id}
 workspace_write: {}
 process_exec: {}
-can_spawn_subtasks: {}",
+can_spawn_subtasks: {}
+network_access: {}
+service_control: {}
+destructive: {}
+read_only: {}",
         permission_bool("workspace_write"),
         permission_bool("process_exec"),
-        permission_bool("can_spawn_subtasks")
+        permission_bool("can_spawn_subtasks"),
+        permission_bool("network_access"),
+        permission_bool("service_control"),
+        permission_bool("destructive"),
+        permission_bool("read_only")
     )
+}
+
+fn format_permission_summary(events: &[LedgerEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::PermissionChecked)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let action = payload.get("action")?.as_str()?;
+            let allowed = payload.get("allowed")?.as_bool()?;
+            let status = if allowed { "allowed" } else { "denied" };
+            Some(format!("{action}: {status}"))
+        })
+        .collect()
 }
 
 pub struct PromptBuilder;
@@ -114,6 +140,17 @@ impl PromptBuilder {
         let mode_policy_summary = input
             .mode_policy_summary
             .unwrap_or_else(|| "Mode Policy:\n<unresolved>".to_string());
+        let permission_checks = if input.permission_summary.is_empty() {
+            "- <none>".to_string()
+        } else {
+            input
+                .permission_summary
+                .iter()
+                .map(|entry| format!("- {entry}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
         } else {
@@ -134,8 +171,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, input.goal, ledger
                     ),
                 },
             ],
@@ -200,6 +237,7 @@ mod tests {
             goal: "Test goal".into(),
             mode_id: Some("orchestrator".into()),
             mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
+            permission_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -252,8 +290,12 @@ mod tests {
                     "mode_id": "orchestrator",
                     "display_name": "Orchestrator",
                     "permissions": {
+                        "read_only": true,
                         "workspace_write": false,
                         "process_exec": false,
+                        "network_access": false,
+                        "service_control": false,
+                        "destructive": false,
                         "can_spawn_subtasks": true
                     }
                 })),
@@ -265,6 +307,37 @@ mod tests {
         assert!(summary.contains("mode_id: orchestrator"));
         assert!(summary.contains("workspace_write: false"));
         assert!(summary.contains("can_spawn_subtasks: true"));
+    }
+
+    #[test]
+    fn context_materializer_includes_permission_summary() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::PermissionChecked,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "action": "WriteWorkspace",
+                    "allowed": false,
+                    "reason": "Mode orchestrator does not allow workspace writes."
+                })),
+            }],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(
+            materialized.permission_summary,
+            vec!["WriteWorkspace: denied"]
+        );
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1].content.contains("Permission Checks:"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- WriteWorkspace: denied"));
     }
 
     #[test]

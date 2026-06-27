@@ -242,6 +242,8 @@ pub struct LedgerEvent {
 pub enum LedgerEventKind {
     TaskStarted,
     ModeResolved,
+    PermissionChecked,
+    PermissionDenied,
     TaskRunning,
     PromptBuilt,
     LlmRequestCreated,
