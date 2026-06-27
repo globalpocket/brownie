@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, ModeSummary, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isModeListResult, isModeSummary, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -18,6 +18,26 @@ export class RuntimeClient {
 
     if (!isRuntimeStatusResult(result)) {
       throw new RuntimeProtocolError('runtime.status returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async listModes(): Promise<ModeSummary[]> {
+    const result = await this.call<{ modes: unknown }>('mode.list');
+
+    if (!isModeListResult(result)) {
+      throw new RuntimeProtocolError('mode.list returned an invalid result');
+    }
+
+    return result.modes;
+  }
+
+  async getMode(modeId: string): Promise<ModeSummary> {
+    const result = await this.call<ModeSummary>('mode.get', { mode_id: modeId });
+
+    if (!isModeSummary(result)) {
+      throw new RuntimeProtocolError('mode.get returned an invalid result');
     }
 
     return result;

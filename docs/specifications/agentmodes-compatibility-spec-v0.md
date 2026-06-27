@@ -66,3 +66,11 @@ The tests should verify that the same input mode definitions compile to stable r
 - Rewriting AgentModes format.
 - Embedding AgentModes repo into Brownie.
 - Runtime mutation of active mode definitions inside a running task.
+
+## Phase 1.3 built-in mode policy baseline
+
+Phase 1.3 does not implement AgentModes YAML parsing, Mode Pack fetching, validation, or activation. Instead, the runtime uses a static built-in stub mode registry as the compatibility bridge before the full parser exists.
+
+The built-in registry resolves `mode_id` values into `CompiledModePolicy` records. The required Phase 1.3 modes are `orchestrator`, `implementer`, and `verifier`. Unknown mode IDs are rejected by runtime entry points that require an executable policy.
+
+Runtime permissions are modeled as policy data so later phases can enforce them outside of LLM instructions. Permission policy remains authoritative over prompt text.

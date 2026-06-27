@@ -19,6 +19,18 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const modeListCommand = vscode.commands.registerCommand('brownie.modeList', async () => {
+    try {
+      const modes = await runtimeClient.listModes();
+      output.appendLine(`mode.list: ${JSON.stringify(modes, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie modes: ${modes.length}`);
+    } catch (error) {
+      output.appendLine(`mode.list failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie mode list failed: ${formatError(error)}`);
+    }
+  });
+
   const taskStartCommand = vscode.commands.registerCommand('brownie.taskStart', async () => {
     const goal = await vscode.window.showInputBox({
       prompt: 'Task goal',
@@ -88,7 +100,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, taskStartCommand, taskListCommand, taskRunCommand);
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, taskRunCommand);
 }
 
 export function deactivate(): void {

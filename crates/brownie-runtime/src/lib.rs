@@ -1,9 +1,11 @@
 //! Brownie runtime entry points.
 
 use brownie_agent_loop::{AgentLoop, AgentLoopState};
+use brownie_agentmodes::{BuiltinModeRegistry, CompiledModePolicy};
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, RuntimeState, RuntimeStatus, TaskGetParams,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, RuntimeState, RuntimeStatus, TaskGetParams,
     TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
 };
 use brownie_store::{BrownieStore, LedgerEventKind};
@@ -15,6 +17,8 @@ const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
 const METHOD_TASK_RUN: &str = "task.run";
 const METHOD_TASK_LIST: &str = "task.list";
+const METHOD_MODE_LIST: &str = "mode.list";
+const METHOD_MODE_GET: &str = "mode.get";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -49,6 +53,8 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
         METHOD_TASK_LIST => handle_task_list(request.id),
+        METHOD_MODE_LIST => handle_mode_list(request.id),
+        METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -63,20 +69,38 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         return error_response(id, -32602, "invalid params: goal must not be empty");
     }
 
+    let policy = match resolve_task_start_policy(params.mode_id.as_deref()) {
+        Ok(policy) => policy,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let params = TaskStartParams {
+        goal: params.goal,
+        mode_id: Some(policy.mode_id.clone()),
+    };
+
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
     match store.tasks().start_task(params) {
-        Ok(record) => result_response(
-            id,
-            json!(TaskStartResult {
-                task_id: record.task_id,
-                run_id: record.run_id,
-                status: record.status,
-            }),
-        ),
+        Ok(record) => {
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &record,
+                LedgerEventKind::ModeResolved,
+                Some(mode_resolved_payload(&policy)),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            result_response(
+                id,
+                json!(TaskStartResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                }),
+            )
+        }
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
 }
@@ -208,6 +232,63 @@ fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
         Ok(tasks) => result_response(id, json!(TaskListResult { tasks })),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
+    let modes = BuiltinModeRegistry::list()
+        .into_iter()
+        .map(mode_summary)
+        .collect();
+    result_response(id, json!(ModeListResult { modes }))
+}
+
+fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModeGetParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    match BuiltinModeRegistry::get(&params.mode_id) {
+        Some(policy) => result_response(id, json!(mode_summary(policy))),
+        None => error_response(id, -32602, "invalid params: unknown mode_id"),
+    }
+}
+
+fn resolve_task_start_policy(mode_id: Option<&str>) -> Result<CompiledModePolicy, String> {
+    match mode_id {
+        Some(mode_id) if !mode_id.trim().is_empty() => BuiltinModeRegistry::get(mode_id)
+            .ok_or_else(|| "invalid params: unknown mode_id".to_string()),
+        _ => Ok(BuiltinModeRegistry::default_policy()),
+    }
+}
+
+fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
+    ModeSummary {
+        mode_id: policy.mode_id,
+        display_name: policy.display_name,
+        role_definition: policy.role_definition,
+        permissions: ModePermissionsSummary {
+            read_only: policy.permissions.read_only,
+            workspace_write: policy.permissions.workspace_write,
+            process_exec: policy.permissions.process_exec,
+            network_access: policy.permissions.network_access,
+            service_control: policy.permissions.service_control,
+            destructive: policy.permissions.destructive,
+            can_spawn_subtasks: policy.permissions.can_spawn_subtasks,
+        },
+    }
+}
+
+fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
+    json!({
+        "mode_id": policy.mode_id,
+        "display_name": policy.display_name,
+        "permissions": {
+            "workspace_write": policy.permissions.workspace_write,
+            "process_exec": policy.permissions.process_exec,
+            "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+        }
+    })
 }
 
 fn preview_prompt(prompt: &brownie_context::PromptView) -> String {
@@ -410,6 +491,7 @@ mod tests {
             events,
             vec![
                 LedgerEventKind::TaskStarted,
+                LedgerEventKind::ModeResolved,
                 LedgerEventKind::TaskRunning,
                 LedgerEventKind::PromptBuilt,
                 LedgerEventKind::LlmRequestCreated,
@@ -467,6 +549,76 @@ mod tests {
     fn task_start_with_empty_goal_returns_invalid_params() {
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":4,"method":"task.start","params":{"goal":"   ","mode_id":null}}"#,
+        );
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, -32602);
+    }
+
+    #[test]
+    fn task_start_with_null_mode_stores_default_and_mode_resolved() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Default mode","mode_id":null}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .expect("run id")
+            .to_string();
+        let state: TaskRecord = serde_json::from_str(
+            &std::fs::read_to_string(
+                temp.path()
+                    .join(".brownie/runs")
+                    .join(&run_id)
+                    .join("state.json"),
+            )
+            .expect("state"),
+        )
+        .expect("state record");
+        assert_eq!(state.mode_id, Some("orchestrator".into()));
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert!(ledger.contains("ModeResolved"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_start_with_unknown_mode_returns_invalid_params() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Bad mode","mode_id":"unknown-mode"}}"#,
+        );
+        assert!(response.result.is_none());
+        assert_eq!(response.error.expect("error").code, -32602);
+    }
+
+    #[test]
+    fn mode_list_and_get_return_builtin_modes() {
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .expect("modes")
+            .clone();
+        assert_eq!(modes.len(), 3);
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "orchestrator"));
+
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
+        );
+        assert_eq!(get.result.expect("get result")["mode_id"], "orchestrator");
+    }
+
+    #[test]
+    fn mode_get_unknown_returns_invalid_params() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"mode.get","params":{"mode_id":"unknown-mode"}}"#,
         );
         assert!(response.result.is_none());
         assert_eq!(response.error.expect("error").code, -32602);

@@ -1,7 +1,7 @@
 //! Context materialization and sliding window truncation crate.
 
 use brownie_protocol::TaskRecord;
-use brownie_store::LedgerEvent;
+use brownie_store::{LedgerEvent, LedgerEventKind};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +36,7 @@ pub struct PromptBuildInput {
     pub run_id: String,
     pub goal: String,
     pub mode_id: Option<String>,
+    pub mode_policy_summary: Option<String>,
     pub ledger_summary: Vec<String>,
 }
 
@@ -49,6 +50,19 @@ pub struct ContextMaterializer;
 
 impl ContextMaterializer {
     pub fn materialize(input: ContextMaterializerInput) -> PromptBuildInput {
+        let mode_policy_summary = input
+            .ledger_events
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .map(format_mode_policy_summary)
+            .unwrap_or_else(|| {
+                "Mode Policy:
+<unresolved>"
+                    .to_string()
+            });
+
         let ledger_summary = input
             .ledger_events
             .iter()
@@ -60,9 +74,36 @@ impl ContextMaterializer {
             run_id: input.task.run_id,
             goal: input.task.goal,
             mode_id: input.task.mode_id,
+            mode_policy_summary: Some(mode_policy_summary),
             ledger_summary,
         }
     }
+}
+
+fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
+    let mode_id = payload
+        .get("mode_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let permissions = payload.get("permissions");
+    let permission_bool = |name: &str| {
+        permissions
+            .and_then(|value| value.get(name))
+            .and_then(|value| value.as_bool())
+            .map(|value| value.to_string())
+            .unwrap_or_else(|| "<unknown>".to_string())
+    };
+
+    format!(
+        "Mode Policy:
+mode_id: {mode_id}
+workspace_write: {}
+process_exec: {}
+can_spawn_subtasks: {}",
+        permission_bool("workspace_write"),
+        permission_bool("process_exec"),
+        permission_bool("can_spawn_subtasks")
+    )
 }
 
 pub struct PromptBuilder;
@@ -70,6 +111,9 @@ pub struct PromptBuilder;
 impl PromptBuilder {
     pub fn build(input: PromptBuildInput) -> PromptView {
         let mode_id = input.mode_id.as_deref().unwrap_or("<none>");
+        let mode_policy_summary = input
+            .mode_policy_summary
+            .unwrap_or_else(|| "Mode Policy:\n<unresolved>".to_string());
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
         } else {
@@ -90,8 +134,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, input.goal, ledger
                     ),
                 },
             ],
@@ -155,6 +199,7 @@ mod tests {
             run_id: "run_1".into(),
             goal: "Test goal".into(),
             mode_id: Some("orchestrator".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -187,6 +232,39 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(materialized.goal, "Ship Phase 1.2");
         assert_eq!(materialized.ledger_summary, vec!["TaskStarted"]);
+        assert_eq!(
+            materialized.mode_policy_summary,
+            Some("Mode Policy:\n<unresolved>".into())
+        );
+    }
+
+    #[test]
+    fn context_materializer_includes_mode_policy_summary_from_ledger() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::ModeResolved,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "display_name": "Orchestrator",
+                    "permissions": {
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "can_spawn_subtasks": true
+                    }
+                })),
+            }],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        let summary = materialized.mode_policy_summary.expect("mode summary");
+        assert!(summary.contains("mode_id: orchestrator"));
+        assert!(summary.contains("workspace_write: false"));
+        assert!(summary.contains("can_spawn_subtasks: true"));
     }
 
     #[test]

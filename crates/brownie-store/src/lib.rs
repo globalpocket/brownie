@@ -241,6 +241,7 @@ pub struct LedgerEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LedgerEventKind {
     TaskStarted,
+    ModeResolved,
     TaskRunning,
     PromptBuilt,
     LlmRequestCreated,
