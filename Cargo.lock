@@ -17,6 +17,10 @@ checksum = "b4388bee8683e3d04af747c73422af53102d2bd24d9eadb6cbc100baef4b43f8"
 [[package]]
 name = "brownie-agent-loop"
 version = "0.1.0"
+dependencies = [
+ "brownie-context",
+ "brownie-llm",
+]
 
 [[package]]
 name = "brownie-agentmodes"
@@ -29,6 +33,11 @@ version = "0.1.0"
 [[package]]
 name = "brownie-context"
 version = "0.1.0"
+dependencies = [
+ "brownie-protocol",
+ "brownie-store",
+ "serde",
+]
 
 [[package]]
 name = "brownie-events"
@@ -45,6 +54,9 @@ version = "0.1.0"
 [[package]]
 name = "brownie-llm"
 version = "0.1.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "brownie-modepack"
@@ -68,6 +80,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "brownie-agent-loop",
+ "brownie-context",
  "brownie-protocol",
  "brownie-store",
  "serde",

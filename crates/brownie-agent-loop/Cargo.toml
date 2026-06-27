@@ -6,5 +6,9 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+brownie-context = { path = "../brownie-context" }
+brownie-llm = { path = "../brownie-llm" }
+
 [lib]
 path = "src/lib.rs"

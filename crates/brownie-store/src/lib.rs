@@ -1,7 +1,7 @@
 //! Brownie persistence crate.
 
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
@@ -149,14 +149,28 @@ impl TaskStore {
         fs::write(run_dir.join("state.json"), state).context("failed to write task state")
     }
 
-    fn append_task_event(&self, record: &TaskRecord, kind: LedgerEventKind) -> Result<()> {
+    pub fn append_task_event(&self, record: &TaskRecord, kind: LedgerEventKind) -> Result<()> {
+        self.append_task_event_with_payload(record, kind, None)
+    }
+
+    pub fn append_task_event_with_payload(
+        &self,
+        record: &TaskRecord,
+        kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<()> {
         RunLedger::new(self.run_dir(&record.run_id)).append(&LedgerEvent {
             event_id: format!("event_{}", Uuid::new_v4()),
             task_id: record.task_id.clone(),
             run_id: record.run_id.clone(),
             kind,
             timestamp: timestamp()?,
+            payload,
         })
+    }
+
+    pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
+        RunLedger::new(self.run_dir(run_id)).read_events()
     }
 
     fn runs_dir(&self) -> PathBuf {
@@ -188,6 +202,29 @@ impl RunLedger {
         writeln!(file).context("failed to write ledger newline")?;
         Ok(())
     }
+
+    pub fn read_events(&self) -> Result<Vec<LedgerEvent>> {
+        let ledger_path = self.run_dir.join("ledger.jsonl");
+        if !ledger_path.exists() {
+            return Ok(Vec::new());
+        }
+
+        let file = fs::File::open(&ledger_path)
+            .with_context(|| format!("failed to open {}", ledger_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut events = Vec::new();
+        for line in reader.lines() {
+            let line = line.context("failed to read ledger line")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            events.push(
+                serde_json::from_str(&line)
+                    .with_context(|| format!("failed to parse {}", ledger_path.display()))?,
+            );
+        }
+        Ok(events)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -197,12 +234,17 @@ pub struct LedgerEvent {
     pub run_id: String,
     pub kind: LedgerEventKind,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payload: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LedgerEventKind {
     TaskStarted,
     TaskRunning,
+    PromptBuilt,
+    LlmRequestCreated,
+    LlmResponseReceived,
     TaskCompleted,
     TaskFailed,
     TaskCancelled,
@@ -276,6 +318,32 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str(line).expect("event"))
             .collect();
+        assert_eq!(events[0].kind, LedgerEventKind::TaskStarted);
+        assert_eq!(events[1].kind, LedgerEventKind::TaskRunning);
+    }
+
+    #[test]
+    fn ledger_read_events_returns_appended_events_in_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let record = store
+            .start_task(TaskStartParams {
+                goal: "read ledger".into(),
+                mode_id: None,
+            })
+            .expect("start task");
+        store
+            .update_task_status(
+                &record.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("update task");
+
+        let events = store
+            .read_ledger_events(&record.run_id)
+            .expect("read ledger events");
+        assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, LedgerEventKind::TaskStarted);
         assert_eq!(events[1].kind, LedgerEventKind::TaskRunning);
     }
