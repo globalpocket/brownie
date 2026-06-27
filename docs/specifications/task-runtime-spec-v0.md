@@ -98,3 +98,11 @@ TaskCancelled
 `LedgerEvent` may include an optional `payload` object. Prompt and fake-LLM events store metadata such as `message_count`, `model`, `prompt_preview`, and `content_preview`. Full prompt text is not persisted by default.
 
 Phase 1.2 still does not call a real LLM API, implement an OpenAI-compatible HTTP client, execute tools, parse AgentModes, fetch or activate Mode Packs, use Qdrant, use llama-server, or run an indexer.
+
+## Phase 1.3 mode resolution during task.start
+
+`task.start` resolves the requested `mode_id` before creating a task record. If `mode_id` is omitted or `null`, the runtime uses the default built-in `orchestrator` policy and stores `mode_id: "orchestrator"` in `state.json`.
+
+If a caller supplies an unknown `mode_id`, `task.start` returns JSON-RPC `-32602 invalid params` and does not create a task. This prevents tasks from running without a resolved runtime policy.
+
+After task creation, the run ledger records `TaskStarted` followed by `ModeResolved`. The `ModeResolved` payload stores a compact policy summary rather than the full policy.

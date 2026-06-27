@@ -114,6 +114,7 @@ mod tests {
             run_id: "run_1".into(),
             goal: "test".into(),
             mode_id: None,
+            mode_policy_summary: Some("Mode Policy:\n<unresolved>".into()),
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 

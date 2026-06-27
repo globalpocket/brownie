@@ -25,6 +25,24 @@ export interface RuntimeStatusResult {
 
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
+
+export interface ModePermissionsSummary {
+  read_only: boolean;
+  workspace_write: boolean;
+  process_exec: boolean;
+  network_access: boolean;
+  service_control: boolean;
+  destructive: boolean;
+  can_spawn_subtasks: boolean;
+}
+
+export interface ModeSummary {
+  mode_id: string;
+  display_name: string;
+  role_definition: string;
+  permissions: ModePermissionsSummary;
+}
+
 export interface TaskStartParams {
   goal: string;
   modeId?: string;
@@ -83,6 +101,20 @@ export function isRuntimeStatusResult(value: unknown): value is RuntimeStatusRes
   );
 }
 
+export function isModeSummary(value: unknown): value is ModeSummary {
+  return (
+    isRecord(value) &&
+    typeof value.mode_id === 'string' &&
+    typeof value.display_name === 'string' &&
+    typeof value.role_definition === 'string' &&
+    isModePermissionsSummary(value.permissions)
+  );
+}
+
+export function isModeListResult(value: unknown): value is { modes: ModeSummary[] } {
+  return isRecord(value) && Array.isArray(value.modes) && value.modes.every(isModeSummary);
+}
+
 export function isTaskStartResult(value: unknown): value is TaskStartResult {
   return (
     isRecord(value) &&
@@ -111,6 +143,19 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     isTaskStatus(value.status) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
+  );
+}
+
+function isModePermissionsSummary(value: unknown): value is ModePermissionsSummary {
+  return (
+    isRecord(value) &&
+    typeof value.read_only === 'boolean' &&
+    typeof value.workspace_write === 'boolean' &&
+    typeof value.process_exec === 'boolean' &&
+    typeof value.network_access === 'boolean' &&
+    typeof value.service_control === 'boolean' &&
+    typeof value.destructive === 'boolean' &&
+    typeof value.can_spawn_subtasks === 'boolean'
   );
 }
 

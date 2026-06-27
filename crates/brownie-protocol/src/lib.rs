@@ -44,6 +44,35 @@ pub enum RuntimeState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeSummary {
+    pub mode_id: String,
+    pub display_name: String,
+    pub role_definition: String,
+    pub permissions: ModePermissionsSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePermissionsSummary {
+    pub read_only: bool,
+    pub workspace_write: bool,
+    pub process_exec: bool,
+    pub network_access: bool,
+    pub service_control: bool,
+    pub destructive: bool,
+    pub can_spawn_subtasks: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeListResult {
+    pub modes: Vec<ModeSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModeGetParams {
+    pub mode_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,

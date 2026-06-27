@@ -37,3 +37,11 @@ Phase 1.2 records prompt lifecycle metadata in the run ledger, but it does not p
 - Tool execution.
 - Mode Pack fetch or activation.
 - Qdrant, llama-server, or indexer integration.
+
+## Phase 1.3 mode policy prompt summary
+
+`PromptBuildInput` includes an optional mode policy summary materialized from the run ledger. `ContextMaterializer` reads the latest `ModeResolved` event and formats the resolved mode and key permissions for prompt construction.
+
+`PromptBuilder` includes the mode policy summary in the prompt view. This is informational for Phase 1.3 only; permission enforcement is reserved for later runtime phases and remains authoritative over any LLM instruction.
+
+If no `ModeResolved` event is available, the materialized prompt input uses `Mode Policy:\n<unresolved>` as a fallback summary.

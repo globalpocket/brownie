@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isRuntimeStatusResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isModeSummary, isRuntimeStatusResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -14,6 +14,22 @@ class FakeTransport implements RuntimeTransport {
     return this.response as JsonRpcResponse<T>;
   }
 }
+
+
+const modeSummary = {
+  mode_id: 'orchestrator',
+  display_name: 'Orchestrator',
+  role_definition: 'Coordinate tasks.',
+  permissions: {
+    read_only: true,
+    workspace_write: false,
+    process_exec: false,
+    network_access: false,
+    service_control: false,
+    destructive: false,
+    can_spawn_subtasks: true,
+  },
+};
 
 const taskRecord = {
   task_id: 'task_1',
@@ -37,6 +53,11 @@ describe('protocol validation', () => {
     expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 1, error: { code: '1', message: 'bad' } })).toBe(false);
   });
 
+  it('accepts mode summaries and rejects invalid permission shapes', () => {
+    expect(isModeSummary(modeSummary)).toBe(true);
+    expect(isModeSummary({ ...modeSummary, permissions: { ...modeSummary.permissions, workspace_write: 'false' } })).toBe(false);
+  });
+
   it('accepts runtime.status results with string fields', () => {
     expect(isRuntimeStatusResult({ name: 'brownie-runtime', version: '0.1.0', status: 'Ready' })).toBe(true);
   });
@@ -57,6 +78,22 @@ describe('RuntimeClient', () => {
       status: 'Ready',
     });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'runtime.status' }]);
+  });
+
+  it('creates a mode.list request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { modes: [modeSummary] } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.listModes()).resolves.toEqual([modeSummary]);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'mode.list' }]);
+  });
+
+  it('creates a mode.get request', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: modeSummary });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.getMode('orchestrator')).resolves.toEqual(modeSummary);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'mode.get', params: { mode_id: 'orchestrator' } }]);
   });
 
   it('creates a task.start request', async () => {

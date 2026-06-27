@@ -22,6 +22,10 @@
         "title": "Brownie: Runtime Status"
       },
       {
+        "command": "brownie.modeList",
+        "title": "Brownie: List Modes"
+      },
+      {
         "command": "brownie.taskStart",
         "title": "Brownie: Start Task"
       },
