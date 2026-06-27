@@ -53,7 +53,13 @@ impl FakeLlm {
         }
         let tool_requests = requests
             .into_iter()
-            .map(|(tool_id, reason)| serde_json::json!({ "tool_id": tool_id, "reason": reason }))
+            .map(|(tool_id, reason)| {
+                if tool_id == "workspace.read" {
+                    serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md" } })
+                } else {
+                    serde_json::json!({ "tool_id": tool_id, "reason": reason })
+                }
+            })
             .collect::<Vec<_>>();
         let intent = serde_json::json!({ "tool_requests": tool_requests });
         LlmResponse {
@@ -94,5 +100,6 @@ mod tests {
         assert!(content.starts_with("Fake LLM completed request with 2 messages."));
         assert!(content.contains("```brownie-tool-intent"));
         assert!(content.contains("workspace.read"));
+        assert!(content.contains(r#""path": "README.md""#));
     }
 }
