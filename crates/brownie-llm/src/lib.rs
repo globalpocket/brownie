@@ -29,6 +29,7 @@ pub struct LlmResponse {
 pub enum LlmProviderKind {
     Fake,
     OpenAiCompatible,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,6 +222,7 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
             self.config.base_url.trim_end_matches('/')
         );
         let client = reqwest::blocking::Client::builder()
+            .no_proxy()
             .timeout(self.timeout)
             .build()
             .map_err(|e| {

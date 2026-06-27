@@ -64,6 +64,7 @@ describe('protocol validation', () => {
 
   it('accepts valid llm.status results and rejects missing required fields', () => {
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', active_profile: null })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Unknown', enabled: false, model: '', base_url: null, reason: 'unknown provider: mystery', strict: true, will_fallback_to_fake: false, config_source: 'Env', active_profile: null })).toBe(true);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false, config_source: 'Default' })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, active_profile: null })).toBe(false);

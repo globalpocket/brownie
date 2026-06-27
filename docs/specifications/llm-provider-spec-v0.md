@@ -41,3 +41,13 @@ OpenAI-compatible failures report only provider type, redacted base URL, model, 
 Provider selection now follows explicit environment override, then `.brownie/config.json` `active_profile`, then the default Fake provider. The default remains Fake and Brownie does not contact a real LLM API unless explicitly configured. OpenAI-compatible workspace profiles use `api_key_env`; direct `api_key` fields are rejected.
 
 `llm.status` includes `config_source` and `active_profile` so callers can distinguish `Env`, `WorkspaceConfig`, and `Default` selection.
+
+## Phase 2.3 OpenAI-compatible smoke and redaction clarification
+
+Phase 2.3 requires deterministic mock-server coverage for config-profile opt-in to the OpenAI-compatible provider. The mock path validates `POST /v1/chat/completions`, the `model` field, system/user messages, presence of an `Authorization` header without logging its value, successful response parsing, and strict failures for non-2xx, malformed JSON, and missing choices.
+
+CI must not require a live local or external LLM endpoint. Optional live local endpoint smoke steps are documented in `docs/specifications/openai-compatible-smoke-spec-v0.md`.
+
+Run inspection/event metadata may include provider, model, redacted base URL, and strict mode. It must not include API key values, `Authorization`, or `Bearer` token values.
+
+Unknown `BROWNIE_LLM_PROVIDER` values must not silently become Fake. Status reports `provider=Unknown`, `enabled=false`, and a safe explanatory reason; strict task runs fail.
