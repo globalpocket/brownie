@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isModeListResult, isModeSummary, isPermissionCheckResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -74,6 +74,36 @@ export class RuntimeClient {
 
     if (!isTaskRunResult(result)) {
       throw new RuntimeProtocolError('task.run returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async getRunEvents(runId: string): Promise<RunEventsResult> {
+    const result = await this.call<RunEventsResult>('run.events', { run_id: runId });
+
+    if (!isRunEventsResult(result)) {
+      throw new RuntimeProtocolError('run.events returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async inspectRun(runId: string): Promise<RunInspectSummary> {
+    const result = await this.call<RunInspectResult>('run.inspect', { run_id: runId });
+
+    if (!isRunInspectResult(result)) {
+      throw new RuntimeProtocolError('run.inspect returned an invalid result');
+    }
+
+    return result.run;
+  }
+
+  async inspectTask(taskId: string): Promise<TaskInspectResult> {
+    const result = await this.call<TaskInspectResult>('task.inspect', { task_id: taskId });
+
+    if (!isTaskInspectResult(result)) {
+      throw new RuntimeProtocolError('task.inspect returned an invalid result');
     }
 
     return result;

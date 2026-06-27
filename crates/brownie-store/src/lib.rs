@@ -103,6 +103,15 @@ impl TaskStore {
         Ok(None)
     }
 
+    pub fn get_task_by_run_id(&self, run_id: &str) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record.run_id == run_id {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {
         let runs_dir = self.runs_dir();
         if !runs_dir.exists() {

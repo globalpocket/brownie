@@ -127,6 +127,40 @@ export interface TaskRecord {
   updated_at: string;
 }
 
+export interface LedgerEventSummary {
+  event_id: string;
+  task_id: string;
+  run_id: string;
+  kind: string;
+  timestamp: string;
+  payload?: unknown;
+}
+
+export interface RunInspectSummary {
+  run_id: string;
+  task_id?: string | null;
+  status?: TaskStatus | null;
+  event_count: number;
+  has_tool_execution_completed: boolean;
+  has_second_pass: boolean;
+  final_response_preview?: string | null;
+  timeline: string[];
+}
+
+export interface RunEventsResult {
+  run_id: string;
+  events: LedgerEventSummary[];
+}
+
+export interface RunInspectResult {
+  run: RunInspectSummary;
+}
+
+export interface TaskInspectResult {
+  task: TaskRecord;
+  run: RunInspectSummary;
+}
+
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse<unknown> {
   if (!isRecord(value)) {
     return false;
@@ -271,6 +305,46 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
+}
+
+export function isLedgerEventSummary(value: unknown): value is LedgerEventSummary {
+  return (
+    isRecord(value) &&
+    typeof value.event_id === 'string' &&
+    typeof value.task_id === 'string' &&
+    typeof value.run_id === 'string' &&
+    typeof value.kind === 'string' &&
+    typeof value.timestamp === 'string'
+  );
+}
+
+export function isRunEventsResult(value: unknown): value is RunEventsResult {
+  return isRecord(value) && typeof value.run_id === 'string' && Array.isArray(value.events) && value.events.every(isLedgerEventSummary);
+}
+
+export function isRunInspectSummary(value: unknown): value is RunInspectSummary {
+  return (
+    isRecord(value) &&
+    typeof value.run_id === 'string' &&
+    (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
+    (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
+    typeof value.event_count === 'number' &&
+    Number.isInteger(value.event_count) &&
+    value.event_count >= 0 &&
+    typeof value.has_tool_execution_completed === 'boolean' &&
+    typeof value.has_second_pass === 'boolean' &&
+    (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string') &&
+    Array.isArray(value.timeline) &&
+    value.timeline.every((entry) => typeof entry === 'string')
+  );
+}
+
+export function isRunInspectResult(value: unknown): value is RunInspectResult {
+  return isRecord(value) && isRunInspectSummary(value.run);
+}
+
+export function isTaskInspectResult(value: unknown): value is TaskInspectResult {
+  return isRecord(value) && isTaskRecord(value.task) && isRunInspectSummary(value.run);
 }
 
 function isModePermissionsSummary(value: unknown): value is ModePermissionsSummary {

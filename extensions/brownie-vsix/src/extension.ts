@@ -143,6 +143,55 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
 
+  const taskInspectCommand = vscode.commands.registerCommand('brownie.taskInspect', async () => {
+    const taskId = await vscode.window.showInputBox({
+      prompt: 'Task ID',
+      placeHolder: 'task_...',
+      ignoreFocusOut: true,
+    });
+
+    if (taskId === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.inspectTask(taskId.trim());
+      output.appendLine(`task.inspect: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie task inspect: ${result.task.status}, events=${result.run.event_count}, second_pass=${result.run.has_second_pass}`,
+      );
+    } catch (error) {
+      output.appendLine(`task.inspect failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie task inspect failed: ${formatError(error)}`);
+    }
+  });
+
+  const runInspectCommand = vscode.commands.registerCommand('brownie.runInspect', async () => {
+    const runId = await vscode.window.showInputBox({
+      prompt: 'Run ID',
+      placeHolder: 'run_...',
+      ignoreFocusOut: true,
+    });
+
+    if (runId === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.inspectRun(runId.trim());
+      output.appendLine(`run.inspect: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie run inspect: events=${result.event_count}, second_pass=${result.has_second_pass}`,
+      );
+    } catch (error) {
+      output.appendLine(`run.inspect failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie run inspect failed: ${formatError(error)}`);
+    }
+  });
+
+
   const toolPlanCommand = vscode.commands.registerCommand('brownie.toolPlan', async () => {
     const taskId = await vscode.window.showInputBox({
       prompt: 'Task ID',
@@ -242,7 +291,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand);
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
 }
 
 export function deactivate(): void {
