@@ -25,3 +25,13 @@ Phase 2.0 introduces a configurable LLM provider boundary for connecting real LL
 LLM request events store only safe metadata: `provider`, `model`, and `message_count`.
 LLM response events store only `provider` and `content_preview`.
 Full prompts, full responses, API keys, and Authorization headers are not persisted for inspection.
+
+## Phase 2.1 strict OpenAI-compatible smoke path
+
+Phase 2.1 keeps Fake as the default provider. The runtime does not make an external LLM call unless `BROWNIE_LLM_PROVIDER=openai-compatible` is explicitly selected and the required OpenAI-compatible configuration is present. Streaming remains out of scope.
+
+`BROWNIE_LLM_STRICT` defaults to `false`. When OpenAI-compatible is requested with incomplete configuration, `strict=false` makes `task.run` fall back to Fake and `llm.status` reports `will_fallback_to_fake=true`; `strict=true` makes `task.run` fail without an external call. Runtime permissions continue to override LLM instructions.
+
+`llm.status` includes `strict` and `will_fallback_to_fake`. Status, ledger, inspection, and error messages must not expose API keys, Authorization headers, Bearer tokens, or query-string secrets. Redaction covers Authorization, Bearer tokens, `api_key`, API key text, `access_token`, `token=`, and `key=` patterns.
+
+OpenAI-compatible failures report only provider type, redacted base URL, model, and high-level failure reason for timeout/connection failure, non-2xx status, invalid JSON, missing choices, or missing message content.

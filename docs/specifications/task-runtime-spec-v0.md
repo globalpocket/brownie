@@ -149,3 +149,9 @@ The second pass runs only when at least one `ToolExecutionCompleted` event exist
 ## Phase 2.0 LLM provider boundary
 
 Phase 2.0 routes LLM calls through a provider abstraction. The Fake provider remains the default and no external LLM API is contacted unless `BROWNIE_LLM_PROVIDER=openai-compatible` and the required OpenAI-compatible environment configuration are present. The `llm.status` JSON-RPC method reports provider, enabled state, model, base URL, and a non-secret reason; it never returns API keys or Authorization headers. Task ledger LLM request events store only provider/model/message_count metadata, and response events store only provider/content_preview. Streaming and additional tool execution capabilities remain out of scope. See `docs/specifications/llm-provider-spec-v0.md`.
+
+## Phase 2.1 strict provider behavior
+
+`task.run` selects Fake unless `BROWNIE_LLM_PROVIDER=openai-compatible` is explicitly set. With complete OpenAI-compatible configuration it uses that provider and records redacted provider metadata (`provider`, `model`, `message_count`, `base_url`, `strict`) in `LlmRequestCreated` and `SecondPassLlmRequestCreated`. API keys are never stored.
+
+If OpenAI-compatible configuration is incomplete, `BROWNIE_LLM_STRICT=false` (default) falls back to Fake. `BROWNIE_LLM_STRICT=true` fails the run, writes `LlmRequestFailed` and `TaskFailed`, and returns `-32603`. If an enabled OpenAI-compatible request fails, the runtime writes `LlmRequestFailed` or `SecondPassLlmRequestFailed` with a redacted high-level reason and marks the task Failed. Streaming and additional execution capabilities remain out of scope.

@@ -63,8 +63,8 @@ describe('protocol validation', () => {
   });
 
   it('accepts valid llm.status results and rejects missing required fields', () => {
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null })).toBe(true);
-    expect(isLlmStatusResult({ provider: 'Fake', model: 'brownie-fake-llm' })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true })).toBe(false);
   });
 
@@ -147,7 +147,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates an llm.status request', async () => {
-    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null };
+    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 

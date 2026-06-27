@@ -29,6 +29,8 @@ export interface LlmStatusResult {
   model: string;
   base_url?: string | null;
   reason?: string | null;
+  strict: boolean;
+  will_fallback_to_fake: boolean;
 }
 
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
@@ -207,7 +209,9 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     typeof value.enabled === 'boolean' &&
     typeof value.model === 'string' &&
     (value.base_url === undefined || value.base_url === null || typeof value.base_url === 'string') &&
-    (value.reason === undefined || value.reason === null || typeof value.reason === 'string')
+    (value.reason === undefined || value.reason === null || typeof value.reason === 'string') &&
+    typeof value.strict === 'boolean' &&
+    typeof value.will_fallback_to_fake === 'boolean'
   );
 }
 

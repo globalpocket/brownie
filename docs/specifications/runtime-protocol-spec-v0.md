@@ -214,3 +214,9 @@ The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JS
 ## Phase 2.0 LLM provider boundary
 
 Phase 2.0 routes LLM calls through a provider abstraction. The Fake provider remains the default and no external LLM API is contacted unless `BROWNIE_LLM_PROVIDER=openai-compatible` and the required OpenAI-compatible environment configuration are present. The `llm.status` JSON-RPC method reports provider, enabled state, model, base URL, and a non-secret reason; it never returns API keys or Authorization headers. Task ledger LLM request events store only provider/model/message_count metadata, and response events store only provider/content_preview. Streaming and additional tool execution capabilities remain out of scope. See `docs/specifications/llm-provider-spec-v0.md`.
+
+## Phase 2.1 LLM status and failure events
+
+`llm.status` returns `provider`, `enabled`, `model`, `base_url`, `reason`, `strict`, and `will_fallback_to_fake`. `will_fallback_to_fake` is true only when OpenAI-compatible was requested, required configuration is missing, and `BROWNIE_LLM_STRICT` is not true. No API key or Authorization/Bearer value is returned.
+
+Ledger event kinds include `LlmRequestFailed` and `SecondPassLlmRequestFailed`. When a configured provider call fails during `task.run`, the runtime records the redacted failure event, records `TaskFailed`, marks the task Failed, and returns JSON-RPC `-32603`. Disabled OpenAI-compatible with `strict=false` falls back to Fake and does not emit a failure event. Phase 2.1 does not add streaming or any new workspace.write, process.exec, network tool, service-control, destructive, or subtask-spawn execution capability.
