@@ -119,6 +119,34 @@ pub struct ToolPlanDecisionSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParseParams {
+    pub assistant_content: String,
+    pub mode_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParseResult {
+    pub mode_id: String,
+    pub items: Vec<ToolIntentDecisionSummary>,
+    pub rejected: Vec<ToolIntentRejectedSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentDecisionSummary {
+    pub tool_id: String,
+    pub required_action: RuntimeActionName,
+    pub allowed: bool,
+    pub reason: String,
+    pub request_reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentRejectedSummary {
+    pub tool_id: Option<String>,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolListResult {
     pub tools: Vec<ToolSummary>,
 }

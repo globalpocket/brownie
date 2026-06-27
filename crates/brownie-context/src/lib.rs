@@ -39,6 +39,7 @@ pub struct PromptBuildInput {
     pub mode_policy_summary: Option<String>,
     pub permission_summary: Vec<String>,
     pub tool_plan_summary: Vec<String>,
+    pub tool_intent_summary: Vec<String>,
     pub ledger_summary: Vec<String>,
 }
 
@@ -67,6 +68,7 @@ impl ContextMaterializer {
 
         let permission_summary = format_permission_summary(&input.ledger_events);
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
+        let tool_intent_summary = format_tool_intent_summary(&input.ledger_events);
 
         let ledger_summary = input
             .ledger_events
@@ -82,6 +84,7 @@ impl ContextMaterializer {
             mode_policy_summary: Some(mode_policy_summary),
             permission_summary,
             tool_plan_summary,
+            tool_intent_summary,
             ledger_summary,
         }
     }
@@ -149,6 +152,39 @@ fn format_tool_plan_summary(events: &[LedgerEvent]) -> Vec<String> {
         .collect()
 }
 
+fn format_tool_intent_summary(events: &[LedgerEvent]) -> Vec<String> {
+    let mut summary = Vec::new();
+    for event in events {
+        match event.kind {
+            LedgerEventKind::ToolIntentPermissionChecked => {
+                let Some(payload) = event.payload.as_ref() else {
+                    continue;
+                };
+                let Some(tool_id) = payload.get("tool_id").and_then(|value| value.as_str()) else {
+                    continue;
+                };
+                let Some(allowed) = payload.get("allowed").and_then(|value| value.as_bool()) else {
+                    continue;
+                };
+                let status = if allowed { "allowed" } else { "denied" };
+                summary.push(format!("{tool_id}: {status}"));
+            }
+            LedgerEventKind::ToolIntentRejected => {
+                let Some(payload) = event.payload.as_ref() else {
+                    continue;
+                };
+                let tool_id = payload
+                    .get("tool_id")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("<unknown>");
+                summary.push(format!("{tool_id}: rejected"));
+            }
+            _ => {}
+        }
+    }
+    summary
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -179,6 +215,17 @@ impl PromptBuilder {
                 .join("\n")
         };
 
+        let tool_intent = if input.tool_intent_summary.is_empty() {
+            "- <none>".to_string()
+        } else {
+            input
+                .tool_intent_summary
+                .iter()
+                .map(|entry| format!("- {entry}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
         } else {
@@ -199,8 +246,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, input.goal, ledger
                     ),
                 },
             ],
@@ -267,6 +314,7 @@ mod tests {
             mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
             permission_summary: vec![],
             tool_plan_summary: vec![],
+            tool_intent_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -367,6 +415,39 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- WriteWorkspace: denied"));
+    }
+
+    #[test]
+    fn context_materializer_includes_assistant_tool_intent_summary() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![
+                LedgerEvent {
+                    event_id: "event_1".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::ToolIntentPermissionChecked,
+                    timestamp: "2026-01-01T00:00:00Z".into(),
+                    payload: Some(serde_json::json!({"tool_id":"workspace.read","allowed":true})),
+                },
+                LedgerEvent {
+                    event_id: "event_2".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::ToolIntentRejected,
+                    timestamp: "2026-01-01T00:00:01Z".into(),
+                    payload: Some(
+                        serde_json::json!({"tool_id":"unknown.tool","reason":"Unknown tool id."}),
+                    ),
+                },
+            ],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(
+            materialized.tool_intent_summary,
+            vec!["workspace.read: allowed", "unknown.tool: rejected"]
+        );
     }
 
     #[test]

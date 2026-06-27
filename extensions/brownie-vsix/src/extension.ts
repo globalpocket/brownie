@@ -169,7 +169,46 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand);
+
+  const toolIntentParseCommand = vscode.commands.registerCommand('brownie.toolIntentParse', async () => {
+    const modeId = await vscode.window.showInputBox({
+      prompt: 'Mode ID',
+      placeHolder: 'orchestrator',
+      ignoreFocusOut: true,
+    });
+
+    if (modeId === undefined) {
+      return;
+    }
+
+    const assistantContent = await vscode.window.showInputBox({
+      prompt: 'Assistant content containing a brownie-tool-intent fenced block',
+      placeHolder: '```brownie-tool-intent\n{"tool_requests":[...]}\n```',
+      ignoreFocusOut: true,
+    });
+
+    if (assistantContent === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.parseToolIntent(modeId.trim(), assistantContent);
+      const approved = result.items.filter((item) => item.allowed).length;
+      const denied = result.items.length - approved;
+      const rejected = result.rejected.length;
+      output.appendLine(`tool.intent.parse: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie tool intent: ${approved} approved, ${denied} denied, ${rejected} rejected`,
+      );
+    } catch (error) {
+      output.appendLine(`tool.intent.parse failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie tool intent parse failed: ${formatError(error)}`);
+    }
+  });
+
+
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand);
 }
 
 export function deactivate(): void {

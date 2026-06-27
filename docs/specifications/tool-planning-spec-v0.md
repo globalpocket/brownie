@@ -35,3 +35,7 @@ Phase 1.5 introduces a dry-run tool planning layer before any future tool execut
 3. `ToolPlanApproved` or `ToolPlanDenied`
 
 A denied dry-run tool plan does not fail `task.run` in Phase 1.5 because no actual tool request is executed.
+
+## Phase 1.6 assistant tool intent dry-run
+
+Phase 1.6 adds assistant tool intent parsing from fenced `brownie-tool-intent` JSON blocks. The runtime validates all requested tool IDs against `BuiltinToolRegistry` and evaluates valid requests with `RuntimePermissionGate`. Denied or rejected assistant tool intent is recorded for inspection, but no tool is executed and `task.run` remains allowed to complete in this phase.

@@ -73,6 +73,25 @@ export interface ToolPlanResult {
   items: ToolPlanDecisionSummary[];
 }
 
+export interface ToolIntentDecisionSummary {
+  tool_id: string;
+  required_action: RuntimeActionName;
+  allowed: boolean;
+  reason: string;
+  request_reason: string;
+}
+
+export interface ToolIntentRejectedSummary {
+  tool_id?: string | null;
+  reason: string;
+}
+
+export interface ToolIntentParseResult {
+  mode_id: string;
+  items: ToolIntentDecisionSummary[];
+  rejected: ToolIntentRejectedSummary[];
+}
+
 export interface TaskStartParams {
   goal: string;
   modeId?: string;
@@ -155,6 +174,17 @@ export function isPermissionCheckResult(value: unknown): value is PermissionChec
   );
 }
 
+export function isToolIntentParseResult(value: unknown): value is ToolIntentParseResult {
+  return (
+    isRecord(value) &&
+    typeof value.mode_id === 'string' &&
+    Array.isArray(value.items) &&
+    value.items.every(isToolIntentDecisionSummary) &&
+    Array.isArray(value.rejected) &&
+    value.rejected.every(isToolIntentRejectedSummary)
+  );
+}
+
 export function isToolPlanResult(value: unknown): value is ToolPlanResult {
   return (
     isRecord(value) &&
@@ -163,6 +193,25 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
     typeof value.mode_id === 'string' &&
     Array.isArray(value.items) &&
     value.items.every(isToolPlanDecisionSummary)
+  );
+}
+
+function isToolIntentDecisionSummary(value: unknown): value is ToolIntentDecisionSummary {
+  return (
+    isRecord(value) &&
+    typeof value.tool_id === 'string' &&
+    isRuntimeActionName(value.required_action) &&
+    typeof value.allowed === 'boolean' &&
+    typeof value.reason === 'string' &&
+    typeof value.request_reason === 'string'
+  );
+}
+
+function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejectedSummary {
+  return (
+    isRecord(value) &&
+    (value.tool_id === undefined || value.tool_id === null || typeof value.tool_id === 'string') &&
+    typeof value.reason === 'string'
   );
 }
 
