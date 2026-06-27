@@ -1,9 +1,7 @@
 //! Agent loop state-machine crate.
 
 use brownie_context::{PromptBuildInput, PromptBuilder, PromptRole, PromptView};
-use brownie_llm::{FakeLlm, LlmMessage, LlmRequest, LlmResponse};
-
-pub const FAKE_LLM_MODEL: &str = "brownie-fake-llm";
+use brownie_llm::{FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest, LlmResponse};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentLoopState {
@@ -64,36 +62,54 @@ impl AgentLoop {
         }
     }
 
-    pub fn run_with_fake_llm(prompt_input: PromptBuildInput) -> AgentLoopRunOutput {
-        let (task_id, prompt, llm_request, llm_response) = run_fake_llm(prompt_input);
-        AgentLoopRunOutput {
+    pub fn run_with_llm(
+        prompt_input: PromptBuildInput,
+        provider: &dyn LlmProvider,
+    ) -> anyhow::Result<AgentLoopRunOutput> {
+        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider)?;
+        Ok(AgentLoopRunOutput {
             final_state: AgentLoopState::Completed,
             prompt,
             llm_request,
-            completion_summary: format!("Fake LLM agent loop completed for {task_id}"),
+            completion_summary: format!("LLM agent loop completed for {task_id}"),
             llm_response,
-        }
+        })
+    }
+
+    pub fn run_second_pass_with_llm(
+        prompt_input: PromptBuildInput,
+        provider: &dyn LlmProvider,
+    ) -> anyhow::Result<AgentLoopSecondPassOutput> {
+        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider)?;
+        Ok(AgentLoopSecondPassOutput {
+            final_state: AgentLoopState::Completed,
+            prompt,
+            llm_request,
+            completion_summary: format!("Second-pass LLM agent loop completed for {task_id}"),
+            llm_response,
+        })
+    }
+
+    pub fn run_with_fake_llm(prompt_input: PromptBuildInput) -> AgentLoopRunOutput {
+        Self::run_with_llm(prompt_input, &FakeLlmProvider).expect("fake provider should not fail")
     }
 
     pub fn run_second_pass_with_fake_llm(
         prompt_input: PromptBuildInput,
     ) -> AgentLoopSecondPassOutput {
-        let (task_id, prompt, llm_request, llm_response) = run_fake_llm(prompt_input);
-        AgentLoopSecondPassOutput {
-            final_state: AgentLoopState::Completed,
-            prompt,
-            llm_request,
-            completion_summary: format!("Second-pass Fake LLM agent loop completed for {task_id}"),
-            llm_response,
-        }
+        Self::run_second_pass_with_llm(prompt_input, &FakeLlmProvider)
+            .expect("fake provider should not fail")
     }
 }
 
-fn run_fake_llm(prompt_input: PromptBuildInput) -> (String, PromptView, LlmRequest, LlmResponse) {
+fn run_llm(
+    prompt_input: PromptBuildInput,
+    provider: &dyn LlmProvider,
+) -> anyhow::Result<(String, PromptView, LlmRequest, LlmResponse)> {
     let task_id = prompt_input.task_id.clone();
     let prompt = PromptBuilder::build(prompt_input);
     let llm_request = LlmRequest {
-        model: FAKE_LLM_MODEL.to_string(),
+        model: provider.status().model,
         messages: prompt
             .messages
             .iter()
@@ -103,8 +119,8 @@ fn run_fake_llm(prompt_input: PromptBuildInput) -> (String, PromptView, LlmReque
             })
             .collect(),
     };
-    let llm_response = FakeLlm::complete(&llm_request);
-    (task_id, prompt, llm_request, llm_response)
+    let llm_response = provider.complete(&llm_request)?;
+    Ok((task_id, prompt, llm_request, llm_response))
 }
 
 fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
@@ -119,6 +135,7 @@ fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brownie_llm::FAKE_LLM_MODEL;
 
     #[test]
     fn run_noop_completes() {

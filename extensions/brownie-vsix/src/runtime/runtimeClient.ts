@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isModeListResult, isModeSummary, isPermissionCheckResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, LlmStatusResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isLlmStatusResult, isModeListResult, isModeSummary, isPermissionCheckResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -18,6 +18,16 @@ export class RuntimeClient {
 
     if (!isRuntimeStatusResult(result)) {
       throw new RuntimeProtocolError('runtime.status returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async llmStatus(): Promise<LlmStatusResult> {
+    const result = await this.call<LlmStatusResult>('llm.status');
+
+    if (!isLlmStatusResult(result)) {
+      throw new RuntimeProtocolError('llm.status returned an invalid result');
     }
 
     return result;

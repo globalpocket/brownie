@@ -29,6 +29,15 @@ pub struct JsonRpcError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmStatusResult {
+    pub provider: String,
+    pub enabled: bool,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeStatus {
     pub name: String,
     pub version: String,

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -60,6 +60,12 @@ describe('protocol validation', () => {
 
   it('accepts runtime.status results with string fields', () => {
     expect(isRuntimeStatusResult({ name: 'brownie-runtime', version: '0.1.0', status: 'Ready' })).toBe(true);
+  });
+
+  it('accepts valid llm.status results and rejects missing required fields', () => {
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Fake', model: 'brownie-fake-llm' })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true })).toBe(false);
   });
 
   it('accepts valid permission.check results', () => {
@@ -138,6 +144,22 @@ describe('RuntimeClient', () => {
       status: 'Ready',
     });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'runtime.status' }]);
+  });
+
+  it('creates an llm.status request', async () => {
+    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.llmStatus()).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.status' }]);
+  });
+
+  it('rejects invalid llm.status results', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { provider: 'Fake', enabled: true } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.llmStatus()).rejects.toThrow('llm.status returned an invalid result');
   });
 
   it('creates a mode.list request', async () => {
