@@ -40,6 +40,10 @@
       {
         "command": "brownie.permissionCheck",
         "title": "Brownie: Check Permission"
+      },
+      {
+        "command": "brownie.toolPlan",
+        "title": "Brownie: Plan Tools"
       }
     ]
   },

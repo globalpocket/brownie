@@ -142,7 +142,34 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand);
+
+  const toolPlanCommand = vscode.commands.registerCommand('brownie.toolPlan', async () => {
+    const taskId = await vscode.window.showInputBox({
+      prompt: 'Task ID',
+      placeHolder: 'task_...',
+      ignoreFocusOut: true,
+    });
+
+    if (taskId === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.planTools(taskId.trim());
+      const allowed = result.items.filter((item) => item.allowed).length;
+      const denied = result.items.length - allowed;
+      output.appendLine(`tool.plan: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie tool plan: ${allowed} allowed, ${denied} denied`,
+      );
+    } catch (error) {
+      output.appendLine(`tool.plan failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie tool plan failed: ${formatError(error)}`);
+    }
+  });
+
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand);
 }
 
 export function deactivate(): void {

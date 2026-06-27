@@ -59,6 +59,20 @@ export interface PermissionCheckResult {
   reason: string;
 }
 
+export interface ToolPlanDecisionSummary {
+  tool_id: string;
+  required_action: RuntimeActionName;
+  allowed: boolean;
+  reason: string;
+}
+
+export interface ToolPlanResult {
+  task_id: string;
+  run_id: string;
+  mode_id: string;
+  items: ToolPlanDecisionSummary[];
+}
+
 export interface TaskStartParams {
   goal: string;
   modeId?: string;
@@ -136,6 +150,27 @@ export function isPermissionCheckResult(value: unknown): value is PermissionChec
     isRecord(value) &&
     typeof value.mode_id === 'string' &&
     isRuntimeActionName(value.action) &&
+    typeof value.allowed === 'boolean' &&
+    typeof value.reason === 'string'
+  );
+}
+
+export function isToolPlanResult(value: unknown): value is ToolPlanResult {
+  return (
+    isRecord(value) &&
+    typeof value.task_id === 'string' &&
+    typeof value.run_id === 'string' &&
+    typeof value.mode_id === 'string' &&
+    Array.isArray(value.items) &&
+    value.items.every(isToolPlanDecisionSummary)
+  );
+}
+
+function isToolPlanDecisionSummary(value: unknown): value is ToolPlanDecisionSummary {
+  return (
+    isRecord(value) &&
+    typeof value.tool_id === 'string' &&
+    isRuntimeActionName(value.required_action) &&
     typeof value.allowed === 'boolean' &&
     typeof value.reason === 'string'
   );

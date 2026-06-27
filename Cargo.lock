@@ -88,6 +88,7 @@ dependencies = [
  "brownie-context",
  "brownie-protocol",
  "brownie-store",
+ "brownie-tools",
  "serde",
  "serde_json",
  "tempfile",
@@ -109,6 +110,10 @@ dependencies = [
 [[package]]
 name = "brownie-tools"
 version = "0.1.0"
+dependencies = [
+ "brownie-agentmodes",
+ "serde",
+]
 
 [[package]]
 name = "bumpalo"

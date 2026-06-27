@@ -9,9 +9,13 @@ use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModeGetParams, ModeListResult,
     ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
     RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams, TaskListResult, TaskRunParams,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolListResult,
+    ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEventKind};
+use brownie_tools::{
+    BuiltinToolRegistry, ToolPlanDecision, ToolPlanEvaluator, ToolPlanner, ToolPlanningInput,
+};
 use serde_json::{json, Value};
 
 const JSONRPC_VERSION: &str = "2.0";
@@ -23,6 +27,8 @@ const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
+const METHOD_TOOL_LIST: &str = "tool.list";
+const METHOD_TOOL_PLAN: &str = "tool.plan";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -60,6 +66,8 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
+        METHOD_TOOL_LIST => handle_tool_list(request.id),
+        METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -166,6 +174,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_permission_checks(&store, &running, &policy) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_tool_plan_events(&store, &running, &policy) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     let ledger_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
@@ -246,6 +257,36 @@ fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
         Ok(tasks) => result_response(id, json!(TaskListResult { tasks })),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn handle_tool_list(id: Value) -> JsonRpcResponse<Value> {
+    let tools = BuiltinToolRegistry::list()
+        .into_iter()
+        .map(tool_summary)
+        .collect();
+    result_response(id, json!(ToolListResult { tools }))
+}
+
+fn handle_tool_plan(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ToolPlanParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let record = match store.tasks().get_task(&params.task_id) {
+        Ok(Some(record)) => record,
+        Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let policy = match resolve_policy_for_task_run(&record, &store) {
+        Ok(policy) => policy,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let result = build_tool_plan_result(&record, &policy);
+    result_response(id, json!(result))
 }
 
 fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
@@ -356,6 +397,89 @@ fn resolve_policy_for_task_run(
         .unwrap_or(DEFAULT_MODE_ID_FOR_RUN);
     BuiltinModeRegistry::get(mode_id)
         .ok_or_else(|| format!("ledger has unknown mode_id: {mode_id}"))
+}
+
+fn tool_summary(tool: brownie_tools::ToolDefinition) -> ToolSummary {
+    ToolSummary {
+        tool_id: tool.tool_id,
+        display_name: tool.display_name,
+        description: tool.description,
+        required_action: runtime_action_name(&tool.required_action),
+    }
+}
+
+fn build_tool_plan_result(
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+) -> ToolPlanResult {
+    let plan = ToolPlanner::plan(ToolPlanningInput {
+        task_id: record.task_id.clone(),
+        goal: record.goal.clone(),
+        mode_id: policy.mode_id.clone(),
+    });
+    let evaluation = ToolPlanEvaluator::evaluate(policy, plan);
+    ToolPlanResult {
+        task_id: record.task_id.clone(),
+        run_id: record.run_id.clone(),
+        mode_id: policy.mode_id.clone(),
+        items: evaluation
+            .items
+            .into_iter()
+            .map(tool_plan_decision_summary)
+            .collect(),
+    }
+}
+
+fn tool_plan_decision_summary(decision: ToolPlanDecision) -> ToolPlanDecisionSummary {
+    ToolPlanDecisionSummary {
+        tool_id: decision.tool_id,
+        required_action: runtime_action_name(&decision.required_action),
+        allowed: decision.allowed,
+        reason: decision.reason,
+    }
+}
+
+fn append_tool_plan_events(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+) -> anyhow::Result<()> {
+    let plan = ToolPlanner::plan(ToolPlanningInput {
+        task_id: record.task_id.clone(),
+        goal: record.goal.clone(),
+        mode_id: policy.mode_id.clone(),
+    });
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolPlanned,
+        Some(json!({
+            "tool_ids": plan.items.iter().map(|item| item.tool_id.as_str()).collect::<Vec<_>>(),
+        })),
+    )?;
+    let evaluation = ToolPlanEvaluator::evaluate(policy, plan);
+    for decision in evaluation.items {
+        let payload = json!({
+            "tool_id": decision.tool_id,
+            "required_action": runtime_action_name(&decision.required_action),
+            "allowed": decision.allowed,
+            "reason": decision.reason,
+        });
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolPermissionChecked,
+            Some(payload.clone()),
+        )?;
+        store.tasks().append_task_event_with_payload(
+            record,
+            if decision.allowed {
+                LedgerEventKind::ToolPlanApproved
+            } else {
+                LedgerEventKind::ToolPlanDenied
+            },
+            Some(payload),
+        )?;
+    }
+    Ok(())
 }
 
 const DEFAULT_MODE_ID_FOR_RUN: &str = "orchestrator";
@@ -637,6 +761,13 @@ mod tests {
                 LedgerEventKind::PermissionDenied,
                 LedgerEventKind::PermissionChecked,
                 LedgerEventKind::PermissionDenied,
+                LedgerEventKind::ToolPlanned,
+                LedgerEventKind::ToolPermissionChecked,
+                LedgerEventKind::ToolPlanApproved,
+                LedgerEventKind::ToolPermissionChecked,
+                LedgerEventKind::ToolPlanDenied,
+                LedgerEventKind::ToolPermissionChecked,
+                LedgerEventKind::ToolPlanApproved,
                 LedgerEventKind::PromptBuilt,
                 LedgerEventKind::LlmRequestCreated,
                 LedgerEventKind::LlmResponseReceived,
@@ -837,6 +968,48 @@ mod tests {
         );
         assert!(ledger.contains("WriteWorkspace"));
         assert!(ledger.contains("ExecuteProcess"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn tool_list_returns_builtin_tools() {
+        let response = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"tool.list"}"#);
+        assert!(response.error.is_none());
+        let tools = response.result.expect("tool list")["tools"]
+            .as_array()
+            .expect("tools")
+            .clone();
+        assert_eq!(tools.len(), 7);
+        assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
+    }
+
+    #[test]
+    fn tool_plan_returns_dry_run_decisions_for_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement and test","mode_id":"orchestrator"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let plan = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"tool.plan","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(plan.error.is_none());
+        let result = plan.result.expect("plan result");
+        assert_eq!(result["mode_id"], "orchestrator");
+        let items = result["items"].as_array().expect("items");
+        assert!(items
+            .iter()
+            .any(|item| item["tool_id"] == "workspace.write" && item["allowed"] == false));
+        assert!(items
+            .iter()
+            .any(|item| item["tool_id"] == "subtask.spawn" && item["allowed"] == true));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
