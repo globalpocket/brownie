@@ -147,6 +147,7 @@ fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
     match kind {
         LlmProviderKind::Fake => "Fake",
         LlmProviderKind::OpenAiCompatible => "OpenAiCompatible",
+        LlmProviderKind::Unknown => "Unknown",
     }
 }
 
@@ -196,9 +197,22 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 active_profile: None,
             },
         },
-        Some("fake") | _ => RuntimeLlmProviderStatus {
+        Some("fake") | None => RuntimeLlmProviderStatus {
             config_source: RuntimeConfigSource::Env,
             ..fake_status_with_profile(None, false)
+        },
+        Some(value) => RuntimeLlmProviderStatus {
+            status: LlmProviderStatus {
+                provider: LlmProviderKind::Unknown,
+                enabled: false,
+                model: String::new(),
+                base_url: None,
+                reason: Some(format!("unknown provider: {}", redact_secret(value))),
+            },
+            strict,
+            will_fallback_to_fake: !strict,
+            config_source: RuntimeConfigSource::Env,
+            active_profile: None,
         },
     }
 }
@@ -368,7 +382,18 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
                 }
             }
         },
-        _ => Ok(Box::new(FakeLlmProvider)),
+        Some("fake") | None => Ok(Box::new(FakeLlmProvider)),
+        Some(value) => {
+            let selection = llm_provider_status_from_env();
+            if selection.strict {
+                Err(RuntimeLlmProviderError {
+                    message: format!("unknown provider: {}", redact_secret(value)),
+                    status: selection,
+                })
+            } else {
+                Ok(Box::new(FakeLlmProvider))
+            }
+        }
     }
 }
 
@@ -2405,5 +2430,233 @@ mod phase_2_2_tests {
         assert!(response.contains("error"));
         assert!(!response.contains("DO_NOT_ALLOW"));
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+}
+
+#[cfg(test)]
+mod phase_2_3_tests {
+    use super::*;
+    use std::{
+        fs,
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    struct EnvGuard;
+    impl EnvGuard {
+        fn clear() -> Self {
+            for key in [
+                "BROWNIE_WORKSPACE_ROOT",
+                "BROWNIE_LLM_PROVIDER",
+                "BROWNIE_LLM_BASE_URL",
+                "BROWNIE_LLM_MODEL",
+                "BROWNIE_LLM_API_KEY_ENV",
+                "BROWNIE_LLM_API_KEY",
+                "BROWNIE_LLM_STRICT",
+                "BROWNIE_TEST_LLM_API_KEY",
+            ] {
+                std::env::remove_var(key);
+            }
+            Self
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for key in [
+                "BROWNIE_WORKSPACE_ROOT",
+                "BROWNIE_LLM_PROVIDER",
+                "BROWNIE_LLM_BASE_URL",
+                "BROWNIE_LLM_MODEL",
+                "BROWNIE_LLM_API_KEY_ENV",
+                "BROWNIE_LLM_API_KEY",
+                "BROWNIE_LLM_STRICT",
+                "BROWNIE_TEST_LLM_API_KEY",
+            ] {
+                std::env::remove_var(key);
+            }
+        }
+    }
+
+    fn parse_line(line: &str) -> JsonRpcResponse<Value> {
+        serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
+            .expect("valid response")
+    }
+
+    fn write_mock_config(root: &std::path::Path, base_url: &str) {
+        fs::create_dir_all(root.join(".brownie")).unwrap();
+        fs::write(root.join("README.md"), "# Brownie\n").unwrap();
+        fs::write(
+            root.join(".brownie/config.json"),
+            format!(
+                r#"{{
+  "version": 1,
+  "active_profile": "mock-openai",
+  "llm": {{ "profiles": {{ "mock-openai": {{
+    "provider": "openai-compatible",
+    "base_url": "{}",
+    "model": "mock-model",
+    "api_key_env": "BROWNIE_TEST_LLM_API_KEY",
+    "strict": true
+  }} }} }}
+}}"#,
+                base_url
+            ),
+        )
+        .unwrap();
+    }
+
+    fn spawn_mock(
+        status: &str,
+        body: &'static str,
+    ) -> (String, thread::JoinHandle<serde_json::Value>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let status = status.to_string();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0_u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let req = String::from_utf8_lossy(&buf[..n]).to_string();
+            let header_end = req.find("\r\n\r\n").unwrap();
+            let (headers, request_body) = req.split_at(header_end + 4);
+            assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
+            assert!(headers.lines().any(|line| line
+                .to_ascii_lowercase()
+                .starts_with("authorization: bearer ")));
+            let json: serde_json::Value = serde_json::from_str(request_body).unwrap();
+            assert_eq!(json["model"], "mock-model");
+            let messages = json["messages"].as_array().expect("messages");
+            assert!(messages.iter().any(|m| m["role"] == "system"));
+            assert!(messages.iter().any(|m| m["role"] == "user"));
+            let response = format!("HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}", body.len(), body);
+            stream.write_all(response.as_bytes()).unwrap();
+            json
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
+    #[test]
+    fn config_profile_openai_mock_task_run_completes_and_is_sanitized() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock(
+            "200 OK",
+            r#"{"choices":[{"message":{"content":"Mock OpenAI-compatible final response."}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+
+        let status = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#)
+            .result
+            .unwrap();
+        assert_eq!(status["provider"], "OpenAiCompatible");
+        assert_eq!(status["config_source"], "WorkspaceConfig");
+        assert_eq!(status["active_profile"], "mock-openai");
+        assert_eq!(status["enabled"], true);
+        assert_eq!(status["strict"], true);
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Use mock provider","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(run.result.unwrap()["status"], "Completed");
+        let observed = handle.join().unwrap();
+        assert_eq!(observed["model"], "mock-model");
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("OpenAiCompatible"));
+        assert!(serialized.contains("mock-model"));
+        assert!(serialized.contains(&base_url));
+        assert!(serialized.contains("strict"));
+        assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+        assert!(!serialized.contains("Bearer"));
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "LlmRequestCreated"
+                && e["payload"]["provider"] == "OpenAiCompatible"
+                && e["payload"]["model"] == "mock-model"));
+    }
+
+    fn assert_strict_failure(status_line: &str, body: &'static str, expected_reason: &str) {
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock(status_line, body);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail strictly","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(run.error.unwrap().code, -32603);
+        handle.join().unwrap();
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("LlmRequestFailed"));
+        assert!(serialized.contains("TaskFailed"));
+        assert!(serialized.contains(expected_reason));
+        assert!(!serialized.contains("test-key"));
+    }
+
+    #[test]
+    fn mock_500_strict_fails_and_records_llm_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        assert_strict_failure(
+            "500 Internal Server Error",
+            r#"{"error":"boom"}"#,
+            "non-2xx",
+        );
+    }
+
+    #[test]
+    fn malformed_json_strict_fails_and_records_llm_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        assert_strict_failure("200 OK", "not json", "invalid JSON");
+    }
+
+    #[test]
+    fn missing_choices_strict_fails_and_records_llm_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        assert_strict_failure("200 OK", r#"{"choices":[]}"#, "missing choices");
+    }
+
+    #[test]
+    fn unknown_env_provider_status_is_not_silent_fake() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "mystery");
+        std::env::set_var("BROWNIE_LLM_STRICT", "true");
+        let status = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#)
+            .result
+            .unwrap();
+        assert_eq!(status["provider"], "Unknown");
+        assert_eq!(status["enabled"], false);
+        assert_eq!(status["strict"], true);
+        assert!(status["reason"]
+            .as_str()
+            .unwrap()
+            .contains("unknown provider: mystery"));
     }
 }
