@@ -118,6 +118,7 @@ mod tests {
             permission_summary: vec![],
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
+            tool_execution_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 

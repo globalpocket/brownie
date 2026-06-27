@@ -240,6 +240,8 @@ pub struct AssistantToolIntent {
 pub struct AssistantToolRequest {
     pub tool_id: String,
     pub reason: String,
+    #[serde(default = "empty_input_object")]
+    pub input: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -296,9 +298,24 @@ impl ToolIntentParser {
                 .get("reason")
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            let input = match item.get("input") {
+                Some(value) if value.is_object() => value.clone(),
+                Some(_) => {
+                    rejected.push(RejectedToolIntent {
+                        tool_id,
+                        reason: "input must be an object when provided.".to_string(),
+                    });
+                    continue;
+                }
+                None => empty_input_object(),
+            };
             match (tool_id, reason) {
                 (Some(tool_id), Some(reason)) if BuiltinToolRegistry::get(&tool_id).is_some() => {
-                    requests.push(AssistantToolRequest { tool_id, reason })
+                    requests.push(AssistantToolRequest {
+                        tool_id,
+                        reason,
+                        input,
+                    })
                 }
                 (Some(tool_id), Some(_)) => rejected.push(RejectedToolIntent {
                     tool_id: Some(tool_id),
@@ -312,6 +329,10 @@ impl ToolIntentParser {
         }
         ParsedToolIntent { requests, rejected }
     }
+}
+
+fn empty_input_object() -> serde_json::Value {
+    serde_json::json!({})
 }
 
 fn extract_fenced_block(content: &str) -> Option<&str> {
@@ -340,6 +361,7 @@ pub struct ToolIntentDecision {
     pub allowed: bool,
     pub reason: String,
     pub request_reason: String,
+    pub input: serde_json::Value,
 }
 
 pub struct ToolIntentEvaluator;
@@ -363,6 +385,7 @@ impl ToolIntentEvaluator {
                 allowed: decision.allowed,
                 reason: decision.reason,
                 request_reason: request.reason,
+                input: request.input,
             });
         }
         ToolIntentEvaluation { items, rejected }
@@ -546,6 +569,21 @@ mod tests {
         assert!(parsed.requests.is_empty());
         assert_eq!(parsed.rejected[0].tool_id.as_deref(), Some("unknown.tool"));
     }
+
+    #[test]
+    fn parser_parses_input_object_and_defaults_missing_input() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edit.\"}]}\n```");
+        assert_eq!(parsed.requests[0].input["path"], "README.md");
+        assert_eq!(parsed.requests[1].input, serde_json::json!({}));
+    }
+
+    #[test]
+    fn parser_rejects_non_object_input() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":\"README.md\"}]}\n```");
+        assert!(parsed.requests.is_empty());
+        assert_eq!(parsed.rejected.len(), 1);
+    }
+
     #[test]
     fn intent_evaluator_allows_read_and_denies_write_for_orchestrator() {
         let policy = BuiltinModeRegistry::get("orchestrator").expect("policy");
@@ -554,10 +592,12 @@ mod tests {
                 AssistantToolRequest {
                     tool_id: "workspace.read".into(),
                     reason: "Read".into(),
+                    input: serde_json::json!({"path":"README.md"}),
                 },
                 AssistantToolRequest {
                     tool_id: "workspace.write".into(),
                     reason: "Write".into(),
+                    input: serde_json::json!({}),
                 },
             ],
             rejected: vec![],
@@ -571,6 +611,12 @@ mod tests {
             .items
             .iter()
             .any(|item| item.tool_id == "workspace.write" && !item.allowed));
+        let read = evaluation
+            .items
+            .iter()
+            .find(|item| item.tool_id == "workspace.read")
+            .expect("read decision");
+        assert_eq!(read.input["path"], "README.md");
     }
 
     #[test]

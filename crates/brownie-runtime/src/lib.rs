@@ -18,7 +18,7 @@ use brownie_store::{BrownieStore, LedgerEventKind};
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
-    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput,
+    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WORKSPACE_READ_TOOL_ID,
 };
 use serde_json::{json, Value};
 
@@ -219,6 +219,14 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) =
         append_tool_intent_events(&store, &running, &policy, &result.llm_response.content)
     {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = execute_approved_workspace_read_intents(
+        &store,
+        &running,
+        &policy,
+        &result.llm_response.content,
+    ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
 
@@ -536,6 +544,7 @@ fn tool_intent_decision_summary(decision: ToolIntentDecision) -> ToolIntentDecis
         allowed: decision.allowed,
         reason: decision.reason,
         request_reason: decision.request_reason,
+        input: decision.input,
     }
 }
 
@@ -587,6 +596,7 @@ fn append_tool_intent_events(
             "allowed": decision.allowed,
             "reason": decision.reason,
             "request_reason": decision.request_reason,
+            "input": decision.input,
         });
         store.tasks().append_task_event_with_payload(
             record,
@@ -604,6 +614,91 @@ fn append_tool_intent_events(
         )?;
     }
     Ok(())
+}
+
+fn execute_approved_workspace_read_intents(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    assistant_content: &str,
+) -> anyhow::Result<()> {
+    let evaluation = ToolIntentEvaluator::evaluate(
+        policy,
+        ToolIntentParser::parse_assistant_content(assistant_content),
+    );
+    for decision in evaluation.items {
+        if !decision.allowed || decision.tool_id != WORKSPACE_READ_TOOL_ID {
+            continue;
+        }
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolExecutionRequested,
+            Some(json!({ "tool_id": decision.tool_id, "input": decision.input })),
+        )?;
+        let permission = RuntimePermissionGate::check(policy, decision.required_action.clone());
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolExecutionPermissionChecked,
+            Some(json!({
+                "tool_id": decision.tool_id,
+                "required_action": runtime_action_name(&permission.action),
+                "allowed": permission.allowed,
+                "reason": permission.reason,
+            })),
+        )?;
+        if !permission.allowed {
+            store.tasks().append_task_event_with_payload(
+                record,
+                LedgerEventKind::ToolExecutionDenied,
+                Some(json!({ "tool_id": decision.tool_id, "status": "Denied", "reason": permission.reason })),
+            )?;
+            continue;
+        }
+        let result = ToolExecutor::execute_read_only(
+            store.workspace_root(),
+            ToolExecutionRequest {
+                tool_id: decision.tool_id,
+                input: decision.input,
+            },
+        )?;
+        let kind = match result.status {
+            ToolExecutionStatus::Completed => LedgerEventKind::ToolExecutionCompleted,
+            ToolExecutionStatus::Denied => LedgerEventKind::ToolExecutionDenied,
+            ToolExecutionStatus::Failed => LedgerEventKind::ToolExecutionFailed,
+        };
+        store.tasks().append_task_event_with_payload(
+            record,
+            kind,
+            Some(tool_execution_ledger_payload(&result)),
+        )?;
+    }
+    Ok(())
+}
+
+fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("tool_id".to_string(), json!(result.tool_id));
+    payload.insert(
+        "status".to_string(),
+        json!(match result.status {
+            ToolExecutionStatus::Completed => "Completed",
+            ToolExecutionStatus::Denied => "Denied",
+            ToolExecutionStatus::Failed => "Failed",
+        }),
+    );
+    if let Some(content) = result.output.get("content").and_then(Value::as_str) {
+        payload.insert("output_preview".to_string(), json!(preview(content)));
+    }
+    if let Some(bytes_read) = result.output.get("bytes_read") {
+        payload.insert("bytes_read".to_string(), bytes_read.clone());
+    }
+    if let Some(truncated) = result.output.get("truncated") {
+        payload.insert("truncated".to_string(), truncated.clone());
+    }
+    if let Some(reason) = result.output.get("reason") {
+        payload.insert("reason".to_string(), reason.clone());
+    }
+    Value::Object(payload)
 }
 
 fn append_tool_plan_events(
@@ -1000,6 +1095,9 @@ mod tests {
                 LedgerEventKind::ToolIntentDenied,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 LedgerEventKind::ToolIntentApproved,
+                LedgerEventKind::ToolExecutionRequested,
+                LedgerEventKind::ToolExecutionPermissionChecked,
+                LedgerEventKind::ToolExecutionFailed,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::TaskCompleted,
             ]

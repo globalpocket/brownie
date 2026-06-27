@@ -138,6 +138,7 @@ pub struct ToolIntentDecisionSummary {
     pub allowed: bool,
     pub reason: String,
     pub request_reason: String,
+    pub input: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

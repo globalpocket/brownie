@@ -40,6 +40,7 @@ pub struct PromptBuildInput {
     pub permission_summary: Vec<String>,
     pub tool_plan_summary: Vec<String>,
     pub tool_intent_summary: Vec<String>,
+    pub tool_execution_summary: Vec<String>,
     pub ledger_summary: Vec<String>,
 }
 
@@ -69,6 +70,7 @@ impl ContextMaterializer {
         let permission_summary = format_permission_summary(&input.ledger_events);
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
         let tool_intent_summary = format_tool_intent_summary(&input.ledger_events);
+        let tool_execution_summary = format_tool_execution_summary(&input.ledger_events);
 
         let ledger_summary = input
             .ledger_events
@@ -85,6 +87,7 @@ impl ContextMaterializer {
             permission_summary,
             tool_plan_summary,
             tool_intent_summary,
+            tool_execution_summary,
             ledger_summary,
         }
     }
@@ -185,6 +188,48 @@ fn format_tool_intent_summary(events: &[LedgerEvent]) -> Vec<String> {
     summary
 }
 
+fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::ToolExecutionCompleted
+                    | LedgerEventKind::ToolExecutionDenied
+                    | LedgerEventKind::ToolExecutionFailed
+            )
+        })
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let tool_id = payload.get("tool_id")?.as_str()?;
+            let status = payload.get("status")?.as_str()?;
+            match event.kind {
+                LedgerEventKind::ToolExecutionCompleted => {
+                    let bytes_read = payload.get("bytes_read").and_then(|value| value.as_u64());
+                    let truncated = payload.get("truncated").and_then(|value| value.as_bool());
+                    Some(format!(
+                        "{tool_id}: {status} bytes_read={} truncated={}",
+                        bytes_read
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string()),
+                        truncated
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "<unknown>".to_string())
+                    ))
+                }
+                LedgerEventKind::ToolExecutionDenied | LedgerEventKind::ToolExecutionFailed => {
+                    let reason = payload
+                        .get("reason")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    Some(format!("{tool_id}: {status} reason={reason}"))
+                }
+                _ => None,
+            }
+        })
+        .collect()
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -226,6 +271,17 @@ impl PromptBuilder {
                 .join("\n")
         };
 
+        let tool_execution = if input.tool_execution_summary.is_empty() {
+            "- <none>".to_string()
+        } else {
+            input
+                .tool_execution_summary
+                .iter()
+                .map(|entry| format!("- {entry}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
         } else {
@@ -246,8 +302,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, input.goal, ledger
                     ),
                 },
             ],
@@ -315,6 +371,7 @@ mod tests {
             permission_summary: vec![],
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
+            tool_execution_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
