@@ -1,6 +1,7 @@
 //! Brownie runtime entry points.
 
-use brownie_agent_loop::{AgentLoop, AgentLoopInput, AgentLoopState};
+use brownie_agent_loop::{AgentLoop, AgentLoopState};
+use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, RuntimeState, RuntimeStatus, TaskGetParams,
     TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
@@ -128,12 +129,45 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
-    let result = AgentLoop::run_noop(AgentLoopInput {
-        task_id: running.task_id.clone(),
-        run_id: running.run_id.clone(),
-        goal: running.goal.clone(),
-        mode_id: running.mode_id.clone(),
+    let ledger_events = match store.tasks().read_ledger_events(&running.run_id) {
+        Ok(events) => events,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
+        task: running.clone(),
+        ledger_events,
     });
+    let result = AgentLoop::run_with_fake_llm(prompt_input);
+
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::PromptBuilt,
+        Some(json!({
+            "message_count": result.prompt.messages.len(),
+            "prompt_preview": preview_prompt(&result.prompt),
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::LlmRequestCreated,
+        Some(json!({
+            "model": result.llm_request.model.clone(),
+            "message_count": result.llm_request.messages.len(),
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::LlmResponseReceived,
+        Some(json!({
+            "content_preview": preview(&result.llm_response.content),
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     let final_status = match result.final_state {
         AgentLoopState::Completed => TaskStatus::Completed,
@@ -174,6 +208,21 @@ fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
         Ok(tasks) => result_response(id, json!(TaskListResult { tasks })),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn preview_prompt(prompt: &brownie_context::PromptView) -> String {
+    let joined = prompt
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n---\n");
+    preview(&joined)
+}
+
+fn preview(content: &str) -> String {
+    const MAX_PREVIEW_CHARS: usize = 200;
+    content.chars().take(MAX_PREVIEW_CHARS).collect()
 }
 
 fn parse_params<T: serde::de::DeserializeOwned>(params: Option<Value>) -> Result<T, String> {
@@ -345,7 +394,29 @@ mod tests {
         .expect("ledger");
         assert!(ledger.contains("TaskStarted"));
         assert!(ledger.contains("TaskRunning"));
+        assert!(ledger.contains("PromptBuilt"));
+        assert!(ledger.contains("LlmRequestCreated"));
+        assert!(ledger.contains("LlmResponseReceived"));
         assert!(ledger.contains("TaskCompleted"));
+        let events: Vec<LedgerEventKind> = ledger
+            .lines()
+            .map(|line| {
+                serde_json::from_str::<brownie_store::LedgerEvent>(line)
+                    .expect("event")
+                    .kind
+            })
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                LedgerEventKind::TaskStarted,
+                LedgerEventKind::TaskRunning,
+                LedgerEventKind::PromptBuilt,
+                LedgerEventKind::LlmRequestCreated,
+                LedgerEventKind::LlmResponseReceived,
+                LedgerEventKind::TaskCompleted,
+            ]
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

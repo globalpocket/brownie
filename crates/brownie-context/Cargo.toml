@@ -6,5 +6,10 @@ license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
+[dependencies]
+brownie-protocol = { path = "../brownie-protocol" }
+brownie-store = { path = "../brownie-store" }
+serde.workspace = true
+
 [lib]
 path = "src/lib.rs"

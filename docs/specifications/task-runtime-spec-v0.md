@@ -69,3 +69,32 @@ The persisted ledger is separate from any future prompt window truncation behavi
 - No Qdrant wrapper.
 - No llama-server wrapper.
 - No codebase indexer.
+
+## Phase 1.2 prompt and fake LLM execution
+
+Phase 1.2 changes `task.run` from the no-op loop to a minimal prompt/fake-LLM path while keeping the runtime as the task lifecycle authority.
+
+The implemented transition remains:
+
+```text
+Created -> Running -> Completed
+```
+
+After writing `TaskRunning`, the runtime reads the run ledger, materializes prompt input from the current task and ledger events, builds a prompt through the agent loop, creates a local fake LLM request, receives a deterministic fake response, writes `Completed` to `state.json`, and appends `TaskCompleted`.
+
+Phase 1.2 ledger event kinds are:
+
+```text
+TaskStarted
+TaskRunning
+PromptBuilt
+LlmRequestCreated
+LlmResponseReceived
+TaskCompleted
+TaskFailed
+TaskCancelled
+```
+
+`LedgerEvent` may include an optional `payload` object. Prompt and fake-LLM events store metadata such as `message_count`, `model`, `prompt_preview`, and `content_preview`. Full prompt text is not persisted by default.
+
+Phase 1.2 still does not call a real LLM API, implement an OpenAI-compatible HTTP client, execute tools, parse AgentModes, fetch or activate Mode Packs, use Qdrant, use llama-server, or run an indexer.

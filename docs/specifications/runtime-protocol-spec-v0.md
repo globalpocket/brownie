@@ -144,3 +144,22 @@ The runtime returns JSON-RPC errors for protocol failures that it can report:
 ## Rule
 
 The VSIX is a presentation and workspace bridge. Runtime policy and task execution remain in Rust.
+
+## Phase 1.2 `task.run` behavior
+
+In Phase 1.2, the `task.run` JSON-RPC request and response shape are unchanged, but the runtime now connects the task to prompt materialization and a deterministic local fake LLM adapter.
+
+For a `Created` task, the runtime performs this ordered lifecycle:
+
+```text
+TaskStarted
+TaskRunning
+PromptBuilt
+LlmRequestCreated
+LlmResponseReceived
+TaskCompleted
+```
+
+The response still reports `Completed` on success. The additional ledger events contain metadata only, such as message counts, fake model name, and short previews. Full prompt text is not persisted by default.
+
+The fake LLM adapter is deterministic and local-only. Phase 1.2 performs no real LLM network calls and does not introduce tool execution, AgentModes parsing, Mode Pack fetch or activation, Qdrant, llama-server, or indexing behavior.
