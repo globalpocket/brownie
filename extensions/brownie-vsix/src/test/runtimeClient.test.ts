@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -90,6 +90,12 @@ describe('protocol validation', () => {
     };
     expect(isToolPlanResult(result)).toBe(true);
     expect(isToolPlanResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok' }] })).toBe(false);
+  });
+
+  it('validates tool.execute results', () => {
+    expect(isToolExecuteResult({ tool_id: 'workspace.read', status: 'Completed', output: { content: 'ok' } })).toBe(true);
+    expect(isToolExecuteResult({ tool_id: 'workspace.write', status: 'Denied', output: { reason: 'no' } })).toBe(true);
+    expect(isToolExecuteResult({ tool_id: 'workspace.read', status: 'Unknown', output: {} })).toBe(false);
   });
 });
 
@@ -215,6 +221,26 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.planTools('task_1')).rejects.toThrow('tool.plan returned an invalid result');
+  });
+
+  it('creates a tool.execute request', async () => {
+    const result = {
+      tool_id: 'workspace.read',
+      status: 'Completed',
+      output: { path: 'README.md', content: 'hello', truncated: false, bytes_read: 5 },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.executeTool('orchestrator', 'workspace.read', { path: 'README.md' })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'tool.execute', params: { mode_id: 'orchestrator', tool_id: 'workspace.read', input: { path: 'README.md' } } }]);
+  });
+
+  it('rejects invalid tool.execute results', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { tool_id: 'workspace.read', status: 'Invalid', output: {} } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.executeTool('orchestrator', 'workspace.read', { path: 'README.md' })).rejects.toThrow('tool.execute returned an invalid result');
   });
 
   it('creates a task.get request', async () => {

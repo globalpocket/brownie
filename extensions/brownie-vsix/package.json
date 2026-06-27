@@ -48,6 +48,10 @@
       {
         "command": "brownie.toolIntentParse",
         "title": "Brownie: Parse Tool Intent"
+      },
+      {
+        "command": "brownie.toolExecuteRead",
+        "title": "Brownie: Execute Read Tool"
       }
     ]
   },

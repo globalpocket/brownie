@@ -9,14 +9,16 @@ use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, ModeGetParams, ModeListResult,
     ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
     RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams, TaskListResult, TaskRunParams,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolIntentDecisionSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult,
-    ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEventKind};
 use brownie_tools::{
-    BuiltinToolRegistry, RejectedToolIntent, ToolIntentDecision, ToolIntentEvaluator,
-    ToolIntentParser, ToolPlanDecision, ToolPlanEvaluator, ToolPlanner, ToolPlanningInput,
+    BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
+    ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
+    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput,
 };
 use serde_json::{json, Value};
 
@@ -32,6 +34,7 @@ const METHOD_PERMISSION_CHECK: &str = "permission.check";
 const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
 const METHOD_TOOL_INTENT_PARSE: &str = "tool.intent.parse";
+const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -72,6 +75,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TOOL_LIST => handle_tool_list(request.id),
         METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
         METHOD_TOOL_INTENT_PARSE => handle_tool_intent_parse(request.id, request.params),
+        METHOD_TOOL_EXECUTE => handle_tool_execute(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -328,6 +332,53 @@ fn handle_tool_intent_parse(id: Value, params: Option<Value>) -> JsonRpcResponse
     )
 }
 
+fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ToolExecuteParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let policy = match BuiltinModeRegistry::get(&params.mode_id) {
+        Some(policy) => policy,
+        None => return error_response(id, -32602, "invalid params: unknown mode_id"),
+    };
+    let Some(definition) = BuiltinToolRegistry::get(&params.tool_id) else {
+        return result_response(
+            id,
+            json!(ToolExecuteResult {
+                tool_id: params.tool_id,
+                status: ToolExecuteStatus::Failed,
+                output: json!({ "reason": "Unknown tool id." }),
+            }),
+        );
+    };
+    let decision = RuntimePermissionGate::check(&policy, definition.required_action);
+    if !decision.allowed {
+        return result_response(
+            id,
+            json!(ToolExecuteResult {
+                tool_id: definition.tool_id,
+                status: ToolExecuteStatus::Denied,
+                output: json!({ "reason": decision.reason }),
+            }),
+        );
+    }
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match ToolExecutor::execute_read_only(
+        store.workspace_root(),
+        ToolExecutionRequest {
+            tool_id: definition.tool_id,
+            input: params.input,
+        },
+    ) {
+        Ok(result) => result_response(id, json!(tool_execute_result(result))),
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
 fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
     let modes = BuiltinModeRegistry::list()
         .into_iter()
@@ -492,6 +543,18 @@ fn tool_intent_rejected_summary(rejected: RejectedToolIntent) -> ToolIntentRejec
     ToolIntentRejectedSummary {
         tool_id: rejected.tool_id,
         reason: rejected.reason,
+    }
+}
+
+fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecuteResult {
+    ToolExecuteResult {
+        tool_id: result.tool_id,
+        status: match result.status {
+            ToolExecutionStatus::Completed => ToolExecuteStatus::Completed,
+            ToolExecutionStatus::Denied => ToolExecuteStatus::Denied,
+            ToolExecutionStatus::Failed => ToolExecuteStatus::Failed,
+        },
+        output: result.output,
     }
 }
 
@@ -739,6 +802,62 @@ mod tests {
             response.result.expect("status result")["name"],
             "brownie-runtime"
         );
+    }
+
+    #[test]
+    fn tool_execute_workspace_read_returns_completed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "hello brownie").expect("write");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"orchestrator","tool_id":"workspace.read","input":{"path":"README.md"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Completed");
+        assert_eq!(result["output"]["content"], "hello brownie");
+        assert_eq!(result["output"]["truncated"], false);
+    }
+
+    #[test]
+    fn tool_execute_workspace_read_path_traversal_fails() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"tool.execute","params":{"mode_id":"orchestrator","tool_id":"workspace.read","input":{"path":"../secret.txt"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        assert_eq!(response.result.expect("result")["status"], "Failed");
+    }
+
+    #[test]
+    fn tool_execute_unknown_mode_returns_invalid_params() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tool.execute","params":{"mode_id":"unknown","tool_id":"workspace.read","input":{"path":"README.md"}}}"#,
+        );
+
+        assert_eq!(response.error.expect("error").code, -32602);
+    }
+
+    #[test]
+    fn tool_execute_workspace_write_is_denied_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"tool.execute","params":{"mode_id":"implementer","tool_id":"workspace.write","input":{"path":"created.txt","content":"nope"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        assert_eq!(response.result.expect("result")["status"], "Denied");
+        assert!(!temp.path().join("created.txt").exists());
     }
 
     #[test]

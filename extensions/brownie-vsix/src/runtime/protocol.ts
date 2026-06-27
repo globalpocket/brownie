@@ -92,6 +92,14 @@ export interface ToolIntentParseResult {
   rejected: ToolIntentRejectedSummary[];
 }
 
+export type ToolExecuteStatus = 'Completed' | 'Denied' | 'Failed';
+
+export interface ToolExecuteResult {
+  tool_id: string;
+  status: ToolExecuteStatus;
+  output: unknown;
+}
+
 export interface TaskStartParams {
   goal: string;
   modeId?: string;
@@ -196,6 +204,15 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
   );
 }
 
+export function isToolExecuteResult(value: unknown): value is ToolExecuteResult {
+  return (
+    isRecord(value) &&
+    typeof value.tool_id === 'string' &&
+    isToolExecuteStatus(value.status) &&
+    Object.prototype.hasOwnProperty.call(value, 'output')
+  );
+}
+
 function isToolIntentDecisionSummary(value: unknown): value is ToolIntentDecisionSummary {
   return (
     isRecord(value) &&
@@ -283,6 +300,10 @@ function isRuntimeActionName(value: unknown): value is RuntimeActionName {
 
 function isTaskStatus(value: unknown): value is TaskStatus {
   return value === 'Created' || value === 'Running' || value === 'Completed' || value === 'Failed' || value === 'Cancelled';
+}
+
+function isToolExecuteStatus(value: unknown): value is ToolExecuteStatus {
+  return value === 'Completed' || value === 'Denied' || value === 'Failed';
 }
 
 function isJsonRpcError(value: unknown): value is JsonRpcError {

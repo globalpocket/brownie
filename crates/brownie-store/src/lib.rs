@@ -36,6 +36,10 @@ impl BrownieStore {
     pub fn tasks(&self) -> &TaskStore {
         &self.task_store
     }
+
+    pub fn workspace_root(&self) -> &std::path::Path {
+        self.task_store.workspace_root()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -176,6 +180,10 @@ impl TaskStore {
     fn runs_dir(&self) -> PathBuf {
         self.workspace_root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR)
     }
+
+    pub fn workspace_root(&self) -> &std::path::Path {
+        &self.workspace_root
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -253,6 +261,11 @@ pub enum LedgerEventKind {
     ToolIntentPermissionChecked,
     ToolIntentApproved,
     ToolIntentDenied,
+    ToolExecutionRequested,
+    ToolExecutionPermissionChecked,
+    ToolExecutionCompleted,
+    ToolExecutionDenied,
+    ToolExecutionFailed,
     TaskRunning,
     PromptBuilt,
     LlmRequestCreated,
