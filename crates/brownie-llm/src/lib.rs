@@ -32,6 +32,15 @@ impl FakeLlm {
             .collect::<Vec<_>>()
             .join("\n")
             .to_lowercase();
+        if prompt.contains("tool execution:")
+            && prompt.contains("workspace.read")
+            && (prompt.contains("completed") || prompt.contains("bytes_read="))
+        {
+            return LlmResponse {
+                content: "Fake LLM final response after reading workspace context.".to_string(),
+            };
+        }
+
         let mut requests = vec![(
             "workspace.read",
             "Inspect workspace context before proceeding.",
@@ -101,5 +110,24 @@ mod tests {
         assert!(content.contains("```brownie-tool-intent"));
         assert!(content.contains("workspace.read"));
         assert!(content.contains(r#""path": "README.md""#));
+    }
+    #[test]
+    fn fake_llm_second_pass_returns_final_response_without_tool_intent() {
+        let request = LlmRequest {
+            model: "brownie-fake-llm".into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content:
+                    "Tool Execution:\n- workspace.read: Completed bytes_read=42 truncated=false"
+                        .into(),
+            }],
+        };
+
+        let content = FakeLlm::complete(&request).content;
+        assert_eq!(
+            content,
+            "Fake LLM final response after reading workspace context."
+        );
+        assert!(!content.contains("brownie-tool-intent"));
     }
 }

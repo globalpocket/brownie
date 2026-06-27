@@ -45,6 +45,15 @@ pub struct AgentLoopRunOutput {
     pub completion_summary: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentLoopSecondPassOutput {
+    pub final_state: AgentLoopState,
+    pub prompt: PromptView,
+    pub llm_request: LlmRequest,
+    pub llm_response: LlmResponse,
+    pub completion_summary: String,
+}
+
 pub struct AgentLoop;
 
 impl AgentLoop {
@@ -56,21 +65,7 @@ impl AgentLoop {
     }
 
     pub fn run_with_fake_llm(prompt_input: PromptBuildInput) -> AgentLoopRunOutput {
-        let task_id = prompt_input.task_id.clone();
-        let prompt = PromptBuilder::build(prompt_input);
-        let llm_request = LlmRequest {
-            model: FAKE_LLM_MODEL.to_string(),
-            messages: prompt
-                .messages
-                .iter()
-                .map(|message| LlmMessage {
-                    role: prompt_role_to_llm_role(&message.role).to_string(),
-                    content: message.content.clone(),
-                })
-                .collect(),
-        };
-        let llm_response = FakeLlm::complete(&llm_request);
-
+        let (task_id, prompt, llm_request, llm_response) = run_fake_llm(prompt_input);
         AgentLoopRunOutput {
             final_state: AgentLoopState::Completed,
             prompt,
@@ -79,6 +74,37 @@ impl AgentLoop {
             llm_response,
         }
     }
+
+    pub fn run_second_pass_with_fake_llm(
+        prompt_input: PromptBuildInput,
+    ) -> AgentLoopSecondPassOutput {
+        let (task_id, prompt, llm_request, llm_response) = run_fake_llm(prompt_input);
+        AgentLoopSecondPassOutput {
+            final_state: AgentLoopState::Completed,
+            prompt,
+            llm_request,
+            completion_summary: format!("Second-pass Fake LLM agent loop completed for {task_id}"),
+            llm_response,
+        }
+    }
+}
+
+fn run_fake_llm(prompt_input: PromptBuildInput) -> (String, PromptView, LlmRequest, LlmResponse) {
+    let task_id = prompt_input.task_id.clone();
+    let prompt = PromptBuilder::build(prompt_input);
+    let llm_request = LlmRequest {
+        model: FAKE_LLM_MODEL.to_string(),
+        messages: prompt
+            .messages
+            .iter()
+            .map(|message| LlmMessage {
+                role: prompt_role_to_llm_role(&message.role).to_string(),
+                content: message.content.clone(),
+            })
+            .collect(),
+    };
+    let llm_response = FakeLlm::complete(&llm_request);
+    (task_id, prompt, llm_request, llm_response)
 }
 
 fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
@@ -133,5 +159,29 @@ mod tests {
             .llm_response
             .content
             .contains("```brownie-tool-intent"));
+    }
+    #[test]
+    fn run_second_pass_with_fake_llm_returns_completed_and_final_response() {
+        let result = AgentLoop::run_second_pass_with_fake_llm(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "test".into(),
+            mode_id: None,
+            mode_policy_summary: Some("Mode Policy:\n<unresolved>".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![
+                "workspace.read: Completed bytes_read=12 truncated=false".into()
+            ],
+            ledger_summary: vec!["ToolExecutionCompleted".into()],
+        });
+
+        assert_eq!(result.final_state, AgentLoopState::Completed);
+        assert!(result
+            .llm_response
+            .content
+            .contains("Fake LLM final response after reading workspace context."));
+        assert!(!result.llm_response.content.contains("brownie-tool-intent"));
     }
 }
