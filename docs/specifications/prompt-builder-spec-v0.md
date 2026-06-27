@@ -45,3 +45,11 @@ Phase 1.2 records prompt lifecycle metadata in the run ledger, but it does not p
 `PromptBuilder` includes the mode policy summary in the prompt view. This is informational for Phase 1.3 only; permission enforcement is reserved for later runtime phases and remains authoritative over any LLM instruction.
 
 If no `ModeResolved` event is available, the materialized prompt input uses `Mode Policy:\n<unresolved>` as a fallback summary.
+
+## Phase 1.4 permission gate update
+
+Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
+
+Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, and `SpawnSubtask`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
+
+The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.

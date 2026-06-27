@@ -25,6 +25,15 @@ export interface RuntimeStatusResult {
 
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
+export type RuntimeActionName =
+  | 'ReadWorkspace'
+  | 'WriteWorkspace'
+  | 'ExecuteProcess'
+  | 'AccessNetwork'
+  | 'ControlService'
+  | 'DestructiveOperation'
+  | 'SpawnSubtask';
+
 
 export interface ModePermissionsSummary {
   read_only: boolean;
@@ -41,6 +50,13 @@ export interface ModeSummary {
   display_name: string;
   role_definition: string;
   permissions: ModePermissionsSummary;
+}
+
+export interface PermissionCheckResult {
+  mode_id: string;
+  action: RuntimeActionName;
+  allowed: boolean;
+  reason: string;
 }
 
 export interface TaskStartParams {
@@ -115,6 +131,16 @@ export function isModeListResult(value: unknown): value is { modes: ModeSummary[
   return isRecord(value) && Array.isArray(value.modes) && value.modes.every(isModeSummary);
 }
 
+export function isPermissionCheckResult(value: unknown): value is PermissionCheckResult {
+  return (
+    isRecord(value) &&
+    typeof value.mode_id === 'string' &&
+    isRuntimeActionName(value.action) &&
+    typeof value.allowed === 'boolean' &&
+    typeof value.reason === 'string'
+  );
+}
+
 export function isTaskStartResult(value: unknown): value is TaskStartResult {
   return (
     isRecord(value) &&
@@ -156,6 +182,18 @@ function isModePermissionsSummary(value: unknown): value is ModePermissionsSumma
     typeof value.service_control === 'boolean' &&
     typeof value.destructive === 'boolean' &&
     typeof value.can_spawn_subtasks === 'boolean'
+  );
+}
+
+function isRuntimeActionName(value: unknown): value is RuntimeActionName {
+  return (
+    value === 'ReadWorkspace' ||
+    value === 'WriteWorkspace' ||
+    value === 'ExecuteProcess' ||
+    value === 'AccessNetwork' ||
+    value === 'ControlService' ||
+    value === 'DestructiveOperation' ||
+    value === 'SpawnSubtask'
   );
 }
 

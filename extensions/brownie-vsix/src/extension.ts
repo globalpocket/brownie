@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { formatError } from './runtime/errors';
+import type { RuntimeActionName } from './runtime/protocol';
 import { createRuntimeClient } from './runtime/workspace';
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -76,6 +77,47 @@ export function activate(context: vscode.ExtensionContext): void {
   });
 
 
+  const permissionCheckCommand = vscode.commands.registerCommand('brownie.permissionCheck', async () => {
+    const modeId = await vscode.window.showInputBox({
+      prompt: 'Mode ID',
+      placeHolder: 'orchestrator',
+      ignoreFocusOut: true,
+    });
+
+    if (modeId === undefined) {
+      return;
+    }
+
+    const actions: RuntimeActionName[] = [
+      'ReadWorkspace',
+      'WriteWorkspace',
+      'ExecuteProcess',
+      'AccessNetwork',
+      'ControlService',
+      'DestructiveOperation',
+      'SpawnSubtask',
+    ];
+    const action = await vscode.window.showQuickPick(actions, {
+      placeHolder: 'Select a runtime action to check',
+    });
+
+    if (action === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.checkPermission(modeId.trim(), action as RuntimeActionName);
+      output.appendLine(`permission.check: ${JSON.stringify(result)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie permission ${result.allowed ? 'allowed' : 'denied'}: ${result.action}`,
+      );
+    } catch (error) {
+      output.appendLine(`permission.check failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie permission check failed: ${formatError(error)}`);
+    }
+  });
+
   const taskRunCommand = vscode.commands.registerCommand('brownie.taskRun', async () => {
     const taskId = await vscode.window.showInputBox({
       prompt: 'Task ID',
@@ -100,7 +142,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, taskRunCommand);
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand);
 }
 
 export function deactivate(): void {

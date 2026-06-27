@@ -106,3 +106,11 @@ Phase 1.2 still does not call a real LLM API, implement an OpenAI-compatible HTT
 If a caller supplies an unknown `mode_id`, `task.start` returns JSON-RPC `-32602 invalid params` and does not create a task. This prevents tasks from running without a resolved runtime policy.
 
 After task creation, the run ledger records `TaskStarted` followed by `ModeResolved`. The `ModeResolved` payload stores a compact policy summary rather than the full policy.
+
+## Phase 1.4 permission gate update
+
+Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
+
+Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, and `SpawnSubtask`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
+
+The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.

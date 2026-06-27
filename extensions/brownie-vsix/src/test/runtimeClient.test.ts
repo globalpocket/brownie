@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isModeSummary, isRuntimeStatusResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -61,6 +61,15 @@ describe('protocol validation', () => {
   it('accepts runtime.status results with string fields', () => {
     expect(isRuntimeStatusResult({ name: 'brownie-runtime', version: '0.1.0', status: 'Ready' })).toBe(true);
   });
+
+  it('accepts valid permission.check results', () => {
+    expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'WriteWorkspace', allowed: false, reason: 'denied' })).toBe(true);
+  });
+
+  it('rejects invalid permission.check result shapes', () => {
+    expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'UnknownAction', allowed: false, reason: 'denied' })).toBe(false);
+    expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'WriteWorkspace', allowed: 'false', reason: 'denied' })).toBe(false);
+  });
 });
 
 describe('RuntimeClient', () => {
@@ -94,6 +103,22 @@ describe('RuntimeClient', () => {
 
     await expect(client.getMode('orchestrator')).resolves.toEqual(modeSummary);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'mode.get', params: { mode_id: 'orchestrator' } }]);
+  });
+
+  it('creates a permission.check request', async () => {
+    const result = { mode_id: 'orchestrator', action: 'WriteWorkspace', allowed: false, reason: 'Mode orchestrator does not allow workspace writes.' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.checkPermission('orchestrator', 'WriteWorkspace')).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'permission.check', params: { mode_id: 'orchestrator', action: 'WriteWorkspace' } }]);
+  });
+
+  it('rejects invalid permission.check results', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { mode_id: 'orchestrator', action: 'UnknownAction', allowed: false, reason: 'bad' } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.checkPermission('orchestrator', 'WriteWorkspace')).rejects.toThrow('permission.check returned an invalid result');
   });
 
   it('creates a task.start request', async () => {
