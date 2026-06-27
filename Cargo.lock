@@ -112,9 +112,11 @@ dependencies = [
 name = "brownie-tools"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "brownie-agentmodes",
  "serde",
  "serde_json",
+ "tempfile",
 ]
 
 [[package]]

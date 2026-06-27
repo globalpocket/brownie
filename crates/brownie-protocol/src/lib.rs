@@ -160,6 +160,27 @@ pub struct ToolSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolExecuteParams {
+    pub mode_id: String,
+    pub tool_id: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolExecuteResult {
+    pub tool_id: String,
+    pub status: ToolExecuteStatus,
+    pub output: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ToolExecuteStatus {
+    Completed,
+    Denied,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,

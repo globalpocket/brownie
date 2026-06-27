@@ -1,8 +1,15 @@
 //! Runtime tool abstraction crate.
 
+use std::fs;
+use std::path::{Component, Path};
+
+use anyhow::{bail, Context};
 use brownie_agentmodes::{CompiledModePolicy, RuntimeAction, RuntimePermissionGate};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
+
+pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
+pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSideEffectLevel {
@@ -65,6 +72,147 @@ impl BuiltinToolRegistry {
         Self::list()
             .into_iter()
             .find(|tool| tool.tool_id == tool_id)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolExecutionRequest {
+    pub tool_id: String,
+    pub input: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolExecutionResult {
+    pub tool_id: String,
+    pub status: ToolExecutionStatus,
+    pub output: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ToolExecutionStatus {
+    Completed,
+    Denied,
+    Failed,
+}
+
+pub struct WorkspaceReadExecutor;
+
+impl WorkspaceReadExecutor {
+    pub fn read(
+        workspace_root: &Path,
+        relative_path: &str,
+        max_bytes: usize,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        match Self::try_read(workspace_root, relative_path, max_bytes) {
+            Ok(result) => Ok(result),
+            Err(error) => Ok(ToolExecutionResult {
+                tool_id: WORKSPACE_READ_TOOL_ID.to_string(),
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": error.to_string() }),
+            }),
+        }
+    }
+
+    fn try_read(
+        workspace_root: &Path,
+        relative_path: &str,
+        max_bytes: usize,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        if relative_path.trim().is_empty() {
+            bail!("path must not be empty");
+        }
+        let requested_path = Path::new(relative_path);
+        if requested_path.is_absolute() {
+            bail!("absolute paths are not allowed");
+        }
+        for component in requested_path.components() {
+            match component {
+                Component::ParentDir => bail!("path traversal is not allowed"),
+                Component::Normal(name)
+                    if is_blocked_component(name.to_string_lossy().as_ref()) =>
+                {
+                    bail!("reading protected workspace paths is not allowed")
+                }
+                Component::Prefix(_) | Component::RootDir => {
+                    bail!("absolute paths are not allowed")
+                }
+                _ => {}
+            }
+        }
+
+        let root = workspace_root.canonicalize().with_context(|| {
+            format!(
+                "failed to canonicalize workspace root {}",
+                workspace_root.display()
+            )
+        })?;
+        let target = root.join(requested_path);
+        let canonical_target = target
+            .canonicalize()
+            .with_context(|| format!("failed to canonicalize {}", relative_path))?;
+        if !canonical_target.starts_with(&root) {
+            bail!("path escapes workspace root");
+        }
+        if canonical_target.is_dir() {
+            bail!("directory reads are not supported in Phase 1.7");
+        }
+
+        let bytes = fs::read(&canonical_target)
+            .with_context(|| format!("failed to read {}", relative_path))?;
+        let truncated = bytes.len() > max_bytes;
+        let read_len = bytes.len().min(max_bytes);
+        let content = std::str::from_utf8(&bytes[..read_len])
+            .context("workspace.read supports UTF-8 text files only")?
+            .to_string();
+
+        Ok(ToolExecutionResult {
+            tool_id: WORKSPACE_READ_TOOL_ID.to_string(),
+            status: ToolExecutionStatus::Completed,
+            output: json!({
+                "path": relative_path,
+                "content": content,
+                "truncated": truncated,
+                "bytes_read": read_len,
+            }),
+        })
+    }
+}
+
+fn is_blocked_component(component: &str) -> bool {
+    matches!(component, ".git" | ".brownie" | "node_modules" | "target")
+}
+
+pub struct ToolExecutor;
+
+impl ToolExecutor {
+    pub fn execute_read_only(
+        workspace_root: &Path,
+        request: ToolExecutionRequest,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        if BuiltinToolRegistry::get(&request.tool_id).is_none() {
+            return Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": "Unknown tool id." }),
+            });
+        }
+        if request.tool_id != WORKSPACE_READ_TOOL_ID {
+            return Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Denied,
+                output: json!({
+                    "reason": "Tool execution is not enabled for this tool in Phase 1.7."
+                }),
+            });
+        }
+        let Some(path) = request.input.get("path").and_then(Value::as_str) else {
+            return Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": "workspace.read input.path must be a string." }),
+            });
+        };
+        WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
     }
 }
 
@@ -423,5 +571,88 @@ mod tests {
             .items
             .iter()
             .any(|item| item.tool_id == "workspace.write" && !item.allowed));
+    }
+
+    #[test]
+    fn workspace_read_executor_reads_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "hello brownie").expect("write");
+
+        let result =
+            WorkspaceReadExecutor::read(temp.path(), "README.md", MAX_WORKSPACE_READ_BYTES)
+                .expect("read result");
+
+        assert_eq!(result.status, ToolExecutionStatus::Completed);
+        assert_eq!(result.output["content"], "hello brownie");
+        assert_eq!(result.output["truncated"], false);
+    }
+
+    #[test]
+    fn workspace_read_executor_rejects_absolute_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result =
+            WorkspaceReadExecutor::read(temp.path(), "/etc/passwd", MAX_WORKSPACE_READ_BYTES)
+                .expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+    }
+
+    #[test]
+    fn workspace_read_executor_rejects_path_traversal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result =
+            WorkspaceReadExecutor::read(temp.path(), "../secret.txt", MAX_WORKSPACE_READ_BYTES)
+                .expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+    }
+
+    #[test]
+    fn workspace_read_executor_rejects_protected_directories() {
+        for dir in [".brownie", ".git", "node_modules", "target"] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            std::fs::create_dir(temp.path().join(dir)).expect("mkdir");
+            std::fs::write(temp.path().join(dir).join("file.txt"), "secret").expect("write");
+            let result = WorkspaceReadExecutor::read(
+                temp.path(),
+                &format!("{dir}/file.txt"),
+                MAX_WORKSPACE_READ_BYTES,
+            )
+            .expect("read result");
+            assert_eq!(result.status, ToolExecutionStatus::Failed, "{dir}");
+        }
+    }
+
+    #[test]
+    fn workspace_read_executor_truncates_large_file() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("large.log"), "abcdef").expect("write");
+        let result = WorkspaceReadExecutor::read(temp.path(), "large.log", 3).expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Completed);
+        assert_eq!(result.output["content"], "abc");
+        assert_eq!(result.output["truncated"], true);
+        assert_eq!(result.output["bytes_read"], 3);
+    }
+
+    #[test]
+    fn workspace_read_executor_fails_invalid_utf8() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("binary.bin"), [0xff, 0xfe, 0xfd]).expect("write");
+        let result =
+            WorkspaceReadExecutor::read(temp.path(), "binary.bin", MAX_WORKSPACE_READ_BYTES)
+                .expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+    }
+
+    #[test]
+    fn tool_executor_denies_non_workspace_read_tools() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = ToolExecutor::execute_read_only(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: "workspace.write".into(),
+                input: serde_json::json!({"path":"README.md"}),
+            },
+        )
+        .expect("execute");
+        assert_eq!(result.status, ToolExecutionStatus::Denied);
     }
 }

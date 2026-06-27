@@ -207,8 +207,42 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
+    const modeIdInput = await vscode.window.showInputBox({
+      prompt: 'Mode ID',
+      value: 'orchestrator',
+      ignoreFocusOut: true,
+    });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand);
+    if (modeIdInput === undefined) {
+      return;
+    }
+
+    const path = await vscode.window.showInputBox({
+      prompt: 'Workspace-relative path to read',
+      placeHolder: 'README.md',
+      ignoreFocusOut: true,
+    });
+
+    if (path === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.executeTool(modeIdInput.trim() || 'orchestrator', 'workspace.read', { path: path.trim() });
+      output.appendLine(`tool.execute workspace.read: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      const outputValue = result.output as { bytes_read?: unknown; truncated?: unknown };
+      await vscode.window.showInformationMessage(
+        `Brownie workspace.read ${result.status}: bytes_read=${String(outputValue.bytes_read ?? 'n/a')}, truncated=${String(outputValue.truncated ?? 'n/a')}`,
+      );
+    } catch (error) {
+      output.appendLine(`tool.execute workspace.read failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie execute read tool failed: ${formatError(error)}`);
+    }
+  });
+
+  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand);
 }
 
 export function deactivate(): void {

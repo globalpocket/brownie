@@ -13,3 +13,7 @@ path = "src/lib.rs"
 brownie-agentmodes = { path = "../brownie-agentmodes" }
 serde.workspace = true
 serde_json.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

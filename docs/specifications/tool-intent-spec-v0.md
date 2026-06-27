@@ -7,3 +7,7 @@ The runtime parses these blocks without executing any tool. Every assistant-requ
 Validated assistant tool intent is evaluated by `RuntimePermissionGate` using the compiled mode policy. Runtime permissions take precedence over assistant intent. Denied and rejected tool intent does not execute and does not fail `task.run` in Phase 1.6.
 
 Real tool execution, file reads, file writes, patch application, process command execution, subtask spawning, real LLM API calls, and OpenAI-compatible HTTP clients remain non-goals for this phase.
+
+## Phase 1.7 read-only tool execution note
+
+Phase 1.7 adds standalone `tool.execute` for permission-gated `workspace.read` execution only. All writes, process execution, subtasks, network access, service control, and destructive operations remain non-executable. `task.run` does not automatically execute tools in Phase 1.7. See `docs/specifications/tool-execution-spec-v0.md` for workspace boundary, protected path, truncation, UTF-8, and ledger behavior.
