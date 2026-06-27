@@ -37,6 +37,16 @@ pub struct LlmStatusResult {
     pub reason: Option<String>,
     pub strict: bool,
     pub will_fallback_to_fake: bool,
+    pub config_source: String,
+    pub active_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RuntimeConfigGetResult {
+    pub config_source: String,
+    pub config_path: Option<String>,
+    pub active_profile: Option<String>,
+    pub llm_status: LlmStatusResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

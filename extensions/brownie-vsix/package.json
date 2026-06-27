@@ -26,6 +26,10 @@
         "title": "Brownie: LLM Status"
       },
       {
+        "command": "brownie.runtimeConfig",
+        "title": "Brownie: Runtime Config"
+      },
+      {
         "command": "brownie.modeList",
         "title": "Brownie: List Modes"
       },

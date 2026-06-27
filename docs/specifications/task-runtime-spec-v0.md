@@ -155,3 +155,7 @@ Phase 2.0 routes LLM calls through a provider abstraction. The Fake provider rem
 `task.run` selects Fake unless `BROWNIE_LLM_PROVIDER=openai-compatible` is explicitly set. With complete OpenAI-compatible configuration it uses that provider and records redacted provider metadata (`provider`, `model`, `message_count`, `base_url`, `strict`) in `LlmRequestCreated` and `SecondPassLlmRequestCreated`. API keys are never stored.
 
 If OpenAI-compatible configuration is incomplete, `BROWNIE_LLM_STRICT=false` (default) falls back to Fake. `BROWNIE_LLM_STRICT=true` fails the run, writes `LlmRequestFailed` and `TaskFailed`, and returns `-32603`. If an enabled OpenAI-compatible request fails, the runtime writes `LlmRequestFailed` or `SecondPassLlmRequestFailed` with a redacted high-level reason and marks the task Failed. Streaming and additional execution capabilities remain out of scope.
+
+## Phase 2.2 task LLM provider selection
+
+`task.run` resolves its LLM provider using the same priority as `llm.status`: explicit environment override, workspace `.brownie/config.json` active profile, then default Fake. Runtime permissions remain authoritative over LLM instructions, and Phase 2.2 does not add streaming or new tool execution capabilities.

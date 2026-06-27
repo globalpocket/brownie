@@ -31,6 +31,15 @@ export interface LlmStatusResult {
   reason?: string | null;
   strict: boolean;
   will_fallback_to_fake: boolean;
+  config_source: string;
+  active_profile?: string | null;
+}
+
+export interface RuntimeConfigGetResult {
+  config_source: string;
+  config_path?: string | null;
+  active_profile?: string | null;
+  llm_status: LlmStatusResult;
 }
 
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
@@ -211,7 +220,21 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     (value.base_url === undefined || value.base_url === null || typeof value.base_url === 'string') &&
     (value.reason === undefined || value.reason === null || typeof value.reason === 'string') &&
     typeof value.strict === 'boolean' &&
-    typeof value.will_fallback_to_fake === 'boolean'
+    typeof value.will_fallback_to_fake === 'boolean' &&
+    typeof value.config_source === 'string' &&
+    (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    !Object.prototype.hasOwnProperty.call(value, 'api_key')
+  );
+}
+
+export function isRuntimeConfigGetResult(value: unknown): value is RuntimeConfigGetResult {
+  return (
+    isRecord(value) &&
+    typeof value.config_source === 'string' &&
+    (value.config_path === undefined || value.config_path === null || typeof value.config_path === 'string') &&
+    (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    isLlmStatusResult(value.llm_status) &&
+    !Object.prototype.hasOwnProperty.call(value, 'api_key')
   );
 }
 
