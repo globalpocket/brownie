@@ -44,6 +44,10 @@
       {
         "command": "brownie.toolPlan",
         "title": "Brownie: Plan Tools"
+      },
+      {
+        "command": "brownie.toolIntentParse",
+        "title": "Brownie: Parse Tool Intent"
       }
     ]
   },

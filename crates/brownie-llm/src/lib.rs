@@ -25,13 +25,49 @@ pub struct FakeLlm;
 
 impl FakeLlm {
     pub fn complete(request: &LlmRequest) -> LlmResponse {
+        let prompt = request
+            .messages
+            .iter()
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+            .to_lowercase();
+        let mut requests = vec![(
+            "workspace.read",
+            "Inspect workspace context before proceeding.",
+        )];
+        if contains_any(&prompt, &["implement", "edit", "修正", "実装"]) {
+            requests.push(("workspace.write", "Need to edit workspace files."));
+        }
+        if contains_any(
+            &prompt,
+            &["test", "check", "verify", "検証", "テスト", "実行"],
+        ) {
+            requests.push(("process.exec", "Need to run verification commands."));
+        }
+        if prompt.contains("orchestrator") {
+            requests.push((
+                "subtask.spawn",
+                "Orchestrator mode may coordinate subtasks.",
+            ));
+        }
+        let tool_requests = requests
+            .into_iter()
+            .map(|(tool_id, reason)| serde_json::json!({ "tool_id": tool_id, "reason": reason }))
+            .collect::<Vec<_>>();
+        let intent = serde_json::json!({ "tool_requests": tool_requests });
         LlmResponse {
             content: format!(
-                "Fake LLM completed request with {} messages.",
-                request.messages.len()
+                "Fake LLM completed request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                request.messages.len(),
+                serde_json::to_string_pretty(&intent).expect("fake intent serializes")
             ),
         }
     }
+}
+
+fn contains_any(haystack: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| haystack.contains(needle))
 }
 
 #[cfg(test)]
@@ -54,9 +90,9 @@ mod tests {
             ],
         };
 
-        assert_eq!(
-            FakeLlm::complete(&request).content,
-            "Fake LLM completed request with 2 messages."
-        );
+        let content = FakeLlm::complete(&request).content;
+        assert!(content.starts_with("Fake LLM completed request with 2 messages."));
+        assert!(content.contains("```brownie-tool-intent"));
+        assert!(content.contains("workspace.read"));
     }
 }

@@ -117,15 +117,20 @@ mod tests {
             mode_policy_summary: Some("Mode Policy:\n<unresolved>".into()),
             permission_summary: vec![],
             tool_plan_summary: vec![],
+            tool_intent_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
         assert_eq!(result.final_state, AgentLoopState::Completed);
         assert_eq!(result.prompt.messages.len(), 2);
         assert_eq!(result.llm_request.model, FAKE_LLM_MODEL);
-        assert_eq!(
-            result.llm_response.content,
-            "Fake LLM completed request with 2 messages."
-        );
+        assert!(result
+            .llm_response
+            .content
+            .starts_with("Fake LLM completed request with 2 messages."));
+        assert!(result
+            .llm_response
+            .content
+            .contains("```brownie-tool-intent"));
     }
 }

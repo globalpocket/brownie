@@ -60,6 +60,7 @@ name = "brownie-llm"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -113,6 +114,7 @@ version = "0.1.0"
 dependencies = [
  "brownie-agentmodes",
  "serde",
+ "serde_json",
 ]
 
 [[package]]

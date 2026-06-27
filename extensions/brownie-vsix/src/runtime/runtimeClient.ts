@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -74,6 +74,19 @@ export class RuntimeClient {
 
     if (!isTaskRunResult(result)) {
       throw new RuntimeProtocolError('task.run returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async parseToolIntent(modeId: string, assistantContent: string): Promise<ToolIntentParseResult> {
+    const result = await this.call<ToolIntentParseResult>('tool.intent.parse', {
+      mode_id: modeId,
+      assistant_content: assistantContent,
+    });
+
+    if (!isToolIntentParseResult(result)) {
+      throw new RuntimeProtocolError('tool.intent.parse returned an invalid result');
     }
 
     return result;
