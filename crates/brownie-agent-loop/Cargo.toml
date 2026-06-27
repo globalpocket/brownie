@@ -7,6 +7,7 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+anyhow.workspace = true
 brownie-context = { path = "../brownie-context" }
 brownie-llm = { path = "../brownie-llm" }
 

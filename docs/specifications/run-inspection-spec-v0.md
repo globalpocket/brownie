@@ -12,7 +12,7 @@ Unknown `run_id` or `task_id` values return JSON-RPC `-32602 invalid params` err
 
 ## Sanitized event summaries
 
-`LedgerEventSummary` contains event identity, task/run identity, kind, timestamp, and a sanitized optional payload. Inspection never returns full file content. Payloads are allowlisted to preview and metadata keys such as `output_preview`, `prompt_preview`, `content_preview`, `bytes_read`, `truncated`, `reason`, `model`, `message_count`, mode metadata, permission decisions, and tool IDs.
+`LedgerEventSummary` contains event identity, task/run identity, kind, timestamp, and a sanitized optional payload. Inspection never returns full file content. Payloads are allowlisted to preview and metadata keys such as `output_preview`, `prompt_preview`, `content_preview`, `bytes_read`, `truncated`, `reason`, `model`, `message_count`, `provider`, mode metadata, permission decisions, and tool IDs.
 
 Keys such as `content`, `full_content`, `file_content`, and `raw_output` are removed even if future ledger producers accidentally include them.
 

@@ -5,9 +5,13 @@ use brownie_agentmodes::{
     BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
 };
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
+use brownie_llm::{
+    FakeLlmProvider, LlmProvider, LlmProviderKind, LlmProviderStatus,
+    OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
+};
 use brownie_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, ModeGetParams,
-    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmStatusResult,
+    ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
     RunInspectSummary, RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams,
     TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
@@ -26,6 +30,7 @@ use serde_json::{json, Value};
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
+const METHOD_LLM_STATUS: &str = "llm.status";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
 const METHOD_TASK_RUN: &str = "task.run";
@@ -70,6 +75,10 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
 
     match request.method.as_str() {
         METHOD_RUNTIME_STATUS => result_response(request.id, json!(runtime_status())),
+        METHOD_LLM_STATUS => result_response(
+            request.id,
+            json!(llm_status_result(llm_provider_from_env().status())),
+        ),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
@@ -85,6 +94,68 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
+    }
+}
+
+fn llm_status_result(status: LlmProviderStatus) -> LlmStatusResult {
+    LlmStatusResult {
+        provider: provider_kind_name(&status.provider).to_string(),
+        enabled: status.enabled,
+        model: status.model,
+        base_url: status.base_url,
+        reason: status.reason,
+    }
+}
+
+fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
+    match kind {
+        LlmProviderKind::Fake => "Fake",
+        LlmProviderKind::OpenAiCompatible => "OpenAiCompatible",
+    }
+}
+
+pub fn llm_provider_from_env() -> Box<dyn LlmProvider> {
+    match std::env::var("BROWNIE_LLM_PROVIDER").ok().as_deref() {
+        Some("openai-compatible") => match OpenAiCompatibleLlmProvider::from_env() {
+            OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+                let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
+                Box::new(OpenAiCompatibleLlmProvider::new(config, api_key))
+            }
+            OpenAiCompatibleConfigFromEnv::Disabled(status) => {
+                Box::new(DisabledLlmProvider { status })
+            }
+        },
+        _ => Box::new(FakeLlmProvider),
+    }
+}
+
+fn llm_provider_from_env_for_task_run() -> Box<dyn LlmProvider> {
+    let provider = llm_provider_from_env();
+    if provider.status().enabled {
+        provider
+    } else {
+        Box::new(FakeLlmProvider)
+    }
+}
+
+struct DisabledLlmProvider {
+    status: LlmProviderStatus,
+}
+
+impl LlmProvider for DisabledLlmProvider {
+    fn status(&self) -> LlmProviderStatus {
+        self.status.clone()
+    }
+
+    fn complete(
+        &self,
+        _request: &brownie_llm::LlmRequest,
+    ) -> anyhow::Result<brownie_llm::LlmResponse> {
+        anyhow::bail!(self
+            .status
+            .reason
+            .clone()
+            .unwrap_or_else(|| "LLM provider disabled".to_string()))
     }
 }
 
@@ -202,7 +273,18 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         task: running.clone(),
         ledger_events,
     });
-    let result = AgentLoop::run_with_fake_llm(prompt_input);
+    let provider = llm_provider_from_env_for_task_run();
+    let provider_status = provider.status();
+    let result = match AgentLoop::run_with_llm(prompt_input, provider.as_ref()) {
+        Ok(result) => result,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: LLM request failed: {error}"),
+            )
+        }
+    };
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -218,6 +300,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         &running,
         LedgerEventKind::LlmRequestCreated,
         Some(json!({
+            "provider": provider_kind_name(&provider_status.provider),
             "model": result.llm_request.model.clone(),
             "message_count": result.llm_request.messages.len(),
         })),
@@ -242,6 +325,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         &running,
         LedgerEventKind::LlmResponseReceived,
         Some(json!({
+            "provider": provider_kind_name(&provider_status.provider),
             "content_preview": preview(&result.llm_response.content),
         })),
     ) {
@@ -260,7 +344,19 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             task: running.clone(),
             ledger_events: second_pass_events,
         });
-        let second_pass = AgentLoop::run_second_pass_with_fake_llm(second_pass_prompt_input);
+        let second_pass = match AgentLoop::run_second_pass_with_llm(
+            second_pass_prompt_input,
+            provider.as_ref(),
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                return error_response(
+                    id,
+                    -32603,
+                    &format!("internal error: LLM request failed: {error}"),
+                )
+            }
+        };
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassPromptBuilt,
@@ -275,6 +371,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             &running,
             LedgerEventKind::SecondPassLlmRequestCreated,
             Some(json!({
+                "provider": provider_kind_name(&provider_status.provider),
                 "model": second_pass.llm_request.model.clone(),
                 "message_count": second_pass.llm_request.messages.len(),
             })),
@@ -285,6 +382,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             &running,
             LedgerEventKind::SecondPassLlmResponseReceived,
             Some(json!({
+                "provider": provider_kind_name(&provider_status.provider),
                 "content_preview": preview(&second_pass.llm_response.content),
             })),
         ) {
@@ -631,6 +729,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "content_preview",
         "bytes_read",
         "truncated",
+        "provider",
         "model",
         "message_count",
         "mode_id",
@@ -661,6 +760,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "bytes_read",
             "truncated",
             "reason",
+            "provider",
             "model",
             "message_count",
         ] {
@@ -1418,6 +1518,41 @@ mod tests {
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn llm_status_returns_fake_when_env_unset() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_BASE_URL");
+        std::env::remove_var("BROWNIE_LLM_MODEL");
+        std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
+        std::env::remove_var("BROWNIE_LLM_API_KEY");
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""provider":"Fake""#));
+        assert!(response.contains(r#""enabled":true"#));
+        assert!(response.contains(r#""model":"brownie-fake-llm""#));
+    }
+
+    #[test]
+    fn llm_status_does_not_expose_api_key_for_incomplete_config() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        std::env::remove_var("BROWNIE_LLM_BASE_URL");
+        std::env::set_var("BROWNIE_LLM_MODEL", "qwen35");
+        std::env::set_var("BROWNIE_LLM_API_KEY_ENV", "BROWNIE_LLM_API_KEY");
+        std::env::set_var("BROWNIE_LLM_API_KEY", "super-secret-key");
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""provider":"OpenAiCompatible""#));
+        assert!(response.contains(r#""enabled":false"#));
+        assert!(response.contains("missing config"));
+        assert!(!response.contains("super-secret-key"));
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_MODEL");
+        std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
+        std::env::remove_var("BROWNIE_LLM_API_KEY");
     }
 
     #[test]

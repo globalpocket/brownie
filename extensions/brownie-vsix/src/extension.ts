@@ -20,6 +20,20 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const llmStatusCommand = vscode.commands.registerCommand('brownie.llmStatus', async () => {
+    try {
+      const status = await runtimeClient.llmStatus();
+      output.appendLine(`llm.status: ${JSON.stringify(status, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie LLM: ${status.provider} ${status.model} enabled=${String(status.enabled)}`,
+      );
+    } catch (error) {
+      output.appendLine(`llm.status failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie LLM status failed: ${formatError(error)}`);
+    }
+  });
+
   const modeListCommand = vscode.commands.registerCommand('brownie.modeList', async () => {
     try {
       const modes = await runtimeClient.listModes();
@@ -291,7 +305,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
 }
 
 export function deactivate(): void {

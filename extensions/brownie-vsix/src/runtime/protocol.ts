@@ -23,6 +23,14 @@ export interface RuntimeStatusResult {
   status: string;
 }
 
+export interface LlmStatusResult {
+  provider: string;
+  enabled: boolean;
+  model: string;
+  base_url?: string | null;
+  reason?: string | null;
+}
+
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export type RuntimeActionName =
@@ -189,6 +197,17 @@ export function isRuntimeStatusResult(value: unknown): value is RuntimeStatusRes
     typeof value.name === 'string' &&
     typeof value.version === 'string' &&
     typeof value.status === 'string'
+  );
+}
+
+export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
+  return (
+    isRecord(value) &&
+    typeof value.provider === 'string' &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.model === 'string' &&
+    (value.base_url === undefined || value.base_url === null || typeof value.base_url === 'string') &&
+    (value.reason === undefined || value.reason === null || typeof value.reason === 'string')
   );
 }
 
