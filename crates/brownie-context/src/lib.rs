@@ -508,6 +508,38 @@ mod tests {
     }
 
     #[test]
+    fn context_materializer_and_prompt_include_tool_execution_summary() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::ToolExecutionCompleted,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "tool_id": "workspace.read",
+                    "status": "Completed",
+                    "bytes_read": 123,
+                    "truncated": false,
+                    "output_preview": "# Brownie"
+                })),
+            }],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(
+            materialized.tool_execution_summary,
+            vec!["workspace.read: Completed bytes_read=123 truncated=false"]
+        );
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1].content.contains("Tool Execution:"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- workspace.read: Completed bytes_read=123 truncated=false"));
+    }
+
+    #[test]
     fn truncator_preserves_system_message_and_task_goal() {
         let prompt = PromptView {
             messages: vec![

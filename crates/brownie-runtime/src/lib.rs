@@ -240,6 +240,50 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
 
+    let second_pass_events = match store.tasks().read_ledger_events(&running.run_id) {
+        Ok(events) => events,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if second_pass_events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted)
+    {
+        let second_pass_prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
+            task: running.clone(),
+            ledger_events: second_pass_events,
+        });
+        let second_pass = AgentLoop::run_second_pass_with_fake_llm(second_pass_prompt_input);
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            &running,
+            LedgerEventKind::SecondPassPromptBuilt,
+            Some(json!({
+                "message_count": second_pass.prompt.messages.len(),
+                "prompt_preview": preview_prompt(&second_pass.prompt),
+            })),
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            &running,
+            LedgerEventKind::SecondPassLlmRequestCreated,
+            Some(json!({
+                "model": second_pass.llm_request.model.clone(),
+                "message_count": second_pass.llm_request.messages.len(),
+            })),
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            &running,
+            LedgerEventKind::SecondPassLlmResponseReceived,
+            Some(json!({
+                "content_preview": preview(&second_pass.llm_response.content),
+            })),
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
     let final_status = match result.final_state {
         AgentLoopState::Completed => TaskStatus::Completed,
         AgentLoopState::Cancelled => TaskStatus::Cancelled,
@@ -687,7 +731,10 @@ fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) ->
         }),
     );
     if let Some(content) = result.output.get("content").and_then(Value::as_str) {
-        payload.insert("output_preview".to_string(), json!(preview(content)));
+        payload.insert(
+            "output_preview".to_string(),
+            json!(preview_tool_output(content)),
+        );
     }
     if let Some(bytes_read) = result.output.get("bytes_read") {
         payload.insert("bytes_read".to_string(), bytes_read.clone());
@@ -830,6 +877,14 @@ fn preview(content: &str) -> String {
     content.chars().take(MAX_PREVIEW_CHARS).collect()
 }
 
+fn preview_tool_output(content: &str) -> String {
+    const MAX_TOOL_OUTPUT_PREVIEW_CHARS: usize = 24;
+    content
+        .chars()
+        .take(MAX_TOOL_OUTPUT_PREVIEW_CHARS)
+        .collect()
+}
+
 fn parse_params<T: serde::de::DeserializeOwned>(params: Option<Value>) -> Result<T, String> {
     let params = params.ok_or_else(|| "invalid params: missing params".to_string())?;
     serde_json::from_value(params).map_err(|error| format!("invalid params: {error}"))
@@ -915,6 +970,68 @@ mod tests {
         assert_eq!(result["status"], "Completed");
         assert_eq!(result["output"]["content"], "hello brownie");
         assert_eq!(result["output"]["truncated"], false);
+    }
+
+    #[test]
+    fn task_run_with_readme_records_second_pass_events() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("README.md"),
+            "# Brownie\n\nWorkspace read smoke content that must not appear in the second-pass response.",
+        )
+        .expect("write");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README before final response","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted));
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
+        let second_response = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived)
+            .expect("second pass response");
+        let preview = second_response
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("content_preview"))
+            .and_then(Value::as_str)
+            .expect("preview");
+        assert!(preview.contains("Fake LLM final response"));
+        assert!(!preview.contains("Workspace read smoke content"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
