@@ -35,3 +35,9 @@ Phase 2.1 keeps Fake as the default provider. The runtime does not make an exter
 `llm.status` includes `strict` and `will_fallback_to_fake`. Status, ledger, inspection, and error messages must not expose API keys, Authorization headers, Bearer tokens, or query-string secrets. Redaction covers Authorization, Bearer tokens, `api_key`, API key text, `access_token`, `token=`, and `key=` patterns.
 
 OpenAI-compatible failures report only provider type, redacted base URL, model, and high-level failure reason for timeout/connection failure, non-2xx status, invalid JSON, missing choices, or missing message content.
+
+## Phase 2.2 runtime config profiles
+
+Provider selection now follows explicit environment override, then `.brownie/config.json` `active_profile`, then the default Fake provider. The default remains Fake and Brownie does not contact a real LLM API unless explicitly configured. OpenAI-compatible workspace profiles use `api_key_env`; direct `api_key` fields are rejected.
+
+`llm.status` includes `config_source` and `active_profile` so callers can distinguish `Env`, `WorkspaceConfig`, and `Default` selection.

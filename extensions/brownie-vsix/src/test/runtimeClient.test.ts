@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeConfigGetResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -63,9 +63,17 @@ describe('protocol validation', () => {
   });
 
   it('accepts valid llm.status results and rejects missing required fields', () => {
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false })).toBe(true);
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', active_profile: null })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false, config_source: 'Default' })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, active_profile: null })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', api_key: 'secret' })).toBe(false);
+  });
+
+  it('accepts valid runtime.config.get results', () => {
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', active_profile: null };
+    expect(isRuntimeConfigGetResult({ config_source: 'Default', config_path: null, active_profile: null, llm_status })).toBe(true);
+    expect(isRuntimeConfigGetResult({ config_source: 'Default', llm_status, api_key: 'secret' })).toBe(false);
   });
 
   it('accepts valid permission.check results', () => {
@@ -147,7 +155,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates an llm.status request', async () => {
-    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false };
+    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', active_profile: null };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
@@ -160,6 +168,16 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.llmStatus()).rejects.toThrow('llm.status returned an invalid result');
+  });
+
+  it('creates a runtime.config.get request', async () => {
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, config_source: 'Default', active_profile: null };
+    const result = { config_source: 'Default', config_path: null, active_profile: null, llm_status };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.runtimeConfig()).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'runtime.config.get' }]);
   });
 
   it('creates a mode.list request', async () => {

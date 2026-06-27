@@ -4,21 +4,22 @@ use brownie_agent_loop::{AgentLoop, AgentLoopState};
 use brownie_agentmodes::{
     BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
 };
+use brownie_config::{BrownieConfig, LlmProfile, RuntimeConfigLoader, CONFIG_RELATIVE_PATH};
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_llm::{
     redact_secret, FakeLlmProvider, LlmProvider, LlmProviderKind, LlmProviderStatus,
-    OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
+    OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
 };
 use brownie_protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmStatusResult,
     ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
-    RunInspectSummary, RuntimeActionName, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary,
+    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeState, RuntimeStatus,
+    TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams,
+    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -31,6 +32,7 @@ use serde_json::{json, Value};
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
 const METHOD_LLM_STATUS: &str = "llm.status";
+const METHOD_RUNTIME_CONFIG_GET: &str = "runtime.config.get";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
 const METHOD_TASK_RUN: &str = "task.run";
@@ -75,10 +77,8 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
 
     match request.method.as_str() {
         METHOD_RUNTIME_STATUS => result_response(request.id, json!(runtime_status())),
-        METHOD_LLM_STATUS => result_response(
-            request.id,
-            json!(llm_status_result(llm_provider_status_from_env())),
-        ),
+        METHOD_LLM_STATUS => handle_llm_status(request.id),
+        METHOD_RUNTIME_CONFIG_GET => handle_runtime_config_get(request.id),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
@@ -102,6 +102,25 @@ pub struct RuntimeLlmProviderStatus {
     status: LlmProviderStatus,
     strict: bool,
     will_fallback_to_fake: bool,
+    config_source: RuntimeConfigSource,
+    active_profile: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RuntimeConfigSource {
+    Env,
+    WorkspaceConfig,
+    Default,
+}
+
+impl RuntimeConfigSource {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Env => "Env",
+            Self::WorkspaceConfig => "WorkspaceConfig",
+            Self::Default => "Default",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -119,6 +138,8 @@ fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
         reason: selection.status.reason,
         strict: selection.strict,
         will_fallback_to_fake: selection.will_fallback_to_fake,
+        config_source: selection.config_source.as_str().to_string(),
+        active_profile: selection.active_profile,
     }
 }
 
@@ -127,6 +148,24 @@ fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
         LlmProviderKind::Fake => "Fake",
         LlmProviderKind::OpenAiCompatible => "OpenAiCompatible",
     }
+}
+
+pub fn llm_provider_status_from_workspace(
+    workspace_root: &std::path::Path,
+) -> Result<RuntimeLlmProviderStatus, String> {
+    if std::env::var("BROWNIE_LLM_PROVIDER")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
+    {
+        return Ok(llm_provider_status_from_env());
+    }
+    let config =
+        RuntimeConfigLoader::load_from_workspace(workspace_root).map_err(|e| e.to_string())?;
+    if let Some(config) = config {
+        return status_from_config(&config);
+    }
+    Ok(default_fake_status())
 }
 
 pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
@@ -146,18 +185,163 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 },
                 strict,
                 will_fallback_to_fake: false,
+                config_source: RuntimeConfigSource::Env,
+                active_profile: None,
             },
             OpenAiCompatibleConfigFromEnv::Disabled(status) => RuntimeLlmProviderStatus {
                 status,
                 strict,
                 will_fallback_to_fake: !strict,
+                config_source: RuntimeConfigSource::Env,
+                active_profile: None,
             },
         },
-        _ => RuntimeLlmProviderStatus {
-            status: FakeLlmProvider.status(),
-            strict: false,
-            will_fallback_to_fake: false,
+        Some("fake") | _ => RuntimeLlmProviderStatus {
+            config_source: RuntimeConfigSource::Env,
+            ..fake_status_with_profile(None, false)
         },
+    }
+}
+
+fn default_fake_status() -> RuntimeLlmProviderStatus {
+    RuntimeLlmProviderStatus {
+        config_source: RuntimeConfigSource::Default,
+        ..fake_status_with_profile(None, false)
+    }
+}
+
+fn fake_status_with_profile(
+    active_profile: Option<String>,
+    strict: bool,
+) -> RuntimeLlmProviderStatus {
+    RuntimeLlmProviderStatus {
+        status: FakeLlmProvider.status(),
+        strict,
+        will_fallback_to_fake: false,
+        config_source: RuntimeConfigSource::WorkspaceConfig,
+        active_profile,
+    }
+}
+
+fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus, String> {
+    let profile_name = config.active_profile.clone().ok_or_else(|| {
+        "runtime config active_profile is required when config exists".to_string()
+    })?;
+    let profile = config
+        .llm
+        .as_ref()
+        .and_then(|l| l.profiles.get(&profile_name))
+        .ok_or_else(|| "active_profile references unknown profile".to_string())?;
+    Ok(match profile {
+        LlmProfile::Fake { model } => {
+            let mut s = fake_status_with_profile(Some(profile_name), false);
+            if let Some(model) = model {
+                s.status.model = model.clone();
+            }
+            s
+        }
+        LlmProfile::OpenAiCompatible {
+            base_url,
+            model,
+            api_key_env,
+            strict,
+        } => {
+            let api_key_env = api_key_env
+                .clone()
+                .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
+            let strict = strict.unwrap_or(false);
+            let api_key_present = std::env::var(&api_key_env)
+                .ok()
+                .filter(|v| !v.trim().is_empty())
+                .is_some();
+            let enabled = api_key_present;
+            RuntimeLlmProviderStatus {
+                status: LlmProviderStatus {
+                    provider: LlmProviderKind::OpenAiCompatible,
+                    enabled,
+                    model: model.clone(),
+                    base_url: Some(redact_secret(base_url)),
+                    reason: if enabled {
+                        None
+                    } else {
+                        Some(format!("missing config: {api_key_env}"))
+                    },
+                },
+                strict,
+                will_fallback_to_fake: !strict && !enabled,
+                config_source: RuntimeConfigSource::WorkspaceConfig,
+                active_profile: Some(profile_name),
+            }
+        }
+    })
+}
+
+pub fn llm_provider_from_workspace_for_task_run(
+    workspace_root: &std::path::Path,
+) -> Result<Box<dyn LlmProvider>, RuntimeLlmProviderError> {
+    if std::env::var("BROWNIE_LLM_PROVIDER")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
+    {
+        return llm_provider_from_env_for_task_run();
+    }
+    let config = RuntimeConfigLoader::load_from_workspace(workspace_root).map_err(|e| {
+        RuntimeLlmProviderError {
+            status: default_fake_status(),
+            message: e.to_string(),
+        }
+    })?;
+    let Some(config) = config else {
+        return Ok(Box::new(FakeLlmProvider));
+    };
+    let selection = status_from_config(&config).map_err(|e| RuntimeLlmProviderError {
+        status: default_fake_status(),
+        message: e,
+    })?;
+    if selection.status.provider == LlmProviderKind::Fake {
+        return Ok(Box::new(FakeLlmProvider));
+    }
+    if !selection.status.enabled {
+        if selection.strict {
+            return Err(RuntimeLlmProviderError {
+                message: selection
+                    .status
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "LLM provider disabled".to_string()),
+                status: selection,
+            });
+        }
+        return Ok(Box::new(FakeLlmProvider));
+    }
+    let profile_name = selection.active_profile.clone().unwrap_or_default();
+    let profile = config
+        .llm
+        .as_ref()
+        .and_then(|l| l.profiles.get(&profile_name))
+        .expect("validated profile");
+    if let LlmProfile::OpenAiCompatible {
+        base_url,
+        model,
+        api_key_env,
+        ..
+    } = profile
+    {
+        let api_key_env = api_key_env
+            .clone()
+            .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
+        let api_key = std::env::var(&api_key_env).unwrap_or_default();
+        Ok(Box::new(OpenAiCompatibleLlmProvider::new(
+            OpenAiCompatibleConfig {
+                base_url: base_url.clone(),
+                model: model.clone(),
+                api_key_env,
+            },
+            api_key,
+        )))
+    } else {
+        Ok(Box::new(FakeLlmProvider))
     }
 }
 
@@ -186,6 +370,49 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
         },
         _ => Ok(Box::new(FakeLlmProvider)),
     }
+}
+
+fn handle_llm_status(id: Value) -> JsonRpcResponse<Value> {
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match llm_provider_status_from_workspace(store.workspace_root()) {
+        Ok(status) => result_response(id, json!(llm_status_result(status))),
+        Err(error) => error_response(
+            id,
+            -32603,
+            &format!("internal error: {}", redact_secret(&error)),
+        ),
+    }
+}
+
+fn handle_runtime_config_get(id: Value) -> JsonRpcResponse<Value> {
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let status = match llm_provider_status_from_workspace(store.workspace_root()) {
+        Ok(status) => status,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: {}", redact_secret(&error)),
+            )
+        }
+    };
+    let result = RuntimeConfigGetResult {
+        config_source: status.config_source.as_str().to_string(),
+        config_path: if status.config_source == RuntimeConfigSource::WorkspaceConfig {
+            Some(CONFIG_RELATIVE_PATH.to_string())
+        } else {
+            None
+        },
+        active_profile: status.active_profile.clone(),
+        llm_status: llm_status_result(status),
+    };
+    result_response(id, json!(result))
 }
 
 fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
@@ -302,7 +529,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         task: running.clone(),
         ledger_events,
     });
-    let provider = match llm_provider_from_env_for_task_run() {
+    let provider = match llm_provider_from_workspace_for_task_run(store.workspace_root()) {
         Ok(provider) => provider,
         Err(error) => {
             return fail_llm_request(
@@ -316,7 +543,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
     let provider_status = provider.status();
-    let provider_strict = llm_provider_status_from_env().strict;
+    let provider_selection = match llm_provider_status_from_workspace(store.workspace_root()) {
+        Ok(s) => s,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: {}", redact_secret(&error)),
+            )
+        }
+    };
+    let provider_strict = provider_selection.strict;
     let result = match AgentLoop::run_with_llm(prompt_input, provider.as_ref()) {
         Ok(result) => result,
         Err(error) => {
@@ -328,6 +565,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: provider_status.clone(),
                     strict: provider_strict,
                     will_fallback_to_fake: false,
+                    config_source: provider_selection.config_source.clone(),
+                    active_profile: provider_selection.active_profile.clone(),
                 },
                 &error.to_string(),
                 LedgerEventKind::LlmRequestFailed,
@@ -409,6 +648,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         status: provider_status.clone(),
                         strict: provider_strict,
                         will_fallback_to_fake: false,
+                        config_source: provider_selection.config_source.clone(),
+                        active_profile: provider_selection.active_profile.clone(),
                     },
                     &error.to_string(),
                     LedgerEventKind::SecondPassLlmRequestFailed,
@@ -1324,7 +1565,7 @@ mod tests {
     use brownie_protocol::{TaskRecord, TaskStatus};
     use std::sync::Mutex;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
@@ -2068,5 +2309,101 @@ mod tests {
     #[test]
     fn empty_line_is_ignored() {
         assert_eq!(handle_jsonrpc_input_line("  \t "), None);
+    }
+}
+
+#[cfg(test)]
+mod phase_2_2_tests {
+    use super::*;
+    use std::fs;
+
+    struct EnvGuard;
+    impl EnvGuard {
+        fn clear_env() {
+            for key in [
+                "BROWNIE_LLM_PROVIDER",
+                "BROWNIE_LLM_BASE_URL",
+                "BROWNIE_LLM_MODEL",
+                "BROWNIE_LLM_API_KEY_ENV",
+                "BROWNIE_LLM_API_KEY",
+                "BROWNIE_LLM_STRICT",
+            ] {
+                std::env::remove_var(key);
+            }
+        }
+        fn clear() -> Self {
+            Self::clear_env();
+            Self
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            Self::clear_env();
+        }
+    }
+
+    fn write_config(dir: &std::path::Path, body: &str) {
+        fs::create_dir_all(dir.join(".brownie")).unwrap();
+        fs::write(dir.join(".brownie/config.json"), body).unwrap();
+    }
+
+    #[test]
+    fn no_env_and_no_config_uses_default_fake() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        let status = llm_provider_status_from_workspace(dir.path()).unwrap();
+        assert_eq!(status.status.provider, LlmProviderKind::Fake);
+        assert_eq!(status.config_source, RuntimeConfigSource::Default);
+    }
+
+    #[test]
+    fn env_fake_overrides_workspace_config() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"fake","llm":{"profiles":{"fake":{"provider":"fake"}}}}"#,
+        );
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+        let status = llm_provider_status_from_workspace(dir.path()).unwrap();
+        assert_eq!(status.status.provider, LlmProviderKind::Fake);
+        assert_eq!(status.config_source, RuntimeConfigSource::Env);
+    }
+
+    #[test]
+    fn workspace_config_openai_status_is_sanitized() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"local","llm":{"profiles":{"local":{"provider":"openai-compatible","base_url":"http://127.0.0.1:4141/v1","model":"qwen35","api_key_env":"BROWNIE_LLM_API_KEY","strict":true}}}}"#,
+        );
+        let status = llm_provider_status_from_workspace(dir.path()).unwrap();
+        assert_eq!(status.status.provider, LlmProviderKind::OpenAiCompatible);
+        assert_eq!(status.config_source, RuntimeConfigSource::WorkspaceConfig);
+        assert_eq!(status.active_profile.as_deref(), Some("local"));
+        assert!(!status.status.enabled);
+        assert!(status.strict);
+    }
+
+    #[test]
+    fn runtime_config_get_rejects_direct_api_key_without_leaking_value() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"bad","llm":{"profiles":{"bad":{"provider":"openai-compatible","base_url":"http://127.0.0.1:4141/v1","model":"qwen35","api_key":"DO_NOT_ALLOW"}}}}"#,
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", dir.path());
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"runtime.config.get"}"#)
+                .unwrap();
+        assert!(response.contains("error"));
+        assert!(!response.contains("DO_NOT_ALLOW"));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 }

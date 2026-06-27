@@ -1,6 +1,7 @@
 [workspace]
 members = [
   "crates/brownie-common",
+  "crates/brownie-config",
   "crates/brownie-protocol",
   "crates/brownie-runtime",
   "crates/brownie-agent-loop",

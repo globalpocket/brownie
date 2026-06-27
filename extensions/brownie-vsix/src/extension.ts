@@ -41,6 +41,21 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const runtimeConfigCommand = vscode.commands.registerCommand('brownie.runtimeConfig', async () => {
+    try {
+      const config = await runtimeClient.runtimeConfig();
+      output.appendLine(`runtime.config.get:`);
+      output.appendLine(JSON.stringify(config, null, 2));
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie config: source=${config.config_source} profile=${config.active_profile ?? 'null'} provider=${config.llm_status.provider}`,
+      );
+    } catch (error) {
+      output.appendLine(`runtime.config.get failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie runtime config failed: ${formatError(error)}`);
+    }
+  });
+
   const modeListCommand = vscode.commands.registerCommand('brownie.modeList', async () => {
     try {
       const modes = await runtimeClient.listModes();
@@ -312,7 +327,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
 }
 
 export function deactivate(): void {

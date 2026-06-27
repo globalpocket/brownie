@@ -220,3 +220,7 @@ Phase 2.0 routes LLM calls through a provider abstraction. The Fake provider rem
 `llm.status` returns `provider`, `enabled`, `model`, `base_url`, `reason`, `strict`, and `will_fallback_to_fake`. `will_fallback_to_fake` is true only when OpenAI-compatible was requested, required configuration is missing, and `BROWNIE_LLM_STRICT` is not true. No API key or Authorization/Bearer value is returned.
 
 Ledger event kinds include `LlmRequestFailed` and `SecondPassLlmRequestFailed`. When a configured provider call fails during `task.run`, the runtime records the redacted failure event, records `TaskFailed`, marks the task Failed, and returns JSON-RPC `-32603`. Disabled OpenAI-compatible with `strict=false` falls back to Fake and does not emit a failure event. Phase 2.1 does not add streaming or any new workspace.write, process.exec, network tool, service-control, destructive, or subtask-spawn execution capability.
+
+## Phase 2.2 `runtime.config.get`
+
+`runtime.config.get` returns a sanitized view of the active runtime configuration with `config_source`, optional `config_path`, optional `active_profile`, and the same `llm_status` shape returned by `llm.status`. `LlmStatusResult` includes `config_source` and `active_profile`. Secrets such as direct API keys, Authorization headers, and bearer tokens are never returned.
