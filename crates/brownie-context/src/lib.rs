@@ -38,6 +38,7 @@ pub struct PromptBuildInput {
     pub mode_id: Option<String>,
     pub mode_policy_summary: Option<String>,
     pub permission_summary: Vec<String>,
+    pub tool_plan_summary: Vec<String>,
     pub ledger_summary: Vec<String>,
 }
 
@@ -65,6 +66,7 @@ impl ContextMaterializer {
             });
 
         let permission_summary = format_permission_summary(&input.ledger_events);
+        let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
 
         let ledger_summary = input
             .ledger_events
@@ -79,6 +81,7 @@ impl ContextMaterializer {
             mode_id: input.task.mode_id,
             mode_policy_summary: Some(mode_policy_summary),
             permission_summary,
+            tool_plan_summary,
             ledger_summary,
         }
     }
@@ -132,6 +135,20 @@ fn format_permission_summary(events: &[LedgerEvent]) -> Vec<String> {
         .collect()
 }
 
+fn format_tool_plan_summary(events: &[LedgerEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::ToolPermissionChecked)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let tool_id = payload.get("tool_id")?.as_str()?;
+            let allowed = payload.get("allowed")?.as_bool()?;
+            let status = if allowed { "allowed" } else { "denied" };
+            Some(format!("{tool_id}: {status}"))
+        })
+        .collect()
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -145,6 +162,17 @@ impl PromptBuilder {
         } else {
             input
                 .permission_summary
+                .iter()
+                .map(|entry| format!("- {entry}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+
+        let tool_plan = if input.tool_plan_summary.is_empty() {
+            "- <none>".to_string()
+        } else {
+            input
+                .tool_plan_summary
                 .iter()
                 .map(|entry| format!("- {entry}"))
                 .collect::<Vec<_>>()
@@ -171,8 +199,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, input.goal, ledger
                     ),
                 },
             ],
@@ -238,6 +266,7 @@ mod tests {
             mode_id: Some("orchestrator".into()),
             mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
             permission_summary: vec![],
+            tool_plan_summary: vec![],
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 

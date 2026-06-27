@@ -13,6 +13,7 @@ brownie-agent-loop = { path = "../brownie-agent-loop" }
 brownie-context = { path = "../brownie-context" }
 brownie-protocol = { path = "../brownie-protocol" }
 brownie-store = { path = "../brownie-store" }
+brownie-tools = { path = "../brownie-tools" }
 serde.workspace = true
 serde_json.workspace = true
 

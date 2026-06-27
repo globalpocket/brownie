@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, TaskRecord, TaskRunResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isModeListResult, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isTaskRecord, isTaskRunResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -74,6 +74,16 @@ export class RuntimeClient {
 
     if (!isTaskRunResult(result)) {
       throw new RuntimeProtocolError('task.run returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async planTools(taskId: string): Promise<ToolPlanResult> {
+    const result = await this.call<ToolPlanResult>('tool.plan', { task_id: taskId });
+
+    if (!isToolPlanResult(result)) {
+      throw new RuntimeProtocolError('tool.plan returned an invalid result');
     }
 
     return result;

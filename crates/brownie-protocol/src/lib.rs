@@ -98,6 +98,40 @@ pub enum RuntimeActionName {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolPlanParams {
+    pub task_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolPlanResult {
+    pub task_id: String,
+    pub run_id: String,
+    pub mode_id: String,
+    pub items: Vec<ToolPlanDecisionSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolPlanDecisionSummary {
+    pub tool_id: String,
+    pub required_action: RuntimeActionName,
+    pub allowed: bool,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolListResult {
+    pub tools: Vec<ToolSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolSummary {
+    pub tool_id: String,
+    pub display_name: String,
+    pub description: String,
+    pub required_action: RuntimeActionName,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,

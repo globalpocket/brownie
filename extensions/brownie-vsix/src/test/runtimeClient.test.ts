@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isModeSummary, isPermissionCheckResult, isRuntimeStatusResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -69,6 +69,17 @@ describe('protocol validation', () => {
   it('rejects invalid permission.check result shapes', () => {
     expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'UnknownAction', allowed: false, reason: 'denied' })).toBe(false);
     expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'WriteWorkspace', allowed: 'false', reason: 'denied' })).toBe(false);
+  });
+
+  it('accepts valid tool.plan results and rejects invalid item shapes', () => {
+    const result = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      mode_id: 'orchestrator',
+      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok' }],
+    };
+    expect(isToolPlanResult(result)).toBe(true);
+    expect(isToolPlanResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok' }] })).toBe(false);
   });
 });
 
@@ -153,6 +164,27 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.runTask('task_missing')).rejects.toBeInstanceOf(RuntimeJsonRpcError);
+  });
+
+  it('creates a tool.plan request', async () => {
+    const result = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      mode_id: 'orchestrator',
+      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok' }],
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.planTools('task_1')).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'tool.plan', params: { task_id: 'task_1' } }]);
+  });
+
+  it('rejects invalid tool.plan results', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', mode_id: 'orchestrator', items: [{ tool_id: 'workspace.read', required_action: 'Unknown', allowed: true, reason: 'bad' }] } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.planTools('task_1')).rejects.toThrow('tool.plan returned an invalid result');
   });
 
   it('creates a task.get request', async () => {
