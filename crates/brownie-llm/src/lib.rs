@@ -2,7 +2,7 @@
 
 use std::{env, time::Duration};
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
 pub const OPENAI_COMPATIBLE_API_VERSION: &str = "v1";
@@ -185,7 +185,7 @@ impl OpenAiCompatibleLlmProvider {
                 provider: LlmProviderKind::OpenAiCompatible,
                 enabled: false,
                 model: model.unwrap_or_default(),
-                base_url,
+                base_url: base_url.map(|v| redact_secret(&v)),
                 reason: Some(format!("missing config: {}", missing.join(", "))),
             });
         }
@@ -203,12 +203,19 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
             provider: LlmProviderKind::OpenAiCompatible,
             enabled: true,
             model: self.config.model.clone(),
-            base_url: Some(self.config.base_url.clone()),
+            base_url: Some(redact_secret(&self.config.base_url)),
             reason: None,
         }
     }
 
     fn complete(&self, request: &LlmRequest) -> anyhow::Result<LlmResponse> {
+        let base_url = redact_secret(&self.config.base_url);
+        let failure_prefix = || {
+            format!(
+                "OpenAI-compatible request failed: provider=OpenAiCompatible base_url={} model={}",
+                base_url, self.config.model
+            )
+        };
         let url = format!(
             "{}/chat/completions",
             self.config.base_url.trim_end_matches('/')
@@ -216,35 +223,51 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
         let client = reqwest::blocking::Client::builder()
             .timeout(self.timeout)
             .build()
-            .context("failed to build OpenAI-compatible HTTP client")?;
-        let response: ChatCompletionResponse = client
+            .map_err(|e| {
+                anyhow!(
+                    "{} reason={}",
+                    failure_prefix(),
+                    redact_secret(&e.to_string())
+                )
+            })?;
+        let response = client
             .post(url)
             .bearer_auth(&self.api_key)
             .json(&serde_json::json!({ "model": request.model, "messages": request.messages }))
             .send()
             .map_err(|e| {
                 anyhow!(
-                    "OpenAI-compatible request failed: {}",
+                    "{} reason={}",
+                    failure_prefix(),
                     redact_secret(&e.to_string())
                 )
-            })?
-            .error_for_status()
-            .map_err(|e| {
-                anyhow!(
-                    "OpenAI-compatible response failed: {}",
-                    redact_secret(&e.to_string())
-                )
-            })?
-            .json()
-            .context("failed to parse OpenAI-compatible response")?;
-        response
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(anyhow!(
+                "{} reason=non-2xx HTTP status {}",
+                failure_prefix(),
+                status.as_u16()
+            ));
+        }
+        let response: ChatCompletionResponse = response.json().map_err(|e| {
+            anyhow!(
+                "{} reason=invalid JSON: {}",
+                failure_prefix(),
+                redact_secret(&e.to_string())
+            )
+        })?;
+        let choice = response
             .choices
             .into_iter()
             .next()
-            .map(|choice| LlmResponse {
-                content: choice.message.content,
-            })
-            .ok_or_else(|| anyhow!("OpenAI-compatible response contained no choices"))
+            .ok_or_else(|| anyhow!("{} reason=missing choices", failure_prefix()))?;
+        let content = choice
+            .message
+            .content
+            .filter(|content| !content.trim().is_empty())
+            .ok_or_else(|| anyhow!("{} reason=missing message content", failure_prefix()))?;
+        Ok(LlmResponse { content })
     }
 }
 
@@ -258,19 +281,56 @@ struct ChatChoice {
 }
 #[derive(Debug, Deserialize)]
 struct ChatMessage {
-    content: String,
+    content: Option<String>,
 }
 
 pub fn redact_secret(value: &str) -> String {
-    let mut redacted = value.replace("Authorization", "[REDACTED_HEADER]");
+    let mut redacted = value.to_string();
+    if let Some(query_start) = redacted.find('?') {
+        let end = redacted[query_start..]
+            .find(|c: char| c.is_whitespace() || c == '\'' || c == '"')
+            .map(|i| query_start + i)
+            .unwrap_or(redacted.len());
+        redacted.replace_range(query_start..end, "?[REDACTED]");
+    }
+    for marker in ["Authorization:", "authorization:", "API key", "api key"] {
+        while let Some(start) = redacted.find(marker) {
+            let end = redacted[start..]
+                .find('\n')
+                .map(|i| start + i)
+                .unwrap_or(redacted.len());
+            redacted.replace_range(start..end, "[REDACTED]");
+        }
+    }
     for marker in ["Bearer ", "bearer "] {
         while let Some(start) = redacted.find(marker) {
             let token_start = start + marker.len();
             let token_end = redacted[token_start..]
-                .find(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == ',')
+                .find(|c: char| c.is_whitespace() || c == '\'' || c == '"' || c == ',' || c == '&')
                 .map(|i| token_start + i)
                 .unwrap_or(redacted.len());
-            redacted.replace_range(start..token_end, "[REDACTED_BEARER]");
+            redacted.replace_range(start..token_end, "[REDACTED]");
+        }
+    }
+    for key in ["api_key", "access_token", "token", "key"] {
+        for sep in ["=", ":"] {
+            let marker = format!("{key}{sep}");
+            let mut offset = 0;
+            while offset < redacted.len() {
+                let Some(relative_start) = redacted[offset..].find(&marker) else {
+                    break;
+                };
+                let start = offset + relative_start;
+                let value_start = start + marker.len();
+                let value_end = redacted[value_start..]
+                    .find(|c: char| {
+                        c.is_whitespace() || c == '\'' || c == '"' || c == ',' || c == '&'
+                    })
+                    .map(|i| value_start + i)
+                    .unwrap_or(redacted.len());
+                redacted.replace_range(value_start..value_end, "[REDACTED]");
+                offset = value_start + "[REDACTED]".len();
+            }
         }
     }
     redacted
@@ -372,5 +432,18 @@ mod tests {
         let redacted = redact_secret("Authorization: Bearer secret-token-123 failed");
         assert!(!redacted.contains("secret-token-123"));
         assert!(redacted.contains("[REDACTED"));
+    }
+
+    #[test]
+    fn redacts_common_secret_patterns() {
+        assert_eq!(redact_secret("Authorization: Bearer abc123"), "[REDACTED]");
+        assert_eq!(redact_secret("Bearer abc123"), "[REDACTED]");
+        assert_eq!(redact_secret("api_key=abc123"), "api_key=[REDACTED]");
+        assert_eq!(redact_secret("token=abc123"), "token=[REDACTED]");
+        assert_eq!(redact_secret("key=abc123"), "key=[REDACTED]");
+        assert_eq!(
+            redact_secret("https://example.test/v1?api_key=abc123"),
+            "https://example.test/v1?[REDACTED]"
+        );
     }
 }

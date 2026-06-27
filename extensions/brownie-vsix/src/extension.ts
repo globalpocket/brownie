@@ -23,10 +23,17 @@ export function activate(context: vscode.ExtensionContext): void {
   const llmStatusCommand = vscode.commands.registerCommand('brownie.llmStatus', async () => {
     try {
       const status = await runtimeClient.llmStatus();
-      output.appendLine(`llm.status: ${JSON.stringify(status, null, 2)}`);
+      output.appendLine(`llm.status:`);
+      output.appendLine(`provider: ${status.provider}`);
+      output.appendLine(`enabled: ${String(status.enabled)}`);
+      output.appendLine(`model: ${status.model}`);
+      output.appendLine(`base_url: ${status.base_url ?? 'null'}`);
+      output.appendLine(`strict: ${String(status.strict)}`);
+      output.appendLine(`will_fallback_to_fake: ${String(status.will_fallback_to_fake)}`);
+      output.appendLine(`reason: ${status.reason ?? 'null'}`);
       output.show(true);
       await vscode.window.showInformationMessage(
-        `Brownie LLM: ${status.provider} ${status.model} enabled=${String(status.enabled)}`,
+        `Brownie LLM: ${status.provider} ${status.model} enabled=${String(status.enabled)} strict=${String(status.strict)}`,
       );
     } catch (error) {
       output.appendLine(`llm.status failed: ${formatError(error)}`);

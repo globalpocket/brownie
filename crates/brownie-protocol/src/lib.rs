@@ -35,6 +35,8 @@ pub struct LlmStatusResult {
     pub model: String,
     pub base_url: Option<String>,
     pub reason: Option<String>,
+    pub strict: bool,
+    pub will_fallback_to_fake: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
