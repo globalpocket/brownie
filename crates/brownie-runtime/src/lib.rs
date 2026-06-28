@@ -1355,11 +1355,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::PromptBuilt,
-        Some(json!({
-            "message_count": result.prompt.messages.len(),
-            "prompt_preview": preview_prompt(&result.prompt, provider_selection.budget.response_preview_chars),
-            "max_prompt_chars": provider_selection.budget.max_prompt_chars,
-        })),
+        Some(prompt_built_payload(
+            result.prompt.messages.len(),
+            &result.prompt,
+            provider_selection.budget.response_preview_chars,
+            provider_selection.budget.max_prompt_chars,
+            &result.sensitive_scan,
+        )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -1455,11 +1457,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassPromptBuilt,
-            Some(json!({
-                "message_count": second_pass.prompt.messages.len(),
-                "prompt_preview": preview_prompt(&second_pass.prompt, provider_selection.budget.response_preview_chars),
-                    "max_prompt_chars": provider_selection.budget.max_prompt_chars,
-            })),
+            Some(prompt_built_payload(
+                second_pass.prompt.messages.len(),
+                &second_pass.prompt,
+                provider_selection.budget.response_preview_chars,
+                provider_selection.budget.max_prompt_chars,
+                &second_pass.sensitive_scan,
+            )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
@@ -2353,6 +2357,25 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::DestructiveOperation => RuntimeActionName::DestructiveOperation,
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
     }
+}
+
+fn prompt_built_payload(
+    message_count: usize,
+    prompt: &brownie_context::PromptView,
+    response_preview_chars: usize,
+    max_prompt_chars: usize,
+    sensitive_scan: &PromptSensitiveScanResult,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("message_count".to_string(), json!(message_count));
+    payload.insert("max_prompt_chars".to_string(), json!(max_prompt_chars));
+    if sensitive_scan.findings.is_empty() {
+        payload.insert(
+            "prompt_preview".to_string(),
+            json!(preview_prompt(prompt, response_preview_chars)),
+        );
+    }
+    Value::Object(payload)
 }
 
 fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
@@ -3674,6 +3697,67 @@ content-length: {}
             observed
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    #[test]
+    fn sensitive_prompt_findings_suppress_prompt_previews() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock_two(
+            r#"{"choices":[{"message":{"content":"Mock LLM first pass.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read README\",\"input\":{\"path\":\"README.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Mock LLM final response after tool feedback."}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "warn");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=sk-test-sensitive-preview","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(handle.join().unwrap().len(), 2);
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events = ledger
+            .lines()
+            .map(|line| serde_json::from_str::<brownie_store::LedgerEvent>(line).expect("event"))
+            .collect::<Vec<_>>();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::PromptSensitiveScanCompleted));
+        for kind in [
+            LedgerEventKind::PromptBuilt,
+            LedgerEventKind::SecondPassPromptBuilt,
+        ] {
+            let event = events
+                .iter()
+                .find(|event| event.kind == kind)
+                .unwrap_or_else(|| panic!("missing {kind:?}"));
+            let payload = event.payload.as_ref().expect("prompt payload");
+            assert_eq!(payload["message_count"].as_u64().is_some(), true);
+            assert_eq!(payload.get("prompt_preview"), None);
+            assert!(!serde_json::to_string(payload)
+                .unwrap()
+                .contains("sk-test-sensitive-preview"));
+        }
     }
 
     #[test]
