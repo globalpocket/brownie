@@ -234,13 +234,19 @@ pub struct ToolIntentParserSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentInputSummary {
+    pub has_path: bool,
+    pub field_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentDecisionSummary {
     pub tool_id: String,
     pub required_action: RuntimeActionName,
     pub allowed: bool,
     pub reason: String,
     pub request_reason: String,
-    pub input: serde_json::Value,
+    pub input_summary: ToolIntentInputSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

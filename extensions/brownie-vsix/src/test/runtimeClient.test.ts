@@ -123,11 +123,14 @@ describe('protocol validation', () => {
     const result = {
       mode_id: 'orchestrator',
       parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 },
-      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context' }],
+      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context', input_summary: { has_path: true, field_count: 1 } }],
       rejected: [{ tool_id: null, reason: 'bad json', code: 'malformed_json' }, { reason: 'missing id is ok', code: 'invalid_schema' }],
     };
     expect(isToolIntentParseResult(result)).toBe(true);
-    expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok', request_reason: 'need context' }] })).toBe(false);
+    expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok', request_reason: 'need context', input_summary: { has_path: true, field_count: 1 } }] })).toBe(false);
+    expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context', input_summary: { has_path: true, field_count: 1 }, input: { path: 'README.md' } }] })).toBe(false);
+    expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context' }] })).toBe(false);
+    expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context', input_summary: { has_path: true, field_count: -1 } }] })).toBe(false);
   });
 
   it('accepts valid tool.plan results and rejects invalid item shapes', () => {
@@ -333,7 +336,7 @@ describe('RuntimeClient', () => {
     const result = {
       mode_id: 'orchestrator',
       parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 },
-      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'Need context.' }],
+      items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'Need context.', input_summary: { has_path: true, field_count: 1 } }],
       rejected: [],
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
@@ -344,7 +347,7 @@ describe('RuntimeClient', () => {
   });
 
   it('rejects invalid tool.intent.parse results', async () => {
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { mode_id: 'orchestrator', parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, items: [{ tool_id: 'workspace.read', required_action: 'Unknown', allowed: true, reason: 'bad', request_reason: 'Need context.' }], rejected: [] } });
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { mode_id: 'orchestrator', parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, items: [{ tool_id: 'workspace.read', required_action: 'Unknown', allowed: true, reason: 'bad', request_reason: 'Need context.', input_summary: { has_path: true, field_count: 1 } }], rejected: [] } });
     const client = new RuntimeClient(transport);
 
     await expect(client.parseToolIntent('orchestrator', 'content')).rejects.toThrow('tool.intent.parse returned an invalid result');
