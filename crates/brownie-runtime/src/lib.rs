@@ -12,15 +12,15 @@ use brownie_llm::{
 };
 use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PermissionCheckParams, PermissionCheckResult, RunEventsParams, RunEventsResult,
-    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary,
+    LlmHealthParams, LlmHealthResult, LlmStatusResult, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult,
+    ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -33,6 +33,7 @@ use serde_json::{json, Value};
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
 const METHOD_LLM_STATUS: &str = "llm.status";
+const METHOD_LLM_HEALTH: &str = "llm.health";
 const METHOD_RUNTIME_CONFIG_GET: &str = "runtime.config.get";
 const METHOD_RUNTIME_DIAGNOSTICS_GET: &str = "runtime.diagnostics.get";
 const METHOD_TASK_START: &str = "task.start";
@@ -80,6 +81,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
     match request.method.as_str() {
         METHOD_RUNTIME_STATUS => result_response(request.id, json!(runtime_status())),
         METHOD_LLM_STATUS => handle_llm_status(request.id),
+        METHOD_LLM_HEALTH => handle_llm_health(request.id, request.params),
         METHOD_RUNTIME_CONFIG_GET => handle_runtime_config_get(request.id),
         METHOD_RUNTIME_DIAGNOSTICS_GET => handle_runtime_diagnostics_get(request.id),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
@@ -610,6 +612,161 @@ pub fn runtime_diagnostics_from_workspace(
     }
 }
 
+pub fn llm_health_from_workspace(
+    workspace_root: &std::path::Path,
+    allow_network: bool,
+    timeout: std::time::Duration,
+) -> Result<LlmHealthResult, String> {
+    let selection = llm_provider_status_from_workspace(workspace_root)?;
+    let checked_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|e| e.to_string())?;
+    let mut result = LlmHealthResult {
+        provider: provider_kind_name(&selection.status.provider).to_string(),
+        config_source: selection.config_source.as_str().to_string(),
+        active_profile: selection.active_profile.clone(),
+        enabled: selection.status.enabled,
+        attempted: false,
+        healthy: false,
+        model: selection.status.model.clone(),
+        base_url: selection.status.base_url.clone(),
+        checked_at,
+        latency_ms: None,
+        status_code: None,
+        reason: selection.status.reason.clone().map(|v| redact_secret(&v)),
+        diagnostics: Vec::new(),
+    };
+
+    match selection.status.provider {
+        LlmProviderKind::Fake => {
+            result.enabled = true;
+            result.healthy = true;
+            result.reason = None;
+            result.diagnostics.push(diagnostic(
+                DiagnosticSeverity::Info,
+                "PROVIDER_FAKE_HEALTHY",
+                "Fake provider is healthy without network access.",
+                None,
+            ));
+            Ok(result)
+        }
+        LlmProviderKind::OpenAiCompatible if !selection.status.enabled => {
+            result.diagnostics.push(diagnostic(
+                DiagnosticSeverity::Error,
+                "HEALTH_PROVIDER_DISABLED",
+                selection
+                    .status
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "OpenAI-compatible provider is disabled.".to_string()),
+                None,
+            ));
+            Ok(result)
+        }
+        LlmProviderKind::OpenAiCompatible if !allow_network => {
+            result.diagnostics.push(diagnostic(
+                DiagnosticSeverity::Warning,
+                "HEALTH_NETWORK_NOT_ALLOWED",
+                "Network probe was not attempted because allow_network=false.",
+                None,
+            ));
+            Ok(result)
+        }
+        LlmProviderKind::OpenAiCompatible => {
+            let provider = openai_provider_from_workspace_for_health(workspace_root, &selection)?;
+            let probe = provider.probe_models(timeout);
+            result.attempted = probe.attempted;
+            result.healthy = probe.healthy;
+            result.latency_ms = probe.latency_ms;
+            result.status_code = probe.status_code;
+            result.reason = probe.reason.map(|v| redact_secret(&v));
+            result.diagnostics.push(diagnostic(
+                if result.healthy {
+                    DiagnosticSeverity::Info
+                } else {
+                    DiagnosticSeverity::Error
+                },
+                if result.healthy {
+                    "HEALTH_PROBE_OK"
+                } else {
+                    "HEALTH_PROBE_FAILED"
+                },
+                if result.healthy {
+                    "OpenAI-compatible /models probe returned a 2xx status.".to_string()
+                } else {
+                    result
+                        .reason
+                        .clone()
+                        .unwrap_or_else(|| "OpenAI-compatible /models probe failed.".to_string())
+                },
+                result.base_url.as_deref(),
+            ));
+            Ok(result)
+        }
+        LlmProviderKind::Unknown => {
+            result.diagnostics.push(diagnostic(
+                DiagnosticSeverity::Error,
+                "HEALTH_PROVIDER_UNSUPPORTED",
+                selection
+                    .status
+                    .reason
+                    .clone()
+                    .unwrap_or_else(|| "Unsupported LLM provider.".to_string()),
+                None,
+            ));
+            Ok(result)
+        }
+    }
+}
+
+fn openai_provider_from_workspace_for_health(
+    workspace_root: &std::path::Path,
+    selection: &RuntimeLlmProviderStatus,
+) -> Result<OpenAiCompatibleLlmProvider, String> {
+    if selection.config_source == RuntimeConfigSource::Env {
+        return match OpenAiCompatibleLlmProvider::from_env() {
+            OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+                let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
+                Ok(OpenAiCompatibleLlmProvider::new(config, api_key))
+            }
+            OpenAiCompatibleConfigFromEnv::Disabled(status) => Err(status
+                .reason
+                .unwrap_or_else(|| "OpenAI-compatible provider disabled".to_string())),
+        };
+    }
+    let config =
+        RuntimeConfigLoader::load_from_workspace(workspace_root).map_err(|e| e.to_string())?;
+    let config = config.ok_or_else(|| "workspace config missing".to_string())?;
+    let profile_name = selection.active_profile.clone().unwrap_or_default();
+    let profile = config
+        .llm
+        .as_ref()
+        .and_then(|llm| llm.profiles.get(&profile_name))
+        .ok_or_else(|| "active_profile references unknown profile".to_string())?;
+    let LlmProfile::OpenAiCompatible {
+        base_url,
+        model,
+        api_key_env,
+        ..
+    } = profile
+    else {
+        return Err("active provider is not OpenAI-compatible".to_string());
+    };
+    let api_key_env = api_key_env
+        .clone()
+        .unwrap_or_else(|| "BROWNIE_LLM_API_KEY".to_string());
+    let api_key =
+        std::env::var(&api_key_env).map_err(|_| format!("missing config: {api_key_env}"))?;
+    Ok(OpenAiCompatibleLlmProvider::new(
+        OpenAiCompatibleConfig {
+            base_url: base_url.clone(),
+            model: model.clone(),
+            api_key_env,
+        },
+        api_key,
+    ))
+}
+
 fn contains_key_recursive(value: &serde_json::Value, key: &str) -> bool {
     match value {
         serde_json::Value::Object(map) => map
@@ -644,6 +801,37 @@ fn handle_runtime_diagnostics_get(id: Value) -> JsonRpcResponse<Value> {
         id,
         json!(runtime_diagnostics_from_workspace(store.workspace_root())),
     )
+}
+
+fn handle_llm_health(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: LlmHealthParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let timeout_ms = params.timeout_ms.unwrap_or(5000);
+    if !(1000..=30000).contains(&timeout_ms) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: timeout_ms must be between 1000 and 30000",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match llm_health_from_workspace(
+        store.workspace_root(),
+        params.allow_network,
+        std::time::Duration::from_millis(timeout_ms),
+    ) {
+        Ok(result) => result_response(id, json!(result)),
+        Err(error) => error_response(
+            id,
+            -32603,
+            &format!("internal error: {}", redact_secret(&error)),
+        ),
+    }
 }
 
 fn handle_runtime_config_get(id: Value) -> JsonRpcResponse<Value> {
@@ -1826,7 +2014,7 @@ mod tests {
 
     pub(super) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
-    fn parse_line(line: &str) -> JsonRpcResponse<Value> {
+    pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
             .expect("valid response")
     }
@@ -2750,6 +2938,174 @@ mod phase_2_2_tests {
         assert!(response.contains("error"));
         assert!(!response.contains("DO_NOT_ALLOW"));
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+}
+
+#[cfg(test)]
+mod phase_2_5_tests {
+    use super::*;
+    use std::{
+        fs,
+        io::{Read, Write},
+        net::TcpListener,
+        thread,
+    };
+
+    struct EnvGuard;
+    impl EnvGuard {
+        fn clear_env() {
+            for key in [
+                "BROWNIE_WORKSPACE_ROOT",
+                "BROWNIE_LLM_PROVIDER",
+                "BROWNIE_LLM_BASE_URL",
+                "BROWNIE_LLM_MODEL",
+                "BROWNIE_LLM_API_KEY_ENV",
+                "BROWNIE_LLM_API_KEY",
+                "BROWNIE_LLM_STRICT",
+            ] {
+                std::env::remove_var(key);
+            }
+        }
+        fn clear() -> Self {
+            Self::clear_env();
+            Self
+        }
+    }
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            Self::clear_env();
+        }
+    }
+
+    fn write_config(dir: &std::path::Path, body: &str) {
+        fs::create_dir_all(dir.join(".brownie")).unwrap();
+        fs::write(dir.join(".brownie/config.json"), body).unwrap();
+    }
+
+    fn mock_models_server(status: u16) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buffer = [0; 2048];
+            let _ = stream.read(&mut buffer);
+            let response = format!(
+                "HTTP/1.1 {status} OK\r\ncontent-type: application/json\r\ncontent-length: 13\r\n\r\n{{\"data\":[]}}"
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+        });
+        format!("http://{addr}/v1")
+    }
+
+    #[test]
+    fn llm_health_fake_returns_healthy_without_network() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        let result =
+            llm_health_from_workspace(dir.path(), false, std::time::Duration::from_secs(5))
+                .unwrap();
+        assert_eq!(result.provider, "Fake");
+        assert!(!result.attempted);
+        assert!(result.healthy);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "PROVIDER_FAKE_HEALTHY"));
+    }
+
+    #[test]
+    fn llm_health_openai_network_not_allowed_does_not_probe() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        std::env::set_var("BROWNIE_LLM_BASE_URL", "http://127.0.0.1:9/v1");
+        std::env::set_var("BROWNIE_LLM_MODEL", "qwen35");
+        std::env::set_var("BROWNIE_LLM_API_KEY_ENV", "BROWNIE_LLM_API_KEY");
+        std::env::set_var("BROWNIE_LLM_API_KEY", "local-secret");
+        let result =
+            llm_health_from_workspace(dir.path(), false, std::time::Duration::from_secs(5))
+                .unwrap();
+        assert_eq!(result.provider, "OpenAiCompatible");
+        assert!(!result.attempted);
+        assert!(!result.healthy);
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == "HEALTH_NETWORK_NOT_ALLOWED"));
+    }
+
+    #[test]
+    fn llm_health_rejects_timeout_bounds() {
+        let below = super::tests::parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"llm.health","params":{"allow_network":true,"timeout_ms":999}}"#,
+        );
+        assert_eq!(below.error.unwrap().code, -32602);
+        let above = super::tests::parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"llm.health","params":{"allow_network":true,"timeout_ms":30001}}"#,
+        );
+        assert_eq!(above.error.unwrap().code, -32602);
+    }
+
+    #[test]
+    fn llm_health_missing_openai_config_is_disabled() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        let result =
+            llm_health_from_workspace(dir.path(), true, std::time::Duration::from_secs(5)).unwrap();
+        assert_eq!(result.provider, "OpenAiCompatible");
+        assert!(!result.attempted);
+        assert!(!result.healthy);
+        assert!(result.reason.unwrap().contains("missing config"));
+    }
+
+    #[test]
+    fn llm_health_openai_2xx_and_500_mock_server() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        for (status, healthy) in [(200, true), (500, false)] {
+            let base_url = mock_models_server(status);
+            std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+            std::env::set_var("BROWNIE_LLM_BASE_URL", &base_url);
+            std::env::set_var("BROWNIE_LLM_MODEL", "qwen35");
+            std::env::set_var("BROWNIE_LLM_API_KEY_ENV", "BROWNIE_LLM_API_KEY");
+            std::env::set_var("BROWNIE_LLM_API_KEY", "local-secret");
+            let result =
+                llm_health_from_workspace(dir.path(), true, std::time::Duration::from_secs(5))
+                    .unwrap();
+            assert!(result.attempted);
+            assert_eq!(result.healthy, healthy);
+            assert_eq!(result.status_code, Some(status));
+            let serialized = serde_json::to_string(&result).unwrap();
+            assert!(!serialized.contains("local-secret"));
+            assert!(!serialized.contains("Authorization"));
+            assert!(!serialized.contains(r#"{"data":[]}"#));
+        }
+    }
+
+    #[test]
+    fn llm_health_redacts_connection_failure_and_query_secret() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"local","llm":{"profiles":{"local":{"provider":"openai-compatible","base_url":"http://127.0.0.1:9/v1?api_key=secret-query","model":"qwen35","api_key_env":"BROWNIE_LLM_API_KEY","strict":true}}}}"#,
+        );
+        std::env::set_var("BROWNIE_LLM_API_KEY", "local-secret");
+        let result =
+            llm_health_from_workspace(dir.path(), true, std::time::Duration::from_millis(1000))
+                .unwrap();
+        assert!(result.attempted);
+        assert!(!result.healthy);
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(serialized.contains("?[REDACTED]"));
+        assert!(!serialized.contains("secret-query"));
+        assert!(!serialized.contains("local-secret"));
     }
 }
 

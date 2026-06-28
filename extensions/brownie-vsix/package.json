@@ -26,6 +26,10 @@
         "title": "Brownie: LLM Status"
       },
       {
+        "command": "brownie.llmHealth",
+        "title": "Brownie: LLM Health"
+      },
+      {
         "command": "brownie.runtimeConfig",
         "title": "Brownie: Runtime Config"
       },

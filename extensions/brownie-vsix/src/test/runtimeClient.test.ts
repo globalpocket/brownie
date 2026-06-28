@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -77,6 +77,28 @@ describe('protocol validation', () => {
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [], api_key: 'secret' })).toBe(false);
+  });
+
+  it('accepts valid llm.health results and rejects invalid health fields', () => {
+    const result = {
+      provider: 'Fake',
+      config_source: 'Default',
+      active_profile: null,
+      enabled: true,
+      attempted: false,
+      healthy: true,
+      model: 'brownie-fake-llm',
+      base_url: null,
+      checked_at: '2026-06-28T00:00:00Z',
+      latency_ms: null,
+      status_code: null,
+      reason: null,
+      diagnostics: [{ severity: 'Info', code: 'PROVIDER_FAKE_HEALTHY', message: 'ok', subject: null }],
+    };
+    expect(isLlmHealthResult(result)).toBe(true);
+    expect(isLlmHealthResult({ ...result, attempted: undefined })).toBe(false);
+    expect(isLlmHealthResult({ ...result, healthy: undefined })).toBe(false);
+    expect(isLlmHealthResult({ ...result, latency_ms: '1' })).toBe(false);
   });
 
   it('accepts valid runtime.config.get results', () => {
@@ -170,6 +192,15 @@ describe('RuntimeClient', () => {
 
     await expect(client.llmStatus()).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.status' }]);
+  });
+
+  it('creates an llm.health request', async () => {
+    const result = { provider: 'Fake', config_source: 'Default', active_profile: null, enabled: true, attempted: false, healthy: true, model: 'brownie-fake-llm', base_url: null, checked_at: '2026-06-28T00:00:00Z', latency_ms: null, status_code: null, reason: null, diagnostics: [] };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.llmHealth({ allow_network: false })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'llm.health', params: { allow_network: false } }]);
   });
 
   it('rejects invalid llm.status results', async () => {

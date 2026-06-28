@@ -55,3 +55,7 @@ Unknown `BROWNIE_LLM_PROVIDER` values must not silently become Fake. Status repo
 ## Phase 2.4 diagnostics
 
 `runtime.diagnostics.get` reports provider-profile diagnostics without contacting external LLM endpoints. It explains default Fake selection, workspace profile selection, environment overrides, unknown providers, missing API key environment variables, fallback-to-Fake behavior, and strict failures. Diagnostics and status output must not expose API keys, Authorization headers, or Bearer tokens.
+
+## Phase 2.5 LLM health
+
+Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/specifications/llm-health-spec-v0.md`. `runtime.diagnostics.get` remains read-only and no-network. Endpoint readiness checks are only performed by `llm.health` when `allow_network=true`; Fake health remains no-network. OpenAI-compatible health uses `GET {base_url}/models`, does not persist response bodies, does not write run ledgers, and redacts API keys, Authorization/Bearer values, and query-string secrets.

@@ -41,6 +41,31 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const llmHealthCommand = vscode.commands.registerCommand('brownie.llmHealth', async () => {
+    const confirm = await vscode.window.showWarningMessage(
+      'Brownie will connect to the configured LLM endpoint to check /models readiness. Continue?',
+      { modal: true },
+      'Confirm',
+    );
+
+    if (confirm !== 'Confirm') {
+      return;
+    }
+
+    try {
+      const health = await runtimeClient.llmHealth({ allow_network: true, timeout_ms: 5000 });
+      output.appendLine(`llm.health:`);
+      output.appendLine(JSON.stringify(health, null, 2));
+      output.show(true);
+      await vscode.window.showInformationMessage(
+        `Brownie LLM health: provider=${health.provider} healthy=${String(health.healthy)} latency=${health.latency_ms ?? 'n/a'}ms`,
+      );
+    } catch (error) {
+      output.appendLine(`llm.health failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie LLM health failed: ${formatError(error)}`);
+    }
+  });
+
   const runtimeConfigCommand = vscode.commands.registerCommand('brownie.runtimeConfig', async () => {
     try {
       const config = await runtimeClient.runtimeConfig();
@@ -344,7 +369,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
 }
 
 export function deactivate(): void {
