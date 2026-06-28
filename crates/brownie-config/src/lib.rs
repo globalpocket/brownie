@@ -7,6 +7,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
+use brownie_llm::{validate_llm_request_budget, LlmRequestBudget};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -29,6 +30,7 @@ pub struct LlmConfig {
 pub enum LlmProfile {
     Fake {
         model: Option<String>,
+        budget: Option<LlmRequestBudgetConfig>,
     },
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible {
@@ -36,10 +38,36 @@ pub enum LlmProfile {
         model: String,
         api_key_env: Option<String>,
         strict: Option<bool>,
+        budget: Option<LlmRequestBudgetConfig>,
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub struct LlmRequestBudgetConfig {
+    pub max_prompt_chars: Option<usize>,
+    pub max_messages: Option<usize>,
+    pub request_timeout_ms: Option<u64>,
+    pub response_preview_chars: Option<usize>,
+}
+
+impl LlmRequestBudgetConfig {
+    pub fn apply_to(&self, mut budget: LlmRequestBudget) -> LlmRequestBudget {
+        if let Some(v) = self.max_prompt_chars {
+            budget.max_prompt_chars = v;
+        }
+        if let Some(v) = self.max_messages {
+            budget.max_messages = v;
+        }
+        if let Some(v) = self.request_timeout_ms {
+            budget.request_timeout_ms = v;
+        }
+        if let Some(v) = self.response_preview_chars {
+            budget.response_preview_chars = v;
+        }
+        budget
+    }
+}
+
 pub struct RuntimeConfigLoadResult {
     pub config: Option<BrownieConfig>,
     pub path: PathBuf,
@@ -75,6 +103,20 @@ pub fn validate_config(config: &BrownieConfig) -> Result<()> {
         };
         if !llm.profiles.contains_key(active) {
             bail!("active_profile references unknown profile: {active}");
+        }
+    }
+    if let Some(llm) = &config.llm {
+        for (name, profile) in &llm.profiles {
+            let budget = match profile {
+                LlmProfile::Fake { budget, .. } | LlmProfile::OpenAiCompatible { budget, .. } => {
+                    budget
+                }
+            };
+            if let Some(budget) = budget {
+                let resolved = budget.apply_to(LlmRequestBudget::default());
+                validate_llm_request_budget(&resolved)
+                    .map_err(|e| anyhow::anyhow!("invalid llm budget for profile {name}: {e}"))?;
+            }
         }
     }
     Ok(())

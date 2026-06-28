@@ -1,7 +1,9 @@
 //! Agent loop state-machine crate.
 
 use brownie_context::{PromptBuildInput, PromptBuilder, PromptRole, PromptView};
-use brownie_llm::{FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest, LlmResponse};
+use brownie_llm::{
+    FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest, LlmRequestBudget, LlmResponse,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AgentLoopState {
@@ -65,8 +67,9 @@ impl AgentLoop {
     pub fn run_with_llm(
         prompt_input: PromptBuildInput,
         provider: &dyn LlmProvider,
+        budget: &LlmRequestBudget,
     ) -> anyhow::Result<AgentLoopRunOutput> {
-        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider)?;
+        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider, budget)?;
         Ok(AgentLoopRunOutput {
             final_state: AgentLoopState::Completed,
             prompt,
@@ -79,8 +82,9 @@ impl AgentLoop {
     pub fn run_second_pass_with_llm(
         prompt_input: PromptBuildInput,
         provider: &dyn LlmProvider,
+        budget: &LlmRequestBudget,
     ) -> anyhow::Result<AgentLoopSecondPassOutput> {
-        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider)?;
+        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider, budget)?;
         Ok(AgentLoopSecondPassOutput {
             final_state: AgentLoopState::Completed,
             prompt,
@@ -91,13 +95,14 @@ impl AgentLoop {
     }
 
     pub fn run_with_fake_llm(prompt_input: PromptBuildInput) -> AgentLoopRunOutput {
-        Self::run_with_llm(prompt_input, &FakeLlmProvider).expect("fake provider should not fail")
+        Self::run_with_llm(prompt_input, &FakeLlmProvider, &LlmRequestBudget::default())
+            .expect("fake provider should not fail")
     }
 
     pub fn run_second_pass_with_fake_llm(
         prompt_input: PromptBuildInput,
     ) -> AgentLoopSecondPassOutput {
-        Self::run_second_pass_with_llm(prompt_input, &FakeLlmProvider)
+        Self::run_second_pass_with_llm(prompt_input, &FakeLlmProvider, &LlmRequestBudget::default())
             .expect("fake provider should not fail")
     }
 }
@@ -105,6 +110,7 @@ impl AgentLoop {
 fn run_llm(
     prompt_input: PromptBuildInput,
     provider: &dyn LlmProvider,
+    budget: &LlmRequestBudget,
 ) -> anyhow::Result<(String, PromptView, LlmRequest, LlmResponse)> {
     let task_id = prompt_input.task_id.clone();
     let prompt = PromptBuilder::build(prompt_input);
@@ -119,8 +125,33 @@ fn run_llm(
             })
             .collect(),
     };
-    let llm_response = provider.complete(&llm_request)?;
+    validate_request_budget(&llm_request, budget)?;
+    let llm_response = provider.complete(&llm_request, budget)?;
     Ok((task_id, prompt, llm_request, llm_response))
+}
+
+fn validate_request_budget(request: &LlmRequest, budget: &LlmRequestBudget) -> anyhow::Result<()> {
+    let message_count = request.messages.len();
+    if message_count > budget.max_messages {
+        anyhow::bail!(
+            "LLM request budget exceeded: message count {} > max_messages {}",
+            message_count,
+            budget.max_messages
+        );
+    }
+    let prompt_chars: usize = request
+        .messages
+        .iter()
+        .map(|m| m.content.chars().count())
+        .sum();
+    if prompt_chars > budget.max_prompt_chars {
+        anyhow::bail!(
+            "LLM request budget exceeded: prompt chars {} > max_prompt_chars {}",
+            prompt_chars,
+            budget.max_prompt_chars
+        );
+    }
+    Ok(())
 }
 
 fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
