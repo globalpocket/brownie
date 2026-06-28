@@ -76,10 +76,10 @@ describe('protocol validation', () => {
 
   it('accepts valid runtime diagnostics results', () => {
     const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ severity: 'Info', code: 'CONFIG_NOT_FOUND', message: 'No config.', subject: '.brownie/config.json' }] })).toBe(true);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [], api_key: 'secret' })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', code: 'CONFIG_NOT_FOUND', message: 'No config.', subject: '.brownie/config.json' }] })).toBe(true);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [], api_key: 'secret' })).toBe(false);
   });
 
   it('accepts valid llm.health results and rejects invalid health fields', () => {
@@ -122,8 +122,9 @@ describe('protocol validation', () => {
   it('accepts valid tool intent parse results and rejects invalid decision shapes', () => {
     const result = {
       mode_id: 'orchestrator',
+      parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 },
       items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'need context' }],
-      rejected: [{ tool_id: null, reason: 'bad json' }, { reason: 'missing id is ok' }],
+      rejected: [{ tool_id: null, reason: 'bad json', code: 'malformed_json' }, { reason: 'missing id is ok', code: 'invalid_schema' }],
     };
     expect(isToolIntentParseResult(result)).toBe(true);
     expect(isToolIntentParseResult({ ...result, items: [{ tool_id: 'workspace.read', required_action: 'Nope', allowed: true, reason: 'ok', request_reason: 'need context' }] })).toBe(false);
@@ -215,7 +216,7 @@ describe('RuntimeClient', () => {
 
   it('creates a runtime.diagnostics.get request', async () => {
     const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
-    const result = { config_source: 'Default', active_profile: null, llm_status, diagnostics: [] };
+    const result = { config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
     await expect(client.runtimeDiagnostics()).resolves.toEqual(result);
@@ -331,6 +332,7 @@ describe('RuntimeClient', () => {
   it('creates a tool.intent.parse request', async () => {
     const result = {
       mode_id: 'orchestrator',
+      parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 },
       items: [{ tool_id: 'workspace.read', required_action: 'ReadWorkspace', allowed: true, reason: 'ok', request_reason: 'Need context.' }],
       rejected: [],
     };
@@ -342,7 +344,7 @@ describe('RuntimeClient', () => {
   });
 
   it('rejects invalid tool.intent.parse results', async () => {
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { mode_id: 'orchestrator', items: [{ tool_id: 'workspace.read', required_action: 'Unknown', allowed: true, reason: 'bad', request_reason: 'Need context.' }], rejected: [] } });
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { mode_id: 'orchestrator', parser: { found_blocks: 1, accepted_blocks: 1, accepted_requests: 1, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, items: [{ tool_id: 'workspace.read', required_action: 'Unknown', allowed: true, reason: 'bad', request_reason: 'Need context.' }], rejected: [] } });
     const client = new RuntimeClient(transport);
 
     await expect(client.parseToolIntent('orchestrator', 'content')).rejects.toThrow('tool.intent.parse returned an invalid result');

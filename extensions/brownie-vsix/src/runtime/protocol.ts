@@ -65,8 +65,21 @@ export interface RuntimeDiagnosticsResult {
   config_source: string;
   active_profile?: string | null;
   llm_status: LlmStatusResult;
+  parser_config: ToolIntentParserSummary;
   diagnostics: RuntimeDiagnostic[];
 }
+export interface ToolIntentParserSummary {
+  found_blocks: number;
+  accepted_blocks: number;
+  accepted_requests: number;
+  rejected_requests: number;
+  max_blocks: number;
+  max_block_bytes: number;
+  max_tool_requests: number;
+  max_input_bytes: number;
+  max_reason_chars: number;
+}
+
 
 export interface LlmHealthResult {
   provider: string;
@@ -145,10 +158,12 @@ export interface ToolIntentDecisionSummary {
 export interface ToolIntentRejectedSummary {
   tool_id?: string | null;
   reason: string;
+  code: string;
 }
 
 export interface ToolIntentParseResult {
   mode_id: string;
+  parser: ToolIntentParserSummary;
   items: ToolIntentDecisionSummary[];
   rejected: ToolIntentRejectedSummary[];
 }
@@ -303,6 +318,7 @@ export function isRuntimeDiagnosticsResult(value: unknown): value is RuntimeDiag
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
     isLlmStatusResult(value.llm_status) &&
+    isToolIntentParserSummary(value.parser_config) &&
     Array.isArray(value.diagnostics) &&
     value.diagnostics.every(isRuntimeDiagnostic) &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
@@ -369,6 +385,7 @@ export function isToolIntentParseResult(value: unknown): value is ToolIntentPars
   return (
     isRecord(value) &&
     typeof value.mode_id === 'string' &&
+    isToolIntentParserSummary(value.parser) &&
     Array.isArray(value.items) &&
     value.items.every(isToolIntentDecisionSummary) &&
     Array.isArray(value.rejected) &&
@@ -411,7 +428,23 @@ function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejecte
   return (
     isRecord(value) &&
     (value.tool_id === undefined || value.tool_id === null || typeof value.tool_id === 'string') &&
-    typeof value.reason === 'string'
+    typeof value.reason === 'string' &&
+    typeof value.code === 'string'
+  );
+}
+
+function isToolIntentParserSummary(value: unknown): value is ToolIntentParserSummary {
+  return (
+    isRecord(value) &&
+    isNonNegativeInteger(value.found_blocks) &&
+    isNonNegativeInteger(value.accepted_blocks) &&
+    isNonNegativeInteger(value.accepted_requests) &&
+    isNonNegativeInteger(value.rejected_requests) &&
+    isNonNegativeInteger(value.max_blocks) &&
+    isNonNegativeInteger(value.max_block_bytes) &&
+    isNonNegativeInteger(value.max_tool_requests) &&
+    isNonNegativeInteger(value.max_input_bytes) &&
+    isNonNegativeInteger(value.max_reason_chars)
   );
 }
 

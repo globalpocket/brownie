@@ -232,6 +232,56 @@ fn tool(
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParserConfig {
+    pub max_blocks: usize,
+    pub max_block_bytes: usize,
+    pub max_tool_requests: usize,
+    pub max_input_bytes: usize,
+    pub max_reason_chars: usize,
+}
+
+impl Default for ToolIntentParserConfig {
+    fn default() -> Self {
+        Self {
+            max_blocks: 1,
+            max_block_bytes: 16_384,
+            max_tool_requests: 8,
+            max_input_bytes: 4_096,
+            max_reason_chars: 1_000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParserSummary {
+    pub found_blocks: usize,
+    pub accepted_blocks: usize,
+    pub accepted_requests: usize,
+    pub rejected_requests: usize,
+    pub max_blocks: usize,
+    pub max_block_bytes: usize,
+    pub max_tool_requests: usize,
+    pub max_input_bytes: usize,
+    pub max_reason_chars: usize,
+}
+
+impl ToolIntentParserSummary {
+    fn new(config: &ToolIntentParserConfig) -> Self {
+        Self {
+            found_blocks: 0,
+            accepted_blocks: 0,
+            accepted_requests: 0,
+            rejected_requests: 0,
+            max_blocks: config.max_blocks,
+            max_block_bytes: config.max_block_bytes,
+            max_tool_requests: config.max_tool_requests,
+            max_input_bytes: config.max_input_bytes,
+            max_reason_chars: config.max_reason_chars,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AssistantToolIntent {
     pub tool_requests: Vec<AssistantToolRequest>,
 }
@@ -248,104 +298,311 @@ pub struct AssistantToolRequest {
 pub struct ParsedToolIntent {
     pub requests: Vec<AssistantToolRequest>,
     pub rejected: Vec<RejectedToolIntent>,
+    pub summary: ToolIntentParserSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RejectedToolIntent {
     pub tool_id: Option<String>,
     pub reason: String,
+    pub code: String,
 }
 
 pub struct ToolIntentParser;
 
 impl ToolIntentParser {
+    pub fn config() -> ToolIntentParserConfig {
+        ToolIntentParserConfig::default()
+    }
+
     pub fn parse_assistant_content(content: &str) -> ParsedToolIntent {
-        let Some(json_block) = extract_fenced_block(content) else {
+        Self::parse_assistant_content_with_config(content, &Self::config())
+    }
+
+    pub fn parse_assistant_content_with_config(
+        content: &str,
+        config: &ToolIntentParserConfig,
+    ) -> ParsedToolIntent {
+        let mut summary = ToolIntentParserSummary::new(config);
+        let blocks = extract_fenced_blocks(content);
+        summary.found_blocks = blocks.len();
+        let mut rejected = Vec::new();
+        if blocks.is_empty() {
+            if content.contains("```brownie-tool-intent") {
+                rejected.push(rejection(
+                    None,
+                    "Missing closing brownie-tool-intent fence.",
+                    "missing_closing_fence",
+                ));
+            }
+            summary.rejected_requests = rejected.len();
             return ParsedToolIntent {
                 requests: Vec::new(),
-                rejected: Vec::new(),
+                rejected,
+                summary,
             };
-        };
+        }
+        if blocks.len() > config.max_blocks {
+            rejected.push(rejection(
+                None,
+                "Too many brownie-tool-intent blocks.",
+                "too_many_blocks",
+            ));
+            summary.rejected_requests = rejected.len();
+            return ParsedToolIntent {
+                requests: Vec::new(),
+                rejected,
+                summary,
+            };
+        }
+        let json_block = blocks[0];
+        if json_block.len() > config.max_block_bytes {
+            rejected.push(rejection(
+                None,
+                "brownie-tool-intent block exceeds parser size limit.",
+                "block_too_large",
+            ));
+            summary.rejected_requests = rejected.len();
+            return ParsedToolIntent {
+                requests: Vec::new(),
+                rejected,
+                summary,
+            };
+        }
+        summary.accepted_blocks = 1;
         let value: Value = match serde_json::from_str(json_block.trim()) {
             Ok(value) => value,
-            Err(error) => {
+            Err(_) => {
+                rejected.push(rejection(
+                    None,
+                    "Invalid brownie-tool-intent JSON.",
+                    "malformed_json",
+                ));
+                summary.rejected_requests = rejected.len();
                 return ParsedToolIntent {
                     requests: Vec::new(),
-                    rejected: vec![RejectedToolIntent {
-                        tool_id: None,
-                        reason: format!("Invalid brownie-tool-intent JSON: {error}"),
-                    }],
-                }
+                    rejected,
+                    summary,
+                };
             }
         };
-        let Some(items) = value.get("tool_requests").and_then(Value::as_array) else {
+        let Some(object) = value.as_object() else {
+            rejected.push(rejection(
+                None,
+                "brownie-tool-intent JSON must be an object.",
+                "invalid_schema",
+            ));
+            summary.rejected_requests = rejected.len();
             return ParsedToolIntent {
                 requests: Vec::new(),
-                rejected: vec![RejectedToolIntent {
-                    tool_id: None,
-                    reason: "tool_requests must be an array.".to_string(),
-                }],
+                rejected,
+                summary,
             };
         };
+        if object.keys().any(|key| key != "tool_requests") {
+            rejected.push(rejection(
+                None,
+                "Unknown top-level field in brownie-tool-intent JSON.",
+                "unknown_field",
+            ));
+            summary.rejected_requests = rejected.len();
+            return ParsedToolIntent {
+                requests: Vec::new(),
+                rejected,
+                summary,
+            };
+        }
+        let Some(items) = object.get("tool_requests").and_then(Value::as_array) else {
+            rejected.push(rejection(
+                None,
+                "tool_requests must be an array.",
+                "invalid_schema",
+            ));
+            summary.rejected_requests = rejected.len();
+            return ParsedToolIntent {
+                requests: Vec::new(),
+                rejected,
+                summary,
+            };
+        };
+        if items.len() > config.max_tool_requests {
+            rejected.push(rejection(
+                None,
+                "tool_requests exceeds parser count limit.",
+                "too_many_requests",
+            ));
+            summary.rejected_requests = rejected.len();
+            return ParsedToolIntent {
+                requests: Vec::new(),
+                rejected,
+                summary,
+            };
+        }
         let mut requests = Vec::new();
-        let mut rejected = Vec::new();
         for item in items {
-            let tool_id = item
+            let Some(obj) = item.as_object() else {
+                rejected.push(rejection(
+                    None,
+                    "tool request must be an object.",
+                    "invalid_schema",
+                ));
+                continue;
+            };
+            if obj
+                .keys()
+                .any(|key| !matches!(key.as_str(), "tool_id" | "reason" | "input"))
+            {
+                rejected.push(rejection(
+                    None,
+                    "Unknown field in tool request.",
+                    "unknown_field",
+                ));
+                continue;
+            }
+            let tool_id = obj
                 .get("tool_id")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let reason = item
+            let reason = obj
                 .get("reason")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let input = match item.get("input") {
+            let Some(tool_id_value) = tool_id.clone() else {
+                rejected.push(rejection(
+                    None,
+                    "tool_id must be a string.",
+                    "invalid_schema",
+                ));
+                continue;
+            };
+            let Some(reason_value) = reason else {
+                rejected.push(rejection(
+                    Some(tool_id_value),
+                    "reason must be a string.",
+                    "invalid_schema",
+                ));
+                continue;
+            };
+            if reason_value.chars().count() > config.max_reason_chars {
+                rejected.push(rejection(
+                    Some(tool_id_value),
+                    "reason exceeds parser length limit.",
+                    "input_too_large",
+                ));
+                continue;
+            }
+            if BuiltinToolRegistry::get(&tool_id_value).is_none() {
+                rejected.push(rejection(
+                    Some(tool_id_value),
+                    "Unknown tool id.",
+                    "unknown_tool",
+                ));
+                continue;
+            }
+            let input = match obj.get("input") {
                 Some(value) if value.is_object() => value.clone(),
                 Some(_) => {
-                    rejected.push(RejectedToolIntent {
-                        tool_id,
-                        reason: "input must be an object when provided.".to_string(),
-                    });
+                    rejected.push(rejection(
+                        Some(tool_id_value),
+                        "input must be an object when provided.",
+                        "invalid_input",
+                    ));
                     continue;
                 }
                 None => empty_input_object(),
             };
-            match (tool_id, reason) {
-                (Some(tool_id), Some(reason)) if BuiltinToolRegistry::get(&tool_id).is_some() => {
-                    requests.push(AssistantToolRequest {
-                        tool_id,
-                        reason,
-                        input,
-                    })
-                }
-                (Some(tool_id), Some(_)) => rejected.push(RejectedToolIntent {
-                    tool_id: Some(tool_id),
-                    reason: "Unknown tool id.".to_string(),
-                }),
-                (tool_id, _) => rejected.push(RejectedToolIntent {
-                    tool_id,
-                    reason: "tool_id and reason must be strings.".to_string(),
-                }),
+            if input.to_string().len() > config.max_input_bytes {
+                rejected.push(rejection(
+                    Some(tool_id_value),
+                    "input exceeds parser size limit.",
+                    "input_too_large",
+                ));
+                continue;
             }
+            if tool_id_value == WORKSPACE_READ_TOOL_ID {
+                if let Err(reason) = preflight_workspace_read_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            requests.push(AssistantToolRequest {
+                tool_id: tool_id_value,
+                reason: reason_value,
+                input,
+            });
         }
-        ParsedToolIntent { requests, rejected }
+        summary.accepted_requests = requests.len();
+        summary.rejected_requests = rejected.len();
+        ParsedToolIntent {
+            requests,
+            rejected,
+            summary,
+        }
     }
+}
+
+fn rejection(tool_id: Option<String>, reason: impl Into<String>, code: &str) -> RejectedToolIntent {
+    RejectedToolIntent {
+        tool_id,
+        reason: reason.into(),
+        code: code.to_string(),
+    }
+}
+
+pub fn preflight_workspace_read_path(relative_path: &str) -> Result<(), &'static str> {
+    if relative_path.trim().is_empty() {
+        return Err("workspace.read input.path must not be empty.");
+    }
+    let requested_path = Path::new(relative_path);
+    if requested_path.is_absolute() {
+        return Err("workspace.read input.path must be workspace-relative.");
+    }
+    for component in requested_path.components() {
+        match component {
+            Component::ParentDir => {
+                return Err("workspace.read input.path must not contain path traversal.")
+            }
+            Component::Normal(name) if is_blocked_component(name.to_string_lossy().as_ref()) => {
+                return Err("workspace.read input.path targets a protected workspace path.")
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err("workspace.read input.path must be workspace-relative.")
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+fn preflight_workspace_read_input(input: &Value) -> Result<(), &'static str> {
+    let Some(path) = input.get("path").and_then(Value::as_str) else {
+        return Err("workspace.read input.path must be a string.");
+    };
+    preflight_workspace_read_path(path)
+}
+
+fn extract_fenced_blocks(content: &str) -> Vec<&str> {
+    let marker = "```brownie-tool-intent";
+    let mut blocks = Vec::new();
+    let mut rest = content;
+    while let Some(pos) = rest.find(marker) {
+        let after = &rest[pos + marker.len()..];
+        let after = after
+            .strip_prefix('\r')
+            .unwrap_or(after)
+            .strip_prefix('\n')
+            .unwrap_or(after);
+        let Some(end) = after.find("```") else {
+            break;
+        };
+        blocks.push(&after[..end]);
+        rest = &after[end + 3..];
+    }
+    blocks
 }
 
 fn empty_input_object() -> serde_json::Value {
     serde_json::json!({})
-}
-
-fn extract_fenced_block(content: &str) -> Option<&str> {
-    let marker = "```brownie-tool-intent";
-    let start = content.find(marker)? + marker.len();
-    let rest = &content[start..];
-    let rest = rest
-        .strip_prefix('\r')
-        .unwrap_or(rest)
-        .strip_prefix('\n')
-        .unwrap_or(rest);
-    let end = rest.find("```")?;
-    Some(&rest[..end])
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -375,6 +632,7 @@ impl ToolIntentEvaluator {
                 rejected.push(RejectedToolIntent {
                     tool_id: Some(request.tool_id),
                     reason: "Unknown tool id.".to_string(),
+                    code: "unknown_tool".to_string(),
                 });
                 continue;
             };
@@ -546,7 +804,7 @@ mod tests {
     }
     #[test]
     fn parser_parses_valid_fenced_json() {
-        let parsed = ToolIntentParser::parse_assistant_content("x\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\"}]}\n```");
+        let parsed = ToolIntentParser::parse_assistant_content("x\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}}]}\n```");
         assert_eq!(parsed.requests.len(), 1);
         assert!(parsed.rejected.is_empty());
     }
@@ -563,6 +821,35 @@ mod tests {
         assert!(parsed.requests.is_empty());
         assert_eq!(parsed.rejected.len(), 1);
     }
+
+    #[test]
+    fn parser_rejects_missing_closing_fence_and_path_traversal() {
+        let missing = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{}");
+        assert_eq!(missing.rejected[0].code, "missing_closing_fence");
+
+        let traversal = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"../secret.txt\"}}]}\n```");
+        assert!(traversal.requests.is_empty());
+        assert_eq!(traversal.rejected[0].code, "invalid_input");
+    }
+
+    #[test]
+    fn parser_rejects_unknown_fields_and_oversized_blocks() {
+        let unknown = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[],\"raw\":\"do not keep\"}\n```",
+        );
+        assert_eq!(unknown.rejected[0].code, "unknown_field");
+
+        let config = ToolIntentParserConfig {
+            max_block_bytes: 2,
+            ..ToolIntentParserConfig::default()
+        };
+        let oversized = ToolIntentParser::parse_assistant_content_with_config(
+            "```brownie-tool-intent\n{}\n```",
+            &config,
+        );
+        assert_eq!(oversized.rejected[0].code, "block_too_large");
+    }
+
     #[test]
     fn parser_rejects_unknown_tool_id() {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"unknown.tool\",\"reason\":\"Need it.\"}]}\n```");
@@ -601,6 +888,7 @@ mod tests {
                 },
             ],
             rejected: vec![],
+            summary: ToolIntentParserSummary::new(&ToolIntentParserConfig::default()),
         };
         let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
         assert!(evaluation

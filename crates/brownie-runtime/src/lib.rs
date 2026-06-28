@@ -23,8 +23,8 @@ use brownie_protocol::{
     TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
     TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
     ToolIntentDecisionSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -917,6 +917,7 @@ pub fn runtime_diagnostics_from_workspace(
         config_source: status.config_source.as_str().to_string(),
         active_profile: status.active_profile.clone(),
         llm_status: llm_status_result(status),
+        parser_config: tool_intent_parser_config_summary(),
         diagnostics,
     }
 }
@@ -1727,11 +1728,13 @@ fn handle_tool_intent_parse(id: Value, params: Option<Value>) -> JsonRpcResponse
         None => return error_response(id, -32602, "invalid params: unknown mode_id"),
     };
     let parsed = ToolIntentParser::parse_assistant_content(&params.assistant_content);
+    let parser_summary = parsed.summary.clone();
     let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
     result_response(
         id,
         json!(ToolIntentParseResult {
             mode_id: policy.mode_id,
+            parser: tool_intent_parser_summary(parser_summary),
             items: evaluation
                 .items
                 .into_iter()
@@ -1936,6 +1939,9 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "message_indexes",
         "sensitive_guard",
         "prompt_preview_redacted",
+        "parser",
+        "code",
+        "input_summary",
     ];
     let sanitized = map
         .into_iter()
@@ -2094,7 +2100,42 @@ fn tool_intent_rejected_summary(rejected: RejectedToolIntent) -> ToolIntentRejec
     ToolIntentRejectedSummary {
         tool_id: rejected.tool_id,
         reason: rejected.reason,
+        code: rejected.code,
     }
+}
+
+fn tool_intent_parser_summary(
+    summary: brownie_tools::ToolIntentParserSummary,
+) -> ToolIntentParserSummary {
+    ToolIntentParserSummary {
+        found_blocks: summary.found_blocks,
+        accepted_blocks: summary.accepted_blocks,
+        accepted_requests: summary.accepted_requests,
+        rejected_requests: summary.rejected_requests,
+        max_blocks: summary.max_blocks,
+        max_block_bytes: summary.max_block_bytes,
+        max_tool_requests: summary.max_tool_requests,
+        max_input_bytes: summary.max_input_bytes,
+        max_reason_chars: summary.max_reason_chars,
+    }
+}
+
+fn tool_intent_parser_config_summary() -> ToolIntentParserConfigSummary {
+    let config = ToolIntentParser::config();
+    ToolIntentParserConfigSummary {
+        max_blocks: config.max_blocks,
+        max_block_bytes: config.max_block_bytes,
+        max_tool_requests: config.max_tool_requests,
+        max_input_bytes: config.max_input_bytes,
+        max_reason_chars: config.max_reason_chars,
+    }
+}
+
+fn summarize_intent_input(input: &Value) -> Value {
+    json!({
+        "has_path": input.get("path").and_then(Value::as_str).is_some(),
+        "field_count": input.as_object().map(|object| object.len()).unwrap_or(0),
+    })
 }
 
 fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecuteResult {
@@ -2121,6 +2162,7 @@ fn append_tool_intent_events(
         LedgerEventKind::ToolIntentParsed,
         Some(json!({
             "tool_ids": parsed.requests.iter().map(|request| request.tool_id.as_str()).collect::<Vec<_>>(),
+            "parser": parsed.summary,
         })),
     )?;
     let evaluation = ToolIntentEvaluator::evaluate(policy, parsed);
@@ -2128,7 +2170,7 @@ fn append_tool_intent_events(
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentRejected,
-            Some(json!({ "tool_id": rejected.tool_id, "reason": rejected.reason })),
+            Some(json!({ "tool_id": rejected.tool_id, "reason": rejected.reason, "code": rejected.code })),
         )?;
     }
     for decision in evaluation.items {
@@ -2138,7 +2180,7 @@ fn append_tool_intent_events(
             "allowed": decision.allowed,
             "reason": decision.reason,
             "request_reason": decision.request_reason,
-            "input": decision.input,
+            "input_summary": summarize_intent_input(&decision.input),
         });
         store.tasks().append_task_event_with_payload(
             record,
@@ -3126,7 +3168,7 @@ mod tests {
     #[test]
     fn tool_intent_parse_returns_evaluated_decisions() {
         let response = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\"},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edits.\"}]}\n```"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edits.\"}]}\n```"}}"#,
         );
         assert!(response.error.is_none());
         let result = response.result.expect("result");

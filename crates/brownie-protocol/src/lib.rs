@@ -65,7 +65,17 @@ pub struct RuntimeDiagnosticsResult {
     pub config_source: String,
     pub active_profile: Option<String>,
     pub llm_status: LlmStatusResult,
+    pub parser_config: ToolIntentParserConfigSummary,
     pub diagnostics: Vec<RuntimeDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParserConfigSummary {
+    pub max_blocks: usize,
+    pub max_block_bytes: usize,
+    pub max_tool_requests: usize,
+    pub max_input_bytes: usize,
+    pub max_reason_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -205,8 +215,22 @@ pub struct ToolIntentParseParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ToolIntentParseResult {
     pub mode_id: String,
+    pub parser: ToolIntentParserSummary,
     pub items: Vec<ToolIntentDecisionSummary>,
     pub rejected: Vec<ToolIntentRejectedSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ToolIntentParserSummary {
+    pub found_blocks: usize,
+    pub accepted_blocks: usize,
+    pub accepted_requests: usize,
+    pub rejected_requests: usize,
+    pub max_blocks: usize,
+    pub max_block_bytes: usize,
+    pub max_tool_requests: usize,
+    pub max_input_bytes: usize,
+    pub max_reason_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -223,6 +247,7 @@ pub struct ToolIntentDecisionSummary {
 pub struct ToolIntentRejectedSummary {
     pub tool_id: Option<String>,
     pub reason: String,
+    pub code: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
