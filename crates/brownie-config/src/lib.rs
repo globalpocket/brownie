@@ -31,6 +31,7 @@ pub enum LlmProfile {
     Fake {
         model: Option<String>,
         budget: Option<LlmRequestBudgetConfig>,
+        sensitive_guard: Option<String>,
     },
     #[serde(rename = "openai-compatible")]
     OpenAiCompatible {
@@ -39,6 +40,7 @@ pub enum LlmProfile {
         api_key_env: Option<String>,
         strict: Option<bool>,
         budget: Option<LlmRequestBudgetConfig>,
+        sensitive_guard: Option<String>,
     },
 }
 
@@ -108,7 +110,21 @@ pub fn validate_config(config: &BrownieConfig) -> Result<()> {
     if let Some(llm) = &config.llm {
         for (name, profile) in &llm.profiles {
             let budget = match profile {
-                LlmProfile::Fake { budget, .. } | LlmProfile::OpenAiCompatible { budget, .. } => {
+                LlmProfile::Fake {
+                    budget,
+                    sensitive_guard,
+                    ..
+                }
+                | LlmProfile::OpenAiCompatible {
+                    budget,
+                    sensitive_guard,
+                    ..
+                } => {
+                    if let Some(value) = sensitive_guard {
+                        if brownie_llm::PromptSensitiveGuardMode::parse(value).is_none() {
+                            anyhow::bail!("invalid sensitive_guard for profile {name}: expected off, warn, or fail");
+                        }
+                    }
                     budget
                 }
             };

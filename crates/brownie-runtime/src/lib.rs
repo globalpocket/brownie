@@ -11,7 +11,7 @@ use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_llm::{
     redact_secret, validate_llm_request_budget, FakeLlmProvider, LlmProvider, LlmProviderKind,
     LlmProviderStatus, LlmRequestBudget, OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv,
-    OpenAiCompatibleLlmProvider,
+    OpenAiCompatibleLlmProvider, PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
 use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
@@ -115,6 +115,8 @@ pub struct RuntimeLlmProviderStatus {
     active_profile: Option<String>,
     task_run_network_allowed: bool,
     budget: LlmRequestBudget,
+    sensitive_guard_mode: PromptSensitiveGuardMode,
+    sensitive_guard_invalid: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +168,7 @@ fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
         active_profile: selection.active_profile,
         task_run_network_allowed: selection.task_run_network_allowed,
         budget: budget_summary(&selection.budget),
+        sensitive_guard: selection.sensitive_guard_mode.as_config_str().to_string(),
     }
 }
 
@@ -186,6 +189,49 @@ fn budget_from_profile(
         budget = profile_budget.apply_to(budget);
     }
     apply_env_budget_overrides(budget)
+}
+
+fn provider_default_sensitive_guard(kind: &LlmProviderKind) -> PromptSensitiveGuardMode {
+    match kind {
+        LlmProviderKind::OpenAiCompatible => PromptSensitiveGuardMode::Fail,
+        _ => PromptSensitiveGuardMode::Warn,
+    }
+}
+
+fn resolve_sensitive_guard(
+    provider: &LlmProviderKind,
+    profile_value: Option<&String>,
+) -> (PromptSensitiveGuardMode, Option<String>) {
+    if let Ok(value) = std::env::var("BROWNIE_LLM_SENSITIVE_GUARD") {
+        if !value.trim().is_empty() {
+            return PromptSensitiveGuardMode::parse(&value)
+                .map(|mode| (mode, None))
+                .unwrap_or_else(|| {
+                    (
+                        provider_default_sensitive_guard(provider),
+                        Some("BROWNIE_LLM_SENSITIVE_GUARD".to_string()),
+                    )
+                });
+        }
+    }
+    if let Some(value) = profile_value {
+        return PromptSensitiveGuardMode::parse(value)
+            .map(|mode| (mode, None))
+            .unwrap_or_else(|| {
+                (
+                    provider_default_sensitive_guard(provider),
+                    Some("sensitive_guard".to_string()),
+                )
+            });
+    }
+    (provider_default_sensitive_guard(provider), None)
+}
+
+fn env_sensitive_guard_override_present() -> bool {
+    std::env::var("BROWNIE_LLM_SENSITIVE_GUARD")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+        .is_some()
 }
 
 fn env_budget_override_present() -> bool {
@@ -287,6 +333,16 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 active_profile: None,
                 task_run_network_allowed: task_run_network_allowed(),
                 budget: budget_from_profile(None).unwrap_or_default(),
+                sensitive_guard_mode: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    None,
+                )
+                .0,
+                sensitive_guard_invalid: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    None,
+                )
+                .1,
             },
             OpenAiCompatibleConfigFromEnv::Disabled(status) => RuntimeLlmProviderStatus {
                 status,
@@ -296,6 +352,16 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 active_profile: None,
                 task_run_network_allowed: task_run_network_allowed(),
                 budget: budget_from_profile(None).unwrap_or_default(),
+                sensitive_guard_mode: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    None,
+                )
+                .0,
+                sensitive_guard_invalid: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    None,
+                )
+                .1,
             },
         },
         Some("fake") | None => RuntimeLlmProviderStatus {
@@ -316,6 +382,8 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
             active_profile: None,
             task_run_network_allowed: task_run_network_allowed(),
             budget: budget_from_profile(None).unwrap_or_default(),
+            sensitive_guard_mode: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).0,
+            sensitive_guard_invalid: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).1,
         },
     }
 }
@@ -339,6 +407,8 @@ fn fake_status_with_profile(
         active_profile,
         task_run_network_allowed: task_run_network_allowed(),
         budget: budget_from_profile(None).unwrap_or_default(),
+        sensitive_guard_mode: resolve_sensitive_guard(&LlmProviderKind::Fake, None).0,
+        sensitive_guard_invalid: resolve_sensitive_guard(&LlmProviderKind::Fake, None).1,
     }
 }
 
@@ -352,9 +422,17 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
         .and_then(|l| l.profiles.get(&profile_name))
         .ok_or_else(|| "active_profile references unknown profile".to_string())?;
     Ok(match profile {
-        LlmProfile::Fake { model, budget } => {
+        LlmProfile::Fake {
+            model,
+            budget,
+            sensitive_guard,
+        } => {
             let mut s = fake_status_with_profile(Some(profile_name), false);
             s.budget = budget_from_profile(budget.as_ref())?;
+            let (mode, invalid) =
+                resolve_sensitive_guard(&LlmProviderKind::Fake, sensitive_guard.as_ref());
+            s.sensitive_guard_mode = mode;
+            s.sensitive_guard_invalid = invalid;
             if let Some(model) = model {
                 s.status.model = model.clone();
             }
@@ -366,6 +444,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
             api_key_env,
             strict,
             budget,
+            sensitive_guard,
         } => {
             let api_key_env = api_key_env
                 .clone()
@@ -394,6 +473,16 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
                 active_profile: Some(profile_name),
                 task_run_network_allowed: task_run_network_allowed(),
                 budget: budget_from_profile(budget.as_ref())?,
+                sensitive_guard_mode: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    sensitive_guard.as_ref(),
+                )
+                .0,
+                sensitive_guard_invalid: resolve_sensitive_guard(
+                    &LlmProviderKind::OpenAiCompatible,
+                    sensitive_guard.as_ref(),
+                )
+                .1,
             }
         }
     })
@@ -559,6 +648,8 @@ pub fn runtime_diagnostics_from_workspace(
             active_profile: None,
             task_run_network_allowed: task_run_network_allowed(),
             budget: budget_from_profile(None).unwrap_or_default(),
+            sensitive_guard_mode: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).0,
+            sensitive_guard_invalid: resolve_sensitive_guard(&LlmProviderKind::Unknown, None).1,
         },
     };
 
@@ -598,6 +689,40 @@ pub fn runtime_diagnostics_from_workspace(
             status.status.reason = Some("invalid LLM request budget".to_string());
         }
         Err(_) => {}
+    }
+
+    if let Some(subject) = status.sensitive_guard_invalid.clone() {
+        diagnostics.push(diagnostic(
+            DiagnosticSeverity::Error,
+            "PROMPT_SENSITIVE_GUARD_INVALID",
+            "Invalid prompt sensitive guard value; expected off, warn, or fail.",
+            Some(&subject),
+        ));
+        status.status.enabled = false;
+        status.status.reason = Some("invalid prompt sensitive guard".to_string());
+    } else {
+        let (code, subject) = if env_sensitive_guard_override_present() {
+            (
+                "PROMPT_SENSITIVE_GUARD_ENV_OVERRIDE",
+                Some("BROWNIE_LLM_SENSITIVE_GUARD"),
+            )
+        } else if status.config_source == RuntimeConfigSource::WorkspaceConfig {
+            (
+                "PROMPT_SENSITIVE_GUARD_PROFILE",
+                status.active_profile.as_deref(),
+            )
+        } else {
+            ("PROMPT_SENSITIVE_GUARD_DEFAULT", None)
+        };
+        diagnostics.push(diagnostic(
+            DiagnosticSeverity::Info,
+            code,
+            format!(
+                "Prompt sensitive guard mode: {}.",
+                status.sensitive_guard_mode.as_config_str()
+            ),
+            subject,
+        ));
     }
 
     let strict_env = matches!(
@@ -1192,6 +1317,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         prompt_input,
         provider.as_ref(),
         &provider_selection.budget,
+        provider_selection.sensitive_guard_mode.clone(),
     ) {
         Ok(result) => result,
         Err(error) => {
@@ -1207,6 +1333,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     active_profile: provider_selection.active_profile.clone(),
                     task_run_network_allowed: provider_selection.task_run_network_allowed,
                     budget: provider_selection.budget.clone(),
+                    sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                    sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
                 },
                 &error.to_string(),
                 LedgerEventKind::LlmRequestFailed,
@@ -1214,14 +1342,26 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
 
+    if let Err(error) = append_sensitive_scan_event(
+        &store,
+        &running,
+        &result.sensitive_scan,
+        &provider_selection.sensitive_guard_mode,
+        false,
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::PromptBuilt,
-        Some(json!({
-            "message_count": result.prompt.messages.len(),
-            "prompt_preview": preview_prompt(&result.prompt, provider_selection.budget.response_preview_chars),
-            "max_prompt_chars": provider_selection.budget.max_prompt_chars,
-        })),
+        Some(prompt_built_payload(
+            result.prompt.messages.len(),
+            &result.prompt,
+            provider_selection.budget.response_preview_chars,
+            provider_selection.budget.max_prompt_chars,
+            &result.sensitive_scan,
+        )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -1280,6 +1420,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             second_pass_prompt_input,
             provider.as_ref(),
             &provider_selection.budget,
+            provider_selection.sensitive_guard_mode.clone(),
         ) {
             Ok(result) => result,
             Err(error) => {
@@ -1295,20 +1436,34 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         active_profile: provider_selection.active_profile.clone(),
                         task_run_network_allowed: provider_selection.task_run_network_allowed,
                         budget: provider_selection.budget.clone(),
+                        sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                        sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
                     },
                     &error.to_string(),
                     LedgerEventKind::SecondPassLlmRequestFailed,
                 );
             }
         };
+        if let Err(error) = append_sensitive_scan_event(
+            &store,
+            &running,
+            &second_pass.sensitive_scan,
+            &provider_selection.sensitive_guard_mode,
+            false,
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassPromptBuilt,
-            Some(json!({
-                "message_count": second_pass.prompt.messages.len(),
-                "prompt_preview": preview_prompt(&second_pass.prompt, provider_selection.budget.response_preview_chars),
-                    "max_prompt_chars": provider_selection.budget.max_prompt_chars,
-            })),
+            Some(prompt_built_payload(
+                second_pass.prompt.messages.len(),
+                &second_pass.prompt,
+                provider_selection.budget.response_preview_chars,
+                provider_selection.budget.max_prompt_chars,
+                &second_pass.sensitive_scan,
+            )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
@@ -1367,6 +1522,47 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
 }
 
+fn append_sensitive_scan_event(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    scan: &PromptSensitiveScanResult,
+    mode: &PromptSensitiveGuardMode,
+    failed: bool,
+) -> anyhow::Result<()> {
+    if !failed && scan.findings.is_empty() {
+        return Ok(());
+    }
+    let mut categories = scan
+        .findings
+        .iter()
+        .map(|f| f.category.clone())
+        .collect::<Vec<_>>();
+    categories.sort();
+    categories.dedup();
+    let mut message_indexes = scan
+        .findings
+        .iter()
+        .map(|f| f.message_index)
+        .collect::<Vec<_>>();
+    message_indexes.sort_unstable();
+    message_indexes.dedup();
+    store.tasks().append_task_event_with_payload(
+        running,
+        if failed {
+            LedgerEventKind::PromptSensitiveScanFailed
+        } else {
+            LedgerEventKind::PromptSensitiveScanCompleted
+        },
+        Some(json!({
+            "mode": mode.as_config_str(),
+            "sensitive_guard": mode.as_config_str(),
+            "finding_count": scan.findings.len(),
+            "categories": categories,
+            "message_indexes": message_indexes,
+        })),
+    )
+}
+
 fn fail_llm_request(
     store: &BrownieStore,
     running: &brownie_protocol::TaskRecord,
@@ -1376,6 +1572,19 @@ fn fail_llm_request(
     kind: LedgerEventKind,
 ) -> JsonRpcResponse<Value> {
     let reason = redact_secret(reason);
+    if reason.contains("Prompt sensitive-content guard failed") {
+        let _ = store.tasks().append_task_event_with_payload(
+            running,
+            LedgerEventKind::PromptSensitiveScanFailed,
+            Some(json!({
+                "mode": selection.sensitive_guard_mode.as_config_str(),
+                "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
+                "finding_count": 1,
+                "categories": [],
+                "message_indexes": [],
+            })),
+        );
+    }
     let _ = store.tasks().append_task_event_with_payload(
         running,
         kind,
@@ -1385,6 +1594,7 @@ fn fail_llm_request(
             "reason": reason,
             "base_url": selection.status.base_url.as_deref().map(redact_secret),
             "strict": selection.strict,
+            "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
         })),
     );
     let _ = store.tasks().update_task_status(
@@ -1721,6 +1931,11 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "allowed",
         "request_reason",
         "tool_ids",
+        "finding_count",
+        "categories",
+        "message_indexes",
+        "sensitive_guard",
+        "prompt_preview_redacted",
     ];
     let sanitized = map
         .into_iter()
@@ -2143,6 +2358,27 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::DestructiveOperation => RuntimeActionName::DestructiveOperation,
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
     }
+}
+
+fn prompt_built_payload(
+    message_count: usize,
+    prompt: &brownie_context::PromptView,
+    response_preview_chars: usize,
+    max_prompt_chars: usize,
+    sensitive_scan: &PromptSensitiveScanResult,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("message_count".to_string(), json!(message_count));
+    payload.insert("max_prompt_chars".to_string(), json!(max_prompt_chars));
+    if sensitive_scan.findings.is_empty() {
+        payload.insert(
+            "prompt_preview".to_string(),
+            json!(preview_prompt(prompt, response_preview_chars)),
+        );
+    } else {
+        payload.insert("prompt_preview_redacted".to_string(), json!(true));
+    }
+    Value::Object(payload)
 }
 
 fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
@@ -3464,6 +3700,68 @@ content-length: {}
             observed
         });
         (format!("http://{addr}/v1"), handle)
+    }
+
+    #[test]
+    fn sensitive_prompt_findings_suppress_prompt_previews() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock_two(
+            r#"{"choices":[{"message":{"content":"Mock LLM first pass.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read README\",\"input\":{\"path\":\"README.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Mock LLM final response after tool feedback."}}]}"#,
+        );
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "warn");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=sk-test-sensitive-preview","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(handle.join().unwrap().len(), 2);
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events = ledger
+            .lines()
+            .map(|line| serde_json::from_str::<brownie_store::LedgerEvent>(line).expect("event"))
+            .collect::<Vec<_>>();
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::PromptSensitiveScanCompleted));
+        for kind in [
+            LedgerEventKind::PromptBuilt,
+            LedgerEventKind::SecondPassPromptBuilt,
+        ] {
+            let event = events
+                .iter()
+                .find(|event| event.kind == kind)
+                .unwrap_or_else(|| panic!("missing {kind:?}"));
+            let payload = event.payload.as_ref().expect("prompt payload");
+            assert_eq!(payload["message_count"].as_u64().is_some(), true);
+            assert_eq!(payload.get("prompt_preview"), None);
+            assert_eq!(payload["prompt_preview_redacted"], true);
+            assert!(!serde_json::to_string(payload)
+                .unwrap()
+                .contains("sk-test-sensitive-preview"));
+        }
     }
 
     #[test]

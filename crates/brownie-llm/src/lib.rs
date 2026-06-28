@@ -12,6 +12,171 @@ pub const OPENAI_COMPATIBLE_API_VERSION: &str = "v1";
 pub const FAKE_LLM_MODEL: &str = "brownie-fake-llm";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PromptSensitiveGuardMode {
+    Off,
+    Warn,
+    Fail,
+}
+
+impl PromptSensitiveGuardMode {
+    pub fn as_config_str(&self) -> &'static str {
+        match self {
+            Self::Off => "off",
+            Self::Warn => "warn",
+            Self::Fail => "fail",
+        }
+    }
+
+    pub fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "off" => Some(Self::Off),
+            "warn" => Some(Self::Warn),
+            "fail" => Some(Self::Fail),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptSensitiveGuardConfig {
+    pub mode: PromptSensitiveGuardMode,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptSensitiveFinding {
+    pub category: String,
+    pub message_index: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PromptSensitiveScanResult {
+    pub findings: Vec<PromptSensitiveFinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PromptSensitiveGuardError {
+    finding_count: usize,
+    message_count: usize,
+    categories: Vec<String>,
+}
+
+impl std::fmt::Display for PromptSensitiveGuardError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Prompt sensitive-content guard failed: {} findings across {} messages.",
+            self.finding_count, self.message_count
+        )?;
+        if !self.categories.is_empty() {
+            write!(f, " categories={}", self.categories.join(","))?;
+        }
+        Ok(())
+    }
+}
+
+impl std::error::Error for PromptSensitiveGuardError {}
+
+pub fn scan_prompt_for_sensitive_content(messages: &[LlmMessage]) -> PromptSensitiveScanResult {
+    let mut findings = Vec::new();
+    for (message_index, message) in messages.iter().enumerate() {
+        let content = message.content.as_str();
+        let lower = content.to_ascii_lowercase();
+        let checks = [
+            (
+                "authorization_header",
+                lower.contains("authorization: bearer "),
+            ),
+            (
+                "bearer_token",
+                lower.contains("bearer sk-")
+                    || lower.contains("bearer ghp_")
+                    || lower.contains("bearer github_pat_"),
+            ),
+            (
+                "api_key_assignment",
+                contains_assignment(&lower, &["api_key", "apikey", "api-key"]),
+            ),
+            (
+                "access_token_assignment",
+                contains_assignment(&lower, &["access_token", "access-token"]),
+            ),
+            (
+                "private_key_block",
+                content.contains("-----BEGIN PRIVATE KEY-----"),
+            ),
+            (
+                "ssh_private_key_block",
+                content.contains("-----BEGIN OPENSSH PRIVATE KEY-----"),
+            ),
+            (
+                "env_file_secret",
+                contains_assignment(
+                    &lower,
+                    &[
+                        "aws_secret_access_key",
+                        "secret_key",
+                        "client_secret",
+                        "password",
+                    ],
+                ),
+            ),
+            (
+                "github_token_like",
+                content.contains("ghp_") || content.contains("github_pat_"),
+            ),
+            ("openai_key_like", content.contains("sk-")),
+        ];
+        for (category, matched) in checks {
+            if matched {
+                findings.push(PromptSensitiveFinding {
+                    category: category.to_string(),
+                    message_index,
+                });
+            }
+        }
+    }
+    PromptSensitiveScanResult { findings }
+}
+
+pub fn enforce_prompt_sensitive_guard(
+    messages: &[LlmMessage],
+    mode: PromptSensitiveGuardMode,
+) -> Result<PromptSensitiveScanResult, PromptSensitiveGuardError> {
+    let result = scan_prompt_for_sensitive_content(messages);
+    if mode == PromptSensitiveGuardMode::Fail && !result.findings.is_empty() {
+        let mut categories = result
+            .findings
+            .iter()
+            .map(|f| f.category.clone())
+            .collect::<Vec<_>>();
+        categories.sort();
+        categories.dedup();
+        let mut indexes = result
+            .findings
+            .iter()
+            .map(|f| f.message_index)
+            .collect::<Vec<_>>();
+        indexes.sort_unstable();
+        indexes.dedup();
+        return Err(PromptSensitiveGuardError {
+            finding_count: result.findings.len(),
+            message_count: indexes.len(),
+            categories,
+        });
+    }
+    Ok(result)
+}
+
+fn contains_assignment(lower: &str, names: &[&str]) -> bool {
+    names.iter().any(|name| {
+        lower.contains(&format!("{name}="))
+            || lower.contains(&format!("{name}:"))
+            || lower.contains(&format!("{name} ="))
+            || lower.contains(&format!("{name}: "))
+    })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LlmRequestBudget {
     pub max_prompt_chars: usize,
     pub max_messages: usize,
@@ -454,6 +619,45 @@ mod tests {
         ] {
             env::remove_var(key);
         }
+    }
+
+    #[test]
+    fn sensitive_scanner_detects_secret_like_content_without_values() {
+        let messages = vec![
+            LlmMessage {
+                role: "user".into(),
+                content: "Authorization: Bearer sk-secretvalue".into(),
+            },
+            LlmMessage {
+                role: "user".into(),
+                content: "api_key=supersecret\n-----BEGIN PRIVATE KEY-----\nghp_secret".into(),
+            },
+        ];
+        let result = scan_prompt_for_sensitive_content(&messages);
+        let categories: Vec<_> = result
+            .findings
+            .iter()
+            .map(|f| f.category.as_str())
+            .collect();
+        assert!(categories.contains(&"authorization_header"));
+        assert!(categories.contains(&"api_key_assignment"));
+        assert!(categories.contains(&"private_key_block"));
+        assert!(categories.contains(&"github_token_like"));
+        let serialized = serde_json::to_string(&result).unwrap();
+        assert!(!serialized.contains("supersecret"));
+        assert!(!serialized.contains("sk-secretvalue"));
+        assert!(!serialized.contains("ghp_secret"));
+    }
+
+    #[test]
+    fn sensitive_guard_fail_blocks_and_warn_allows() {
+        let messages = vec![LlmMessage {
+            role: "user".into(),
+            content: "access_token=secret".into(),
+        }];
+        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Fail).is_err());
+        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Warn).is_ok());
+        assert!(enforce_prompt_sensitive_guard(&messages, PromptSensitiveGuardMode::Off).is_ok());
     }
 
     #[test]

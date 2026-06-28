@@ -2,7 +2,8 @@
 
 use brownie_context::{PromptBuildInput, PromptBuilder, PromptRole, PromptView};
 use brownie_llm::{
-    FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest, LlmRequestBudget, LlmResponse,
+    enforce_prompt_sensitive_guard, FakeLlmProvider, LlmMessage, LlmProvider, LlmRequest,
+    LlmRequestBudget, LlmResponse, PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -42,6 +43,7 @@ pub struct AgentLoopRunOutput {
     pub prompt: PromptView,
     pub llm_request: LlmRequest,
     pub llm_response: LlmResponse,
+    pub sensitive_scan: PromptSensitiveScanResult,
     pub completion_summary: String,
 }
 
@@ -51,6 +53,7 @@ pub struct AgentLoopSecondPassOutput {
     pub prompt: PromptView,
     pub llm_request: LlmRequest,
     pub llm_response: LlmResponse,
+    pub sensitive_scan: PromptSensitiveScanResult,
     pub completion_summary: String,
 }
 
@@ -68,14 +71,17 @@ impl AgentLoop {
         prompt_input: PromptBuildInput,
         provider: &dyn LlmProvider,
         budget: &LlmRequestBudget,
+        sensitive_guard_mode: PromptSensitiveGuardMode,
     ) -> anyhow::Result<AgentLoopRunOutput> {
-        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider, budget)?;
+        let (task_id, prompt, llm_request, sensitive_scan, llm_response) =
+            run_llm(prompt_input, provider, budget, sensitive_guard_mode)?;
         Ok(AgentLoopRunOutput {
             final_state: AgentLoopState::Completed,
             prompt,
             llm_request,
             completion_summary: format!("LLM agent loop completed for {task_id}"),
             llm_response,
+            sensitive_scan,
         })
     }
 
@@ -83,27 +89,40 @@ impl AgentLoop {
         prompt_input: PromptBuildInput,
         provider: &dyn LlmProvider,
         budget: &LlmRequestBudget,
+        sensitive_guard_mode: PromptSensitiveGuardMode,
     ) -> anyhow::Result<AgentLoopSecondPassOutput> {
-        let (task_id, prompt, llm_request, llm_response) = run_llm(prompt_input, provider, budget)?;
+        let (task_id, prompt, llm_request, sensitive_scan, llm_response) =
+            run_llm(prompt_input, provider, budget, sensitive_guard_mode)?;
         Ok(AgentLoopSecondPassOutput {
             final_state: AgentLoopState::Completed,
             prompt,
             llm_request,
             completion_summary: format!("Second-pass LLM agent loop completed for {task_id}"),
             llm_response,
+            sensitive_scan,
         })
     }
 
     pub fn run_with_fake_llm(prompt_input: PromptBuildInput) -> AgentLoopRunOutput {
-        Self::run_with_llm(prompt_input, &FakeLlmProvider, &LlmRequestBudget::default())
-            .expect("fake provider should not fail")
+        Self::run_with_llm(
+            prompt_input,
+            &FakeLlmProvider,
+            &LlmRequestBudget::default(),
+            PromptSensitiveGuardMode::Warn,
+        )
+        .expect("fake provider should not fail")
     }
 
     pub fn run_second_pass_with_fake_llm(
         prompt_input: PromptBuildInput,
     ) -> AgentLoopSecondPassOutput {
-        Self::run_second_pass_with_llm(prompt_input, &FakeLlmProvider, &LlmRequestBudget::default())
-            .expect("fake provider should not fail")
+        Self::run_second_pass_with_llm(
+            prompt_input,
+            &FakeLlmProvider,
+            &LlmRequestBudget::default(),
+            PromptSensitiveGuardMode::Warn,
+        )
+        .expect("fake provider should not fail")
     }
 }
 
@@ -111,7 +130,14 @@ fn run_llm(
     prompt_input: PromptBuildInput,
     provider: &dyn LlmProvider,
     budget: &LlmRequestBudget,
-) -> anyhow::Result<(String, PromptView, LlmRequest, LlmResponse)> {
+    sensitive_guard_mode: PromptSensitiveGuardMode,
+) -> anyhow::Result<(
+    String,
+    PromptView,
+    LlmRequest,
+    PromptSensitiveScanResult,
+    LlmResponse,
+)> {
     let task_id = prompt_input.task_id.clone();
     let prompt = PromptBuilder::build(prompt_input);
     let llm_request = LlmRequest {
@@ -126,8 +152,10 @@ fn run_llm(
             .collect(),
     };
     validate_request_budget(&llm_request, budget)?;
+    let sensitive_scan =
+        enforce_prompt_sensitive_guard(&llm_request.messages, sensitive_guard_mode)?;
     let llm_response = provider.complete(&llm_request, budget)?;
-    Ok((task_id, prompt, llm_request, llm_response))
+    Ok((task_id, prompt, llm_request, sensitive_scan, llm_response))
 }
 
 fn validate_request_budget(request: &LlmRequest, budget: &LlmRequestBudget) -> anyhow::Result<()> {
