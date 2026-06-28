@@ -1,6 +1,9 @@
 //! LLM client abstraction crate.
 
-use std::{env, time::Duration};
+use std::{
+    env,
+    time::{Duration, Instant},
+};
 
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
@@ -145,6 +148,15 @@ pub struct OpenAiCompatibleLlmProvider {
     timeout: Duration,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmHealthProbeResult {
+    pub attempted: bool,
+    pub healthy: bool,
+    pub latency_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub reason: Option<String>,
+}
+
 impl OpenAiCompatibleLlmProvider {
     pub fn new(config: OpenAiCompatibleConfig, api_key: String) -> Self {
         Self {
@@ -195,6 +207,50 @@ impl OpenAiCompatibleLlmProvider {
             model: model.expect("checked"),
             api_key_env,
         })
+    }
+
+    pub fn probe_models(&self, timeout: Duration) -> LlmHealthProbeResult {
+        let started = Instant::now();
+        let url = format!("{}/models", self.config.base_url.trim_end_matches('/'));
+        let client = match reqwest::blocking::Client::builder()
+            .no_proxy()
+            .timeout(timeout)
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                return LlmHealthProbeResult {
+                    attempted: false,
+                    healthy: false,
+                    latency_ms: None,
+                    status_code: None,
+                    reason: Some(redact_secret(&error.to_string())),
+                };
+            }
+        };
+        match client.get(url).bearer_auth(&self.api_key).send() {
+            Ok(response) => {
+                let status = response.status();
+                LlmHealthProbeResult {
+                    attempted: true,
+                    healthy: status.is_success(),
+                    latency_ms: Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
+                    status_code: Some(status.as_u16()),
+                    reason: if status.is_success() {
+                        None
+                    } else {
+                        Some(format!("non-2xx HTTP status {}", status.as_u16()))
+                    },
+                }
+            }
+            Err(error) => LlmHealthProbeResult {
+                attempted: true,
+                healthy: false,
+                latency_ms: Some(started.elapsed().as_millis().try_into().unwrap_or(u64::MAX)),
+                status_code: error.status().map(|status| status.as_u16()),
+                reason: Some(redact_secret(&error.to_string())),
+            },
+        }
     }
 }
 

@@ -58,6 +58,29 @@ pub struct RuntimeDiagnosticsResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmHealthParams {
+    pub allow_network: bool,
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmHealthResult {
+    pub provider: String,
+    pub config_source: String,
+    pub active_profile: Option<String>,
+    pub enabled: bool,
+    pub attempted: bool,
+    pub healthy: bool,
+    pub model: String,
+    pub base_url: Option<String>,
+    pub checked_at: String,
+    pub latency_ms: Option<u64>,
+    pub status_code: Option<u16>,
+    pub reason: Option<String>,
+    pub diagnostics: Vec<RuntimeDiagnostic>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RuntimeDiagnostic {
     pub severity: DiagnosticSeverity,
     pub code: String,

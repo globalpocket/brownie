@@ -238,3 +238,7 @@ Unknown `BROWNIE_LLM_PROVIDER` values must not silently become Fake. Status repo
 ## Phase 2.4 `runtime.diagnostics.get`
 
 `runtime.diagnostics.get` returns `config_source`, optional `active_profile`, sanitized `llm_status`, and diagnostics with `severity`, `code`, `message`, and optional `subject`. The method is read-only and does not contact external LLM endpoints. It prefers structured diagnostics over JSON-RPC errors when config parsing or validation fails.
+
+## Phase 2.5 LLM health
+
+Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/specifications/llm-health-spec-v0.md`. `runtime.diagnostics.get` remains read-only and no-network. Endpoint readiness checks are only performed by `llm.health` when `allow_network=true`; Fake health remains no-network. OpenAI-compatible health uses `GET {base_url}/models`, does not persist response bodies, does not write run ledgers, and redacts API keys, Authorization/Bearer values, and query-string secrets.

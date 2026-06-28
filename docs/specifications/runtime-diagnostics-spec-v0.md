@@ -28,3 +28,7 @@ Diagnostics must never return API key values, Authorization headers, Bearer toke
 ## Endpoint health
 
 `runtime.diagnostics.get` performs no network calls. Any future endpoint health probe must be exposed as an explicit method such as `llm.health` and must continue to redact secrets.
+
+## Phase 2.5 LLM health
+
+Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/specifications/llm-health-spec-v0.md`. `runtime.diagnostics.get` remains read-only and no-network. Endpoint readiness checks are only performed by `llm.health` when `allow_network=true`; Fake health remains no-network. OpenAI-compatible health uses `GET {base_url}/models`, does not persist response bodies, does not write run ledgers, and redacts API keys, Authorization/Bearer values, and query-string secrets.

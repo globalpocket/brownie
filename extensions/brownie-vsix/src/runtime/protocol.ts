@@ -58,6 +58,22 @@ export interface RuntimeDiagnosticsResult {
   diagnostics: RuntimeDiagnostic[];
 }
 
+export interface LlmHealthResult {
+  provider: string;
+  config_source: string;
+  active_profile?: string | null;
+  enabled: boolean;
+  attempted: boolean;
+  healthy: boolean;
+  model: string;
+  base_url?: string | null;
+  checked_at: string;
+  latency_ms?: number | null;
+  status_code?: number | null;
+  reason?: string | null;
+  diagnostics: RuntimeDiagnostic[];
+}
+
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export type RuntimeActionName =
@@ -260,6 +276,27 @@ export function isRuntimeDiagnosticsResult(value: unknown): value is RuntimeDiag
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
     isLlmStatusResult(value.llm_status) &&
+    Array.isArray(value.diagnostics) &&
+    value.diagnostics.every(isRuntimeDiagnostic) &&
+    !Object.prototype.hasOwnProperty.call(value, 'api_key')
+  );
+}
+
+export function isLlmHealthResult(value: unknown): value is LlmHealthResult {
+  return (
+    isRecord(value) &&
+    typeof value.provider === 'string' &&
+    typeof value.config_source === 'string' &&
+    (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    typeof value.enabled === 'boolean' &&
+    typeof value.attempted === 'boolean' &&
+    typeof value.healthy === 'boolean' &&
+    typeof value.model === 'string' &&
+    (value.base_url === undefined || value.base_url === null || typeof value.base_url === 'string') &&
+    typeof value.checked_at === 'string' &&
+    (value.latency_ms === undefined || value.latency_ms === null || typeof value.latency_ms === 'number') &&
+    (value.status_code === undefined || value.status_code === null || typeof value.status_code === 'number') &&
+    (value.reason === undefined || value.reason === null || typeof value.reason === 'string') &&
     Array.isArray(value.diagnostics) &&
     value.diagnostics.every(isRuntimeDiagnostic) &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
