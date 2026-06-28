@@ -12,6 +12,41 @@ pub const OPENAI_COMPATIBLE_API_VERSION: &str = "v1";
 pub const FAKE_LLM_MODEL: &str = "brownie-fake-llm";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmRequestBudget {
+    pub max_prompt_chars: usize,
+    pub max_messages: usize,
+    pub request_timeout_ms: u64,
+    pub response_preview_chars: usize,
+}
+
+impl Default for LlmRequestBudget {
+    fn default() -> Self {
+        Self {
+            max_prompt_chars: 120_000,
+            max_messages: 64,
+            request_timeout_ms: 30_000,
+            response_preview_chars: 2_000,
+        }
+    }
+}
+
+pub fn validate_llm_request_budget(budget: &LlmRequestBudget) -> Result<(), String> {
+    if !(1_000..=1_000_000).contains(&budget.max_prompt_chars) {
+        return Err("max_prompt_chars must be between 1000 and 1000000".to_string());
+    }
+    if !(1..=256).contains(&budget.max_messages) {
+        return Err("max_messages must be between 1 and 256".to_string());
+    }
+    if !(1_000..=300_000).contains(&budget.request_timeout_ms) {
+        return Err("request_timeout_ms must be between 1000 and 300000".to_string());
+    }
+    if !(100..=20_000).contains(&budget.response_preview_chars) {
+        return Err("response_preview_chars must be between 100 and 20000".to_string());
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LlmRequest {
     pub model: String,
     pub messages: Vec<LlmMessage>,
@@ -46,7 +81,11 @@ pub struct LlmProviderStatus {
 
 pub trait LlmProvider {
     fn status(&self) -> LlmProviderStatus;
-    fn complete(&self, request: &LlmRequest) -> anyhow::Result<LlmResponse>;
+    fn complete(
+        &self,
+        request: &LlmRequest,
+        budget: &LlmRequestBudget,
+    ) -> anyhow::Result<LlmResponse>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -136,7 +175,11 @@ impl LlmProvider for FakeLlmProvider {
         }
     }
 
-    fn complete(&self, request: &LlmRequest) -> anyhow::Result<LlmResponse> {
+    fn complete(
+        &self,
+        request: &LlmRequest,
+        _budget: &LlmRequestBudget,
+    ) -> anyhow::Result<LlmResponse> {
         Ok(FakeLlm::complete(request))
     }
 }
@@ -145,7 +188,6 @@ impl LlmProvider for FakeLlmProvider {
 pub struct OpenAiCompatibleLlmProvider {
     config: OpenAiCompatibleConfig,
     api_key: String,
-    timeout: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -159,11 +201,7 @@ pub struct LlmHealthProbeResult {
 
 impl OpenAiCompatibleLlmProvider {
     pub fn new(config: OpenAiCompatibleConfig, api_key: String) -> Self {
-        Self {
-            config,
-            api_key,
-            timeout: Duration::from_secs(30),
-        }
+        Self { config, api_key }
     }
 
     pub fn from_env() -> OpenAiCompatibleConfigFromEnv {
@@ -265,7 +303,11 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
         }
     }
 
-    fn complete(&self, request: &LlmRequest) -> anyhow::Result<LlmResponse> {
+    fn complete(
+        &self,
+        request: &LlmRequest,
+        budget: &LlmRequestBudget,
+    ) -> anyhow::Result<LlmResponse> {
         let base_url = redact_secret(&self.config.base_url);
         let failure_prefix = || {
             format!(
@@ -279,7 +321,7 @@ impl LlmProvider for OpenAiCompatibleLlmProvider {
         );
         let client = reqwest::blocking::Client::builder()
             .no_proxy()
-            .timeout(self.timeout)
+            .timeout(Duration::from_millis(budget.request_timeout_ms))
             .build()
             .map_err(|e| {
                 anyhow!(
@@ -425,7 +467,10 @@ mod tests {
                 content: "user".into(),
             }],
         };
-        let content = provider.complete(&request).unwrap().content;
+        let content = provider
+            .complete(&request, &LlmRequestBudget::default())
+            .unwrap()
+            .content;
         assert!(content.starts_with("Fake LLM completed request with 1 messages."));
     }
 

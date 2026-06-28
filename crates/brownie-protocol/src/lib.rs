@@ -29,6 +29,14 @@ pub struct JsonRpcError {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmRequestBudgetSummary {
+    pub max_prompt_chars: usize,
+    pub max_messages: usize,
+    pub request_timeout_ms: u64,
+    pub response_preview_chars: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LlmStatusResult {
     pub provider: String,
     pub enabled: bool,
@@ -40,6 +48,7 @@ pub struct LlmStatusResult {
     pub task_run_network_allowed: bool,
     pub config_source: String,
     pub active_profile: Option<String>,
+    pub budget: LlmRequestBudgetSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

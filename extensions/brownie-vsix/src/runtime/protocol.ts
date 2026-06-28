@@ -23,6 +23,13 @@ export interface RuntimeStatusResult {
   status: string;
 }
 
+export interface LlmRequestBudgetSummary {
+  max_prompt_chars: number;
+  max_messages: number;
+  request_timeout_ms: number;
+  response_preview_chars: number;
+}
+
 export interface LlmStatusResult {
   provider: string;
   enabled: boolean;
@@ -34,6 +41,7 @@ export interface LlmStatusResult {
   task_run_network_allowed: boolean;
   config_source: string;
   active_profile?: string | null;
+  budget: LlmRequestBudgetSummary;
 }
 
 export interface RuntimeConfigGetResult {
@@ -244,6 +252,20 @@ export function isRuntimeStatusResult(value: unknown): value is RuntimeStatusRes
   );
 }
 
+function isNonNegativeInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0;
+}
+
+export function isLlmRequestBudgetSummary(value: unknown): value is LlmRequestBudgetSummary {
+  return (
+    isRecord(value) &&
+    isNonNegativeInteger(value.max_prompt_chars) &&
+    isNonNegativeInteger(value.max_messages) &&
+    isNonNegativeInteger(value.request_timeout_ms) &&
+    isNonNegativeInteger(value.response_preview_chars)
+  );
+}
+
 export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
   return (
     isRecord(value) &&
@@ -257,6 +279,7 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     typeof value.task_run_network_allowed === 'boolean' &&
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    isLlmRequestBudgetSummary(value.budget) &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
   );
 }

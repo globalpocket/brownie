@@ -4,23 +4,27 @@ use brownie_agent_loop::{AgentLoop, AgentLoopState};
 use brownie_agentmodes::{
     BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
 };
-use brownie_config::{BrownieConfig, LlmProfile, RuntimeConfigLoader, CONFIG_RELATIVE_PATH};
+use brownie_config::{
+    BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
+};
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_llm::{
-    redact_secret, FakeLlmProvider, LlmProvider, LlmProviderKind, LlmProviderStatus,
-    OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
+    redact_secret, validate_llm_request_budget, FakeLlmProvider, LlmProvider, LlmProviderKind,
+    LlmProviderStatus, LlmRequestBudget, OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv,
+    OpenAiCompatibleLlmProvider,
 };
 use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
-    LlmHealthParams, LlmHealthResult, LlmStatusResult, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
-    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
-    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
-    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult,
-    ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
+    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic,
+    RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
+    TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
+    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -110,6 +114,7 @@ pub struct RuntimeLlmProviderStatus {
     config_source: RuntimeConfigSource,
     active_profile: Option<String>,
     task_run_network_allowed: bool,
+    budget: LlmRequestBudget,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -160,7 +165,76 @@ fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
         config_source: selection.config_source.as_str().to_string(),
         active_profile: selection.active_profile,
         task_run_network_allowed: selection.task_run_network_allowed,
+        budget: budget_summary(&selection.budget),
     }
+}
+
+fn budget_summary(budget: &LlmRequestBudget) -> LlmRequestBudgetSummary {
+    LlmRequestBudgetSummary {
+        max_prompt_chars: budget.max_prompt_chars,
+        max_messages: budget.max_messages,
+        request_timeout_ms: budget.request_timeout_ms,
+        response_preview_chars: budget.response_preview_chars,
+    }
+}
+
+fn budget_from_profile(
+    profile_budget: Option<&LlmRequestBudgetConfig>,
+) -> Result<LlmRequestBudget, String> {
+    let mut budget = LlmRequestBudget::default();
+    if let Some(profile_budget) = profile_budget {
+        budget = profile_budget.apply_to(budget);
+    }
+    apply_env_budget_overrides(budget)
+}
+
+fn env_budget_override_present() -> bool {
+    [
+        "BROWNIE_LLM_MAX_PROMPT_CHARS",
+        "BROWNIE_LLM_MAX_MESSAGES",
+        "BROWNIE_LLM_REQUEST_TIMEOUT_MS",
+        "BROWNIE_LLM_RESPONSE_PREVIEW_CHARS",
+    ]
+    .iter()
+    .any(|key| {
+        std::env::var(key)
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .is_some()
+    })
+}
+
+fn apply_env_budget_overrides(mut budget: LlmRequestBudget) -> Result<LlmRequestBudget, String> {
+    if let Ok(v) = std::env::var("BROWNIE_LLM_MAX_PROMPT_CHARS") {
+        if !v.trim().is_empty() {
+            budget.max_prompt_chars = v
+                .parse()
+                .map_err(|_| "invalid BROWNIE_LLM_MAX_PROMPT_CHARS".to_string())?;
+        }
+    }
+    if let Ok(v) = std::env::var("BROWNIE_LLM_MAX_MESSAGES") {
+        if !v.trim().is_empty() {
+            budget.max_messages = v
+                .parse()
+                .map_err(|_| "invalid BROWNIE_LLM_MAX_MESSAGES".to_string())?;
+        }
+    }
+    if let Ok(v) = std::env::var("BROWNIE_LLM_REQUEST_TIMEOUT_MS") {
+        if !v.trim().is_empty() {
+            budget.request_timeout_ms = v
+                .parse()
+                .map_err(|_| "invalid BROWNIE_LLM_REQUEST_TIMEOUT_MS".to_string())?;
+        }
+    }
+    if let Ok(v) = std::env::var("BROWNIE_LLM_RESPONSE_PREVIEW_CHARS") {
+        if !v.trim().is_empty() {
+            budget.response_preview_chars = v
+                .parse()
+                .map_err(|_| "invalid BROWNIE_LLM_RESPONSE_PREVIEW_CHARS".to_string())?;
+        }
+    }
+    validate_llm_request_budget(&budget)?;
+    Ok(budget)
 }
 
 fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
@@ -174,6 +248,9 @@ fn provider_kind_name(kind: &LlmProviderKind) -> &'static str {
 pub fn llm_provider_status_from_workspace(
     workspace_root: &std::path::Path,
 ) -> Result<RuntimeLlmProviderStatus, String> {
+    if env_budget_override_present() {
+        budget_from_profile(None)?;
+    }
     if std::env::var("BROWNIE_LLM_PROVIDER")
         .ok()
         .filter(|v| !v.trim().is_empty())
@@ -209,6 +286,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 config_source: RuntimeConfigSource::Env,
                 active_profile: None,
                 task_run_network_allowed: task_run_network_allowed(),
+                budget: budget_from_profile(None).unwrap_or_default(),
             },
             OpenAiCompatibleConfigFromEnv::Disabled(status) => RuntimeLlmProviderStatus {
                 status,
@@ -217,6 +295,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 config_source: RuntimeConfigSource::Env,
                 active_profile: None,
                 task_run_network_allowed: task_run_network_allowed(),
+                budget: budget_from_profile(None).unwrap_or_default(),
             },
         },
         Some("fake") | None => RuntimeLlmProviderStatus {
@@ -236,6 +315,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
             config_source: RuntimeConfigSource::Env,
             active_profile: None,
             task_run_network_allowed: task_run_network_allowed(),
+            budget: budget_from_profile(None).unwrap_or_default(),
         },
     }
 }
@@ -258,6 +338,7 @@ fn fake_status_with_profile(
         config_source: RuntimeConfigSource::WorkspaceConfig,
         active_profile,
         task_run_network_allowed: task_run_network_allowed(),
+        budget: budget_from_profile(None).unwrap_or_default(),
     }
 }
 
@@ -271,8 +352,9 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
         .and_then(|l| l.profiles.get(&profile_name))
         .ok_or_else(|| "active_profile references unknown profile".to_string())?;
     Ok(match profile {
-        LlmProfile::Fake { model } => {
+        LlmProfile::Fake { model, budget } => {
             let mut s = fake_status_with_profile(Some(profile_name), false);
+            s.budget = budget_from_profile(budget.as_ref())?;
             if let Some(model) = model {
                 s.status.model = model.clone();
             }
@@ -283,6 +365,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
             model,
             api_key_env,
             strict,
+            budget,
         } => {
             let api_key_env = api_key_env
                 .clone()
@@ -310,6 +393,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
                 config_source: RuntimeConfigSource::WorkspaceConfig,
                 active_profile: Some(profile_name),
                 task_run_network_allowed: task_run_network_allowed(),
+                budget: budget_from_profile(budget.as_ref())?,
             }
         }
     })
@@ -474,8 +558,47 @@ pub fn runtime_diagnostics_from_workspace(
             config_source: RuntimeConfigSource::WorkspaceConfig,
             active_profile: None,
             task_run_network_allowed: task_run_network_allowed(),
+            budget: budget_from_profile(None).unwrap_or_default(),
         },
     };
+
+    match llm_provider_status_from_workspace(workspace_root) {
+        Ok(selection) => {
+            let code = if env_budget_override_present() {
+                "LLM_BUDGET_ENV_OVERRIDE"
+            } else if selection.config_source == RuntimeConfigSource::WorkspaceConfig {
+                "LLM_BUDGET_PROFILE"
+            } else {
+                "LLM_BUDGET_DEFAULT"
+            };
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Info,
+                code,
+                format!(
+                    "LLM request budget: max_prompt_chars={} max_messages={} request_timeout_ms={} response_preview_chars={}",
+                    selection.budget.max_prompt_chars, selection.budget.max_messages, selection.budget.request_timeout_ms, selection.budget.response_preview_chars
+                ),
+                None,
+            ));
+        }
+        Err(error)
+            if error.contains("BROWNIE_LLM_")
+                || error.contains("budget")
+                || error.contains("max_")
+                || error.contains("request_timeout_ms")
+                || error.contains("response_preview_chars") =>
+        {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Error,
+                "LLM_BUDGET_INVALID",
+                format!("Invalid LLM request budget: {}.", redact_secret(&error)),
+                None,
+            ));
+            status.status.enabled = false;
+            status.status.reason = Some("invalid LLM request budget".to_string());
+        }
+        Err(_) => {}
+    }
 
     let strict_env = matches!(
         std::env::var("BROWNIE_LLM_STRICT").ok().as_deref(),
@@ -869,18 +992,21 @@ fn handle_llm_health(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    let timeout_ms = params.timeout_ms.unwrap_or(5000);
-    if !(1000..=30000).contains(&timeout_ms) {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: timeout_ms must be between 1000 and 30000",
-        );
-    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let default_timeout_ms = llm_provider_status_from_workspace(store.workspace_root())
+        .map(|selection| selection.budget.request_timeout_ms)
+        .unwrap_or(30_000);
+    let timeout_ms = params.timeout_ms.unwrap_or(default_timeout_ms);
+    if !(1000..=300000).contains(&timeout_ms) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: timeout_ms must be between 1000 and 300000",
+        );
+    }
     match llm_health_from_workspace(
         store.workspace_root(),
         params.allow_network,
@@ -1062,7 +1188,11 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
     let provider_strict = provider_selection.strict;
-    let result = match AgentLoop::run_with_llm(prompt_input, provider.as_ref()) {
+    let result = match AgentLoop::run_with_llm(
+        prompt_input,
+        provider.as_ref(),
+        &provider_selection.budget,
+    ) {
         Ok(result) => result,
         Err(error) => {
             return fail_llm_request(
@@ -1076,6 +1206,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     config_source: provider_selection.config_source.clone(),
                     active_profile: provider_selection.active_profile.clone(),
                     task_run_network_allowed: provider_selection.task_run_network_allowed,
+                    budget: provider_selection.budget.clone(),
                 },
                 &error.to_string(),
                 LedgerEventKind::LlmRequestFailed,
@@ -1088,7 +1219,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         LedgerEventKind::PromptBuilt,
         Some(json!({
             "message_count": result.prompt.messages.len(),
-            "prompt_preview": preview_prompt(&result.prompt),
+            "prompt_preview": preview_prompt(&result.prompt, provider_selection.budget.response_preview_chars),
+            "max_prompt_chars": provider_selection.budget.max_prompt_chars,
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -1125,7 +1257,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         LedgerEventKind::LlmResponseReceived,
         Some(json!({
             "provider": provider_kind_name(&provider_status.provider),
-            "content_preview": preview(&result.llm_response.content),
+            "content_preview": preview_with_limit(&result.llm_response.content, provider_selection.budget.response_preview_chars),
+            "response_preview_chars": provider_selection.budget.response_preview_chars,
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -1146,6 +1279,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         let second_pass = match AgentLoop::run_second_pass_with_llm(
             second_pass_prompt_input,
             provider.as_ref(),
+            &provider_selection.budget,
         ) {
             Ok(result) => result,
             Err(error) => {
@@ -1160,6 +1294,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         config_source: provider_selection.config_source.clone(),
                         active_profile: provider_selection.active_profile.clone(),
                         task_run_network_allowed: provider_selection.task_run_network_allowed,
+                        budget: provider_selection.budget.clone(),
                     },
                     &error.to_string(),
                     LedgerEventKind::SecondPassLlmRequestFailed,
@@ -1171,7 +1306,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             LedgerEventKind::SecondPassPromptBuilt,
             Some(json!({
                 "message_count": second_pass.prompt.messages.len(),
-                "prompt_preview": preview_prompt(&second_pass.prompt),
+                "prompt_preview": preview_prompt(&second_pass.prompt, provider_selection.budget.response_preview_chars),
+                    "max_prompt_chars": provider_selection.budget.max_prompt_chars,
             })),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -1194,7 +1330,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             LedgerEventKind::SecondPassLlmResponseReceived,
             Some(json!({
                 "provider": provider_kind_name(&provider_status.provider),
-                "content_preview": preview(&second_pass.llm_response.content),
+                "content_preview": preview_with_limit(&second_pass.llm_response.content, provider_selection.budget.response_preview_chars),
+                "response_preview_chars": provider_selection.budget.response_preview_chars,
             })),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2008,19 +2145,18 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
     }
 }
 
-fn preview_prompt(prompt: &brownie_context::PromptView) -> String {
+fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
     let joined = prompt
         .messages
         .iter()
         .map(|message| message.content.as_str())
         .collect::<Vec<_>>()
         .join("\n---\n");
-    preview(&joined)
+    preview_with_limit(&joined, max_chars)
 }
 
-fn preview(content: &str) -> String {
-    const MAX_PREVIEW_CHARS: usize = 200;
-    content.chars().take(MAX_PREVIEW_CHARS).collect()
+fn preview_with_limit(content: &str, max_chars: usize) -> String {
+    content.chars().take(max_chars).collect()
 }
 
 fn preview_tool_output(content: &str) -> String {
@@ -3121,7 +3257,7 @@ mod phase_2_5_tests {
         );
         assert_eq!(below.error.unwrap().code, -32602);
         let above = super::tests::parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"llm.health","params":{"allow_network":true,"timeout_ms":30001}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"llm.health","params":{"allow_network":true,"timeout_ms":300001}}"#,
         );
         assert_eq!(above.error.unwrap().code, -32602);
     }
