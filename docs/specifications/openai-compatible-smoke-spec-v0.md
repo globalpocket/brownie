@@ -81,3 +81,7 @@ Run inspection and event APIs may expose sanitized provider metadata needed for 
 ## Unknown provider handling
 
 If `BROWNIE_LLM_PROVIDER` contains an unknown value, Brownie must not silently report Fake as the selected provider. `llm.status` reports an explanatory disabled status with `provider=Unknown`, `enabled=false`, and `reason="unknown provider: <value>"`. In strict mode, `task.run` fails rather than falling back silently.
+
+## Phase 2.4 diagnostics smoke checks
+
+Use `runtime.diagnostics.get` to inspect OpenAI-compatible configuration completeness without contacting the endpoint. Missing API key environment variables produce `API_KEY_ENV_MISSING` and either fallback or strict-failure diagnostics. Direct `api_key` fields produce `CONFIG_DIRECT_API_KEY_REJECTED` without leaking the value.

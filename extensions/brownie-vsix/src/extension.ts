@@ -56,6 +56,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const runtimeDiagnosticsCommand = vscode.commands.registerCommand('brownie.runtimeDiagnostics', async () => {
+    try {
+      const diagnostics = await runtimeClient.runtimeDiagnostics();
+      output.appendLine(`runtime.diagnostics.get:`);
+      output.appendLine(JSON.stringify(diagnostics, null, 2));
+      output.show(true);
+      const errors = diagnostics.diagnostics.filter((item) => item.severity === 'Error').length;
+      const warnings = diagnostics.diagnostics.filter((item) => item.severity === 'Warning').length;
+      await vscode.window.showInformationMessage(
+        `Brownie diagnostics: ${errors} errors, ${warnings} ${warnings === 1 ? 'warning' : 'warnings'}`,
+      );
+    } catch (error) {
+      output.appendLine(`runtime.diagnostics.get failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie runtime diagnostics failed: ${formatError(error)}`);
+    }
+  });
+
   const modeListCommand = vscode.commands.registerCommand('brownie.modeList', async () => {
     try {
       const modes = await runtimeClient.listModes();

@@ -61,3 +61,7 @@ CI must not require a live local or external LLM endpoint. Optional live local e
 Run inspection/event metadata may include provider, model, redacted base URL, and strict mode. It must not include API key values, `Authorization`, or `Bearer` token values.
 
 Unknown `BROWNIE_LLM_PROVIDER` values must not silently become Fake. Status reports `provider=Unknown`, `enabled=false`, and a safe explanatory reason; strict task runs fail.
+
+## Phase 2.4 diagnostics
+
+`runtime.diagnostics.get` returns structured diagnostics for `.brownie/config.json` discovery, JSON parse and validation failures, unsupported versions, missing or unknown `active_profile`, and rejected direct `api_key` fields. Malformed config diagnostics must not include raw file content or secret values.

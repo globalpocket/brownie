@@ -30,6 +30,10 @@
         "title": "Brownie: Runtime Config"
       },
       {
+        "command": "brownie.runtimeDiagnostics",
+        "title": "Brownie: Runtime Diagnostics"
+      },
+      {
         "command": "brownie.modeList",
         "title": "Brownie: List Modes"
       },

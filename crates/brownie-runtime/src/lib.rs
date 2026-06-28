@@ -11,12 +11,13 @@ use brownie_llm::{
     OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
 };
 use brownie_protocol::{
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmStatusResult,
-    ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
-    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeState, RuntimeStatus,
-    TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
+    PermissionCheckParams, PermissionCheckResult, RunEventsParams, RunEventsResult,
+    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
     ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentParseParams,
     ToolIntentParseResult, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
     ToolPlanParams, ToolPlanResult, ToolSummary,
@@ -33,6 +34,7 @@ const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
 const METHOD_LLM_STATUS: &str = "llm.status";
 const METHOD_RUNTIME_CONFIG_GET: &str = "runtime.config.get";
+const METHOD_RUNTIME_DIAGNOSTICS_GET: &str = "runtime.diagnostics.get";
 const METHOD_TASK_START: &str = "task.start";
 const METHOD_TASK_GET: &str = "task.get";
 const METHOD_TASK_RUN: &str = "task.run";
@@ -79,6 +81,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUNTIME_STATUS => result_response(request.id, json!(runtime_status())),
         METHOD_LLM_STATUS => handle_llm_status(request.id),
         METHOD_RUNTIME_CONFIG_GET => handle_runtime_config_get(request.id),
+        METHOD_RUNTIME_DIAGNOSTICS_GET => handle_runtime_diagnostics_get(request.id),
         METHOD_TASK_START => handle_task_start(request.id, request.params),
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
@@ -397,6 +400,226 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
     }
 }
 
+fn diagnostic(
+    severity: DiagnosticSeverity,
+    code: &str,
+    message: impl Into<String>,
+    subject: Option<&str>,
+) -> RuntimeDiagnostic {
+    RuntimeDiagnostic {
+        severity,
+        code: code.to_string(),
+        message: message.into(),
+        subject: subject.map(str::to_string),
+    }
+}
+
+pub fn runtime_diagnostics_from_workspace(
+    workspace_root: &std::path::Path,
+) -> RuntimeDiagnosticsResult {
+    let mut diagnostics = Vec::new();
+    let mut status = match llm_provider_status_from_workspace(workspace_root) {
+        Ok(status) => status,
+        Err(error) => RuntimeLlmProviderStatus {
+            status: LlmProviderStatus {
+                provider: LlmProviderKind::Unknown,
+                enabled: false,
+                model: String::new(),
+                base_url: None,
+                reason: Some(redact_secret(&error)),
+            },
+            strict: false,
+            will_fallback_to_fake: false,
+            config_source: RuntimeConfigSource::WorkspaceConfig,
+            active_profile: None,
+        },
+    };
+
+    let strict_env = matches!(
+        std::env::var("BROWNIE_LLM_STRICT").ok().as_deref(),
+        Some("true")
+    );
+    let env_provider = std::env::var("BROWNIE_LLM_PROVIDER")
+        .ok()
+        .filter(|v| !v.trim().is_empty());
+    if let Some(provider) = env_provider.as_deref() {
+        diagnostics.push(diagnostic(
+            DiagnosticSeverity::Info,
+            "PROVIDER_ENV_OVERRIDE",
+            format!(
+                "Using LLM provider override from BROWNIE_LLM_PROVIDER: {}.",
+                redact_secret(provider)
+            ),
+            Some("BROWNIE_LLM_PROVIDER"),
+        ));
+        if !matches!(provider, "fake" | "openai-compatible") {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Error,
+                "PROVIDER_UNKNOWN",
+                format!("Unknown LLM provider: {}.", redact_secret(provider)),
+                Some("BROWNIE_LLM_PROVIDER"),
+            ));
+            if strict_env {
+                diagnostics.push(diagnostic(
+                    DiagnosticSeverity::Error,
+                    "PROVIDER_STRICT_FAILURE",
+                    "Strict mode will fail task.run for this provider configuration.",
+                    Some("BROWNIE_LLM_STRICT"),
+                ));
+            } else {
+                diagnostics.push(diagnostic(
+                    DiagnosticSeverity::Warning,
+                    "PROVIDER_FALLBACK_TO_FAKE",
+                    "Unknown provider will fall back to Fake because strict mode is disabled.",
+                    Some("BROWNIE_LLM_PROVIDER"),
+                ));
+            }
+        }
+    } else {
+        let path = workspace_root.join(CONFIG_RELATIVE_PATH);
+        if !path.exists() {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Info,
+                "CONFIG_NOT_FOUND",
+                "No .brownie/config.json found; using default Fake provider.",
+                Some(CONFIG_RELATIVE_PATH),
+            ));
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Info,
+                "PROVIDER_DEFAULT_FAKE",
+                "Using default Fake LLM provider.",
+                None,
+            ));
+        } else {
+            match std::fs::read_to_string(&path) {
+                Err(e) => diagnostics.push(diagnostic(
+                    DiagnosticSeverity::Error,
+                    "CONFIG_MALFORMED",
+                    format!("Failed to read .brownie/config.json: {e}"),
+                    Some(CONFIG_RELATIVE_PATH),
+                )),
+                Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                    Err(e) => diagnostics.push(diagnostic(
+                        DiagnosticSeverity::Error,
+                        "CONFIG_MALFORMED",
+                        format!("Failed to parse .brownie/config.json: {e}"),
+                        Some(CONFIG_RELATIVE_PATH),
+                    )),
+                    Ok(value) => {
+                        if contains_key_recursive(&value, "api_key") {
+                            diagnostics.push(diagnostic(
+                                DiagnosticSeverity::Error,
+                                "CONFIG_DIRECT_API_KEY_REJECTED",
+                                "Direct api_key fields are not allowed; use api_key_env.",
+                                Some(CONFIG_RELATIVE_PATH),
+                            ));
+                        }
+                        match serde_json::from_value::<BrownieConfig>(value) {
+                            Err(e) => diagnostics.push(diagnostic(
+                                DiagnosticSeverity::Error,
+                                "CONFIG_MALFORMED",
+                                format!("Failed to validate .brownie/config.json: {e}"),
+                                Some(CONFIG_RELATIVE_PATH),
+                            )),
+                            Ok(config) => {
+                                if config.version != 1 {
+                                    diagnostics.push(diagnostic(
+                                        DiagnosticSeverity::Error,
+                                        "CONFIG_UNSUPPORTED_VERSION",
+                                        format!(
+                                            "Unsupported runtime config version: {}.",
+                                            config.version
+                                        ),
+                                        Some(CONFIG_RELATIVE_PATH),
+                                    ));
+                                }
+                                match config.active_profile.as_deref() {
+                                    None => diagnostics.push(diagnostic(
+                                        DiagnosticSeverity::Error,
+                                        "ACTIVE_PROFILE_MISSING",
+                                        "active_profile is required when config exists.",
+                                        Some(CONFIG_RELATIVE_PATH),
+                                    )),
+                                    Some(active) => {
+                                        let profile = config
+                                            .llm
+                                            .as_ref()
+                                            .and_then(|l| l.profiles.get(active));
+                                        if profile.is_none() {
+                                            diagnostics.push(diagnostic(DiagnosticSeverity::Error, "ACTIVE_PROFILE_UNKNOWN", format!("active_profile references unknown profile: {active}."), Some("active_profile")));
+                                        } else {
+                                            diagnostics.push(diagnostic(
+                                                DiagnosticSeverity::Info,
+                                                "PROVIDER_WORKSPACE_PROFILE",
+                                                format!("Using workspace LLM profile {active}."),
+                                                Some(active),
+                                            ));
+                                            if let Some(LlmProfile::OpenAiCompatible {
+                                                api_key_env,
+                                                strict,
+                                                ..
+                                            }) = profile
+                                            {
+                                                let key_env =
+                                                    api_key_env.clone().unwrap_or_else(|| {
+                                                        "BROWNIE_LLM_API_KEY".to_string()
+                                                    });
+                                                let key_present = std::env::var(&key_env)
+                                                    .ok()
+                                                    .filter(|v| !v.trim().is_empty())
+                                                    .is_some();
+                                                if !key_present {
+                                                    diagnostics.push(diagnostic(DiagnosticSeverity::Warning, "API_KEY_ENV_MISSING", format!("API key environment variable is not set: {key_env}."), Some(&key_env)));
+                                                    if strict.unwrap_or(false) {
+                                                        diagnostics.push(diagnostic(DiagnosticSeverity::Error, "PROVIDER_STRICT_FAILURE", "Strict mode will fail task.run for this provider configuration.", Some("strict")));
+                                                    } else {
+                                                        diagnostics.push(diagnostic(DiagnosticSeverity::Warning, "PROVIDER_FALLBACK_TO_FAKE", "OpenAI-compatible provider will fall back to Fake because strict mode is disabled.", Some(active)));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+            }
+        }
+    }
+
+    if diagnostics.iter().any(|d| {
+        d.code == "CONFIG_DIRECT_API_KEY_REJECTED"
+            || d.code == "CONFIG_MALFORMED"
+            || d.code == "CONFIG_UNSUPPORTED_VERSION"
+            || d.code == "ACTIVE_PROFILE_UNKNOWN"
+            || d.code == "ACTIVE_PROFILE_MISSING"
+    }) {
+        status.status.provider = LlmProviderKind::Unknown;
+        status.status.enabled = false;
+        status.status.model.clear();
+        status.status.base_url = None;
+        status.will_fallback_to_fake = false;
+    }
+
+    RuntimeDiagnosticsResult {
+        config_source: status.config_source.as_str().to_string(),
+        active_profile: status.active_profile.clone(),
+        llm_status: llm_status_result(status),
+        diagnostics,
+    }
+}
+
+fn contains_key_recursive(value: &serde_json::Value, key: &str) -> bool {
+    match value {
+        serde_json::Value::Object(map) => map
+            .iter()
+            .any(|(k, v)| k == key || contains_key_recursive(v, key)),
+        serde_json::Value::Array(items) => items.iter().any(|v| contains_key_recursive(v, key)),
+        _ => false,
+    }
+}
+
 fn handle_llm_status(id: Value) -> JsonRpcResponse<Value> {
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
@@ -410,6 +633,17 @@ fn handle_llm_status(id: Value) -> JsonRpcResponse<Value> {
             &format!("internal error: {}", redact_secret(&error)),
         ),
     }
+}
+
+fn handle_runtime_diagnostics_get(id: Value) -> JsonRpcResponse<Value> {
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    result_response(
+        id,
+        json!(runtime_diagnostics_from_workspace(store.workspace_root())),
+    )
 }
 
 fn handle_runtime_config_get(id: Value) -> JsonRpcResponse<Value> {
@@ -2412,6 +2646,92 @@ mod phase_2_2_tests {
         assert_eq!(status.active_profile.as_deref(), Some("local"));
         assert!(!status.status.enabled);
         assert!(status.strict);
+    }
+
+    fn diagnostic_codes(result: &RuntimeDiagnosticsResult) -> Vec<&str> {
+        result.diagnostics.iter().map(|d| d.code.as_str()).collect()
+    }
+
+    #[test]
+    fn diagnostics_no_config_reports_default_fake() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        assert_eq!(result.llm_status.provider, "Fake");
+        assert_eq!(result.config_source, "Default");
+        assert!(diagnostic_codes(&result).contains(&"CONFIG_NOT_FOUND"));
+    }
+
+    #[test]
+    fn diagnostics_unknown_env_provider_reports_strict_semantics() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "mystery");
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        let codes = diagnostic_codes(&result);
+        assert_eq!(result.llm_status.provider, "Unknown");
+        assert!(codes.contains(&"PROVIDER_UNKNOWN"));
+        assert!(codes.contains(&"PROVIDER_FALLBACK_TO_FAKE"));
+
+        std::env::set_var("BROWNIE_LLM_STRICT", "true");
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        let codes = diagnostic_codes(&result);
+        assert!(codes.contains(&"PROVIDER_UNKNOWN"));
+        assert!(codes.contains(&"PROVIDER_STRICT_FAILURE"));
+    }
+
+    #[test]
+    fn diagnostics_direct_api_key_and_malformed_config_do_not_leak_raw_content() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"bad","llm":{"profiles":{"bad":{"provider":"openai-compatible","base_url":"http://127.0.0.1:4141/v1","model":"qwen35","api_key":"DO_NOT_ALLOW"}}}}"#,
+        );
+        let response =
+            serde_json::to_string(&runtime_diagnostics_from_workspace(dir.path())).unwrap();
+        assert!(response.contains("CONFIG_DIRECT_API_KEY_REJECTED"));
+        assert!(!response.contains("DO_NOT_ALLOW"));
+        assert!(!response.contains("Authorization"));
+        assert!(!response.contains("Bearer"));
+
+        write_config(dir.path(), r#"{"secret":"RAW_SECRET""#);
+        let response =
+            serde_json::to_string(&runtime_diagnostics_from_workspace(dir.path())).unwrap();
+        assert!(response.contains("CONFIG_MALFORMED"));
+        assert!(!response.contains("RAW_SECRET"));
+    }
+
+    #[test]
+    fn diagnostics_workspace_profiles_and_missing_key() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let dir = tempfile::tempdir().unwrap();
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"fake","llm":{"profiles":{"fake":{"provider":"fake"}}}}"#,
+        );
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        assert!(diagnostic_codes(&result).contains(&"PROVIDER_WORKSPACE_PROFILE"));
+
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"local","llm":{"profiles":{"local":{"provider":"openai-compatible","base_url":"http://127.0.0.1:4141/v1","model":"qwen35","api_key_env":"MISSING_BROWNIE_KEY","strict":false}}}}"#,
+        );
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        let codes = diagnostic_codes(&result);
+        assert!(codes.contains(&"API_KEY_ENV_MISSING"));
+        assert!(codes.contains(&"PROVIDER_FALLBACK_TO_FAKE"));
+
+        write_config(
+            dir.path(),
+            r#"{"version":1,"active_profile":"missing","llm":{"profiles":{"fake":{"provider":"fake"}}}}"#,
+        );
+        let result = runtime_diagnostics_from_workspace(dir.path());
+        assert!(diagnostic_codes(&result).contains(&"ACTIVE_PROFILE_UNKNOWN"));
     }
 
     #[test]
