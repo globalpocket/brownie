@@ -76,10 +76,10 @@ describe('protocol validation', () => {
 
   it('accepts valid runtime diagnostics results', () => {
     const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', code: 'CONFIG_NOT_FOUND', message: 'No config.', subject: '.brownie/config.json' }] })).toBe(true);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
-    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [], api_key: 'secret' })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', code: 'CONFIG_NOT_FOUND', message: 'No config.', subject: '.brownie/config.json' }] })).toBe(true);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
+    expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, parser_config: { max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [], api_key: 'secret' })).toBe(false);
   });
 
   it('accepts valid llm.health results and rejects invalid health fields', () => {
@@ -216,7 +216,7 @@ describe('RuntimeClient', () => {
 
   it('creates a runtime.diagnostics.get request', async () => {
     const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
-    const result = { config_source: 'Default', active_profile: null, llm_status, parser_config: { found_blocks: 0, accepted_blocks: 0, accepted_requests: 0, rejected_requests: 0, max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [] };
+    const result = { config_source: 'Default', active_profile: null, llm_status, parser_config: { max_blocks: 1, max_block_bytes: 16384, max_tool_requests: 8, max_input_bytes: 4096, max_reason_chars: 1000 }, diagnostics: [] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
     await expect(client.runtimeDiagnostics()).resolves.toEqual(result);

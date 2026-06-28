@@ -65,14 +65,10 @@ export interface RuntimeDiagnosticsResult {
   config_source: string;
   active_profile?: string | null;
   llm_status: LlmStatusResult;
-  parser_config: ToolIntentParserSummary;
+  parser_config: ToolIntentParserConfigSummary;
   diagnostics: RuntimeDiagnostic[];
 }
-export interface ToolIntentParserSummary {
-  found_blocks: number;
-  accepted_blocks: number;
-  accepted_requests: number;
-  rejected_requests: number;
+export interface ToolIntentParserConfigSummary {
   max_blocks: number;
   max_block_bytes: number;
   max_tool_requests: number;
@@ -80,6 +76,12 @@ export interface ToolIntentParserSummary {
   max_reason_chars: number;
 }
 
+export interface ToolIntentParserSummary extends ToolIntentParserConfigSummary {
+  found_blocks: number;
+  accepted_blocks: number;
+  accepted_requests: number;
+  rejected_requests: number;
+}
 
 export interface LlmHealthResult {
   provider: string;
@@ -318,7 +320,7 @@ export function isRuntimeDiagnosticsResult(value: unknown): value is RuntimeDiag
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
     isLlmStatusResult(value.llm_status) &&
-    isToolIntentParserSummary(value.parser_config) &&
+    isToolIntentParserConfigSummary(value.parser_config) &&
     Array.isArray(value.diagnostics) &&
     value.diagnostics.every(isRuntimeDiagnostic) &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
@@ -433,18 +435,25 @@ function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejecte
   );
 }
 
-function isToolIntentParserSummary(value: unknown): value is ToolIntentParserSummary {
+function isToolIntentParserConfigSummary(value: unknown): value is ToolIntentParserConfigSummary {
   return (
     isRecord(value) &&
-    isNonNegativeInteger(value.found_blocks) &&
-    isNonNegativeInteger(value.accepted_blocks) &&
-    isNonNegativeInteger(value.accepted_requests) &&
-    isNonNegativeInteger(value.rejected_requests) &&
     isNonNegativeInteger(value.max_blocks) &&
     isNonNegativeInteger(value.max_block_bytes) &&
     isNonNegativeInteger(value.max_tool_requests) &&
     isNonNegativeInteger(value.max_input_bytes) &&
     isNonNegativeInteger(value.max_reason_chars)
+  );
+}
+
+function isToolIntentParserSummary(value: unknown): value is ToolIntentParserSummary {
+  return (
+    isToolIntentParserConfigSummary(value) &&
+    isRecord(value) &&
+    isNonNegativeInteger(value.found_blocks) &&
+    isNonNegativeInteger(value.accepted_blocks) &&
+    isNonNegativeInteger(value.accepted_requests) &&
+    isNonNegativeInteger(value.rejected_requests)
   );
 }
 
