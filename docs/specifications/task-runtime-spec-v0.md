@@ -159,3 +159,7 @@ If OpenAI-compatible configuration is incomplete, `BROWNIE_LLM_STRICT=false` (de
 ## Phase 2.2 task LLM provider selection
 
 `task.run` resolves its LLM provider using the same priority as `llm.status`: explicit environment override, workspace `.brownie/config.json` active profile, then default Fake. Runtime permissions remain authoritative over LLM instructions, and Phase 2.2 does not add streaming or new tool execution capabilities.
+
+## Phase 2.6 real-provider task.run guard
+
+`BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` is required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The default is false. `llm.status` and `runtime.config.get` expose `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED` or `TASK_RUN_NETWORK_NOT_ALLOWED` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.

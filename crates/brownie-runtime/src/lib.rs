@@ -109,6 +109,7 @@ pub struct RuntimeLlmProviderStatus {
     will_fallback_to_fake: bool,
     config_source: RuntimeConfigSource,
     active_profile: Option<String>,
+    task_run_network_allowed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -134,6 +135,19 @@ pub struct RuntimeLlmProviderError {
     message: String,
 }
 
+fn task_run_network_allowed() -> bool {
+    matches!(
+        std::env::var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK")
+            .ok()
+            .as_deref(),
+        Some("true")
+    )
+}
+
+fn task_run_network_guard_reason() -> &'static str {
+    "real-provider task.run requires BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true"
+}
+
 fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
     LlmStatusResult {
         provider: provider_kind_name(&selection.status.provider).to_string(),
@@ -145,6 +159,7 @@ fn llm_status_result(selection: RuntimeLlmProviderStatus) -> LlmStatusResult {
         will_fallback_to_fake: selection.will_fallback_to_fake,
         config_source: selection.config_source.as_str().to_string(),
         active_profile: selection.active_profile,
+        task_run_network_allowed: selection.task_run_network_allowed,
     }
 }
 
@@ -193,6 +208,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 will_fallback_to_fake: false,
                 config_source: RuntimeConfigSource::Env,
                 active_profile: None,
+                task_run_network_allowed: task_run_network_allowed(),
             },
             OpenAiCompatibleConfigFromEnv::Disabled(status) => RuntimeLlmProviderStatus {
                 status,
@@ -200,6 +216,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
                 will_fallback_to_fake: !strict,
                 config_source: RuntimeConfigSource::Env,
                 active_profile: None,
+                task_run_network_allowed: task_run_network_allowed(),
             },
         },
         Some("fake") | None => RuntimeLlmProviderStatus {
@@ -218,6 +235,7 @@ pub fn llm_provider_status_from_env() -> RuntimeLlmProviderStatus {
             will_fallback_to_fake: !strict,
             config_source: RuntimeConfigSource::Env,
             active_profile: None,
+            task_run_network_allowed: task_run_network_allowed(),
         },
     }
 }
@@ -239,6 +257,7 @@ fn fake_status_with_profile(
         will_fallback_to_fake: false,
         config_source: RuntimeConfigSource::WorkspaceConfig,
         active_profile,
+        task_run_network_allowed: task_run_network_allowed(),
     }
 }
 
@@ -290,6 +309,7 @@ fn status_from_config(config: &BrownieConfig) -> Result<RuntimeLlmProviderStatus
                 will_fallback_to_fake: !strict && !enabled,
                 config_source: RuntimeConfigSource::WorkspaceConfig,
                 active_profile: Some(profile_name),
+                task_run_network_allowed: task_run_network_allowed(),
             }
         }
     })
@@ -334,6 +354,15 @@ pub fn llm_provider_from_workspace_for_task_run(
         }
         return Ok(Box::new(FakeLlmProvider));
     }
+    if !selection.strict {
+        return Ok(Box::new(FakeLlmProvider));
+    }
+    if !selection.task_run_network_allowed {
+        return Err(RuntimeLlmProviderError {
+            message: task_run_network_guard_reason().to_string(),
+            status: selection,
+        });
+    }
     let profile_name = selection.active_profile.clone().unwrap_or_default();
     let profile = config
         .llm
@@ -369,6 +398,16 @@ pub fn llm_provider_from_env_for_task_run() -> Result<Box<dyn LlmProvider>, Runt
     match std::env::var("BROWNIE_LLM_PROVIDER").ok().as_deref() {
         Some("openai-compatible") => match OpenAiCompatibleLlmProvider::from_env() {
             OpenAiCompatibleConfigFromEnv::Enabled(config) => {
+                let selection = llm_provider_status_from_env();
+                if !selection.strict {
+                    return Ok(Box::new(FakeLlmProvider));
+                }
+                if !selection.task_run_network_allowed {
+                    return Err(RuntimeLlmProviderError {
+                        message: task_run_network_guard_reason().to_string(),
+                        status: selection,
+                    });
+                }
                 let api_key = std::env::var(&config.api_key_env).unwrap_or_default();
                 Ok(Box::new(OpenAiCompatibleLlmProvider::new(config, api_key)))
             }
@@ -434,6 +473,7 @@ pub fn runtime_diagnostics_from_workspace(
             will_fallback_to_fake: false,
             config_source: RuntimeConfigSource::WorkspaceConfig,
             active_profile: None,
+            task_run_network_allowed: task_run_network_allowed(),
         },
     };
 
@@ -587,6 +627,27 @@ pub fn runtime_diagnostics_from_workspace(
                     }
                 },
             }
+        }
+    }
+
+    if status.status.provider == LlmProviderKind::OpenAiCompatible
+        && status.status.enabled
+        && status.strict
+    {
+        if status.task_run_network_allowed {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Info,
+                "TASK_RUN_NETWORK_ALLOWED",
+                "OpenAI-compatible task.run network calls are explicitly allowed.",
+                Some("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK"),
+            ));
+        } else {
+            diagnostics.push(diagnostic(
+                DiagnosticSeverity::Warning,
+                "TASK_RUN_NETWORK_NOT_ALLOWED",
+                task_run_network_guard_reason(),
+                Some("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK"),
+            ));
         }
     }
 
@@ -1014,6 +1075,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     will_fallback_to_fake: false,
                     config_source: provider_selection.config_source.clone(),
                     active_profile: provider_selection.active_profile.clone(),
+                    task_run_network_allowed: provider_selection.task_run_network_allowed,
                 },
                 &error.to_string(),
                 LedgerEventKind::LlmRequestFailed,
@@ -1097,6 +1159,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         will_fallback_to_fake: false,
                         config_source: provider_selection.config_source.clone(),
                         active_profile: provider_selection.active_profile.clone(),
+                        task_run_network_allowed: provider_selection.task_run_network_allowed,
                     },
                     &error.to_string(),
                     LedgerEventKind::SecondPassLlmRequestFailed,
@@ -2311,6 +2374,7 @@ mod tests {
         std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
         std::env::remove_var("BROWNIE_LLM_API_KEY");
         std::env::remove_var("BROWNIE_LLM_STRICT");
+        std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
         let response =
             handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
         assert!(response.contains(r#""provider":"Fake""#));
@@ -2318,6 +2382,18 @@ mod tests {
         assert!(response.contains(r#""model":"brownie-fake-llm""#));
         assert!(response.contains(r#""strict":false"#));
         assert!(response.contains(r#""will_fallback_to_fake":false"#));
+        assert!(response.contains(r#""task_run_network_allowed":false"#));
+    }
+
+    #[test]
+    fn llm_status_reports_task_run_network_allowed_when_guard_true() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        let response =
+            handle_jsonrpc_input_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#).unwrap();
+        assert!(response.contains(r#""task_run_network_allowed":true"#));
+        std::env::remove_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK");
     }
 
     #[test]
@@ -2774,6 +2850,7 @@ mod phase_2_2_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
             ] {
                 std::env::remove_var(key);
             }
@@ -2962,6 +3039,7 @@ mod phase_2_5_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
             ] {
                 std::env::remove_var(key);
             }
@@ -3130,6 +3208,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
             ] {
                 std::env::remove_var(key);
@@ -3147,6 +3226,7 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_API_KEY_ENV",
                 "BROWNIE_LLM_API_KEY",
                 "BROWNIE_LLM_STRICT",
+                "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
             ] {
                 std::env::remove_var(key);
@@ -3212,18 +3292,57 @@ mod phase_2_3_tests {
         (format!("http://{addr}/v1"), handle)
     }
 
+    fn spawn_mock_two(
+        first_body: &'static str,
+        second_body: &'static str,
+    ) -> (String, thread::JoinHandle<Vec<serde_json::Value>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let mut observed = Vec::new();
+            for body in [first_body, second_body] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0_u8; 8192];
+                let n = stream.read(&mut buf).unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let header_end = req.find("\r\n\r\n").unwrap();
+                let (headers, request_body) = req.split_at(header_end + 4);
+                assert!(headers.starts_with("POST /v1/chat/completions HTTP/1.1"));
+                assert!(headers.lines().any(|line| line
+                    .to_ascii_lowercase()
+                    .starts_with("authorization: bearer ")));
+                let json: serde_json::Value = serde_json::from_str(request_body).unwrap();
+                assert_eq!(json["model"], "mock-model");
+                observed.push(json);
+                let response = format!(
+                    "HTTP/1.1 200 OK
+content-type: application/json
+content-length: {}
+
+{}",
+                    body.len(),
+                    body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            }
+            observed
+        });
+        (format!("http://{addr}/v1"), handle)
+    }
+
     #[test]
     fn config_profile_openai_mock_task_run_completes_and_is_sanitized() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
-        let (base_url, handle) = spawn_mock(
-            "200 OK",
-            r#"{"choices":[{"message":{"content":"Mock OpenAI-compatible final response."}}]}"#,
+        let (base_url, handle) = spawn_mock_two(
+            r#"{"choices":[{"message":{"content":"Mock LLM first pass.\n\n```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Read README\",\"input\":{\"path\":\"README.md\"}}]}\n```"}}]}"#,
+            r#"{"choices":[{"message":{"content":"Mock LLM final response after tool feedback."}}]}"#,
         );
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
 
         let status = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"llm.status"}"#)
             .result
@@ -3245,7 +3364,8 @@ mod phase_2_3_tests {
         }
         assert_eq!(run.result.unwrap()["status"], "Completed");
         let observed = handle.join().unwrap();
-        assert_eq!(observed["model"], "mock-model");
+        assert_eq!(observed.len(), 2);
+        assert_eq!(observed[0]["model"], "mock-model");
 
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
@@ -3267,6 +3387,22 @@ mod phase_2_3_tests {
             .any(|e| e["kind"] == "LlmRequestCreated"
                 && e["payload"]["provider"] == "OpenAiCompatible"
                 && e["payload"]["model"] == "mock-model"));
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "ToolExecutionCompleted"));
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "SecondPassLlmRequestCreated"));
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["kind"] == "SecondPassLlmResponseReceived"));
+        assert!(serialized.contains("Mock LLM final response after tool feedback"));
     }
 
     fn assert_strict_failure(status_line: &str, body: &'static str, expected_reason: &str) {
@@ -3276,6 +3412,7 @@ mod phase_2_3_tests {
         write_mock_config(temp.path(), &base_url);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
         let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail strictly","mode_id":"orchestrator"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
@@ -3293,6 +3430,36 @@ mod phase_2_3_tests {
         assert!(serialized.contains("LlmRequestFailed"));
         assert!(serialized.contains("TaskFailed"));
         assert!(serialized.contains(expected_reason));
+        assert!(!serialized.contains("test-key"));
+    }
+
+    #[test]
+    fn strict_openai_task_run_without_guard_fails_before_network() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Guard failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let error = run.error.unwrap();
+        assert_eq!(error.code, -32603);
+        assert!(error.message.contains(task_run_network_guard_reason()));
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("LlmRequestFailed"));
+        assert!(serialized.contains("TaskFailed"));
+        assert!(serialized.contains(task_run_network_guard_reason()));
         assert!(!serialized.contains("test-key"));
     }
 

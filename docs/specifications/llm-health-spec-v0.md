@@ -27,3 +27,7 @@ When the selected provider is OpenAI-compatible, enabled, and `allow_network=tru
 ## Redaction and persistence
 
 `llm.health` is a global inspection API, not a task run event. It does not write to the run ledger. Health results, reasons, diagnostics, errors, status, and inspection data must not expose API keys, Authorization headers, Bearer tokens, or URL query-string secrets. Health responses contain only high-level metadata such as provider, model, redacted base URL, status code, latency, and redacted reason.
+
+## Phase 2.6 real-provider task.run guard
+
+`BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK=true` is required before strict enabled OpenAI-compatible `task.run` may make network LLM calls. The default is false. `llm.status` and `runtime.config.get` expose `task_run_network_allowed`; `runtime.diagnostics.get` reports `TASK_RUN_NETWORK_ALLOWED` or `TASK_RUN_NETWORK_NOT_ALLOWED` for strict enabled OpenAI-compatible profiles. Missing guard is a warning in diagnostics and a pre-network `task.run` error. Non-strict OpenAI-compatible `task.run` falls back to Fake. See `docs/specifications/real-provider-task-run-smoke-spec-v0.md`.
