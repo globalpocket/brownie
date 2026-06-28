@@ -31,6 +31,7 @@ export interface LlmStatusResult {
   reason?: string | null;
   strict: boolean;
   will_fallback_to_fake: boolean;
+  task_run_network_allowed: boolean;
   config_source: string;
   active_profile?: string | null;
 }
@@ -253,6 +254,7 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     (value.reason === undefined || value.reason === null || typeof value.reason === 'string') &&
     typeof value.strict === 'boolean' &&
     typeof value.will_fallback_to_fake === 'boolean' &&
+    typeof value.task_run_network_allowed === 'boolean' &&
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')

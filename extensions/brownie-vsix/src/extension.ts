@@ -30,6 +30,7 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`base_url: ${status.base_url ?? 'null'}`);
       output.appendLine(`strict: ${String(status.strict)}`);
       output.appendLine(`will_fallback_to_fake: ${String(status.will_fallback_to_fake)}`);
+      output.appendLine(`task_run_network_allowed: ${String(status.task_run_network_allowed)}`);
       output.appendLine(`reason: ${status.reason ?? 'null'}`);
       output.show(true);
       await vscode.window.showInformationMessage(
