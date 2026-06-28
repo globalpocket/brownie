@@ -42,6 +42,22 @@ export interface RuntimeConfigGetResult {
   llm_status: LlmStatusResult;
 }
 
+export type DiagnosticSeverity = 'Info' | 'Warning' | 'Error';
+
+export interface RuntimeDiagnostic {
+  severity: DiagnosticSeverity;
+  code: string;
+  message: string;
+  subject?: string | null;
+}
+
+export interface RuntimeDiagnosticsResult {
+  config_source: string;
+  active_profile?: string | null;
+  llm_status: LlmStatusResult;
+  diagnostics: RuntimeDiagnostic[];
+}
+
 export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export type RuntimeActionName =
@@ -223,6 +239,29 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     typeof value.will_fallback_to_fake === 'boolean' &&
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    !Object.prototype.hasOwnProperty.call(value, 'api_key')
+  );
+}
+
+export function isRuntimeDiagnostic(value: unknown): value is RuntimeDiagnostic {
+  return (
+    isRecord(value) &&
+    (value.severity === 'Info' || value.severity === 'Warning' || value.severity === 'Error') &&
+    typeof value.code === 'string' &&
+    typeof value.message === 'string' &&
+    (value.subject === undefined || value.subject === null || typeof value.subject === 'string') &&
+    !Object.prototype.hasOwnProperty.call(value, 'api_key')
+  );
+}
+
+export function isRuntimeDiagnosticsResult(value: unknown): value is RuntimeDiagnosticsResult {
+  return (
+    isRecord(value) &&
+    typeof value.config_source === 'string' &&
+    (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
+    isLlmStatusResult(value.llm_status) &&
+    Array.isArray(value.diagnostics) &&
+    value.diagnostics.every(isRuntimeDiagnostic) &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
   );
 }

@@ -51,3 +51,7 @@ CI must not require a live local or external LLM endpoint. Optional live local e
 Run inspection/event metadata may include provider, model, redacted base URL, and strict mode. It must not include API key values, `Authorization`, or `Bearer` token values.
 
 Unknown `BROWNIE_LLM_PROVIDER` values must not silently become Fake. Status reports `provider=Unknown`, `enabled=false`, and a safe explanatory reason; strict task runs fail.
+
+## Phase 2.4 diagnostics
+
+`runtime.diagnostics.get` reports provider-profile diagnostics without contacting external LLM endpoints. It explains default Fake selection, workspace profile selection, environment overrides, unknown providers, missing API key environment variables, fallback-to-Fake behavior, and strict failures. Diagnostics and status output must not expose API keys, Authorization headers, or Bearer tokens.
