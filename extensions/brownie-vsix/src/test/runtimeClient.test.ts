@@ -63,11 +63,11 @@ describe('protocol validation', () => {
   });
 
   it('accepts valid llm.status results and rejects missing required fields', () => {
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } })).toBe(true);
-    expect(isLlmStatusResult({ provider: 'Unknown', enabled: false, model: '', base_url: null, reason: 'unknown provider: mystery', strict: true, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Env', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } })).toBe(true);
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Unknown', enabled: false, model: '', base_url: null, reason: 'unknown provider: mystery', strict: true, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Env', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' })).toBe(true);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true })).toBe(false);
-    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } })).toBe(false);
+    expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', api_key: 'secret' })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null })).toBe(false);
     expect(isLlmStatusResult({ provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: -1, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } })).toBe(false);
@@ -75,7 +75,7 @@ describe('protocol validation', () => {
   });
 
   it('accepts valid runtime diagnostics results', () => {
-    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } };
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ severity: 'Info', code: 'CONFIG_NOT_FOUND', message: 'No config.', subject: '.brownie/config.json' }] })).toBe(true);
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ code: 'CONFIG_NOT_FOUND', message: 'No config.' }] })).toBe(false);
     expect(isRuntimeDiagnosticsResult({ config_source: 'Default', active_profile: null, llm_status, diagnostics: [{ severity: 'Info', message: 'No config.' }] })).toBe(false);
@@ -105,7 +105,7 @@ describe('protocol validation', () => {
   });
 
   it('accepts valid runtime.config.get results', () => {
-    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } };
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
     expect(isRuntimeConfigGetResult({ config_source: 'Default', config_path: null, active_profile: null, llm_status })).toBe(true);
     expect(isRuntimeConfigGetResult({ config_source: 'Default', llm_status, api_key: 'secret' })).toBe(false);
   });
@@ -189,7 +189,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates an llm.status request', async () => {
-    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } };
+    const result = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
@@ -214,7 +214,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a runtime.diagnostics.get request', async () => {
-    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } };
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
     const result = { config_source: 'Default', active_profile: null, llm_status, diagnostics: [] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
@@ -223,7 +223,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a runtime.config.get request', async () => {
-    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 } };
+    const llm_status = { provider: 'Fake', enabled: true, model: 'brownie-fake-llm', base_url: null, reason: null, strict: false, will_fallback_to_fake: false, task_run_network_allowed: false, config_source: 'Default', active_profile: null, budget: { max_prompt_chars: 120000, max_messages: 64, request_timeout_ms: 30000, response_preview_chars: 2000 }, sensitive_guard: 'warn' };
     const result = { config_source: 'Default', config_path: null, active_profile: null, llm_status };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);

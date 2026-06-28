@@ -277,6 +277,8 @@ pub enum LedgerEventKind {
     ToolExecutionFailed,
     TaskRunning,
     PromptBuilt,
+    PromptSensitiveScanCompleted,
+    PromptSensitiveScanFailed,
     LlmRequestCreated,
     LlmRequestFailed,
     LlmResponseReceived,

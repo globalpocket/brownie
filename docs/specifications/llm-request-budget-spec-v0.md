@@ -31,3 +31,7 @@ Before an LLM provider call, Brownie checks message count and total prompt chara
 Prompt and response ledger payloads store previews only. Full prompt text and full provider responses are not persisted. Response preview length is controlled by `response_preview_chars`; prompt preview payloads include `max_prompt_chars`.
 
 `llm.status`, `runtime.config.get`, and diagnostics expose budget summaries. `llm.health` uses `request_timeout_ms` unless an explicit bounded `timeout_ms` is supplied.
+
+## Phase 2.8 prompt sensitive guard
+
+Runtime LLM configuration includes `sensitive_guard` (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Fake defaults to `warn`; OpenAI-compatible defaults to `fail`. Provider calls are preceded by budget validation and prompt sensitive-content scanning. In fail mode, findings block the provider call and task failure metadata records only categories, counts, message indexes, and guard mode. Matched secret text, full prompt text, and full provider responses must not be persisted or exposed through status, diagnostics, ledger, or inspection APIs.

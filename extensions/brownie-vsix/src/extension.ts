@@ -31,6 +31,7 @@ export function activate(context: vscode.ExtensionContext): void {
       output.appendLine(`strict: ${String(status.strict)}`);
       output.appendLine(`will_fallback_to_fake: ${String(status.will_fallback_to_fake)}`);
       output.appendLine(`task_run_network_allowed: ${String(status.task_run_network_allowed)}`);
+      output.appendLine(`sensitive_guard: ${status.sensitive_guard}`);
       output.appendLine(`budget.max_prompt_chars: ${String(status.budget.max_prompt_chars)}`);
       output.appendLine(`budget.max_messages: ${String(status.budget.max_messages)}`);
       output.appendLine(`budget.request_timeout_ms: ${String(status.budget.request_timeout_ms)}`);

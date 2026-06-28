@@ -49,6 +49,7 @@ pub struct LlmStatusResult {
     pub config_source: String,
     pub active_profile: Option<String>,
     pub budget: LlmRequestBudgetSummary,
+    pub sensitive_guard: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

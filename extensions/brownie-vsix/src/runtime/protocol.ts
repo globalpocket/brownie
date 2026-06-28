@@ -42,6 +42,7 @@ export interface LlmStatusResult {
   config_source: string;
   active_profile?: string | null;
   budget: LlmRequestBudgetSummary;
+  sensitive_guard: string;
 }
 
 export interface RuntimeConfigGetResult {
@@ -280,6 +281,7 @@ export function isLlmStatusResult(value: unknown): value is LlmStatusResult {
     typeof value.config_source === 'string' &&
     (value.active_profile === undefined || value.active_profile === null || typeof value.active_profile === 'string') &&
     isLlmRequestBudgetSummary(value.budget) &&
+    typeof value.sensitive_guard === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'api_key')
   );
 }
