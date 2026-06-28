@@ -1935,6 +1935,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "categories",
         "message_indexes",
         "sensitive_guard",
+        "prompt_preview_redacted",
     ];
     let sanitized = map
         .into_iter()
@@ -2374,6 +2375,8 @@ fn prompt_built_payload(
             "prompt_preview".to_string(),
             json!(preview_prompt(prompt, response_preview_chars)),
         );
+    } else {
+        payload.insert("prompt_preview_redacted".to_string(), json!(true));
     }
     Value::Object(payload)
 }
@@ -3754,6 +3757,7 @@ content-length: {}
             let payload = event.payload.as_ref().expect("prompt payload");
             assert_eq!(payload["message_count"].as_u64().is_some(), true);
             assert_eq!(payload.get("prompt_preview"), None);
+            assert_eq!(payload["prompt_preview_redacted"], true);
             assert!(!serde_json::to_string(payload)
                 .unwrap()
                 .contains("sk-test-sensitive-preview"));
