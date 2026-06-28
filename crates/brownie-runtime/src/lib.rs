@@ -22,9 +22,10 @@ use brownie_protocol::{
     RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
     TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
     TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
-    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -2092,7 +2093,7 @@ fn tool_intent_decision_summary(decision: ToolIntentDecision) -> ToolIntentDecis
         allowed: decision.allowed,
         reason: decision.reason,
         request_reason: decision.request_reason,
-        input: decision.input,
+        input_summary: tool_intent_input_summary(&decision.input),
     }
 }
 
@@ -2131,11 +2132,15 @@ fn tool_intent_parser_config_summary() -> ToolIntentParserConfigSummary {
     }
 }
 
+fn tool_intent_input_summary(input: &Value) -> ToolIntentInputSummary {
+    ToolIntentInputSummary {
+        has_path: input.get("path").and_then(Value::as_str).is_some(),
+        field_count: input.as_object().map(|object| object.len()).unwrap_or(0),
+    }
+}
+
 fn summarize_intent_input(input: &Value) -> Value {
-    json!({
-        "has_path": input.get("path").and_then(Value::as_str).is_some(),
-        "field_count": input.as_object().map(|object| object.len()).unwrap_or(0),
-    })
+    json!(tool_intent_input_summary(input))
 }
 
 fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecuteResult {
@@ -3175,8 +3180,50 @@ mod tests {
         assert_eq!(result["mode_id"], "orchestrator");
         assert_eq!(result["items"][0]["tool_id"], "workspace.read");
         assert_eq!(result["items"][0]["allowed"], true);
+        assert_eq!(result["items"][0]["input_summary"]["has_path"], true);
+        assert_eq!(result["items"][0]["input_summary"]["field_count"], 1);
+        assert!(result["items"][0].get("input").is_none());
         assert_eq!(result["items"][1]["tool_id"], "workspace.write");
         assert_eq!(result["items"][1]["allowed"], false);
+    }
+
+    #[test]
+    fn tool_intent_parse_does_not_return_raw_input_or_suspicious_path() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"../secret.txt\",\"extra\":\"do-not-return\"}}]}\n```"}}"#,
+        );
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert!(result.to_string().contains("invalid_input"));
+        assert!(!result.to_string().contains("../secret.txt"));
+        assert!(!result.to_string().contains("do-not-return"));
+        assert!(result["items"].as_array().expect("items").is_empty());
+        assert_eq!(result["rejected"][0]["code"], "invalid_input");
+    }
+
+    #[test]
+    fn tool_intent_parse_rejected_response_omits_raw_input_json() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.unknown\",\"reason\":\"Try unknown.\",\"input\":{\"path\":\"README.md\",\"secret\":\"Bearer abc123\"}}]}\n```"}}"#,
+        );
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert!(result["items"].as_array().expect("items").is_empty());
+        assert_eq!(result["rejected"][0]["code"], "unknown_tool");
+        let result_text = result.to_string();
+        assert!(!result_text.contains("README.md"));
+        assert!(!result_text.contains("Bearer abc123"));
+        assert!(!result_text.contains("secret"));
+        assert!(result["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .all(|item| item.get("input").is_none()));
+        assert!(result["rejected"]
+            .as_array()
+            .expect("rejected")
+            .iter()
+            .all(|item| item.get("input").is_none()));
     }
 
     #[test]

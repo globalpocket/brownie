@@ -149,12 +149,18 @@ export interface ToolPlanResult {
   items: ToolPlanDecisionSummary[];
 }
 
+export interface ToolIntentInputSummary {
+  has_path: boolean;
+  field_count: number;
+}
+
 export interface ToolIntentDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
   allowed: boolean;
   reason: string;
   request_reason: string;
+  input_summary: ToolIntentInputSummary;
 }
 
 export interface ToolIntentRejectedSummary {
@@ -415,14 +421,24 @@ export function isToolExecuteResult(value: unknown): value is ToolExecuteResult 
   );
 }
 
+function isToolIntentInputSummary(value: unknown): value is ToolIntentInputSummary {
+  if (!isRecord(value) || typeof value.has_path !== 'boolean') {
+    return false;
+  }
+  const fieldCount = value.field_count;
+  return Number.isInteger(fieldCount) && typeof fieldCount === 'number' && fieldCount >= 0;
+}
+
 function isToolIntentDecisionSummary(value: unknown): value is ToolIntentDecisionSummary {
   return (
     isRecord(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'input') &&
     typeof value.tool_id === 'string' &&
     isRuntimeActionName(value.required_action) &&
     typeof value.allowed === 'boolean' &&
     typeof value.reason === 'string' &&
-    typeof value.request_reason === 'string'
+    typeof value.request_reason === 'string' &&
+    isToolIntentInputSummary(value.input_summary)
   );
 }
 

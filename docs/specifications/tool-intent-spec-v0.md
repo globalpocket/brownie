@@ -25,3 +25,11 @@ For approved `workspace.read` intents with explicit `input.path`, the runtime re
 Phase 1.9 introduces a second-pass Fake LLM feedback loop inside `task.run` after an approved `workspace.read` execution completes. The runtime re-reads the task ledger, materializes the tool execution summary into the next prompt, builds a second-pass prompt, and records `SecondPassPromptBuilt`, `SecondPassLlmRequestCreated`, and `SecondPassLlmResponseReceived` ledger events.
 
 The second pass runs only when at least one `ToolExecutionCompleted` event exists. `workspace.read` results are summarized into prompt materialization as metadata such as status, `bytes_read`, and `truncated`; full file content is not persisted in the ledger. Phase 1.9 does not add write, process, network, service-control, destructive, or subtask execution, and it continues to use only the in-process Fake LLM.
+
+## Parser hardening and protocol summaries
+
+Provider responses are untrusted input. Tool intent parsing validates fenced block count, block size, request count, request schema, input size, reason length, tool IDs, and `workspace.read` path preflight before any permission evaluation or execution path.
+
+`tool.intent.parse` returns the parser summary and typed `input_summary` values only. It never returns raw provider responses, raw `brownie-tool-intent` JSON, or raw request `input` JSON. Unknown tools and invalid `workspace.read` paths are rejected and are not executed.
+
+Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema`, `unknown_tool`, and `invalid_input`. Ledger and inspection records for `ToolIntentPermissionChecked`, `ToolIntentApproved`, and `ToolIntentDenied` store parser metadata and summaries only, including `input_summary`; they do not store raw provider responses or raw intent JSON.

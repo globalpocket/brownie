@@ -254,3 +254,17 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 ## Phase 2.8 prompt sensitive guard
 
 Runtime LLM configuration includes `sensitive_guard` (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Fake defaults to `warn`; OpenAI-compatible defaults to `fail`. Provider calls are preceded by budget validation and prompt sensitive-content scanning. In fail mode, findings block the provider call and task failure metadata records only categories, counts, message indexes, and guard mode. Matched secret text, full prompt text, and full provider responses must not be persisted or exposed through status, diagnostics, ledger, or inspection APIs.
+
+## `tool.intent.parse` trust boundary
+
+Provider responses are untrusted input. The `tool.intent.parse` method parses fenced `brownie-tool-intent` blocks, validates parser limits and schemas, runs `workspace.read` path preflight, and returns only parser metadata plus summaries.
+
+`ToolIntentDecisionSummary` contains `input_summary`:
+
+```json
+{"has_path":true,"field_count":1}
+```
+
+It must not contain a raw `input` field. Raw provider responses and raw `brownie-tool-intent` JSON are never returned by this RPC. Rejected requests include stable rejection codes such as `malformed_json`, `invalid_schema`, `unknown_tool`, and `invalid_input` without echoing raw input JSON.
+
+Ledger and inspection surfaces follow the same trust boundary: parser metadata, rejection codes, and input summaries may be stored or displayed; raw provider responses and raw intent JSON must not be stored or displayed.
