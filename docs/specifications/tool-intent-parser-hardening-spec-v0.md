@@ -36,3 +36,7 @@ The parser uses stable rejection codes for malformed or unsafe requests, includi
 ## Ledger and inspection
 
 Ledger and inspection views store parser metadata and input summaries only for tool-intent permission events such as `ToolIntentPermissionChecked`, `ToolIntentApproved`, and `ToolIntentDenied`. They must not persist or expose raw provider responses or raw `brownie-tool-intent` JSON. Inspection sanitization must not expose raw execution input.
+
+## Phase 3.0 workspace.write preflight
+
+The parser validates `workspace.write` input before permission evaluation. The input must be an object with a relative safe `path`, `operation: "replace_file"`, and string `content` within the configured maximum proposed content character limit. Rejection reasons are high-level and raw input/content is not returned.

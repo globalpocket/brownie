@@ -275,6 +275,7 @@ pub enum LedgerEventKind {
     ToolExecutionCompleted,
     ToolExecutionDenied,
     ToolExecutionFailed,
+    WorkspacePatchProposed,
     TaskRunning,
     PromptBuilt,
     PromptSensitiveScanCompleted,

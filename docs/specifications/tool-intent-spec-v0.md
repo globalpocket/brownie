@@ -33,3 +33,7 @@ Provider responses are untrusted input. Tool intent parsing validates fenced blo
 `tool.intent.parse` returns the parser summary and typed `input_summary` values only. It never returns raw provider responses, raw `brownie-tool-intent` JSON, or raw request `input` JSON. Unknown tools and invalid `workspace.read` paths are rejected and are not executed.
 
 Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema`, `unknown_tool`, and `invalid_input`. Ledger and inspection records for `ToolIntentPermissionChecked`, `ToolIntentApproved`, and `ToolIntentDenied` store parser metadata and summaries only, including `input_summary`; they do not store raw provider responses or raw intent JSON.
+
+## Phase 3.0 workspace.write dry-run proposals
+
+`workspace.write` supports only `replace_file` input for Phase 3.0. The parser preflights `path`, `operation`, and `content`, and invalid input is rejected with `code = "invalid_input"` without returning raw content. Approved intents remain dry-run and produce patch proposals only; the runtime does not write files or apply patches.

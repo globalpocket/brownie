@@ -76,6 +76,7 @@ pub struct ToolIntentParserConfigSummary {
     pub max_tool_requests: usize,
     pub max_input_bytes: usize,
     pub max_reason_chars: usize,
+    pub max_workspace_write_content_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -231,6 +232,7 @@ pub struct ToolIntentParserSummary {
     pub max_tool_requests: usize,
     pub max_input_bytes: usize,
     pub max_reason_chars: usize,
+    pub max_workspace_write_content_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -324,6 +326,11 @@ pub struct RunInspectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalListParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -349,6 +356,22 @@ pub struct RunEventsResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RunInspectResult {
     pub run: RunInspectSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchProposalSummary {
+    pub proposal_id: String,
+    pub path: String,
+    pub operation: String,
+    pub content_preview: String,
+    pub content_chars: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalListResult {
+    pub run_id: String,
+    pub proposals: Vec<WorkspacePatchProposalSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

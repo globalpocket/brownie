@@ -310,6 +310,8 @@ impl FakeLlm {
             .map(|(tool_id, reason)| {
                 if tool_id == "workspace.read" {
                     serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md" } })
+                } else if tool_id == "workspace.write" {
+                    serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md", "operation": "replace_file", "content": "new README content" } })
                 } else {
                     serde_json::json!({ "tool_id": tool_id, "reason": reason })
                 }

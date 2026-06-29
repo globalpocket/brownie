@@ -17,21 +17,22 @@ use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
-    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic,
-    RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
-    TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
-    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary,
+    PermissionCheckResult, ProposalListParams, ProposalListResult, RunEventsParams,
+    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchProposalSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
-    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WORKSPACE_READ_TOOL_ID,
+    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 
@@ -55,6 +56,7 @@ const METHOD_TOOL_INTENT_PARSE: &str = "tool.intent.parse";
 const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
+const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -103,6 +105,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TOOL_EXECUTE => handle_tool_execute(request.id, request.params),
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
+        METHOD_PROPOSAL_LIST => handle_proposal_list(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1385,12 +1388,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
-    if let Err(error) = execute_approved_workspace_read_intents(
-        &store,
-        &running,
-        &policy,
-        &result.llm_response.content,
-    ) {
+    if let Err(error) =
+        handle_approved_workspace_intents(&store, &running, &policy, &result.llm_response.content)
+    {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
 
@@ -1654,6 +1654,30 @@ fn handle_run_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value
     }
 }
 
+fn handle_proposal_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalListParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id must not be empty");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match list_proposals(&store, &params.run_id) {
+        Ok(proposals) => result_response(
+            id,
+            json!(ProposalListResult {
+                run_id: params.run_id,
+                proposals
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -1856,6 +1880,28 @@ fn read_existing_run_events(
         .map_err(|error| format!("invalid params: {error}"))
 }
 
+fn list_proposals(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<Vec<WorkspacePatchProposalSummary>, String> {
+    let events = read_existing_run_events(store, run_id)?;
+    Ok(events
+        .into_iter()
+        .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+        .filter_map(|event| {
+            let payload = sanitize_ledger_payload(event.payload)?;
+            Some(WorkspacePatchProposalSummary {
+                proposal_id: payload.get("proposal_id")?.as_str()?.to_string(),
+                path: payload.get("path")?.as_str()?.to_string(),
+                operation: payload.get("operation")?.as_str()?.to_string(),
+                content_preview: payload.get("content_preview")?.as_str()?.to_string(),
+                content_chars: payload.get("content_chars")?.as_u64()? as usize,
+                truncated: payload.get("truncated")?.as_bool()?,
+            })
+        })
+        .collect())
+}
+
 fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, String> {
     let events = read_existing_run_events(store, run_id)?;
     let task = store
@@ -1943,6 +1989,10 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "parser",
         "code",
         "input_summary",
+        "proposal_id",
+        "operation",
+        "path",
+        "content_chars",
     ];
     let sanitized = map
         .into_iter()
@@ -1967,6 +2017,10 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "provider",
             "model",
             "message_count",
+            "proposal_id",
+            "operation",
+            "path",
+            "content_chars",
         ] {
             if let Some(value) = payload.get(key) {
                 let value = value
@@ -2118,6 +2172,7 @@ fn tool_intent_parser_summary(
         max_tool_requests: summary.max_tool_requests,
         max_input_bytes: summary.max_input_bytes,
         max_reason_chars: summary.max_reason_chars,
+        max_workspace_write_content_chars: summary.max_workspace_write_content_chars,
     }
 }
 
@@ -2129,6 +2184,7 @@ fn tool_intent_parser_config_summary() -> ToolIntentParserConfigSummary {
         max_tool_requests: config.max_tool_requests,
         max_input_bytes: config.max_input_bytes,
         max_reason_chars: config.max_reason_chars,
+        max_workspace_write_content_chars: config.max_workspace_write_content_chars,
     }
 }
 
@@ -2205,7 +2261,7 @@ fn append_tool_intent_events(
     Ok(())
 }
 
-fn execute_approved_workspace_read_intents(
+fn handle_approved_workspace_intents(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
     policy: &CompiledModePolicy,
@@ -2216,7 +2272,14 @@ fn execute_approved_workspace_read_intents(
         ToolIntentParser::parse_assistant_content(assistant_content),
     );
     for decision in evaluation.items {
-        if !decision.allowed || decision.tool_id != WORKSPACE_READ_TOOL_ID {
+        if !decision.allowed {
+            continue;
+        }
+        if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
+            append_workspace_patch_proposal(store, record, &decision)?;
+            continue;
+        }
+        if decision.tool_id != WORKSPACE_READ_TOOL_ID {
             continue;
         }
         store.tasks().append_task_event_with_payload(
@@ -2261,6 +2324,41 @@ fn execute_approved_workspace_read_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
+    Ok(())
+}
+
+fn append_workspace_patch_proposal(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    decision: &ToolIntentDecision,
+) -> anyhow::Result<()> {
+    let path = decision
+        .input
+        .get("path")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let content = decision
+        .input
+        .get("content")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let content_chars = content.chars().count();
+    let content_preview = preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS);
+    let truncated = content_chars > content_preview.chars().count();
+    let proposal_id = format!("proposal_{}", uuid::Uuid::new_v4().simple());
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::WorkspacePatchProposed,
+        Some(json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+            "content_preview": content_preview,
+            "content_chars": content_chars,
+            "truncated": truncated,
+        })),
+    )?;
     Ok(())
 }
 
@@ -2992,6 +3090,81 @@ mod tests {
     }
 
     #[test]
+    fn implementer_workspace_write_creates_proposal_without_modifying_file() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement README update","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let proposal = events
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchProposed")
+            .expect("proposal event");
+        let payload = &proposal["payload"];
+        assert_eq!(payload["tool_id"], "workspace.write");
+        assert_eq!(payload["path"], "README.md");
+        assert_eq!(payload["operation"], "replace_file");
+        assert!(payload.get("content_preview").is_some());
+        assert!(payload.get("content_chars").is_some());
+        assert!(payload.get("content").is_none());
+        assert!(payload.get("raw_content").is_none());
+        assert!(payload.get("patch").is_none());
+        assert!(payload.get("diff").is_none());
+        assert!(payload.get("raw_input").is_none());
+
+        let list = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.list","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let proposals = list.result.expect("proposal result")["proposals"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(proposals.len(), 1);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn proposal_list_unknown_run_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"proposal.list","params":{"run_id":"run_missing"}}"#,
+        );
+        assert_eq!(response.error.expect("error").code, -32602);
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_completed_task_returns_invalid_params() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -3173,7 +3346,7 @@ mod tests {
     #[test]
     fn tool_intent_parse_returns_evaluated_decisions() {
         let response = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edits.\"}]}\n```"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edits.\",\"input\":{\"path\":\"README.md\",\"operation\":\"replace_file\",\"content\":\"new README content\"}}]}\n```"}}"#,
         );
         assert!(response.error.is_none());
         let result = response.result.expect("result");

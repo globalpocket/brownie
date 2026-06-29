@@ -268,3 +268,7 @@ Provider responses are untrusted input. The `tool.intent.parse` method parses fe
 It must not contain a raw `input` field. Raw provider responses and raw `brownie-tool-intent` JSON are never returned by this RPC. Rejected requests include stable rejection codes such as `malformed_json`, `invalid_schema`, `unknown_tool`, and `invalid_input` without echoing raw input JSON.
 
 Ledger and inspection surfaces follow the same trust boundary: parser metadata, rejection codes, and input summaries may be stored or displayed; raw provider responses and raw intent JSON must not be stored or displayed.
+
+## `proposal.list`
+
+Phase 3.0 adds `proposal.list` with params `{ "run_id": string }`. The result is `{ "run_id": string, "proposals": [...] }`, where each proposal summary contains `proposal_id`, `path`, `operation`, `content_preview`, `content_chars`, and `truncated`. Unknown runs return `-32602`.

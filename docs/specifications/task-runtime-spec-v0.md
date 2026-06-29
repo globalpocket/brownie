@@ -171,3 +171,7 @@ See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provide
 ## Phase 2.8 prompt sensitive guard
 
 Runtime LLM configuration includes `sensitive_guard` (`off`, `warn`, `fail`) with `BROWNIE_LLM_SENSITIVE_GUARD` as the highest-priority override. Fake defaults to `warn`; OpenAI-compatible defaults to `fail`. Provider calls are preceded by budget validation and prompt sensitive-content scanning. In fail mode, findings block the provider call and task failure metadata records only categories, counts, message indexes, and guard mode. Matched secret text, full prompt text, and full provider responses must not be persisted or exposed through status, diagnostics, ledger, or inspection APIs.
+
+## Phase 3.0 patch proposal dry-run path
+
+During `task.run`, approved `workspace.read` intents continue to use read-only execution. Approved `workspace.write` intents are not executed; they create `WorkspacePatchProposed` ledger events with bounded preview metadata only. Denied write intents create no proposal.
