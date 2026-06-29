@@ -74,6 +74,7 @@ export interface ToolIntentParserConfigSummary {
   max_tool_requests: number;
   max_input_bytes: number;
   max_reason_chars: number;
+  max_workspace_write_content_chars: number;
 }
 
 export interface ToolIntentParserSummary extends ToolIntentParserConfigSummary {
@@ -245,6 +246,20 @@ export interface TaskInspectResult {
   run: RunInspectSummary;
 }
 
+export interface WorkspacePatchProposalSummary {
+  proposal_id: string;
+  path: string;
+  operation: string;
+  content_preview: string;
+  content_chars: number;
+  truncated: boolean;
+}
+
+export interface ProposalListResult {
+  run_id: string;
+  proposals: WorkspacePatchProposalSummary[];
+}
+
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse<unknown> {
   if (!isRecord(value)) {
     return false;
@@ -412,6 +427,33 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
   );
 }
 
+export function isWorkspacePatchProposalSummary(value: unknown): value is WorkspacePatchProposalSummary {
+  return (
+    isRecord(value) &&
+    typeof value.proposal_id === 'string' &&
+    typeof value.path === 'string' &&
+    typeof value.operation === 'string' &&
+    typeof value.content_preview === 'string' &&
+    isNonNegativeInteger(value.content_chars) &&
+    typeof value.truncated === 'boolean' &&
+    !Object.prototype.hasOwnProperty.call(value, 'content') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_content') &&
+    !Object.prototype.hasOwnProperty.call(value, 'full_content') &&
+    !Object.prototype.hasOwnProperty.call(value, 'patch') &&
+    !Object.prototype.hasOwnProperty.call(value, 'diff') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_input')
+  );
+}
+
+export function isProposalListResult(value: unknown): value is ProposalListResult {
+  return (
+    isRecord(value) &&
+    typeof value.run_id === 'string' &&
+    Array.isArray(value.proposals) &&
+    value.proposals.every(isWorkspacePatchProposalSummary)
+  );
+}
+
 export function isToolExecuteResult(value: unknown): value is ToolExecuteResult {
   return (
     isRecord(value) &&
@@ -458,7 +500,8 @@ function isToolIntentParserConfigSummary(value: unknown): value is ToolIntentPar
     isNonNegativeInteger(value.max_block_bytes) &&
     isNonNegativeInteger(value.max_tool_requests) &&
     isNonNegativeInteger(value.max_input_bytes) &&
-    isNonNegativeInteger(value.max_reason_chars)
+    isNonNegativeInteger(value.max_reason_chars) &&
+    isNonNegativeInteger(value.max_workspace_write_content_chars)
   );
 }
 

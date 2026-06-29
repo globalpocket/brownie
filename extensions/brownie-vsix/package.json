@@ -76,6 +76,10 @@
       {
         "command": "brownie.toolExecuteRead",
         "title": "Brownie: Execute Read Tool"
+      },
+      {
+        "command": "brownie.proposalList",
+        "title": "Brownie: List Patch Proposals"
       }
     ]
   },

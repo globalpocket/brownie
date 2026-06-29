@@ -340,6 +340,28 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const proposalListCommand = vscode.commands.registerCommand('brownie.proposalList', async () => {
+    const runId = await vscode.window.showInputBox({
+      prompt: 'Run ID',
+      placeHolder: 'run_...',
+      ignoreFocusOut: true,
+    });
+
+    if (runId === undefined) {
+      return;
+    }
+
+    try {
+      const result = await runtimeClient.listProposals(runId.trim());
+      output.appendLine(`proposal.list: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch proposals: ${result.proposals.length}`);
+    } catch (error) {
+      output.appendLine(`proposal.list failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal list failed: ${formatError(error)}`);
+    }
+  });
+
   const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
     const modeIdInput = await vscode.window.showInputBox({
       prompt: 'Mode ID',
@@ -375,7 +397,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand);
 }
 
 export function deactivate(): void {

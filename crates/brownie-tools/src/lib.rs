@@ -9,7 +9,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
+pub const WORKSPACE_WRITE_TOOL_ID: &str = "workspace.write";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
+pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
+pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
+pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
+pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSideEffectLevel {
@@ -238,6 +243,7 @@ pub struct ToolIntentParserConfig {
     pub max_tool_requests: usize,
     pub max_input_bytes: usize,
     pub max_reason_chars: usize,
+    pub max_workspace_write_content_chars: usize,
 }
 
 impl Default for ToolIntentParserConfig {
@@ -248,6 +254,7 @@ impl Default for ToolIntentParserConfig {
             max_tool_requests: 8,
             max_input_bytes: 4_096,
             max_reason_chars: 1_000,
+            max_workspace_write_content_chars: DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
         }
     }
 }
@@ -263,6 +270,7 @@ pub struct ToolIntentParserSummary {
     pub max_tool_requests: usize,
     pub max_input_bytes: usize,
     pub max_reason_chars: usize,
+    pub max_workspace_write_content_chars: usize,
 }
 
 impl ToolIntentParserSummary {
@@ -277,6 +285,7 @@ impl ToolIntentParserSummary {
             max_tool_requests: config.max_tool_requests,
             max_input_bytes: config.max_input_bytes,
             max_reason_chars: config.max_reason_chars,
+            max_workspace_write_content_chars: config.max_workspace_write_content_chars,
         }
     }
 }
@@ -306,6 +315,97 @@ pub struct RejectedToolIntent {
     pub tool_id: Option<String>,
     pub reason: String,
     pub code: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchProposal {
+    pub proposal_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub tool_id: String,
+    pub path: String,
+    pub operation: WorkspacePatchOperation,
+    pub content_preview: String,
+    pub content_chars: usize,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum WorkspacePatchOperation {
+    ReplaceFile,
+}
+
+impl WorkspacePatchOperation {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReplaceFile => "replace_file",
+        }
+    }
+}
+
+pub fn preflight_workspace_write_input(input: &Value) -> Result<(), &'static str> {
+    preflight_workspace_write_input_with_limit(input, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS)
+}
+
+pub fn preflight_workspace_write_input_with_limit(
+    input: &Value,
+    max_content_chars: usize,
+) -> Result<(), &'static str> {
+    let max_content_chars = max_content_chars.clamp(
+        MIN_WORKSPACE_WRITE_CONTENT_CHARS,
+        MAX_WORKSPACE_WRITE_CONTENT_CHARS,
+    );
+    let Some(object) = input.as_object() else {
+        return Err("workspace.write input must be an object.");
+    };
+    let Some(path) = object.get("path") else {
+        return Err("workspace.write input.path is required.");
+    };
+    let Some(path) = path.as_str() else {
+        return Err("workspace.write input.path must be a string.");
+    };
+    preflight_workspace_write_path(path)?;
+    let Some(operation) = object.get("operation") else {
+        return Err("workspace.write input.operation is required.");
+    };
+    if operation.as_str() != Some("replace_file") {
+        return Err("workspace.write input.operation must be replace_file.");
+    }
+    let Some(content) = object.get("content") else {
+        return Err("workspace.write input.content is required.");
+    };
+    let Some(content) = content.as_str() else {
+        return Err("workspace.write input.content must be a string.");
+    };
+    if content.chars().count() > max_content_chars {
+        return Err("workspace.write input.content exceeds parser length limit.");
+    }
+    Ok(())
+}
+
+pub fn preflight_workspace_write_path(relative_path: &str) -> Result<(), &'static str> {
+    if relative_path.trim().is_empty() {
+        return Err("workspace.write input.path must not be empty.");
+    }
+    let requested_path = Path::new(relative_path);
+    if requested_path.is_absolute() {
+        return Err("workspace.write input.path must be workspace-relative.");
+    }
+    for component in requested_path.components() {
+        match component {
+            Component::ParentDir => {
+                return Err("workspace.write input.path must not contain path traversal.")
+            }
+            Component::Normal(name) if is_blocked_component(name.to_string_lossy().as_ref()) => {
+                return Err("workspace.write input.path targets a protected workspace path.")
+            }
+            Component::Prefix(_) | Component::RootDir => {
+                return Err("workspace.write input.path must be workspace-relative.")
+            }
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub struct ToolIntentParser;
@@ -521,6 +621,15 @@ impl ToolIntentParser {
             }
             if tool_id_value == WORKSPACE_READ_TOOL_ID {
                 if let Err(reason) = preflight_workspace_read_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == WORKSPACE_WRITE_TOOL_ID {
+                if let Err(reason) = preflight_workspace_write_input_with_limit(
+                    &input,
+                    config.max_workspace_write_content_chars,
+                ) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
                 }
@@ -858,10 +967,11 @@ mod tests {
     }
 
     #[test]
-    fn parser_parses_input_object_and_defaults_missing_input() {
+    fn parser_parses_input_object_and_rejects_missing_write_input() {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.read\",\"reason\":\"Need context.\",\"input\":{\"path\":\"README.md\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Need edit.\"}]}\n```");
         assert_eq!(parsed.requests[0].input["path"], "README.md");
-        assert_eq!(parsed.requests[1].input, serde_json::json!({}));
+        assert_eq!(parsed.requests.len(), 1);
+        assert_eq!(parsed.rejected[0].code, "invalid_input");
     }
 
     #[test]
@@ -905,6 +1015,49 @@ mod tests {
             .find(|item| item.tool_id == "workspace.read")
             .expect("read decision");
         assert_eq!(read.input["path"], "README.md");
+    }
+
+    #[test]
+    fn parser_accepts_valid_workspace_write_replace_file_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Propose README update\",\"input\":{\"path\":\"README.md\",\"operation\":\"replace_file\",\"content\":\"new content\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_rejects_invalid_workspace_write_inputs() {
+        for (input, reason) in [
+            (
+                serde_json::json!({"operation":"replace_file","content":"x"}),
+                "missing path",
+            ),
+            (
+                serde_json::json!({"path":"/tmp/x","operation":"replace_file","content":"x"}),
+                "absolute path",
+            ),
+            (
+                serde_json::json!({"path":"../README.md","operation":"replace_file","content":"x"}),
+                "parent traversal",
+            ),
+            (
+                serde_json::json!({"path":".git/config","operation":"replace_file","content":"x"}),
+                "protected component",
+            ),
+            (
+                serde_json::json!({"path":"README.md","operation":"append","content":"x"}),
+                "unsupported operation",
+            ),
+        ] {
+            assert!(preflight_workspace_write_input(&input).is_err(), "{reason}");
+        }
+    }
+
+    #[test]
+    fn parser_rejects_workspace_write_content_too_large() {
+        let content = "x".repeat(101);
+        let input =
+            serde_json::json!({"path":"README.md","operation":"replace_file","content":content});
+        assert!(preflight_workspace_write_input_with_limit(&input, 100).is_err());
     }
 
     #[test]

@@ -19,6 +19,7 @@ brownie-tools = { path = "../brownie-tools" }
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
