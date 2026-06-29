@@ -253,11 +253,20 @@ export interface WorkspacePatchProposalSummary {
   content_preview: string;
   content_chars: number;
   truncated: boolean;
+  validation_status: string;
+  validation_reason: string | null;
+  diff_preview: string | null;
+  diff_truncated: boolean;
+  diff_redacted: boolean;
 }
 
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
+}
+
+export interface ProposalInspectResult {
+  proposal: WorkspacePatchProposalSummary;
 }
 
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse<unknown> {
@@ -436,6 +445,11 @@ export function isWorkspacePatchProposalSummary(value: unknown): value is Worksp
     typeof value.content_preview === 'string' &&
     isNonNegativeInteger(value.content_chars) &&
     typeof value.truncated === 'boolean' &&
+    (value.validation_status === 'Valid' || value.validation_status === 'Invalid' || value.validation_status === 'Blocked') &&
+    (typeof value.validation_reason === 'string' || value.validation_reason === null) &&
+    (typeof value.diff_preview === 'string' || value.diff_preview === null) &&
+    typeof value.diff_truncated === 'boolean' &&
+    typeof value.diff_redacted === 'boolean' &&
     !Object.prototype.hasOwnProperty.call(value, 'content') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_content') &&
     !Object.prototype.hasOwnProperty.call(value, 'full_content') &&
@@ -451,6 +465,13 @@ export function isProposalListResult(value: unknown): value is ProposalListResul
     typeof value.run_id === 'string' &&
     Array.isArray(value.proposals) &&
     value.proposals.every(isWorkspacePatchProposalSummary)
+  );
+}
+
+export function isProposalInspectResult(value: unknown): value is ProposalInspectResult {
+  return (
+    isRecord(value) &&
+    isWorkspacePatchProposalSummary(value.proposal)
   );
 }
 

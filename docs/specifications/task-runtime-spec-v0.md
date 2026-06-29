@@ -175,3 +175,9 @@ Runtime LLM configuration includes `sensitive_guard` (`off`, `warn`, `fail`) wit
 ## Phase 3.0 patch proposal dry-run path
 
 During `task.run`, approved `workspace.read` intents continue to use read-only execution. Approved `workspace.write` intents are not executed; they create `WorkspacePatchProposed` ledger events with bounded preview metadata only. Denied write intents create no proposal.
+
+## Phase 3.1 patch proposal validation
+
+Approved `workspace.write` intents remain dry-run proposals only: task execution does not write files and does not apply patches. For `replace_file` proposals, the runtime validates the target path and current target file, scans proposed and existing content for sensitive-like data, and stores only bounded previews.
+
+Valid proposals may include a capped synthetic unified diff preview. Blocked proposals suppress or redact previews when proposed or existing content looks sensitive. Proposal inspection is available through `proposal.list` and `proposal.inspect`; neither RPC returns full proposed content, raw provider responses, raw intent JSON, raw input, or full diffs.

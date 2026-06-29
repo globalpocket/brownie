@@ -80,6 +80,10 @@
       {
         "command": "brownie.proposalList",
         "title": "Brownie: List Patch Proposals"
+      },
+      {
+        "command": "brownie.proposalInspect",
+        "title": "Brownie: Inspect Patch Proposal"
       }
     ]
   },

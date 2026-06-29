@@ -331,6 +331,12 @@ pub struct ProposalListParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalInspectParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -366,12 +372,22 @@ pub struct WorkspacePatchProposalSummary {
     pub content_preview: String,
     pub content_chars: usize,
     pub truncated: bool,
+    pub validation_status: String,
+    pub validation_reason: Option<String>,
+    pub diff_preview: Option<String>,
+    pub diff_truncated: bool,
+    pub diff_redacted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalInspectResult {
+    pub proposal: WorkspacePatchProposalSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
