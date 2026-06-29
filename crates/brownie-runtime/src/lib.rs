@@ -2461,8 +2461,23 @@ fn build_workspace_patch_proposal(
         result.validation_reason = Some("path is not a safe workspace-relative path");
         return result;
     }
-    let target = store.workspace_root().join(path);
-    let Ok(metadata) = std::fs::metadata(&target) else {
+    let Ok(root) = store.workspace_root().canonicalize() else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("workspace root is not accessible");
+        return result;
+    };
+    let target = root.join(path);
+    let Ok(canonical_target) = target.canonicalize() else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target file does not exist");
+        return result;
+    };
+    if !canonical_target.starts_with(&root) {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target path escapes workspace root");
+        return result;
+    }
+    let Ok(metadata) = std::fs::metadata(&canonical_target) else {
         result.validation_status = "Invalid";
         result.validation_reason = Some("target file does not exist");
         return result;
@@ -2472,7 +2487,7 @@ fn build_workspace_patch_proposal(
         result.validation_reason = Some("target path is not a file");
         return result;
     }
-    let Ok(existing) = std::fs::read_to_string(&target) else {
+    let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
         result.validation_status = "Invalid";
         result.validation_reason = Some("target file is not UTF-8");
         return result;
@@ -3344,6 +3359,19 @@ mod tests {
 ",
         )
         .expect("secret");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::fs::write(
+            outside.path().join("outside.txt"),
+            "outside workspace
+",
+        )
+        .expect("outside file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            outside.path().join("outside.txt"),
+            temp.path().join("link.txt"),
+        )
+        .expect("symlink");
         let store = BrownieStore::new(temp.path());
 
         let missing = build_workspace_patch_proposal(
@@ -3392,6 +3420,20 @@ mod tests {
         );
         assert!(existing_secret.diff_preview.is_none());
         assert!(existing_secret.diff_redacted);
+
+        #[cfg(unix)]
+        {
+            let symlink_escape = build_workspace_patch_proposal(
+                &store, "link.txt", "safe
+",
+            );
+            assert_eq!(symlink_escape.validation_status, "Invalid");
+            assert_eq!(
+                symlink_escape.validation_reason,
+                Some("target path escapes workspace root")
+            );
+            assert!(symlink_escape.diff_preview.is_none());
+        }
 
         let large = build_workspace_patch_proposal(
             &store,
