@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalListResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalInspectResult, isProposalListResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -172,11 +172,12 @@ describe('protocol validation', () => {
   it('accepts proposal.list results and rejects raw content fields', () => {
     const result = {
       run_id: 'run_1',
-      proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false }],
+      proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false }],
     };
     expect(isProposalListResult(result)).toBe(true);
     expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], content: 'full' }] })).toBe(false);
     expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], raw_input: { content: 'full' } }] })).toBe(false);
+    expect(isProposalInspectResult({ proposal: result.proposals[0] })).toBe(true);
   });
 
   it('validates tool.execute results', () => {
@@ -387,12 +388,21 @@ describe('RuntimeClient', () => {
 
 
   it('creates a proposal.list request', async () => {
-    const result = { run_id: 'run_1', proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false }] };
+    const result = { run_id: 'run_1', proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false }] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
     await expect(client.listProposals('run_1')).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.list', params: { run_id: 'run_1' } }]);
+  });
+
+  it('creates a proposal.inspect request', async () => {
+    const result = { proposal: { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false } };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.inspectProposal('run_1', 'proposal_1')).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.inspect', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

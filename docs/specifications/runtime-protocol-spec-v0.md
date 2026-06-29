@@ -272,3 +272,11 @@ Ledger and inspection surfaces follow the same trust boundary: parser metadata, 
 ## `proposal.list`
 
 Phase 3.0 adds `proposal.list` with params `{ "run_id": string }`. The result is `{ "run_id": string, "proposals": [...] }`, where each proposal summary contains `proposal_id`, `path`, `operation`, `content_preview`, `content_chars`, and `truncated`. Unknown runs return `-32602`.
+
+## Phase 3.1 proposal validation and inspection
+
+`proposal.list` summaries now include `validation_status`, `validation_reason`, `diff_preview`, `diff_truncated`, and `diff_redacted` in addition to the Phase 3.0 fields. Allowed validation statuses are `Valid`, `Invalid`, and `Blocked`.
+
+`proposal.inspect` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+Diff previews are synthetic unified diff previews only. They are capped before ledger storage and RPC exposure. Sensitive-like proposed content redacts `content_preview` and suppresses diff preview; sensitive-like existing target content also suppresses diff preview. The runtime still does not apply patches or write files for `workspace.write`.

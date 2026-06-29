@@ -9,23 +9,25 @@ use brownie_config::{
 };
 use brownie_context::{ContextMaterializer, ContextMaterializerInput};
 use brownie_llm::{
-    redact_secret, validate_llm_request_budget, FakeLlmProvider, LlmProvider, LlmProviderKind,
-    LlmProviderStatus, LlmRequestBudget, OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv,
-    OpenAiCompatibleLlmProvider, PromptSensitiveGuardMode, PromptSensitiveScanResult,
+    redact_secret, scan_prompt_for_sensitive_content, validate_llm_request_budget, FakeLlmProvider,
+    LlmMessage, LlmProvider, LlmProviderKind, LlmProviderStatus, LlmRequestBudget,
+    OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
+    PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
 use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalListParams, ProposalListResult, RunEventsParams,
-    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchProposalSummary,
+    PermissionCheckResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
+    ProposalListResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
+    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic,
+    RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
+    TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
+    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchProposalSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -57,6 +59,9 @@ const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
+const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
+const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
+const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -106,6 +111,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         METHOD_PROPOSAL_LIST => handle_proposal_list(request.id, request.params),
+        METHOD_PROPOSAL_INSPECT => handle_proposal_inspect(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1678,6 +1684,27 @@ fn handle_proposal_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Val
     }
 }
 
+fn handle_proposal_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalInspectParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id must not be empty");
+    }
+    if params.proposal_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: proposal_id must not be empty");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match inspect_proposal(&store, &params.run_id, &params.proposal_id) {
+        Ok(proposal) => result_response(id, json!(ProposalInspectResult { proposal })),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -1897,9 +1924,31 @@ fn list_proposals(
                 content_preview: payload.get("content_preview")?.as_str()?.to_string(),
                 content_chars: payload.get("content_chars")?.as_u64()? as usize,
                 truncated: payload.get("truncated")?.as_bool()?,
+                validation_status: payload.get("validation_status")?.as_str()?.to_string(),
+                validation_reason: payload
+                    .get("validation_reason")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                diff_preview: payload
+                    .get("diff_preview")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                diff_truncated: payload.get("diff_truncated")?.as_bool()?,
+                diff_redacted: payload.get("diff_redacted")?.as_bool()?,
             })
         })
         .collect())
+}
+
+fn inspect_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<WorkspacePatchProposalSummary, String> {
+    list_proposals(store, run_id)?
+        .into_iter()
+        .find(|proposal| proposal.proposal_id == proposal_id)
+        .ok_or_else(|| "invalid params: proposal not found".to_string())
 }
 
 fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, String> {
@@ -1993,6 +2042,11 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "operation",
         "path",
         "content_chars",
+        "validation_status",
+        "validation_reason",
+        "diff_preview",
+        "diff_truncated",
+        "diff_redacted",
     ];
     let sanitized = map
         .into_iter()
@@ -2342,24 +2396,146 @@ fn append_workspace_patch_proposal(
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let content_chars = content.chars().count();
-    let content_preview = preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS);
-    let truncated = content_chars > content_preview.chars().count();
-    let proposal_id = format!("proposal_{}", uuid::Uuid::new_v4().simple());
+    let proposal = build_workspace_patch_proposal(store, path, content);
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::WorkspacePatchProposed,
         Some(json!({
-            "proposal_id": proposal_id,
+            "proposal_id": format!("proposal_{}", uuid::Uuid::new_v4().simple()),
             "tool_id": WORKSPACE_WRITE_TOOL_ID,
             "path": path,
             "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
-            "content_preview": content_preview,
-            "content_chars": content_chars,
-            "truncated": truncated,
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
         })),
     )?;
     Ok(())
+}
+
+struct ProposalBuildResult {
+    content_preview: String,
+    content_chars: usize,
+    truncated: bool,
+    validation_status: &'static str,
+    validation_reason: Option<&'static str>,
+    diff_preview: Option<String>,
+    diff_truncated: bool,
+    diff_redacted: bool,
+}
+
+fn build_workspace_patch_proposal(
+    store: &BrownieStore,
+    path: &str,
+    content: &str,
+) -> ProposalBuildResult {
+    let content_chars = content.chars().count();
+    let mut result = ProposalBuildResult {
+        content_preview: preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS),
+        content_chars,
+        truncated: content_chars
+            > preview_with_limit(content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
+                .chars()
+                .count(),
+        validation_status: "Valid",
+        validation_reason: None,
+        diff_preview: None,
+        diff_truncated: false,
+        diff_redacted: false,
+    };
+    if scan_text_for_sensitive_content(content) {
+        result.content_preview = "[redacted]".to_string();
+        result.validation_status = "Blocked";
+        result.validation_reason = Some("proposal content contains sensitive-like data");
+        result.diff_preview = None;
+        result.diff_redacted = true;
+        return result;
+    }
+    if brownie_tools::preflight_workspace_write_path(path).is_err() {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("path is not a safe workspace-relative path");
+        return result;
+    }
+    let Ok(root) = store.workspace_root().canonicalize() else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("workspace root is not accessible");
+        return result;
+    };
+    let target = root.join(path);
+    let Ok(canonical_target) = target.canonicalize() else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target file does not exist");
+        return result;
+    };
+    if !canonical_target.starts_with(&root) {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target path escapes workspace root");
+        return result;
+    }
+    let Ok(metadata) = std::fs::metadata(&canonical_target) else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target file does not exist");
+        return result;
+    };
+    if !metadata.is_file() {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target path is not a file");
+        return result;
+    }
+    let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("target file is not UTF-8");
+        return result;
+    };
+    if scan_text_for_sensitive_content(&existing) {
+        result.validation_status = "Blocked";
+        result.validation_reason = Some("target file contains sensitive-like data");
+        result.diff_redacted = true;
+        return result;
+    }
+    let diff = synthetic_unified_diff(path, &existing, content);
+    result.diff_truncated =
+        diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
+    result.diff_preview = Some(preview_with_limit(
+        &diff,
+        DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
+    ));
+    result
+}
+
+fn scan_text_for_sensitive_content(content: &str) -> bool {
+    !scan_prompt_for_sensitive_content(&[LlmMessage {
+        role: "user".to_string(),
+        content: content.to_string(),
+    }])
+    .findings
+    .is_empty()
+}
+
+fn synthetic_unified_diff(path: &str, old: &str, new: &str) -> String {
+    let old_lines: Vec<&str> = old.lines().collect();
+    let new_lines: Vec<&str> = new.lines().collect();
+    let mut diff = format!(
+        "--- a/{path}\n+++ b/{path}\n@@ -1,{} +1,{} @@\n",
+        old_lines.len(),
+        new_lines.len()
+    );
+    for line in old_lines {
+        diff.push('-');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    for line in new_lines {
+        diff.push('+');
+        diff.push_str(line);
+        diff.push('\n');
+    }
+    diff
 }
 
 fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) -> Value {
@@ -3134,6 +3310,13 @@ mod tests {
         assert_eq!(payload["operation"], "replace_file");
         assert!(payload.get("content_preview").is_some());
         assert!(payload.get("content_chars").is_some());
+        assert_eq!(payload["validation_status"], "Valid");
+        assert!(payload["diff_preview"]
+            .as_str()
+            .unwrap()
+            .contains("--- a/README.md"));
+        assert_eq!(payload["diff_truncated"], false);
+        assert_eq!(payload["diff_redacted"], false);
         assert!(payload.get("content").is_none());
         assert!(payload.get("raw_content").is_none());
         assert!(payload.get("patch").is_none());
@@ -3148,8 +3331,125 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(proposals.len(), 1);
+        let proposal_id = proposals[0]["proposal_id"].as_str().unwrap();
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.inspect","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        assert_eq!(
+            inspect.result.expect("inspect result")["proposal"]["proposal_id"],
+            proposal_id
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_proposal_validation_blocks_invalid_and_sensitive_cases() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            temp.path().join("README.md"),
+            "old
+",
+        )
+        .expect("write readme");
+        std::fs::create_dir(temp.path().join("docs")).expect("mkdir");
+        std::fs::write(
+            temp.path().join("secret.txt"),
+            "api_key=sk-existing
+",
+        )
+        .expect("secret");
+        let outside = tempfile::tempdir().expect("outside tempdir");
+        std::fs::write(
+            outside.path().join("outside.txt"),
+            "outside workspace
+",
+        )
+        .expect("outside file");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(
+            outside.path().join("outside.txt"),
+            temp.path().join("link.txt"),
+        )
+        .expect("symlink");
+        let store = BrownieStore::new(temp.path());
+
+        let missing = build_workspace_patch_proposal(
+            &store,
+            "missing.md",
+            "new
+",
+        );
+        assert_eq!(missing.validation_status, "Invalid");
+        assert_eq!(
+            missing.validation_reason,
+            Some("target file does not exist")
+        );
+
+        let directory = build_workspace_patch_proposal(
+            &store, "docs", "new
+",
+        );
+        assert_eq!(directory.validation_status, "Invalid");
+        assert_eq!(
+            directory.validation_reason,
+            Some("target path is not a file")
+        );
+
+        let proposed_secret = build_workspace_patch_proposal(
+            &store,
+            "README.md",
+            "sk-proposed
+",
+        );
+        assert_eq!(proposed_secret.validation_status, "Blocked");
+        assert_eq!(proposed_secret.content_preview, "[redacted]");
+        assert!(proposed_secret.diff_preview.is_none());
+        assert!(proposed_secret.diff_redacted);
+
+        let existing_secret = build_workspace_patch_proposal(
+            &store,
+            "secret.txt",
+            "safe
+",
+        );
+        assert_eq!(existing_secret.validation_status, "Blocked");
+        assert_eq!(
+            existing_secret.validation_reason,
+            Some("target file contains sensitive-like data")
+        );
+        assert!(existing_secret.diff_preview.is_none());
+        assert!(existing_secret.diff_redacted);
+
+        #[cfg(unix)]
+        {
+            let symlink_escape = build_workspace_patch_proposal(
+                &store, "link.txt", "safe
+",
+            );
+            assert_eq!(symlink_escape.validation_status, "Invalid");
+            assert_eq!(
+                symlink_escape.validation_reason,
+                Some("target path escapes workspace root")
+            );
+            assert!(symlink_escape.diff_preview.is_none());
+        }
+
+        let large = build_workspace_patch_proposal(
+            &store,
+            "README.md",
+            &"new line
+"
+            .repeat(1000),
+        );
+        assert_eq!(large.validation_status, "Valid");
+        assert!(large.diff_truncated);
+        assert!(large.diff_preview.unwrap().chars().count() <= DEFAULT_DIFF_PREVIEW_CHARS);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "old
+"
+        );
     }
 
     #[test]
