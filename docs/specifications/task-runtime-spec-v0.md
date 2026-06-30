@@ -181,3 +181,9 @@ During `task.run`, approved `workspace.read` intents continue to use read-only e
 Approved `workspace.write` intents remain dry-run proposals only: task execution does not write files and does not apply patches. For `replace_file` proposals, the runtime validates the target path and current target file, scans proposed and existing content for sensitive-like data, and stores only bounded previews.
 
 Valid proposals may include a capped synthetic unified diff preview. Blocked proposals suppress or redact previews when proposed or existing content looks sensitive. Proposal inspection is available through `proposal.list` and `proposal.inspect`; neither RPC returns full proposed content, raw provider responses, raw intent JSON, raw input, or full diffs.
+
+## Phase 3.2 patch approval gate
+
+The task runtime treats workspace-write proposals as dry-run records until a future phase implements apply. Human approval and rejection are represented by ledger events and reflected in `proposal.list` / `proposal.inspect`, but approval does not modify the workspace.
+
+After `proposal.approve`, the runtime creates a blocked apply-plan summary. The checklist explicitly includes `apply_not_enabled`, with reason `Patch apply is not implemented in Phase 3.2.`, so approval cannot be mistaken for execution. Full proposed content, raw provider responses, raw intent JSON, raw input JSON, patches, and full diffs remain excluded from ledger payloads and RPC responses.

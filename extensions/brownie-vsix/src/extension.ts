@@ -378,6 +378,42 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const proposalApproveCommand = vscode.commands.registerCommand('brownie.proposalApprove', async () => {
+    const runId = await vscode.window.showInputBox({ prompt: 'Run ID', placeHolder: 'run_...', ignoreFocusOut: true });
+    if (runId === undefined) { return; }
+    const proposalId = await vscode.window.showInputBox({ prompt: 'Proposal ID', placeHolder: 'proposal_...', ignoreFocusOut: true });
+    if (proposalId === undefined) { return; }
+    const reason = await vscode.window.showInputBox({ prompt: 'Approval reason (optional)', ignoreFocusOut: true });
+    if (reason === undefined) { return; }
+    try {
+      const result = await runtimeClient.approveProposal(runId.trim(), proposalId.trim(), reason.trim() || undefined);
+      output.appendLine(`proposal.approve: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch proposal approved: ${result.proposal.proposal_id} (no apply performed)`);
+    } catch (error) {
+      output.appendLine(`proposal.approve failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal approve failed: ${formatError(error)}`);
+    }
+  });
+
+  const proposalRejectCommand = vscode.commands.registerCommand('brownie.proposalReject', async () => {
+    const runId = await vscode.window.showInputBox({ prompt: 'Run ID', placeHolder: 'run_...', ignoreFocusOut: true });
+    if (runId === undefined) { return; }
+    const proposalId = await vscode.window.showInputBox({ prompt: 'Proposal ID', placeHolder: 'proposal_...', ignoreFocusOut: true });
+    if (proposalId === undefined) { return; }
+    const reason = await vscode.window.showInputBox({ prompt: 'Rejection reason (optional)', ignoreFocusOut: true });
+    if (reason === undefined) { return; }
+    try {
+      const result = await runtimeClient.rejectProposal(runId.trim(), proposalId.trim(), reason.trim() || undefined);
+      output.appendLine(`proposal.reject: ${JSON.stringify(result, null, 2)}`);
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch proposal rejected: ${result.proposal.proposal_id}`);
+    } catch (error) {
+      output.appendLine(`proposal.reject failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal reject failed: ${formatError(error)}`);
+    }
+  });
+
   const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
     const modeIdInput = await vscode.window.showInputBox({
       prompt: 'Mode ID',
@@ -413,7 +449,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand);
 }
 
 export function deactivate(): void {

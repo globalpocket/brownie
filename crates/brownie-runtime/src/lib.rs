@@ -18,8 +18,9 @@ use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
-    ProposalListResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
+    PermissionCheckResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalRejectParams,
+    ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
     RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic,
     RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
     TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
@@ -27,7 +28,8 @@ use brownie_protocol::{
     ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
     ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
     ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchProposalSummary,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchProposalSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -60,6 +62,8 @@ const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
+const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
+const METHOD_PROPOSAL_REJECT: &str = "proposal.reject";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
@@ -112,6 +116,8 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         METHOD_PROPOSAL_LIST => handle_proposal_list(request.id, request.params),
         METHOD_PROPOSAL_INSPECT => handle_proposal_inspect(request.id, request.params),
+        METHOD_PROPOSAL_APPROVE => handle_proposal_approve(request.id, request.params),
+        METHOD_PROPOSAL_REJECT => handle_proposal_reject(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1705,6 +1711,56 @@ fn handle_proposal_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<
     }
 }
 
+fn handle_proposal_approve(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalApproveParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id must not be empty",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match approve_proposal(&store, &params.run_id, &params.proposal_id, params.reason) {
+        Ok((proposal, apply_plan)) => result_response(
+            id,
+            json!(ProposalApproveResult {
+                proposal,
+                apply_plan
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
+fn handle_proposal_reject(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalRejectParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id must not be empty",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    match reject_proposal(&store, &params.run_id, &params.proposal_id, params.reason) {
+        Ok(proposal) => result_response(id, json!(ProposalRejectResult { proposal })),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -1912,13 +1968,16 @@ fn list_proposals(
     run_id: &str,
 ) -> Result<Vec<WorkspacePatchProposalSummary>, String> {
     let events = read_existing_run_events(store, run_id)?;
+    let all_events = events.clone();
     Ok(events
         .into_iter()
         .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
         .filter_map(|event| {
             let payload = sanitize_ledger_payload(event.payload)?;
+            let proposal_id = payload.get("proposal_id")?.as_str()?.to_string();
+            let approval = approval_state(&all_events, &proposal_id);
             Some(WorkspacePatchProposalSummary {
-                proposal_id: payload.get("proposal_id")?.as_str()?.to_string(),
+                proposal_id,
                 path: payload.get("path")?.as_str()?.to_string(),
                 operation: payload.get("operation")?.as_str()?.to_string(),
                 content_preview: payload.get("content_preview")?.as_str()?.to_string(),
@@ -1935,9 +1994,212 @@ fn list_proposals(
                     .map(ToString::to_string),
                 diff_truncated: payload.get("diff_truncated")?.as_bool()?,
                 diff_redacted: payload.get("diff_redacted")?.as_bool()?,
+                approval_status: approval.approval_status,
+                approval_reason: approval.approval_reason,
+                approved_at: approval.approved_at,
+                rejected_at: approval.rejected_at,
+                latest_apply_plan: latest_apply_plan(
+                    &all_events,
+                    payload.get("proposal_id")?.as_str()?,
+                ),
             })
         })
         .collect())
+}
+
+struct ApprovalState {
+    approval_status: String,
+    approval_reason: Option<String>,
+    approved_at: Option<String>,
+    rejected_at: Option<String>,
+}
+
+fn approval_state(events: &[LedgerEvent], proposal_id: &str) -> ApprovalState {
+    let mut state = ApprovalState {
+        approval_status: "Pending".to_string(),
+        approval_reason: None,
+        approved_at: None,
+        rejected_at: None,
+    };
+    for event in events {
+        if !matches!(
+            event.kind,
+            LedgerEventKind::WorkspacePatchApproved | LedgerEventKind::WorkspacePatchRejected
+        ) {
+            continue;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            continue;
+        };
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            continue;
+        }
+        state.approval_status = payload
+            .get("approval_status")
+            .and_then(Value::as_str)
+            .unwrap_or("Pending")
+            .to_string();
+        state.approval_reason = payload
+            .get("approval_reason")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        state.approved_at = payload
+            .get("approved_at")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+        state.rejected_at = payload
+            .get("rejected_at")
+            .and_then(Value::as_str)
+            .map(ToString::to_string);
+    }
+    state
+}
+
+fn latest_apply_plan(
+    events: &[LedgerEvent],
+    proposal_id: &str,
+) -> Option<WorkspacePatchApplyPlanSummary> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyPlanCreated {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            return None;
+        }
+        Some(build_apply_plan_summary(
+            proposal_id,
+            payload.get("plan_id")?.as_str()?,
+            payload.get("status")?.as_str()?,
+        ))
+    })
+}
+
+fn build_apply_plan_summary(
+    proposal_id: &str,
+    plan_id: &str,
+    status: &str,
+) -> WorkspacePatchApplyPlanSummary {
+    let pass = |name: &str| WorkspacePatchApplyCheckSummary {
+        name: name.to_string(),
+        status: "Pass".to_string(),
+        reason: None,
+    };
+    WorkspacePatchApplyPlanSummary {
+        proposal_id: proposal_id.to_string(),
+        plan_id: plan_id.to_string(),
+        status: status.to_string(),
+        checklist: vec![
+            pass("proposal_exists"),
+            pass("proposal_is_valid"),
+            pass("proposal_is_approved"),
+            pass("target_path_safe"),
+            pass("target_file_exists"),
+            pass("target_file_utf8"),
+            pass("diff_preview_available"),
+            pass("sensitive_content_not_detected"),
+            WorkspacePatchApplyCheckSummary {
+                name: "apply_not_enabled".to_string(),
+                status: "Fail".to_string(),
+                reason: Some("Patch apply is not implemented in Phase 3.2.".to_string()),
+            },
+        ],
+    }
+}
+
+fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn approve_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+    reason: Option<String>,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyPlanSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    if proposal.validation_status != "Valid" {
+        return Err("invalid params: only valid proposals can be approved".to_string());
+    }
+    if proposal.approval_status != "Pending" {
+        return Err("invalid params: proposal is not pending".to_string());
+    }
+    let approved_at = now_rfc3339();
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchApproved,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "approval_status": "Approved",
+                "approval_reason": reason,
+                "approved_at": approved_at,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
+    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Blocked");
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchApplyPlanCreated,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "plan_id": plan_id,
+                "status": "Blocked",
+                "check_count": apply_plan.checklist.len(),
+                "failed_checks": ["apply_not_enabled"],
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((inspect_proposal(store, run_id, proposal_id)?, apply_plan))
+}
+
+fn reject_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+    reason: Option<String>,
+) -> Result<WorkspacePatchProposalSummary, String> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    if proposal.approval_status != "Pending" {
+        return Err("invalid params: proposal is not pending".to_string());
+    }
+    let rejected_at = now_rfc3339();
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchRejected,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "approval_status": "Rejected",
+                "approval_reason": reason,
+                "rejected_at": rejected_at,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    inspect_proposal(store, run_id, proposal_id)
 }
 
 fn inspect_proposal(
@@ -2047,6 +2309,13 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "diff_preview",
         "diff_truncated",
         "diff_redacted",
+        "approval_status",
+        "approval_reason",
+        "approved_at",
+        "rejected_at",
+        "plan_id",
+        "check_count",
+        "failed_checks",
     ];
     let sanitized = map
         .into_iter()
@@ -3331,6 +3600,7 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(proposals.len(), 1);
+        assert_eq!(proposals[0]["approval_status"], "Pending");
         let proposal_id = proposals[0]["proposal_id"].as_str().unwrap();
         let inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.inspect","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -3339,6 +3609,53 @@ mod tests {
             inspect.result.expect("inspect result")["proposal"]["proposal_id"],
             proposal_id
         );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct"}}}}"#
+        ));
+        let approve_result = approve.result.expect("approve result");
+        assert_eq!(approve_result["proposal"]["approval_status"], "Approved");
+        assert_eq!(
+            approve_result["apply_plan"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "apply_not_enabled")
+                .unwrap()["status"],
+            "Fail"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_approval = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_approval = events_after_approval.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchApproved"));
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchApplyPlanCreated"));
+        for event in events_after_approval.iter().filter(|event| {
+            event["kind"] == "WorkspacePatchApproved"
+                || event["kind"] == "WorkspacePatchApplyPlanCreated"
+        }) {
+            let serialized = serde_json::to_string(&event["payload"]).unwrap();
+            for forbidden in [
+                "content",
+                "raw_content",
+                "full_content",
+                "patch",
+                "diff",
+                "raw_input",
+            ] {
+                assert!(!serialized.contains(forbidden));
+            }
+        }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
