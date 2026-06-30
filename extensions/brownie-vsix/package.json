@@ -84,6 +84,14 @@
       {
         "command": "brownie.proposalInspect",
         "title": "Brownie: Inspect Patch Proposal"
+      },
+      {
+        "command": "brownie.proposalApprove",
+        "title": "Brownie: Approve Patch Proposal"
+      },
+      {
+        "command": "brownie.proposalReject",
+        "title": "Brownie: Reject Patch Proposal"
       }
     ]
   },

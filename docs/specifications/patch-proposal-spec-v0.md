@@ -46,3 +46,13 @@ Valid replacements get a deterministic synthetic unified diff preview generated 
 `WorkspacePatchProposed` payloads include validation and diff-preview metadata: `validation_status`, `validation_reason`, `diff_preview`, `diff_truncated`, and `diff_redacted`. Forbidden fields remain `content`, `raw_content`, `full_content`, `patch`, and `raw_input`.
 
 `proposal.list` returns the extended proposal summary. `proposal.inspect` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary }`; unknown runs or proposals return `-32602`.
+
+## Phase 3.2 approval gate
+
+Patch proposals have an approval lifecycle reconstructed from the ledger event stream. Summaries include `approval_status`, `approval_reason`, `approved_at`, `rejected_at`, and optional summary-only `latest_apply_plan`. Allowed approval statuses are `Pending`, `Approved`, `Rejected`, and reserved `Superseded`; newly proposed patches start as `Pending`.
+
+`proposal.approve` records human approval for a `Valid` and `Pending` proposal only. It appends `WorkspacePatchApproved` and then creates a summary-only apply plan via `WorkspacePatchApplyPlanCreated`. Approval is not an apply trigger: Phase 3.2 never writes workspace files and never applies patches.
+
+`proposal.reject` records human rejection for a `Pending` proposal and appends `WorkspacePatchRejected`. Rejected proposals cannot later be approved.
+
+Apply plans contain bounded checklist summaries: `proposal_exists`, `proposal_is_valid`, `proposal_is_approved`, `target_path_safe`, `target_file_exists`, `target_file_utf8`, `diff_preview_available`, `sensitive_content_not_detected`, and `apply_not_enabled`. In Phase 3.2, `apply_not_enabled` is always non-passing with reason `Patch apply is not implemented in Phase 3.2.`.

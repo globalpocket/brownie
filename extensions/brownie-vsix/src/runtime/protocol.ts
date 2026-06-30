@@ -258,6 +258,24 @@ export interface WorkspacePatchProposalSummary {
   diff_preview: string | null;
   diff_truncated: boolean;
   diff_redacted: boolean;
+  approval_status: string;
+  approval_reason: string | null;
+  approved_at: string | null;
+  rejected_at: string | null;
+  latest_apply_plan?: WorkspacePatchApplyPlanSummary | null;
+}
+
+export interface WorkspacePatchApplyPlanSummary {
+  proposal_id: string;
+  plan_id: string;
+  status: string;
+  checklist: WorkspacePatchApplyCheckSummary[];
+}
+
+export interface WorkspacePatchApplyCheckSummary {
+  name: string;
+  status: string;
+  reason: string | null;
 }
 
 export interface ProposalListResult {
@@ -266,6 +284,15 @@ export interface ProposalListResult {
 }
 
 export interface ProposalInspectResult {
+  proposal: WorkspacePatchProposalSummary;
+}
+
+export interface ProposalApproveResult {
+  proposal: WorkspacePatchProposalSummary;
+  apply_plan: WorkspacePatchApplyPlanSummary;
+}
+
+export interface ProposalRejectResult {
   proposal: WorkspacePatchProposalSummary;
 }
 
@@ -436,6 +463,14 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
   );
 }
 
+export function isWorkspacePatchApplyCheckSummary(value: unknown): value is WorkspacePatchApplyCheckSummary {
+  return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null);
+}
+
+export function isWorkspacePatchApplyPlanSummary(value: unknown): value is WorkspacePatchApplyPlanSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.plan_id === 'string' && typeof value.status === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCheckSummary) && !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input');
+}
+
 export function isWorkspacePatchProposalSummary(value: unknown): value is WorkspacePatchProposalSummary {
   return (
     isRecord(value) &&
@@ -450,6 +485,11 @@ export function isWorkspacePatchProposalSummary(value: unknown): value is Worksp
     (typeof value.diff_preview === 'string' || value.diff_preview === null) &&
     typeof value.diff_truncated === 'boolean' &&
     typeof value.diff_redacted === 'boolean' &&
+    (value.approval_status === 'Pending' || value.approval_status === 'Approved' || value.approval_status === 'Rejected' || value.approval_status === 'Superseded') &&
+    (typeof value.approval_reason === 'string' || value.approval_reason === null) &&
+    (typeof value.approved_at === 'string' || value.approved_at === null) &&
+    (typeof value.rejected_at === 'string' || value.rejected_at === null) &&
+    (value.latest_apply_plan === undefined || value.latest_apply_plan === null || isWorkspacePatchApplyPlanSummary(value.latest_apply_plan)) &&
     !Object.prototype.hasOwnProperty.call(value, 'content') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_content') &&
     !Object.prototype.hasOwnProperty.call(value, 'full_content') &&
@@ -473,6 +513,14 @@ export function isProposalInspectResult(value: unknown): value is ProposalInspec
     isRecord(value) &&
     isWorkspacePatchProposalSummary(value.proposal)
   );
+}
+
+export function isProposalApproveResult(value: unknown): value is ProposalApproveResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyPlanSummary(value.apply_plan);
+}
+
+export function isProposalRejectResult(value: unknown): value is ProposalRejectResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal);
 }
 
 export function isToolExecuteResult(value: unknown): value is ToolExecuteResult {

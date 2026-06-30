@@ -337,6 +337,20 @@ pub struct ProposalInspectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApproveParams {
+    pub run_id: String,
+    pub proposal_id: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalRejectParams {
+    pub run_id: String,
+    pub proposal_id: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -377,6 +391,26 @@ pub struct WorkspacePatchProposalSummary {
     pub diff_preview: Option<String>,
     pub diff_truncated: bool,
     pub diff_redacted: bool,
+    pub approval_status: String,
+    pub approval_reason: Option<String>,
+    pub approved_at: Option<String>,
+    pub rejected_at: Option<String>,
+    pub latest_apply_plan: Option<WorkspacePatchApplyPlanSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyPlanSummary {
+    pub proposal_id: String,
+    pub plan_id: String,
+    pub status: String,
+    pub checklist: Vec<WorkspacePatchApplyCheckSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyCheckSummary {
+    pub name: String,
+    pub status: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -387,6 +421,17 @@ pub struct ProposalListResult {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalInspectResult {
+    pub proposal: WorkspacePatchProposalSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApproveResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub apply_plan: WorkspacePatchApplyPlanSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalRejectResult {
     pub proposal: WorkspacePatchProposalSummary,
 }
 

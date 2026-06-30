@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalInspectResult, ProposalListResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalInspectResult, isProposalListResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApproveResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalApproveResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -154,6 +154,26 @@ export class RuntimeClient {
 
     if (!isProposalInspectResult(result)) {
       throw new RuntimeProtocolError('proposal.inspect returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async approveProposal(runId: string, proposalId: string, reason?: string): Promise<ProposalApproveResult> {
+    const result = await this.call<ProposalApproveResult>('proposal.approve', { run_id: runId, proposal_id: proposalId, reason: reason ?? null });
+
+    if (!isProposalApproveResult(result)) {
+      throw new RuntimeProtocolError('proposal.approve returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async rejectProposal(runId: string, proposalId: string, reason?: string): Promise<ProposalRejectResult> {
+    const result = await this.call<ProposalRejectResult>('proposal.reject', { run_id: runId, proposal_id: proposalId, reason: reason ?? null });
+
+    if (!isProposalRejectResult(result)) {
+      throw new RuntimeProtocolError('proposal.reject returned an invalid result');
     }
 
     return result;

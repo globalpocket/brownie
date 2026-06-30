@@ -280,3 +280,11 @@ Phase 3.0 adds `proposal.list` with params `{ "run_id": string }`. The result is
 `proposal.inspect` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
 
 Diff previews are synthetic unified diff previews only. They are capped before ledger storage and RPC exposure. Sensitive-like proposed content redacts `content_preview` and suppresses diff preview; sensitive-like existing target content also suppresses diff preview. The runtime still does not apply patches or write files for `workspace.write`.
+
+## Phase 3.2 `proposal.approve` / `proposal.reject`
+
+`proposal.approve` accepts `{ "run_id": string, "proposal_id": string, "reason"?: string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "apply_plan": WorkspacePatchApplyPlanSummary }`. The proposal must exist, be `Valid`, and have `approval_status` `Pending`; otherwise the runtime returns JSON-RPC `-32602`. The method records `WorkspacePatchApproved` and `WorkspacePatchApplyPlanCreated` ledger events only. It does not write files and does not apply patches.
+
+`proposal.reject` accepts `{ "run_id": string, "proposal_id": string, "reason"?: string }` and returns `{ "proposal": WorkspacePatchProposalSummary }`. The proposal must exist and be `Pending`; otherwise the runtime returns `-32602`. The method records `WorkspacePatchRejected` only and does not write files.
+
+`WorkspacePatchProposalSummary` now includes `approval_status`, `approval_reason`, `approved_at`, `rejected_at`, and may include summary-only `latest_apply_plan`. Forbidden raw fields remain excluded from all proposal and apply-plan responses.
