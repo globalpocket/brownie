@@ -487,7 +487,7 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
 }
 
 export function hasNoForbiddenRawFields(value: object): boolean {
-  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input');
+  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path');
 }
 
 export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
@@ -505,8 +505,6 @@ export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value 
     typeof value.captured_at === 'string' &&
     typeof value.stale === 'boolean' &&
     (typeof value.stale_reason === 'string' || value.stale_reason === null) &&
-    !Object.prototype.hasOwnProperty.call(value, 'canonical_path') &&
-    !Object.prototype.hasOwnProperty.call(value, 'absolute_path') &&
     hasNoForbiddenRawFields(value)
   );
 }
@@ -516,7 +514,7 @@ export function isWorkspacePatchApplyCheckSummary(value: unknown): value is Work
 }
 
 export function isWorkspacePatchApplyPlanSummary(value: unknown): value is WorkspacePatchApplyPlanSummary {
-  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.plan_id === 'string' && typeof value.status === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCheckSummary) && !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input');
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.plan_id === 'string' && typeof value.status === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCheckSummary) && hasNoForbiddenRawFields(value);
 }
 
 export function isWorkspacePatchProposalSummary(value: unknown): value is WorkspacePatchProposalSummary {
@@ -540,12 +538,7 @@ export function isWorkspacePatchProposalSummary(value: unknown): value is Worksp
     (typeof value.rejected_at === 'string' || value.rejected_at === null) &&
     (value.latest_apply_plan === undefined || value.latest_apply_plan === null || isWorkspacePatchApplyPlanSummary(value.latest_apply_plan)) &&
     (value.latest_snapshot === undefined || value.latest_snapshot === null || isWorkspacePatchPreflightSnapshotSummary(value.latest_snapshot)) &&
-    !Object.prototype.hasOwnProperty.call(value, 'content') &&
-    !Object.prototype.hasOwnProperty.call(value, 'raw_content') &&
-    !Object.prototype.hasOwnProperty.call(value, 'full_content') &&
-    !Object.prototype.hasOwnProperty.call(value, 'patch') &&
-    !Object.prototype.hasOwnProperty.call(value, 'diff') &&
-    !Object.prototype.hasOwnProperty.call(value, 'raw_input')
+    hasNoForbiddenRawFields(value)
   );
 }
 

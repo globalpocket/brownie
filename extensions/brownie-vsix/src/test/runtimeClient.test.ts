@@ -177,6 +177,7 @@ describe('protocol validation', () => {
     expect(isProposalListResult(result)).toBe(true);
     expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], content: 'full' }] })).toBe(false);
     expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], raw_input: { content: 'full' } }] })).toBe(false);
+    expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], absolute_path: '/tmp/README.md' }] })).toBe(false);
     expect(isProposalInspectResult({ proposal: result.proposals[0] })).toBe(true);
     const applyPlan = { proposal_id: 'proposal_1', plan_id: 'plan_1', status: 'Blocked', checklist: [{ name: 'apply_not_enabled', status: 'Fail', reason: 'Patch apply is not implemented in Phase 3.2.' }] };
     expect(isProposalApproveResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_apply_plan: applyPlan }, apply_plan: applyPlan })).toBe(true);
@@ -186,6 +187,7 @@ describe('protocol validation', () => {
     expect(isProposalPreflightResult({ proposal: result.proposals[0], snapshot: { ...snapshot, raw_input: {} }, apply_plan: applyPlan })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
+    expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
   });
 
   it('validates tool.execute results', () => {
