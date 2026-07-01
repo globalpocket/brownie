@@ -279,6 +279,7 @@ pub enum LedgerEventKind {
     WorkspacePatchApprovalRequested,
     WorkspacePatchApproved,
     WorkspacePatchRejected,
+    WorkspacePatchPreflightSnapshotCreated,
     WorkspacePatchApplyPlanCreated,
     TaskRunning,
     PromptBuilt,

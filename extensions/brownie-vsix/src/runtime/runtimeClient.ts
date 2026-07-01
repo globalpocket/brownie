@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApproveResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalApproveResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApproveResult, ProposalPreflightResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalApproveResult, isProposalPreflightResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -164,6 +164,16 @@ export class RuntimeClient {
 
     if (!isProposalApproveResult(result)) {
       throw new RuntimeProtocolError('proposal.approve returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async preflightProposal(runId: string, proposalId: string): Promise<ProposalPreflightResult> {
+    const result = await this.call<ProposalPreflightResult>('proposal.preflight', { run_id: runId, proposal_id: proposalId });
+
+    if (!isProposalPreflightResult(result)) {
+      throw new RuntimeProtocolError('proposal.preflight returned an invalid result');
     }
 
     return result;

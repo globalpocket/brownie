@@ -414,6 +414,24 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const proposalPreflightCommand = vscode.commands.registerCommand('brownie.proposalPreflight', async () => {
+    const runId = await vscode.window.showInputBox({ prompt: 'Run ID', placeHolder: 'run_...', ignoreFocusOut: true });
+    if (runId === undefined) { return; }
+    const proposalId = await vscode.window.showInputBox({ prompt: 'Proposal ID', placeHolder: 'proposal_...', ignoreFocusOut: true });
+    if (proposalId === undefined) { return; }
+    try {
+      const result = await runtimeClient.preflightProposal(runId.trim(), proposalId.trim());
+      output.appendLine(`proposal.preflight:`);
+      output.appendLine(JSON.stringify(result, null, 2));
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch preflight: stale=${String(result.snapshot.stale)} (no apply performed)`);
+    } catch (error) {
+      output.appendLine(`proposal.preflight failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal preflight failed: ${formatError(error)}`);
+    }
+  });
+
+
   const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
     const modeIdInput = await vscode.window.showInputBox({
       prompt: 'Mode ID',
@@ -449,7 +467,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand);
 }
 
 export function deactivate(): void {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApproveResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApproveResult, isProposalPreflightResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -172,7 +172,7 @@ describe('protocol validation', () => {
   it('accepts proposal.list results and rejects raw content fields', () => {
     const result = {
       run_id: 'run_1',
-      proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null }],
+      proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null, approval_reason_redacted: false }],
     };
     expect(isProposalListResult(result)).toBe(true);
     expect(isProposalListResult({ ...result, proposals: [{ ...result.proposals[0], content: 'full' }] })).toBe(false);
@@ -180,6 +180,10 @@ describe('protocol validation', () => {
     expect(isProposalInspectResult({ proposal: result.proposals[0] })).toBe(true);
     const applyPlan = { proposal_id: 'proposal_1', plan_id: 'plan_1', status: 'Blocked', checklist: [{ name: 'apply_not_enabled', status: 'Fail', reason: 'Patch apply is not implemented in Phase 3.2.' }] };
     expect(isProposalApproveResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_apply_plan: applyPlan }, apply_plan: applyPlan })).toBe(true);
+    const snapshot = { proposal_id: 'proposal_1', snapshot_id: 'snapshot_1', path: 'README.md', canonical_path_hash: 'sha256:abc', file_exists: true, file_kind: 'File', file_size_bytes: 3, file_modified_unix_ms: 1780000000000, file_sha256: 'sha256:def', captured_at: '2026-06-30T00:00:00Z', stale: false, stale_reason: null };
+    expect(isProposalPreflightResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_snapshot: snapshot, latest_apply_plan: applyPlan }, snapshot, apply_plan: applyPlan })).toBe(true);
+    expect(isProposalPreflightResult({ proposal: result.proposals[0], snapshot: { ...snapshot, canonical_path: '/tmp/README.md' }, apply_plan: applyPlan })).toBe(false);
+    expect(isProposalPreflightResult({ proposal: result.proposals[0], snapshot: { ...snapshot, raw_input: {} }, apply_plan: applyPlan })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
   });
@@ -392,7 +396,7 @@ describe('RuntimeClient', () => {
 
 
   it('creates a proposal.list request', async () => {
-    const result = { run_id: 'run_1', proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null }] };
+    const result = { run_id: 'run_1', proposals: [{ proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null, approval_reason_redacted: false }] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
@@ -401,7 +405,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a proposal.inspect request', async () => {
-    const result = { proposal: { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null } };
+    const result = { proposal: { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Pending', approval_reason: null, approved_at: null, rejected_at: null, approval_reason_redacted: false } };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
@@ -410,7 +414,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates proposal.approve and proposal.reject requests', async () => {
-    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null };
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
     const applyPlan = { proposal_id: 'proposal_1', plan_id: 'plan_1', status: 'Blocked', checklist: [{ name: 'apply_not_enabled', status: 'Fail', reason: 'Patch apply is not implemented in Phase 3.2.' }] };
     const approveTransport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, apply_plan: applyPlan } });
     await expect(new RuntimeClient(approveTransport).approveProposal('run_1', 'proposal_1', 'ok')).resolves.toEqual({ proposal, apply_plan: applyPlan });
@@ -420,6 +424,15 @@ describe('RuntimeClient', () => {
     const rejectTransport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal: rejected } });
     await expect(new RuntimeClient(rejectTransport).rejectProposal('run_1', 'proposal_1', 'no')).resolves.toEqual({ proposal: rejected });
     expect(rejectTransport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reject', params: { run_id: 'run_1', proposal_id: 'proposal_1', reason: 'no' } }]);
+  });
+
+  it('creates a proposal.preflight request', async () => {
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
+    const snapshot = { proposal_id: 'proposal_1', snapshot_id: 'snapshot_1', path: 'README.md', canonical_path_hash: 'sha256:abc', file_exists: true, file_kind: 'File', file_size_bytes: 3, file_modified_unix_ms: 1780000000000, file_sha256: 'sha256:def', captured_at: '2026-06-30T00:00:00Z', stale: false, stale_reason: null };
+    const applyPlan = { proposal_id: 'proposal_1', plan_id: 'plan_1', status: 'Blocked', checklist: [{ name: 'apply_not_enabled', status: 'Fail', reason: 'Patch apply is not implemented in Phase 3.3.' }] };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, snapshot, apply_plan: applyPlan } });
+    await expect(new RuntimeClient(transport).preflightProposal('run_1', 'proposal_1')).resolves.toEqual({ proposal, snapshot, apply_plan: applyPlan });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.preflight', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

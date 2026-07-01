@@ -19,16 +19,17 @@ use brownie_protocol::{
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalRejectParams,
-    ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult,
-    RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic,
-    RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams,
-    TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams,
-    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalRejectParams, ProposalRejectResult, RunEventsParams,
+    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchPreflightSnapshotSummary,
     WorkspacePatchProposalSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
@@ -39,6 +40,8 @@ use brownie_tools::{
     DEFAULT_PROPOSAL_PREVIEW_CHARS, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::path::Component;
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
@@ -64,6 +67,7 @@ const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
 const METHOD_PROPOSAL_REJECT: &str = "proposal.reject";
+const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
@@ -118,6 +122,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_INSPECT => handle_proposal_inspect(request.id, request.params),
         METHOD_PROPOSAL_APPROVE => handle_proposal_approve(request.id, request.params),
         METHOD_PROPOSAL_REJECT => handle_proposal_reject(request.id, request.params),
+        METHOD_PROPOSAL_PREFLIGHT => handle_proposal_preflight(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1761,6 +1766,35 @@ fn handle_proposal_reject(id: Value, params: Option<Value>) -> JsonRpcResponse<V
     }
 }
 
+fn handle_proposal_preflight(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalPreflightParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match preflight_proposal(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, snapshot, apply_plan)) => result_response(
+            id,
+            json!(ProposalPreflightResult {
+                proposal,
+                snapshot,
+                apply_plan
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -1996,9 +2030,14 @@ fn list_proposals(
                 diff_redacted: payload.get("diff_redacted")?.as_bool()?,
                 approval_status: approval.approval_status,
                 approval_reason: approval.approval_reason,
+                approval_reason_redacted: approval.approval_reason_redacted,
                 approved_at: approval.approved_at,
                 rejected_at: approval.rejected_at,
                 latest_apply_plan: latest_apply_plan(
+                    &all_events,
+                    payload.get("proposal_id")?.as_str()?,
+                ),
+                latest_snapshot: latest_snapshot(
                     &all_events,
                     payload.get("proposal_id")?.as_str()?,
                 ),
@@ -2010,6 +2049,7 @@ fn list_proposals(
 struct ApprovalState {
     approval_status: String,
     approval_reason: Option<String>,
+    approval_reason_redacted: bool,
     approved_at: Option<String>,
     rejected_at: Option<String>,
 }
@@ -2018,6 +2058,7 @@ fn approval_state(events: &[LedgerEvent], proposal_id: &str) -> ApprovalState {
     let mut state = ApprovalState {
         approval_status: "Pending".to_string(),
         approval_reason: None,
+        approval_reason_redacted: false,
         approved_at: None,
         rejected_at: None,
     };
@@ -2043,6 +2084,10 @@ fn approval_state(events: &[LedgerEvent], proposal_id: &str) -> ApprovalState {
             .get("approval_reason")
             .and_then(Value::as_str)
             .map(ToString::to_string);
+        state.approval_reason_redacted = payload
+            .get("approval_reason_redacted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         state.approved_at = payload
             .get("approved_at")
             .and_then(Value::as_str)
@@ -2075,6 +2120,41 @@ fn latest_apply_plan(
     })
 }
 
+fn latest_snapshot(
+    events: &[LedgerEvent],
+    proposal_id: &str,
+) -> Option<WorkspacePatchPreflightSnapshotSummary> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchPreflightSnapshotCreated {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            return None;
+        }
+        Some(WorkspacePatchPreflightSnapshotSummary {
+            proposal_id: proposal_id.to_string(),
+            snapshot_id: payload.get("snapshot_id")?.as_str()?.to_string(),
+            path: payload.get("path")?.as_str()?.to_string(),
+            canonical_path_hash: payload.get("canonical_path_hash")?.as_str()?.to_string(),
+            file_exists: payload.get("file_exists")?.as_bool()?,
+            file_kind: payload.get("file_kind")?.as_str()?.to_string(),
+            file_size_bytes: payload.get("file_size_bytes").and_then(Value::as_u64),
+            file_modified_unix_ms: payload.get("file_modified_unix_ms").and_then(Value::as_i64),
+            file_sha256: payload
+                .get("file_sha256")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            captured_at: payload.get("captured_at")?.as_str()?.to_string(),
+            stale: payload.get("stale")?.as_bool()?,
+            stale_reason: payload
+                .get("stale_reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        })
+    })
+}
+
 fn build_apply_plan_summary(
     proposal_id: &str,
     plan_id: &str,
@@ -2095,13 +2175,16 @@ fn build_apply_plan_summary(
             pass("proposal_is_approved"),
             pass("target_path_safe"),
             pass("target_file_exists"),
+            pass("target_file_regular"),
             pass("target_file_utf8"),
+            pass("target_file_hash_captured"),
+            pass("proposal_not_stale"),
             pass("diff_preview_available"),
             pass("sensitive_content_not_detected"),
             WorkspacePatchApplyCheckSummary {
                 name: "apply_not_enabled".to_string(),
                 status: "Fail".to_string(),
-                reason: Some("Patch apply is not implemented in Phase 3.2.".to_string()),
+                reason: Some("Patch apply is not implemented in Phase 3.3.".to_string()),
             },
         ],
     }
@@ -2111,6 +2194,18 @@ fn now_rfc3339() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+fn sanitize_approval_reason(reason: Option<String>) -> (Option<String>, bool) {
+    let Some(reason) = reason else {
+        return (None, false);
+    };
+    let bounded = preview_with_limit(&reason, 1000);
+    if scan_text_for_sensitive_content(&bounded) || bounded.contains("sk-") {
+        (Some("[redacted]".to_string()), true)
+    } else {
+        (Some(bounded), false)
+    }
 }
 
 fn approve_proposal(
@@ -2138,6 +2233,7 @@ fn approve_proposal(
         return Err("invalid params: proposal is not pending".to_string());
     }
     let approved_at = now_rfc3339();
+    let (reason, reason_redacted) = sanitize_approval_reason(reason);
     store
         .tasks()
         .append_task_event_with_payload(
@@ -2147,6 +2243,7 @@ fn approve_proposal(
                 "proposal_id": proposal_id,
                 "approval_status": "Approved",
                 "approval_reason": reason,
+                "approval_reason_redacted": reason_redacted,
                 "approved_at": approved_at,
             })),
         )
@@ -2186,6 +2283,7 @@ fn reject_proposal(
         return Err("invalid params: proposal is not pending".to_string());
     }
     let rejected_at = now_rfc3339();
+    let (reason, reason_redacted) = sanitize_approval_reason(reason);
     store
         .tasks()
         .append_task_event_with_payload(
@@ -2195,11 +2293,168 @@ fn reject_proposal(
                 "proposal_id": proposal_id,
                 "approval_status": "Rejected",
                 "approval_reason": reason,
+                "approval_reason_redacted": reason_redacted,
                 "rejected_at": rejected_at,
             })),
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     inspect_proposal(store, run_id, proposal_id)
+}
+
+fn preflight_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchPreflightSnapshotSummary,
+        WorkspacePatchApplyPlanSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    if proposal.approval_status != "Approved" {
+        return Err("invalid params: proposal must be approved".to_string());
+    }
+    if proposal.validation_status != "Valid" {
+        return Err("invalid params: proposal must be valid".to_string());
+    }
+    let events = read_existing_run_events(store, run_id)?;
+    let previous = latest_snapshot(&events, proposal_id);
+    let snapshot = capture_preflight_snapshot(store, &proposal, previous.as_ref())?;
+    let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
+    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Blocked");
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
+            Some(json!(snapshot)),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchApplyPlanCreated,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "plan_id": plan_id,
+                "status": "Blocked",
+                "check_count": apply_plan.checklist.len(),
+                "failed_checks": ["apply_not_enabled"],
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((
+        inspect_proposal(store, run_id, proposal_id)?,
+        snapshot,
+        apply_plan,
+    ))
+}
+
+fn capture_preflight_snapshot(
+    store: &BrownieStore,
+    proposal: &WorkspacePatchProposalSummary,
+    previous: Option<&WorkspacePatchPreflightSnapshotSummary>,
+) -> Result<WorkspacePatchPreflightSnapshotSummary, String> {
+    brownie_tools::preflight_workspace_write_path(&proposal.path)
+        .map_err(|_| "invalid params: target path is not safe".to_string())?;
+    let root = store
+        .workspace_root()
+        .canonicalize()
+        .map_err(|_| "invalid params: workspace root is not accessible".to_string())?;
+    if std::path::Path::new(&proposal.path)
+        .components()
+        .any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("invalid params: target path is not safe".to_string());
+    }
+    let target = root.join(&proposal.path);
+    let canonical_for_hash = target.canonicalize().unwrap_or(target.clone());
+    if canonical_for_hash.exists() && !canonical_for_hash.starts_with(&root) {
+        return Err("invalid params: target path escapes workspace root".to_string());
+    }
+    let canonical_path_hash = format!(
+        "sha256:{}",
+        hex_sha256(canonical_for_hash.to_string_lossy().as_bytes())
+    );
+    let captured_at = now_rfc3339();
+    let snapshot_id = format!("snapshot_{}", uuid::Uuid::new_v4().simple());
+    let metadata = std::fs::metadata(&target);
+    let (file_exists, mut file_kind, file_size_bytes, file_modified_unix_ms, mut file_sha256) =
+        match metadata {
+            Ok(metadata) => {
+                let kind = if metadata.is_file() {
+                    "File"
+                } else if metadata.is_dir() {
+                    "Directory"
+                } else {
+                    "Other"
+                };
+                let modified = metadata.modified().ok().and_then(system_time_unix_ms);
+                let hash = if metadata.is_file() {
+                    std::fs::read(&target)
+                        .ok()
+                        .map(|bytes| format!("sha256:{}", hex_sha256(&bytes)))
+                } else {
+                    None
+                };
+                (true, kind.to_string(), Some(metadata.len()), modified, hash)
+            }
+            Err(_) => (false, "Missing".to_string(), None, None, None),
+        };
+    if file_exists && file_kind == "File" && file_sha256.is_none() {
+        file_kind = "Unreadable".to_string();
+    }
+    if file_sha256
+        .as_deref()
+        .is_some_and(|hash| scan_text_for_sensitive_content(hash))
+    {
+        file_sha256 = None;
+    }
+    let stale = previous.is_some_and(|prev| {
+        prev.file_sha256 != file_sha256
+            || prev.file_size_bytes != file_size_bytes
+            || prev.file_modified_unix_ms != file_modified_unix_ms
+    });
+    Ok(WorkspacePatchPreflightSnapshotSummary {
+        proposal_id: proposal.proposal_id.clone(),
+        snapshot_id,
+        path: proposal.path.clone(),
+        canonical_path_hash,
+        file_exists,
+        file_kind,
+        file_size_bytes,
+        file_modified_unix_ms,
+        file_sha256,
+        captured_at,
+        stale,
+        stale_reason: stale
+            .then(|| "target file metadata changed since previous preflight".to_string()),
+    })
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+fn system_time_unix_ms(time: std::time::SystemTime) -> Option<i64> {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
 }
 
 fn inspect_proposal(
@@ -2311,8 +2566,19 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "diff_redacted",
         "approval_status",
         "approval_reason",
+        "approval_reason_redacted",
         "approved_at",
         "rejected_at",
+        "snapshot_id",
+        "canonical_path_hash",
+        "file_exists",
+        "file_kind",
+        "file_size_bytes",
+        "file_modified_unix_ms",
+        "file_sha256",
+        "captured_at",
+        "stale",
+        "stale_reason",
         "plan_id",
         "check_count",
         "failed_checks",
@@ -3610,10 +3876,12 @@ mod tests {
             proposal_id
         );
         let approve = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct sk-test-secret"}}}}"#
         ));
         let approve_result = approve.result.expect("approve result");
         assert_eq!(approve_result["proposal"]["approval_status"], "Approved");
+        assert_eq!(approve_result["proposal"]["approval_reason"], "[redacted]");
+        assert_eq!(approve_result["proposal"]["approval_reason_redacted"], true);
         assert_eq!(
             approve_result["apply_plan"]["checklist"]
                 .as_array()
@@ -3627,8 +3895,37 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
         );
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        assert_eq!(preflight_result["snapshot"]["path"], "README.md");
+        assert_eq!(preflight_result["snapshot"]["file_kind"], "File");
+        assert!(preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(preflight_result["snapshot"]["canonical_path_hash"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(preflight_result["snapshot"]["stale"], false);
+        assert_eq!(
+            preflight_result["proposal"]["latest_snapshot"]["snapshot_id"],
+            preflight_result["snapshot"]["snapshot_id"]
+        );
+        std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
+        let second_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let second_preflight_result = second_preflight.result.expect("second preflight result");
+        assert_eq!(second_preflight_result["snapshot"]["stale"], true);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "changed manually"
+        );
         let events_after_approval = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":7,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":9,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
         ));
         let events_after_approval = events_after_approval.result.expect("events result")["events"]
             .as_array()
@@ -3640,9 +3937,13 @@ mod tests {
         assert!(events_after_approval
             .iter()
             .any(|event| event["kind"] == "WorkspacePatchApplyPlanCreated"));
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchPreflightSnapshotCreated"));
         for event in events_after_approval.iter().filter(|event| {
             event["kind"] == "WorkspacePatchApproved"
                 || event["kind"] == "WorkspacePatchApplyPlanCreated"
+                || event["kind"] == "WorkspacePatchPreflightSnapshotCreated"
         }) {
             let serialized = serde_json::to_string(&event["payload"]).unwrap();
             for forbidden in [
@@ -3652,8 +3953,11 @@ mod tests {
                 "patch",
                 "diff",
                 "raw_input",
+                "canonical_path",
+                "absolute_path",
+                "original README",
             ] {
-                assert!(!serialized.contains(forbidden));
+                assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
             }
         }
 
