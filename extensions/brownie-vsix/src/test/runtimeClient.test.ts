@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApproveResult, isProposalPreflightResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApproveResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -185,6 +185,10 @@ describe('protocol validation', () => {
     expect(isProposalPreflightResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_snapshot: snapshot, latest_apply_plan: applyPlan }, snapshot, apply_plan: applyPlan })).toBe(true);
     expect(isProposalPreflightResult({ proposal: result.proposals[0], snapshot: { ...snapshot, canonical_path: '/tmp/README.md' }, apply_plan: applyPlan })).toBe(false);
     expect(isProposalPreflightResult({ proposal: result.proposals[0], snapshot: { ...snapshot, raw_input: {} }, apply_plan: applyPlan })).toBe(false);
+    const report = { proposal_id: 'proposal_1', report_id: 'report_1', readiness_status: 'Ready', readiness_reason: null, generated_at: '2026-07-01T00:00:00Z', checklist: [{ name: 'apply_not_implemented', status: 'Skipped', reason: 'Patch apply is not implemented in Phase 3.4.' }], summary: 'Ready for final human review. Patch apply is not implemented in Phase 3.4.' };
+    expect(isProposalReadinessResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_snapshot: snapshot, latest_apply_plan: applyPlan }, report })).toBe(true);
+    expect(isProposalReadinessResult({ proposal: result.proposals[0], report: { ...report, file_content: 'secret' } })).toBe(false);
+    expect(isProposalReadinessResult({ proposal: result.proposals[0], report: { ...report, checklist: [{ ...report.checklist[0], diff: 'raw' }] } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -435,6 +439,14 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, snapshot, apply_plan: applyPlan } });
     await expect(new RuntimeClient(transport).preflightProposal('run_1', 'proposal_1')).resolves.toEqual({ proposal, snapshot, apply_plan: applyPlan });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.preflight', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
+  });
+
+  it('creates a proposal.readiness request', async () => {
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
+    const report = { proposal_id: 'proposal_1', report_id: 'report_1', readiness_status: 'Ready', readiness_reason: null, generated_at: '2026-07-01T00:00:00Z', checklist: [{ name: 'apply_not_implemented', status: 'Skipped', reason: 'Patch apply is not implemented in Phase 3.4.' }], summary: 'Ready for final human review. Patch apply is not implemented in Phase 3.4.' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, report } });
+    await expect(new RuntimeClient(transport).readinessProposal('run_1', 'proposal_1')).resolves.toEqual({ proposal, report });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.readiness', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

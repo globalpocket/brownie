@@ -66,3 +66,13 @@ A preflight snapshot includes `proposal_id`, `snapshot_id`, workspace-relative `
 Repeated preflight creates a new snapshot each time. The first snapshot is not stale. Later snapshots are stale when `file_sha256`, `file_size_bytes`, or `file_modified_unix_ms` differs from the previous latest snapshot. `proposal.list` and `proposal.inspect` return the latest snapshot in `latest_snapshot`.
 
 Approval and rejection reasons are bounded to 1000 characters. Secret-like reasons are stored and returned as `[redacted]` with `approval_reason_redacted = true`; matched secret values are not stored in the ledger.
+
+## Phase 3.4 readiness reports
+
+`proposal.readiness` accepts `{ "run_id": string, "proposal_id": string }` and generates a user-visible final human-review readiness report for an existing patch proposal. The report is not an apply trigger: Phase 3.4 still never writes workspace files and never applies patches.
+
+Readiness relies on the latest `proposal.preflight` snapshot already recorded in the ledger. The runtime checks approval, validation, snapshot freshness, target file kind, target file hash availability, sanitized diff-preview availability, redaction state, sensitive-content state, and the explicit `apply_not_implemented` marker.
+
+`readiness_status` is `Ready`, `NotReady`, or `Blocked`. `Ready` means ready for final human review only. `NotReady` covers missing approval, missing preflight, stale snapshots, missing target hashes, and missing sanitized diff previews. `Blocked` covers blocked validation, redacted previews, unsafe state, or sensitive-like findings.
+
+The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only metadata: proposal ID, report ID, status, reason, generated timestamp, check count, failed check names, and blocked check names. Ledger payloads and RPC responses must not include forbidden raw fields: `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
