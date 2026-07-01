@@ -288,3 +288,11 @@ Diff previews are synthetic unified diff previews only. They are capped before l
 `proposal.reject` accepts `{ "run_id": string, "proposal_id": string, "reason"?: string }` and returns `{ "proposal": WorkspacePatchProposalSummary }`. The proposal must exist and be `Pending`; otherwise the runtime returns `-32602`. The method records `WorkspacePatchRejected` only and does not write files.
 
 `WorkspacePatchProposalSummary` now includes `approval_status`, `approval_reason`, `approved_at`, `rejected_at`, and may include summary-only `latest_apply_plan`. Forbidden raw fields remain excluded from all proposal and apply-plan responses.
+
+## Phase 3.3 `proposal.preflight`
+
+`proposal.preflight` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "snapshot": WorkspacePatchPreflightSnapshotSummary, "apply_plan": WorkspacePatchApplyPlanSummary }`. The proposal must exist, be `Approved`, and have `validation_status = Valid`; otherwise the runtime returns JSON-RPC `-32602`.
+
+`WorkspacePatchPreflightSnapshotSummary` contains metadata only: `proposal_id`, `snapshot_id`, workspace-relative `path`, `canonical_path_hash`, `file_exists`, `file_kind` (`File`, `Directory`, `Missing`, `Other`, or `Unreadable`), `file_size_bytes`, `file_modified_unix_ms`, `file_sha256`, `captured_at`, `stale`, and `stale_reason`. The runtime hashes canonical paths instead of returning absolute paths, and it never returns file content, raw content, full content, patches, diffs, or raw input JSON.
+
+`WorkspacePatchProposalSummary` includes `latest_snapshot` and `approval_reason_redacted`. Secret-like approval or rejection reasons are represented as `[redacted]` and are not stored raw. Preflight appends ledger metadata only and never writes files or applies patches.

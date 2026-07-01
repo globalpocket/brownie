@@ -92,6 +92,10 @@
       {
         "command": "brownie.proposalReject",
         "title": "Brownie: Reject Patch Proposal"
+      },
+      {
+        "command": "brownie.proposalPreflight",
+        "title": "Brownie: Preflight Patch Proposal"
       }
     ]
   },

@@ -187,3 +187,9 @@ Valid proposals may include a capped synthetic unified diff preview. Blocked pro
 The task runtime treats workspace-write proposals as dry-run records until a future phase implements apply. Human approval and rejection are represented by ledger events and reflected in `proposal.list` / `proposal.inspect`, but approval does not modify the workspace.
 
 After `proposal.approve`, the runtime creates a blocked apply-plan summary. The checklist explicitly includes `apply_not_enabled`, with reason `Patch apply is not implemented in Phase 3.2.`, so approval cannot be mistaken for execution. Full proposed content, raw provider responses, raw intent JSON, raw input JSON, patches, and full diffs remain excluded from ledger payloads and RPC responses.
+
+## Phase 3.3 patch preflight
+
+After a patch proposal is approved, callers may invoke `proposal.preflight` to capture metadata needed for stale detection before any future apply implementation. Preflight records a snapshot with SHA-256 hashes for the canonical path and readable regular-file content, records a blocked apply plan, and updates proposal inspection with `latest_snapshot`.
+
+Phase 3.3 preserves the no-write/no-apply guarantee: approval and preflight are ledger-only operations and do not modify workspace files. The runtime redacts secret-like approval and rejection reasons before storing or returning them.

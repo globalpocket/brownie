@@ -56,3 +56,13 @@ Patch proposals have an approval lifecycle reconstructed from the ledger event s
 `proposal.reject` records human rejection for a `Pending` proposal and appends `WorkspacePatchRejected`. Rejected proposals cannot later be approved.
 
 Apply plans contain bounded checklist summaries: `proposal_exists`, `proposal_is_valid`, `proposal_is_approved`, `target_path_safe`, `target_file_exists`, `target_file_utf8`, `diff_preview_available`, `sensitive_content_not_detected`, and `apply_not_enabled`. In Phase 3.2, `apply_not_enabled` is always non-passing with reason `Patch apply is not implemented in Phase 3.2.`.
+
+## Phase 3.3 preflight snapshots
+
+`proposal.preflight` accepts `{ "run_id": string, "proposal_id": string }` for an existing `Approved` and `Valid` proposal. It captures target-file metadata only and appends `WorkspacePatchPreflightSnapshotCreated` plus a blocked `WorkspacePatchApplyPlanCreated` event. The method is not an apply trigger: Phase 3.3 does not write workspace files and does not apply patches.
+
+A preflight snapshot includes `proposal_id`, `snapshot_id`, workspace-relative `path`, `canonical_path_hash`, `file_exists`, `file_kind`, `file_size_bytes`, `file_modified_unix_ms`, `file_sha256`, `captured_at`, `stale`, and `stale_reason`. `canonical_path_hash` is a SHA-256 hash of the canonical target path; the canonical absolute path itself is never returned. File contents, full proposed content, raw input JSON, patches, and full diffs are never persisted in snapshots or RPC responses.
+
+Repeated preflight creates a new snapshot each time. The first snapshot is not stale. Later snapshots are stale when `file_sha256`, `file_size_bytes`, or `file_modified_unix_ms` differs from the previous latest snapshot. `proposal.list` and `proposal.inspect` return the latest snapshot in `latest_snapshot`.
+
+Approval and rejection reasons are bounded to 1000 characters. Secret-like reasons are stored and returned as `[redacted]` with `approval_reason_redacted = true`; matched secret values are not stored in the ledger.

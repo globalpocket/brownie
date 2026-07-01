@@ -18,6 +18,7 @@ brownie-store = { path = "../brownie-store" }
 brownie-tools = { path = "../brownie-tools" }
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 time.workspace = true
 uuid.workspace = true
 

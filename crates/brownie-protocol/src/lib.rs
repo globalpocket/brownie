@@ -351,6 +351,12 @@ pub struct ProposalRejectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalPreflightParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -393,9 +399,27 @@ pub struct WorkspacePatchProposalSummary {
     pub diff_redacted: bool,
     pub approval_status: String,
     pub approval_reason: Option<String>,
+    pub approval_reason_redacted: bool,
     pub approved_at: Option<String>,
     pub rejected_at: Option<String>,
     pub latest_apply_plan: Option<WorkspacePatchApplyPlanSummary>,
+    pub latest_snapshot: Option<WorkspacePatchPreflightSnapshotSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchPreflightSnapshotSummary {
+    pub proposal_id: String,
+    pub snapshot_id: String,
+    pub path: String,
+    pub canonical_path_hash: String,
+    pub file_exists: bool,
+    pub file_kind: String,
+    pub file_size_bytes: Option<u64>,
+    pub file_modified_unix_ms: Option<i64>,
+    pub file_sha256: Option<String>,
+    pub captured_at: String,
+    pub stale: bool,
+    pub stale_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -433,6 +457,13 @@ pub struct ProposalApproveResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalRejectResult {
     pub proposal: WorkspacePatchProposalSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalPreflightResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub snapshot: WorkspacePatchPreflightSnapshotSummary,
+    pub apply_plan: WorkspacePatchApplyPlanSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -262,7 +262,24 @@ export interface WorkspacePatchProposalSummary {
   approval_reason: string | null;
   approved_at: string | null;
   rejected_at: string | null;
+  approval_reason_redacted: boolean;
   latest_apply_plan?: WorkspacePatchApplyPlanSummary | null;
+  latest_snapshot?: WorkspacePatchPreflightSnapshotSummary | null;
+}
+
+export interface WorkspacePatchPreflightSnapshotSummary {
+  proposal_id: string;
+  snapshot_id: string;
+  path: string;
+  canonical_path_hash: string;
+  file_exists: boolean;
+  file_kind: 'File' | 'Directory' | 'Missing' | 'Other' | 'Unreadable';
+  file_size_bytes: number | null;
+  file_modified_unix_ms: number | null;
+  file_sha256: string | null;
+  captured_at: string;
+  stale: boolean;
+  stale_reason: string | null;
 }
 
 export interface WorkspacePatchApplyPlanSummary {
@@ -294,6 +311,12 @@ export interface ProposalApproveResult {
 
 export interface ProposalRejectResult {
   proposal: WorkspacePatchProposalSummary;
+}
+
+export interface ProposalPreflightResult {
+  proposal: WorkspacePatchProposalSummary;
+  snapshot: WorkspacePatchPreflightSnapshotSummary;
+  apply_plan: WorkspacePatchApplyPlanSummary;
 }
 
 export function isJsonRpcResponse(value: unknown): value is JsonRpcResponse<unknown> {
@@ -463,6 +486,31 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
   );
 }
 
+export function hasNoForbiddenRawFields(value: object): boolean {
+  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input');
+}
+
+export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
+  return (
+    isRecord(value) &&
+    typeof value.proposal_id === 'string' &&
+    typeof value.snapshot_id === 'string' &&
+    typeof value.path === 'string' &&
+    typeof value.canonical_path_hash === 'string' &&
+    typeof value.file_exists === 'boolean' &&
+    (value.file_kind === 'File' || value.file_kind === 'Directory' || value.file_kind === 'Missing' || value.file_kind === 'Other' || value.file_kind === 'Unreadable') &&
+    (isNonNegativeInteger(value.file_size_bytes) || value.file_size_bytes === null) &&
+    ((typeof value.file_modified_unix_ms === 'number' && Number.isInteger(value.file_modified_unix_ms)) || value.file_modified_unix_ms === null) &&
+    (typeof value.file_sha256 === 'string' || value.file_sha256 === null) &&
+    typeof value.captured_at === 'string' &&
+    typeof value.stale === 'boolean' &&
+    (typeof value.stale_reason === 'string' || value.stale_reason === null) &&
+    !Object.prototype.hasOwnProperty.call(value, 'canonical_path') &&
+    !Object.prototype.hasOwnProperty.call(value, 'absolute_path') &&
+    hasNoForbiddenRawFields(value)
+  );
+}
+
 export function isWorkspacePatchApplyCheckSummary(value: unknown): value is WorkspacePatchApplyCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null);
 }
@@ -487,9 +535,11 @@ export function isWorkspacePatchProposalSummary(value: unknown): value is Worksp
     typeof value.diff_redacted === 'boolean' &&
     (value.approval_status === 'Pending' || value.approval_status === 'Approved' || value.approval_status === 'Rejected' || value.approval_status === 'Superseded') &&
     (typeof value.approval_reason === 'string' || value.approval_reason === null) &&
+    typeof value.approval_reason_redacted === 'boolean' &&
     (typeof value.approved_at === 'string' || value.approved_at === null) &&
     (typeof value.rejected_at === 'string' || value.rejected_at === null) &&
     (value.latest_apply_plan === undefined || value.latest_apply_plan === null || isWorkspacePatchApplyPlanSummary(value.latest_apply_plan)) &&
+    (value.latest_snapshot === undefined || value.latest_snapshot === null || isWorkspacePatchPreflightSnapshotSummary(value.latest_snapshot)) &&
     !Object.prototype.hasOwnProperty.call(value, 'content') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_content') &&
     !Object.prototype.hasOwnProperty.call(value, 'full_content') &&
@@ -517,6 +567,10 @@ export function isProposalInspectResult(value: unknown): value is ProposalInspec
 
 export function isProposalApproveResult(value: unknown): value is ProposalApproveResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyPlanSummary(value.apply_plan);
+}
+
+export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchPreflightSnapshotSummary(value.snapshot) && isWorkspacePatchApplyPlanSummary(value.apply_plan);
 }
 
 export function isProposalRejectResult(value: unknown): value is ProposalRejectResult {
