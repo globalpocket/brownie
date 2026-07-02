@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -199,6 +199,12 @@ describe('protocol validation', () => {
     expect(isProposalApplyDryRunResult({ proposal: result.proposals[0], dry_run: { ...dryRun, apply_executed: true } })).toBe(false);
     expect(isProposalApplyDryRunResult({ proposal: result.proposals[0], dry_run: { ...dryRun, patch: 'raw' } })).toBe(false);
     expect(isProposalApplyDryRunResult({ proposal: result.proposals[0], dry_run: { ...dryRun, checklist: [{ ...dryRun.checklist[0], file_content: 'secret' }] } })).toBe(false);
+    const dryRunHistoryEntry = { proposal_id: dryRun.proposal_id, dry_run_id: dryRun.dry_run_id, dry_run_status: dryRun.dry_run_status, dry_run_reason: dryRun.dry_run_reason, checked_at: dryRun.checked_at, required_gates: dryRun.required_gates, check_count: dryRun.check_count, failed_checks: dryRun.failed_checks, blocked_checks: dryRun.blocked_checks, no_patch_applied: true, apply_executed: false, workspace_files_changed: false };
+    const dryRunHistory = { proposal_id: 'proposal_1', dry_run_count: 1, latest_dry_run: dryRunHistoryEntry, dry_runs: [dryRunHistoryEntry], generated_at: '2026-07-01T00:01:00Z' };
+    expect(isProposalApplyDryRunHistoryResult({ proposal: result.proposals[0], history: dryRunHistory })).toBe(true);
+    expect(isProposalApplyDryRunHistoryResult({ proposal: result.proposals[0], history: { ...dryRunHistory, raw_input: { diff: 'raw' } } })).toBe(false);
+    expect(isProposalApplyDryRunHistoryResult({ proposal: result.proposals[0], history: { ...dryRunHistory, dry_runs: [{ ...dryRunHistoryEntry, file_content: 'secret' }] } })).toBe(false);
+    expect(isProposalApplyDryRunHistoryResult({ proposal: result.proposals[0], history: { ...dryRunHistory, latest_dry_run: { ...dryRunHistoryEntry, apply_executed: true } } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -473,6 +479,15 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, dry_run } });
     await expect(new RuntimeClient(transport).applyDryRun('run_1', 'proposal_1')).resolves.toEqual({ proposal, dry_run });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.applyDryRun', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
+  });
+
+  it('creates a proposal.applyDryRunHistory request', async () => {
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
+    const entry = { proposal_id: 'proposal_1', dry_run_id: 'apply_dry_run_1', dry_run_status: 'Completed', dry_run_reason: 'Dry run completed without applying a patch or changing workspace files.', checked_at: '2026-07-01T00:00:00Z', required_gates: ['proposal_valid', 'readiness_ready', 'runtime_apply_supported'], check_count: 1, failed_checks: [], blocked_checks: ['apply_execution_disabled'], no_patch_applied: true, apply_executed: false, workspace_files_changed: false };
+    const history = { proposal_id: 'proposal_1', dry_run_count: 1, latest_dry_run: entry, dry_runs: [entry], generated_at: '2026-07-01T00:01:00Z' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, history } });
+    await expect(new RuntimeClient(transport).applyDryRunHistory('run_1', 'proposal_1')).resolves.toEqual({ proposal, history });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.applyDryRunHistory', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

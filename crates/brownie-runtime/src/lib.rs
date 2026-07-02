@@ -19,20 +19,22 @@ use brownie_protocol::{
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunParams, ProposalApplyDryRunResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
-    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult, RunEventsParams,
-    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams,
+    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
+    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunSummary,
+    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
+    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
     WorkspacePatchApplyPlanSummary, WorkspacePatchPreflightSnapshotSummary,
     WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
     WorkspacePatchReadinessReportSummary,
@@ -76,8 +78,10 @@ const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
 const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
 const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
 const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
+const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
+const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -136,6 +140,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
             handle_proposal_apply_capability(request.id, request.params)
         }
         METHOD_PROPOSAL_APPLY_DRY_RUN => handle_proposal_apply_dry_run(request.id, request.params),
+        METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY => {
+            handle_proposal_apply_dry_run_history(request.id, request.params)
+        }
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1884,6 +1891,34 @@ fn handle_proposal_apply_dry_run(id: Value, params: Option<Value>) -> JsonRpcRes
     }
 }
 
+fn handle_proposal_apply_dry_run_history(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ProposalApplyDryRunHistoryParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_apply_dry_run_history(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, history)) => result_response(
+            id,
+            json!(ProposalApplyDryRunHistoryResult { proposal, history }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2796,6 +2831,78 @@ fn inspect_apply_dry_run(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     Ok((inspect_proposal(store, run_id, proposal_id)?, dry_run))
+}
+
+fn inspect_apply_dry_run_history(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyDryRunHistorySummary,
+    ),
+    String,
+> {
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let entries: Vec<WorkspacePatchApplyDryRunHistoryEntry> = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyDryRunChecked)
+        .filter_map(|event| sanitize_ledger_payload(event.payload.clone()))
+        .filter_map(|payload| dry_run_history_entry_from_payload(&payload))
+        .filter(|entry| entry.proposal_id == proposal_id)
+        .collect();
+    let dry_run_count = entries.len();
+    let latest_dry_run = entries.last().cloned();
+    let dry_runs = entries
+        .iter()
+        .rev()
+        .take(MAX_DRY_RUN_HISTORY_ENTRIES)
+        .cloned()
+        .collect();
+    let history = WorkspacePatchApplyDryRunHistorySummary {
+        proposal_id: proposal_id.to_string(),
+        dry_run_count,
+        latest_dry_run,
+        dry_runs,
+        generated_at: now_rfc3339(),
+    };
+    Ok((proposal, history))
+}
+
+fn dry_run_history_entry_from_payload(
+    payload: &Value,
+) -> Option<WorkspacePatchApplyDryRunHistoryEntry> {
+    let no_patch_applied = payload.get("no_patch_applied")?.as_bool()?;
+    let apply_executed = payload.get("apply_executed")?.as_bool()?;
+    let workspace_files_changed = payload.get("workspace_files_changed")?.as_bool()?;
+    if !no_patch_applied || apply_executed || workspace_files_changed {
+        return None;
+    }
+    Some(WorkspacePatchApplyDryRunHistoryEntry {
+        proposal_id: payload.get("proposal_id")?.as_str()?.to_string(),
+        dry_run_id: payload.get("dry_run_id")?.as_str()?.to_string(),
+        dry_run_status: payload.get("dry_run_status")?.as_str()?.to_string(),
+        dry_run_reason: payload.get("dry_run_reason")?.as_str()?.to_string(),
+        checked_at: payload.get("checked_at")?.as_str()?.to_string(),
+        required_gates: string_array_field(payload, "required_gates")?,
+        check_count: usize::try_from(payload.get("check_count")?.as_u64()?).ok()?,
+        failed_checks: string_array_field(payload, "failed_checks")?,
+        blocked_checks: string_array_field(payload, "blocked_checks")?,
+        no_patch_applied,
+        apply_executed,
+        workspace_files_changed,
+    })
+}
+
+fn string_array_field(payload: &Value, key: &str) -> Option<Vec<String>> {
+    payload
+        .get(key)?
+        .as_array()?
+        .iter()
+        .map(|value| value.as_str().map(ToString::to_string))
+        .collect()
 }
 
 fn readiness_proposal(
@@ -4825,6 +4932,93 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
+        );
+        let second_dry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":731,"method":"proposal.applyDryRun","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let second_dry_run_result = second_dry_run.result.expect("second apply dry-run result");
+        assert_ne!(
+            second_dry_run_result["dry_run"]["dry_run_id"],
+            dry_run_result["dry_run"]["dry_run_id"]
+        );
+        assert_eq!(second_dry_run_result["dry_run"]["no_patch_applied"], true);
+        assert_eq!(second_dry_run_result["dry_run"]["apply_executed"], false);
+        assert_eq!(
+            second_dry_run_result["dry_run"]["workspace_files_changed"],
+            false
+        );
+        let events_before_history = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":732,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_before_history = events_before_history.result.expect("events before history")
+            ["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let history = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":733,"method":"proposal.applyDryRunHistory","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let history_result = history.result.expect("apply dry-run history result");
+        assert_eq!(history_result["history"]["proposal_id"], proposal_id);
+        assert_eq!(history_result["history"]["dry_run_count"], 2);
+        assert_eq!(
+            history_result["history"]["latest_dry_run"]["dry_run_id"],
+            second_dry_run_result["dry_run"]["dry_run_id"]
+        );
+        let dry_run_history = history_result["history"]["dry_runs"].as_array().unwrap();
+        assert_eq!(dry_run_history.len(), 2);
+        assert_eq!(
+            dry_run_history[0]["dry_run_id"],
+            second_dry_run_result["dry_run"]["dry_run_id"]
+        );
+        assert_eq!(
+            dry_run_history[1]["dry_run_id"],
+            dry_run_result["dry_run"]["dry_run_id"]
+        );
+        for entry in dry_run_history {
+            assert_eq!(entry["no_patch_applied"], true);
+            assert_eq!(entry["apply_executed"], false);
+            assert_eq!(entry["workspace_files_changed"], false);
+            assert!(entry["required_gates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|gate| gate == "runtime_apply_supported"));
+        }
+        let serialized_history = serde_json::to_string(&history_result["history"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_history.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_history = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":734,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_history = events_after_history.result.expect("events after history")
+            ["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(events_after_history.len(), events_before_history.len());
+        assert_eq!(
+            events_after_history
+                .iter()
+                .filter(|event| event["kind"] == "WorkspacePatchApplyDryRunChecked")
+                .count(),
+            2
         );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(

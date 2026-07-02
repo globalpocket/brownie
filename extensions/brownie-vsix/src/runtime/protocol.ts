@@ -339,6 +339,29 @@ export interface WorkspacePatchApplyDryRunCheckSummary {
   reason: string | null;
 }
 
+export interface WorkspacePatchApplyDryRunHistoryEntry {
+  proposal_id: string;
+  dry_run_id: string;
+  dry_run_status: string;
+  dry_run_reason: string;
+  checked_at: string;
+  required_gates: string[];
+  check_count: number;
+  failed_checks: string[];
+  blocked_checks: string[];
+  no_patch_applied: true;
+  apply_executed: false;
+  workspace_files_changed: false;
+}
+
+export interface WorkspacePatchApplyDryRunHistorySummary {
+  proposal_id: string;
+  dry_run_count: number;
+  latest_dry_run: WorkspacePatchApplyDryRunHistoryEntry | null;
+  dry_runs: WorkspacePatchApplyDryRunHistoryEntry[];
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -361,6 +384,11 @@ export interface ProposalApplyCapabilityResult {
 export interface ProposalApplyDryRunResult {
   proposal: WorkspacePatchProposalSummary;
   dry_run: WorkspacePatchApplyDryRunSummary;
+}
+
+export interface ProposalApplyDryRunHistoryResult {
+  proposal: WorkspacePatchProposalSummary;
+  history: WorkspacePatchApplyDryRunHistorySummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -608,6 +636,14 @@ export function isWorkspacePatchApplyDryRunSummary(value: unknown): value is Wor
   return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.dry_run_id === 'string' && typeof value.dry_run_status === 'string' && typeof value.dry_run_reason === 'string' && typeof value.checked_at === 'string' && Array.isArray(value.required_gates) && value.required_gates.every((gate) => typeof gate === 'string') && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && value.no_patch_applied === true && value.apply_executed === false && value.workspace_files_changed === false && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyDryRunCheckSummary) && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchApplyDryRunHistoryEntry(value: unknown): value is WorkspacePatchApplyDryRunHistoryEntry {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.dry_run_id === 'string' && typeof value.dry_run_status === 'string' && typeof value.dry_run_reason === 'string' && typeof value.checked_at === 'string' && Array.isArray(value.required_gates) && value.required_gates.every((gate) => typeof gate === 'string') && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && value.no_patch_applied === true && value.apply_executed === false && value.workspace_files_changed === false && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchApplyDryRunHistorySummary(value: unknown): value is WorkspacePatchApplyDryRunHistorySummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.dry_run_count) && (value.latest_dry_run === null || isWorkspacePatchApplyDryRunHistoryEntry(value.latest_dry_run)) && Array.isArray(value.dry_runs) && value.dry_runs.every(isWorkspacePatchApplyDryRunHistoryEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -667,6 +703,10 @@ export function isProposalApplyCapabilityResult(value: unknown): value is Propos
 
 export function isProposalApplyDryRunResult(value: unknown): value is ProposalApplyDryRunResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyDryRunSummary(value.dry_run) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalApplyDryRunHistoryResult(value: unknown): value is ProposalApplyDryRunHistoryResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyDryRunHistorySummary(value.history) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
