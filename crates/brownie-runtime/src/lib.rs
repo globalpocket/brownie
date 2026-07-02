@@ -2843,8 +2843,13 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "stale",
         "stale_reason",
         "plan_id",
+        "report_id",
+        "readiness_status",
+        "readiness_reason",
+        "generated_at",
         "check_count",
         "failed_checks",
+        "blocked_checks",
     ];
     let sanitized = map
         .into_iter()
@@ -4285,6 +4290,55 @@ mod tests {
         assert!(events_after_approval
             .iter()
             .any(|event| event["kind"] == "WorkspacePatchReadinessReportCreated"));
+        let readiness_event = events_after_approval
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchReadinessReportCreated")
+            .expect("readiness report event");
+        let readiness_payload = readiness_event["payload"]
+            .as_object()
+            .expect("readiness report payload");
+        assert_eq!(
+            readiness_payload["report_id"],
+            ready_result["report"]["report_id"]
+        );
+        assert_eq!(readiness_payload["readiness_status"], "Ready");
+        assert_eq!(
+            readiness_payload["generated_at"],
+            ready_result["report"]["generated_at"]
+        );
+        assert_eq!(
+            readiness_payload["check_count"],
+            ready_result["report"]["checklist"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_eq!(
+            readiness_payload["failed_checks"].as_array().unwrap().len(),
+            0
+        );
+        assert_eq!(
+            readiness_payload["blocked_checks"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        let serialized_readiness_payload = serde_json::to_string(readiness_payload).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_readiness_payload.contains(&format!(r#"\"{forbidden}\""#)));
+        }
         for event in events_after_approval.iter().filter(|event| {
             event["kind"] == "WorkspacePatchApproved"
                 || event["kind"] == "WorkspacePatchApplyPlanCreated"
