@@ -295,6 +295,28 @@ export interface WorkspacePatchApplyCheckSummary {
   reason: string | null;
 }
 
+export interface WorkspacePatchApplyCapabilitySummary {
+  proposal_id: string;
+  capability_id: string;
+  apply_supported: false;
+  apply_enabled: false;
+  mode: 'dry_run_only';
+  reason: string;
+  required_gates: string[];
+  can_apply_now: false;
+  checked_at: string;
+  check_count: number;
+  failed_checks: string[];
+  blocked_checks: string[];
+  checklist: WorkspacePatchApplyCapabilityCheckSummary[];
+}
+
+export interface WorkspacePatchApplyCapabilityCheckSummary {
+  name: string;
+  status: 'Pass' | 'Fail' | 'Blocked' | 'Skipped';
+  reason: string | null;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -307,6 +329,11 @@ export interface ProposalInspectResult {
 export interface ProposalApproveResult {
   proposal: WorkspacePatchProposalSummary;
   apply_plan: WorkspacePatchApplyPlanSummary;
+}
+
+export interface ProposalApplyCapabilityResult {
+  proposal: WorkspacePatchProposalSummary;
+  capability: WorkspacePatchApplyCapabilitySummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -538,6 +565,14 @@ export function isWorkspacePatchApplyPlanSummary(value: unknown): value is Works
   return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.plan_id === 'string' && typeof value.status === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCheckSummary) && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchApplyCapabilityCheckSummary(value: unknown): value is WorkspacePatchApplyCapabilityCheckSummary {
+  return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchApplyCapabilitySummary(value: unknown): value is WorkspacePatchApplyCapabilitySummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.capability_id === 'string' && value.apply_supported === false && value.apply_enabled === false && value.mode === 'dry_run_only' && typeof value.reason === 'string' && Array.isArray(value.required_gates) && value.required_gates.every((gate) => typeof gate === 'string') && value.can_apply_now === false && typeof value.checked_at === 'string' && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCapabilityCheckSummary) && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -589,6 +624,10 @@ export function isProposalInspectResult(value: unknown): value is ProposalInspec
 
 export function isProposalApproveResult(value: unknown): value is ProposalApproveResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyPlanSummary(value.apply_plan);
+}
+
+export function isProposalApplyCapabilityResult(value: unknown): value is ProposalApplyCapabilityResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyCapabilitySummary(value.capability) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

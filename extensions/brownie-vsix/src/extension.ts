@@ -450,6 +450,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const proposalApplyCapabilityCommand = vscode.commands.registerCommand('brownie.proposalApplyCapability', async () => {
+    const runId = await vscode.window.showInputBox({ prompt: 'Run ID', placeHolder: 'run_...', ignoreFocusOut: true });
+    if (runId === undefined) { return; }
+    const proposalId = await vscode.window.showInputBox({ prompt: 'Proposal ID', placeHolder: 'proposal_...', ignoreFocusOut: true });
+    if (proposalId === undefined) { return; }
+    try {
+      const result = await runtimeClient.inspectApplyCapability(runId.trim(), proposalId.trim());
+      output.appendLine(`proposal.applyCapability:`);
+      output.appendLine(JSON.stringify(result, null, 2));
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch apply capability: enabled=${String(result.capability.apply_enabled)} (no apply performed)`);
+    } catch (error) {
+      output.appendLine(`proposal.applyCapability failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal apply capability failed: ${formatError(error)}`);
+    }
+  });
+
   const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
     const modeIdInput = await vscode.window.showInputBox({
       prompt: 'Mode ID',
@@ -485,7 +502,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand, proposalApplyCapabilityCommand);
 }
 
 export function deactivate(): void {
