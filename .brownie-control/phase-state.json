@@ -1,0 +1,18 @@
+{
+  "project": "brownie",
+  "current_phase": "3.4",
+  "status": "ready_to_implement",
+  "last_reviewed_pr": 33,
+  "latest_pr": null,
+  "current_phase_prompt_path": ".brownie-control/current-phase-prompt.md",
+  "latest_review_path": ".brownie-control/latest-review.md",
+  "next_phase_prompt_path": ".brownie-control/next-phase-prompt.md",
+  "stop_reason_path": ".brownie-control/stop-reason.md",
+  "review_policy": "do_not_merge_automatically",
+  "safety_policy": {
+    "allow_patch_apply": false,
+    "allow_shell_exec_for_tests": true,
+    "allow_git_push": true,
+    "allow_auto_merge": false
+  }
+}
