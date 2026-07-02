@@ -108,6 +108,10 @@
       {
         "command": "brownie.proposalApplyDryRun",
         "title": "Brownie: Patch Proposal Apply Dry Run"
+      },
+      {
+        "command": "brownie.proposalApplyDryRunHistory",
+        "title": "Brownie: Patch Proposal Apply Dry Run History"
       }
     ]
   },

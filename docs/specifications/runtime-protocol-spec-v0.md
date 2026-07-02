@@ -322,3 +322,13 @@ The method uses the reconstructed proposal summary and latest preflight snapshot
 `WorkspacePatchApplyDryRunSummary` contains summary metadata only: `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, `workspace_files_changed`, and a bounded checklist of `WorkspacePatchApplyDryRunCheckSummary`. In Phase 3.6, dry-run inspection never applies a patch and never writes workspace files, so `no_patch_applied` is always `true`, `apply_executed` is always `false`, and `workspace_files_changed` is always `false`.
 
 `proposal.applyDryRun` appends `WorkspacePatchApplyDryRunChecked` with summary-only metadata. It may inspect existing proposal, approval, preflight, readiness, and apply-disabled state, but it must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.7 `proposal.applyDryRunHistory`
+
+`proposal.applyDryRunHistory` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "history": WorkspacePatchApplyDryRunHistorySummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchApplyDryRunHistorySummary` contains `proposal_id`, `dry_run_count`, `latest_dry_run`, `dry_runs`, and `generated_at`. `dry_runs` is bounded to the 10 newest `WorkspacePatchApplyDryRunHistoryEntry` values in newest-first order; `dry_run_count` reports the full number of matching dry-run checks reconstructed from the ledger. `latest_dry_run` is the newest matching entry or `null` when no dry-run checks exist.
+
+Each history entry is summary-only metadata reconstructed from sanitized `WorkspacePatchApplyDryRunChecked` payloads: `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, and `workspace_files_changed`. Every exposed entry must report `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
+
+`proposal.applyDryRunHistory` appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

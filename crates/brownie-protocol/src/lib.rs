@@ -375,6 +375,12 @@ pub struct ProposalApplyDryRunParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyDryRunHistoryParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -522,6 +528,31 @@ pub struct WorkspacePatchApplyDryRunCheckSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyDryRunHistoryEntry {
+    pub proposal_id: String,
+    pub dry_run_id: String,
+    pub dry_run_status: String,
+    pub dry_run_reason: String,
+    pub checked_at: String,
+    pub required_gates: Vec<String>,
+    pub check_count: usize,
+    pub failed_checks: Vec<String>,
+    pub blocked_checks: Vec<String>,
+    pub no_patch_applied: bool,
+    pub apply_executed: bool,
+    pub workspace_files_changed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyDryRunHistorySummary {
+    pub proposal_id: String,
+    pub dry_run_count: usize,
+    pub latest_dry_run: Option<WorkspacePatchApplyDryRunHistoryEntry>,
+    pub dry_runs: Vec<WorkspacePatchApplyDryRunHistoryEntry>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -566,6 +597,12 @@ pub struct ProposalApplyCapabilityResult {
 pub struct ProposalApplyDryRunResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub dry_run: WorkspacePatchApplyDryRunSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyDryRunHistoryResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub history: WorkspacePatchApplyDryRunHistorySummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
