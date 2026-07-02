@@ -18,18 +18,20 @@ use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
+    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApproveParams, ProposalApproveResult, ProposalInspectParams, ProposalInspectResult,
+    ProposalListParams, ProposalListResult, ProposalPreflightParams, ProposalPreflightResult,
+    ProposalReadinessParams, ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
 };
@@ -70,6 +72,7 @@ const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
 const METHOD_PROPOSAL_REJECT: &str = "proposal.reject";
 const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
 const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
+const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
@@ -126,6 +129,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_REJECT => handle_proposal_reject(request.id, request.params),
         METHOD_PROPOSAL_PREFLIGHT => handle_proposal_preflight(request.id, request.params),
         METHOD_PROPOSAL_READINESS => handle_proposal_readiness(request.id, request.params),
+        METHOD_PROPOSAL_APPLY_CAPABILITY => {
+            handle_proposal_apply_capability(request.id, request.params)
+        }
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1822,6 +1828,34 @@ fn handle_proposal_readiness(id: Value, params: Option<Value>) -> JsonRpcRespons
     }
 }
 
+fn handle_proposal_apply_capability(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalApplyCapabilityParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_apply_capability(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, capability)) => result_response(
+            id,
+            json!(ProposalApplyCapabilityResult {
+                proposal,
+                capability
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2340,6 +2374,169 @@ fn readiness_check(
     }
 }
 
+fn apply_capability_check(
+    name: &str,
+    status: &str,
+    reason: Option<&str>,
+) -> WorkspacePatchApplyCapabilityCheckSummary {
+    WorkspacePatchApplyCapabilityCheckSummary {
+        name: name.to_string(),
+        status: status.to_string(),
+        reason: reason.map(ToString::to_string),
+    }
+}
+
+fn inspect_apply_capability(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyCapabilitySummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let snapshot = proposal.latest_snapshot.as_ref();
+    let mut checklist = vec![apply_capability_check("proposal_exists", "Pass", None)];
+
+    if proposal.validation_status == "Blocked" {
+        checklist.push(apply_capability_check(
+            "proposal_is_valid",
+            "Blocked",
+            proposal.validation_reason.as_deref(),
+        ));
+    } else if proposal.validation_status == "Valid" {
+        checklist.push(apply_capability_check("proposal_is_valid", "Pass", None));
+    } else {
+        checklist.push(apply_capability_check(
+            "proposal_is_valid",
+            "Fail",
+            proposal
+                .validation_reason
+                .as_deref()
+                .or(Some("Proposal validation status is not Valid.")),
+        ));
+    }
+
+    checklist.push(if proposal.approval_status == "Approved" {
+        apply_capability_check("proposal_is_approved", "Pass", None)
+    } else {
+        apply_capability_check(
+            "proposal_is_approved",
+            "Fail",
+            Some("Proposal is not approved."),
+        )
+    });
+    checklist.push(if snapshot.is_some() {
+        apply_capability_check("proposal_has_preflight_snapshot", "Pass", None)
+    } else {
+        apply_capability_check(
+            "proposal_has_preflight_snapshot",
+            "Fail",
+            Some("Run proposal.preflight before final review."),
+        )
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if !snapshot.stale => {
+            apply_capability_check("proposal_not_stale", "Pass", None)
+        }
+        Some(snapshot) => apply_capability_check(
+            "proposal_not_stale",
+            "Fail",
+            snapshot
+                .stale_reason
+                .as_deref()
+                .or(Some("Latest preflight snapshot is stale.")),
+        ),
+        None => apply_capability_check(
+            "proposal_not_stale",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(if proposal.diff_preview.is_some() {
+        apply_capability_check("sanitized_diff_preview_available", "Pass", None)
+    } else {
+        apply_capability_check(
+            "sanitized_diff_preview_available",
+            "Fail",
+            Some("Sanitized diff preview is unavailable."),
+        )
+    });
+    checklist.push(
+        if proposal.diff_redacted || proposal.content_preview == "[redacted]" {
+            apply_capability_check(
+                "sensitive_content_not_detected",
+                "Blocked",
+                Some("Sensitive-like content was detected or redacted."),
+            )
+        } else {
+            apply_capability_check("sensitive_content_not_detected", "Pass", None)
+        },
+    );
+    checklist.push(apply_capability_check(
+        "no_raw_content_exposed",
+        "Pass",
+        None,
+    ));
+    checklist.push(apply_capability_check(
+        "apply_execution_disabled",
+        "Blocked",
+        Some("Patch apply execution is not enabled in Phase 3.5."),
+    ));
+
+    let blocked_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Blocked")
+        .map(|c| c.name.clone())
+        .collect();
+    let failed_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Fail")
+        .map(|c| c.name.clone())
+        .collect();
+    let generated_at = now_rfc3339();
+    let capability_id = format!("apply_capability_{}", uuid::Uuid::new_v4().simple());
+    let capability = WorkspacePatchApplyCapabilitySummary {
+        proposal_id: proposal_id.to_string(),
+        capability_id: capability_id.clone(),
+        capability_status: "Unavailable".to_string(),
+        capability_reason: Some("Patch apply execution is not enabled in Phase 3.5.".to_string()),
+        generated_at: generated_at.clone(),
+        execution_enabled: false,
+        check_count: checklist.len(),
+        failed_checks,
+        blocked_checks,
+        checklist,
+    };
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchApplyCapabilityInspected,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "capability_id": capability_id,
+                "capability_status": &capability.capability_status,
+                "capability_reason": &capability.capability_reason,
+                "generated_at": generated_at,
+                "execution_enabled": capability.execution_enabled,
+                "check_count": capability.check_count,
+                "failed_checks": &capability.failed_checks,
+                "blocked_checks": &capability.blocked_checks,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((inspect_proposal(store, run_id, proposal_id)?, capability))
+}
+
 fn readiness_proposal(
     store: &BrownieStore,
     run_id: &str,
@@ -2843,6 +3040,10 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "stale",
         "stale_reason",
         "plan_id",
+        "capability_id",
+        "capability_status",
+        "capability_reason",
+        "execution_enabled",
         "report_id",
         "readiness_status",
         "readiness_reason",
@@ -4231,6 +4432,56 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
         );
+        let capability = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":72,"method":"proposal.applyCapability","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let capability_result = capability.result.expect("capability result");
+        assert_eq!(
+            capability_result["capability"]["capability_status"],
+            "Unavailable"
+        );
+        assert_eq!(capability_result["capability"]["execution_enabled"], false);
+        assert_eq!(
+            capability_result["capability"]["check_count"],
+            capability_result["capability"]["checklist"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_eq!(
+            capability_result["capability"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "apply_execution_disabled")
+                .unwrap()["status"],
+            "Blocked"
+        );
+        assert!(capability_result["capability"]["blocked_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_execution_disabled"));
+        let serialized_capability =
+            serde_json::to_string(&capability_result["capability"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_capability.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -4290,6 +4541,9 @@ mod tests {
         assert!(events_after_approval
             .iter()
             .any(|event| event["kind"] == "WorkspacePatchReadinessReportCreated"));
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchApplyCapabilityInspected"));
         let readiness_event = events_after_approval
             .iter()
             .find(|event| event["kind"] == "WorkspacePatchReadinessReportCreated")
@@ -4358,6 +4612,39 @@ mod tests {
             ] {
                 assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
             }
+        }
+        let capability_event = events_after_approval
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchApplyCapabilityInspected")
+            .expect("apply capability event");
+        let capability_payload = capability_event["payload"]
+            .as_object()
+            .expect("apply capability payload");
+        assert_eq!(
+            capability_payload["capability_id"],
+            capability_result["capability"]["capability_id"]
+        );
+        assert_eq!(capability_payload["capability_status"], "Unavailable");
+        assert_eq!(capability_payload["execution_enabled"], false);
+        assert_eq!(
+            capability_payload["check_count"],
+            capability_result["capability"]["check_count"]
+        );
+        let serialized_capability_payload = serde_json::to_string(capability_payload).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "changed manually",
+        ] {
+            assert!(!serialized_capability_payload.contains(&format!(r#"\"{forbidden}\""#)));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");

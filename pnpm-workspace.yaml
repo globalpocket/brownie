@@ -1,2 +1,4 @@
 packages:
   - "extensions/*"
+allowBuilds:
+  esbuild: true

@@ -306,3 +306,11 @@ Diff previews are synthetic unified diff previews only. They are capped before l
 The method uses the reconstructed proposal summary and latest preflight snapshot. It does not need a fresh target-file read in normal operation, does not write files, and does not apply patches. `Ready` means ready for final human review, not ready to apply; the `apply_not_implemented` check is always `Skipped` with the Phase 3.4 reason.
 
 `WorkspacePatchReadinessReportCreated` is appended as summary-only ledger metadata. Readiness reports, checklists, snapshots, and ledger payloads must not expose raw file content, raw proposed content, raw input JSON, full patch content, raw diffs, canonical absolute paths, absolute paths, or secret-like text. Forbidden raw field names are `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, and `file_content`.
+
+## Phase 3.5 `proposal.applyCapability`
+
+`proposal.applyCapability` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "capability": WorkspacePatchApplyCapabilitySummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchApplyCapabilitySummary` contains summary metadata only: `proposal_id`, `capability_id`, `capability_status`, `capability_reason`, `generated_at`, `execution_enabled`, `check_count`, `failed_checks`, `blocked_checks`, and a bounded checklist of `WorkspacePatchApplyCapabilityCheckSummary`. In Phase 3.5 the capability status is `Unavailable`, `execution_enabled` is `false`, and the checklist includes `apply_execution_disabled`.
+
+`proposal.applyCapability` is an inspect-only design contract. It may inspect existing proposal state and append a summary-only `WorkspacePatchApplyCapabilityInspected` ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
