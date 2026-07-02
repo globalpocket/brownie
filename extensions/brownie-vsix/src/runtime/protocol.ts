@@ -317,6 +317,28 @@ export interface WorkspacePatchApplyCapabilityCheckSummary {
   reason: string | null;
 }
 
+export interface WorkspacePatchApplyDryRunSummary {
+  proposal_id: string;
+  dry_run_id: string;
+  dry_run_status: string;
+  dry_run_reason: string;
+  checked_at: string;
+  required_gates: string[];
+  check_count: number;
+  failed_checks: string[];
+  blocked_checks: string[];
+  no_patch_applied: true;
+  apply_executed: false;
+  workspace_files_changed: false;
+  checklist: WorkspacePatchApplyDryRunCheckSummary[];
+}
+
+export interface WorkspacePatchApplyDryRunCheckSummary {
+  name: string;
+  status: 'Pass' | 'Fail' | 'Blocked' | 'Skipped';
+  reason: string | null;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -334,6 +356,11 @@ export interface ProposalApproveResult {
 export interface ProposalApplyCapabilityResult {
   proposal: WorkspacePatchProposalSummary;
   capability: WorkspacePatchApplyCapabilitySummary;
+}
+
+export interface ProposalApplyDryRunResult {
+  proposal: WorkspacePatchProposalSummary;
+  dry_run: WorkspacePatchApplyDryRunSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -573,6 +600,14 @@ export function isWorkspacePatchApplyCapabilitySummary(value: unknown): value is
   return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.capability_id === 'string' && value.apply_supported === false && value.apply_enabled === false && value.mode === 'dry_run_only' && typeof value.reason === 'string' && Array.isArray(value.required_gates) && value.required_gates.every((gate) => typeof gate === 'string') && value.can_apply_now === false && typeof value.checked_at === 'string' && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCapabilityCheckSummary) && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchApplyDryRunCheckSummary(value: unknown): value is WorkspacePatchApplyDryRunCheckSummary {
+  return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchApplyDryRunSummary(value: unknown): value is WorkspacePatchApplyDryRunSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.dry_run_id === 'string' && typeof value.dry_run_status === 'string' && typeof value.dry_run_reason === 'string' && typeof value.checked_at === 'string' && Array.isArray(value.required_gates) && value.required_gates.every((gate) => typeof gate === 'string') && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && value.no_patch_applied === true && value.apply_executed === false && value.workspace_files_changed === false && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyDryRunCheckSummary) && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -628,6 +663,10 @@ export function isProposalApproveResult(value: unknown): value is ProposalApprov
 
 export function isProposalApplyCapabilityResult(value: unknown): value is ProposalApplyCapabilityResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyCapabilitySummary(value.capability) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalApplyDryRunResult(value: unknown): value is ProposalApplyDryRunResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyDryRunSummary(value.dry_run) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

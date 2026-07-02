@@ -81,4 +81,10 @@ The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only met
 
 `proposal.applyCapability` exposes a design-only apply capability contract for an existing proposal. It returns `WorkspacePatchApplyCapabilitySummary` metadata and appends `WorkspacePatchApplyCapabilityChecked` with summary-only fields. Phase 3.5 always reports `apply_supported = false`, `apply_enabled = false`, `mode = dry_run_only`, and `can_apply_now = false` with the reason `Patch apply is not implemented in Phase 3.5.` Patch application remains unimplemented.
 
-The method is not an apply trigger. It must not write workspace files, apply patches, execute shell or git commands, use network access, or store/return raw file content, raw diffs, raw input JSON, canonical absolute paths, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+## Phase 3.6 apply dry-run inspection
+
+`proposal.applyDryRun` accepts `{ "run_id": string, "proposal_id": string }` for an existing proposal and returns `{ "proposal": WorkspacePatchProposalSummary, "dry_run": WorkspacePatchApplyDryRunSummary }`. The method is operator-controlled inspection only: it evaluates the current proposal, approval, preflight, readiness, and runtime apply-disabled gates, then reports summary-only metadata about what would be required before a future apply path could execute.
+
+The dry-run result includes `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, `workspace_files_changed`, and a bounded checklist. Phase 3.6 always reports `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
+
+The runtime appends `WorkspacePatchApplyDryRunChecked` with summary-only metadata. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

@@ -19,21 +19,23 @@ use brownie_protocol::{
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApproveParams, ProposalApproveResult, ProposalInspectParams, ProposalInspectResult,
-    ProposalListParams, ProposalListResult, ProposalPreflightParams, ProposalPreflightResult,
-    ProposalReadinessParams, ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
-    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
-    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
-    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
-    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
-    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
-    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
-    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
-    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
-    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
+    ProposalApplyDryRunParams, ProposalApplyDryRunResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
+    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult, RunEventsParams,
+    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
+    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchPreflightSnapshotSummary,
+    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
+    WorkspacePatchReadinessReportSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -73,6 +75,7 @@ const METHOD_PROPOSAL_REJECT: &str = "proposal.reject";
 const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
 const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
 const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
+const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
@@ -132,6 +135,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_APPLY_CAPABILITY => {
             handle_proposal_apply_capability(request.id, request.params)
         }
+        METHOD_PROPOSAL_APPLY_DRY_RUN => handle_proposal_apply_dry_run(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1856,6 +1860,30 @@ fn handle_proposal_apply_capability(id: Value, params: Option<Value>) -> JsonRpc
     }
 }
 
+fn handle_proposal_apply_dry_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalApplyDryRunParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_apply_dry_run(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, dry_run)) => {
+            result_response(id, json!(ProposalApplyDryRunResult { proposal, dry_run }))
+        }
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2386,6 +2414,18 @@ fn apply_capability_check(
     }
 }
 
+fn apply_dry_run_check(
+    name: &str,
+    status: &str,
+    reason: Option<&str>,
+) -> WorkspacePatchApplyDryRunCheckSummary {
+    WorkspacePatchApplyDryRunCheckSummary {
+        name: name.to_string(),
+        status: status.to_string(),
+        reason: reason.map(ToString::to_string),
+    }
+}
+
 fn inspect_apply_capability(
     store: &BrownieStore,
     run_id: &str,
@@ -2551,6 +2591,211 @@ fn inspect_apply_capability(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     Ok((inspect_proposal(store, run_id, proposal_id)?, capability))
+}
+
+fn latest_readiness_status(
+    events: &[LedgerEvent],
+    proposal_id: &str,
+) -> Option<(String, Option<String>)> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchReadinessReportCreated {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            return None;
+        }
+        Some((
+            payload.get("readiness_status")?.as_str()?.to_string(),
+            payload
+                .get("readiness_reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        ))
+    })
+}
+
+fn inspect_apply_dry_run(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyDryRunSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let latest_readiness = latest_readiness_status(&events, proposal_id);
+    let snapshot = proposal.latest_snapshot.as_ref();
+    let mut checklist = vec![apply_dry_run_check("proposal_exists", "Pass", None)];
+
+    if proposal.validation_status == "Blocked" {
+        checklist.push(apply_dry_run_check(
+            "proposal_is_valid",
+            "Blocked",
+            proposal.validation_reason.as_deref(),
+        ));
+    } else if proposal.validation_status == "Valid" {
+        checklist.push(apply_dry_run_check("proposal_is_valid", "Pass", None));
+    } else {
+        checklist.push(apply_dry_run_check(
+            "proposal_is_valid",
+            "Fail",
+            proposal
+                .validation_reason
+                .as_deref()
+                .or(Some("Proposal validation status is not Valid.")),
+        ));
+    }
+
+    checklist.push(if proposal.approval_status == "Approved" {
+        apply_dry_run_check("proposal_is_approved", "Pass", None)
+    } else {
+        apply_dry_run_check(
+            "proposal_is_approved",
+            "Fail",
+            Some("Proposal is not approved."),
+        )
+    });
+    checklist.push(if snapshot.is_some() {
+        apply_dry_run_check("proposal_has_preflight_snapshot", "Pass", None)
+    } else {
+        apply_dry_run_check(
+            "proposal_has_preflight_snapshot",
+            "Fail",
+            Some("Run proposal.preflight before dry-run inspection."),
+        )
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if !snapshot.stale => {
+            apply_dry_run_check("proposal_not_stale", "Pass", None)
+        }
+        Some(snapshot) => apply_dry_run_check(
+            "proposal_not_stale",
+            "Fail",
+            snapshot
+                .stale_reason
+                .as_deref()
+                .or(Some("Latest preflight snapshot is stale.")),
+        ),
+        None => apply_dry_run_check(
+            "proposal_not_stale",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(if proposal.diff_preview.is_some() {
+        apply_dry_run_check("sanitized_diff_preview_available", "Pass", None)
+    } else {
+        apply_dry_run_check(
+            "sanitized_diff_preview_available",
+            "Fail",
+            Some("Sanitized diff preview is unavailable."),
+        )
+    });
+    checklist.push(match latest_readiness.as_ref() {
+        Some((status, _)) if status == "Ready" => {
+            apply_dry_run_check("readiness_ready", "Pass", None)
+        }
+        Some((status, reason)) if status == "Blocked" => apply_dry_run_check(
+            "readiness_ready",
+            "Blocked",
+            reason
+                .as_deref()
+                .or(Some("Latest readiness report is blocked.")),
+        ),
+        Some((_, reason)) => apply_dry_run_check(
+            "readiness_ready",
+            "Fail",
+            reason
+                .as_deref()
+                .or(Some("Latest readiness report is not ready.")),
+        ),
+        None => apply_dry_run_check(
+            "readiness_ready",
+            "Fail",
+            Some("Run proposal.readiness before apply dry-run inspection."),
+        ),
+    });
+    checklist.push(apply_dry_run_check("no_raw_content_exposed", "Pass", None));
+    checklist.push(apply_dry_run_check(
+        "apply_execution_disabled",
+        "Blocked",
+        Some("Patch apply execution is not enabled in Phase 3.6 dry-run mode."),
+    ));
+    checklist.push(apply_dry_run_check(
+        "workspace_files_unchanged",
+        "Pass",
+        Some("Dry-run inspection does not write workspace files."),
+    ));
+
+    let blocked_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Blocked")
+        .map(|c| c.name.clone())
+        .collect();
+    let failed_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Fail")
+        .map(|c| c.name.clone())
+        .collect();
+    let checked_at = now_rfc3339();
+    let dry_run_id = format!("apply_dry_run_{}", uuid::Uuid::new_v4().simple());
+    let required_gates = vec![
+        "proposal_valid".to_string(),
+        "proposal_approved".to_string(),
+        "preflight_snapshot_exists".to_string(),
+        "proposal_not_stale".to_string(),
+        "readiness_ready".to_string(),
+        "operator_dry_run_requested".to_string(),
+        "runtime_apply_supported".to_string(),
+    ];
+    let dry_run = WorkspacePatchApplyDryRunSummary {
+        proposal_id: proposal_id.to_string(),
+        dry_run_id: dry_run_id.clone(),
+        dry_run_status: "Completed".to_string(),
+        dry_run_reason: "Dry run completed without applying a patch or changing workspace files."
+            .to_string(),
+        checked_at: checked_at.clone(),
+        required_gates,
+        check_count: checklist.len(),
+        failed_checks,
+        blocked_checks,
+        no_patch_applied: true,
+        apply_executed: false,
+        workspace_files_changed: false,
+        checklist,
+    };
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchApplyDryRunChecked,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "dry_run_id": dry_run_id,
+                "dry_run_status": &dry_run.dry_run_status,
+                "dry_run_reason": &dry_run.dry_run_reason,
+                "checked_at": checked_at,
+                "required_gates": &dry_run.required_gates,
+                "check_count": dry_run.check_count,
+                "failed_checks": &dry_run.failed_checks,
+                "blocked_checks": &dry_run.blocked_checks,
+                "no_patch_applied": dry_run.no_patch_applied,
+                "apply_executed": dry_run.apply_executed,
+                "workspace_files_changed": dry_run.workspace_files_changed,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((inspect_proposal(store, run_id, proposal_id)?, dry_run))
 }
 
 fn readiness_proposal(
@@ -3063,6 +3308,12 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "required_gates",
         "can_apply_now",
         "checked_at",
+        "dry_run_id",
+        "dry_run_status",
+        "dry_run_reason",
+        "no_patch_applied",
+        "apply_executed",
+        "workspace_files_changed",
         "report_id",
         "readiness_status",
         "readiness_reason",
@@ -4509,6 +4760,72 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
         );
+        let dry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":73,"method":"proposal.applyDryRun","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let dry_run_result = dry_run.result.expect("apply dry-run result");
+        assert_eq!(dry_run_result["dry_run"]["dry_run_status"], "Completed");
+        assert_eq!(
+            dry_run_result["dry_run"]["dry_run_reason"],
+            "Dry run completed without applying a patch or changing workspace files."
+        );
+        assert_eq!(dry_run_result["dry_run"]["no_patch_applied"], true);
+        assert_eq!(dry_run_result["dry_run"]["apply_executed"], false);
+        assert_eq!(dry_run_result["dry_run"]["workspace_files_changed"], false);
+        assert!(dry_run_result["dry_run"]["required_gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gate| gate == "readiness_ready"));
+        assert_eq!(
+            dry_run_result["dry_run"]["check_count"],
+            dry_run_result["dry_run"]["checklist"]
+                .as_array()
+                .unwrap()
+                .len()
+        );
+        assert_eq!(
+            dry_run_result["dry_run"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "readiness_ready")
+                .unwrap()["status"],
+            "Pass"
+        );
+        assert_eq!(
+            dry_run_result["dry_run"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "apply_execution_disabled")
+                .unwrap()["status"],
+            "Blocked"
+        );
+        assert!(dry_run_result["dry_run"]["blocked_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_execution_disabled"));
+        let serialized_dry_run = serde_json::to_string(&dry_run_result["dry_run"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_dry_run.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -4571,6 +4888,9 @@ mod tests {
         assert!(events_after_approval
             .iter()
             .any(|event| event["kind"] == "WorkspacePatchApplyCapabilityChecked"));
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchApplyDryRunChecked"));
         let readiness_event = events_after_approval
             .iter()
             .find(|event| event["kind"] == "WorkspacePatchReadinessReportCreated")
@@ -4678,6 +4998,45 @@ mod tests {
             "changed manually",
         ] {
             assert!(!serialized_capability_payload.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        let dry_run_event = events_after_approval
+            .iter()
+            .find(|event| event["kind"] == "WorkspacePatchApplyDryRunChecked")
+            .expect("apply dry-run event");
+        let dry_run_payload = dry_run_event["payload"]
+            .as_object()
+            .expect("apply dry-run payload");
+        assert_eq!(
+            dry_run_payload["dry_run_id"],
+            dry_run_result["dry_run"]["dry_run_id"]
+        );
+        assert_eq!(dry_run_payload["dry_run_status"], "Completed");
+        assert_eq!(
+            dry_run_payload["dry_run_reason"],
+            "Dry run completed without applying a patch or changing workspace files."
+        );
+        assert_eq!(dry_run_payload["no_patch_applied"], true);
+        assert_eq!(dry_run_payload["apply_executed"], false);
+        assert_eq!(dry_run_payload["workspace_files_changed"], false);
+        assert_eq!(
+            dry_run_payload["check_count"],
+            dry_run_result["dry_run"]["check_count"]
+        );
+        let serialized_dry_run_payload = serde_json::to_string(dry_run_payload).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "changed manually",
+        ] {
+            assert!(!serialized_dry_run_payload.contains(&format!(r#"\"{forbidden}\""#)));
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
