@@ -56,4 +56,4 @@ The runtime is the execution authority. The VSIX presents state and connects Cod
 
 ## Patch apply boundary
 
-Phase 3.5 exposes `proposal.applyCapability` as a read-only design contract for future patch application. The runtime may inspect existing proposal metadata and append summary-only ledger events, but it still must not apply patches, write workspace files, execute shell or git commands, use network access, or return raw file content, raw diffs, raw input JSON, canonical paths, or absolute paths.
+Phase 3.5 exposes `proposal.applyCapability` as a read-only design contract for future patch application. Phase 3.6 adds operator-controlled `proposal.applyDryRun` inspection, which reports dry-run gate metadata and explicitly records that no patch was applied and no workspace file changed. The runtime may inspect existing proposal metadata and append summary-only ledger events, but it still must not apply patches, write workspace files, execute shell or git commands, use network access, or return raw file content, raw diffs, raw input JSON, canonical paths, or absolute paths.

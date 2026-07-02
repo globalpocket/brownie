@@ -104,6 +104,10 @@
       {
         "command": "brownie.proposalApplyCapability",
         "title": "Brownie: Patch Proposal Apply Capability"
+      },
+      {
+        "command": "brownie.proposalApplyDryRun",
+        "title": "Brownie: Patch Proposal Apply Dry Run"
       }
     ]
   },
