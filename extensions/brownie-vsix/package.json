@@ -100,6 +100,10 @@
       {
         "command": "brownie.proposalReadiness",
         "title": "Brownie: Patch Proposal Readiness"
+      },
+      {
+        "command": "brownie.proposalApplyCapability",
+        "title": "Brownie: Patch Proposal Apply Capability"
       }
     ]
   },

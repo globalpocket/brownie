@@ -76,3 +76,9 @@ Readiness relies on the latest `proposal.preflight` snapshot already recorded in
 `readiness_status` is `Ready`, `NotReady`, or `Blocked`. `Ready` means ready for final human review only. `NotReady` covers missing approval, missing preflight, stale snapshots, missing target hashes, and missing sanitized diff previews. `Blocked` covers blocked validation, redacted previews, unsafe state, or sensitive-like findings.
 
 The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only metadata: proposal ID, report ID, status, reason, generated timestamp, check count, failed check names, and blocked check names. Ledger payloads and RPC responses must not include forbidden raw fields: `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.5 apply capability inspection
+
+`proposal.applyCapability` exposes a design-only apply capability contract for an existing proposal. It returns `WorkspacePatchApplyCapabilitySummary` metadata and appends `WorkspacePatchApplyCapabilityChecked` with summary-only fields. Phase 3.5 always reports `apply_supported = false`, `apply_enabled = false`, `mode = dry_run_only`, and `can_apply_now = false` with the reason `Patch apply is not implemented in Phase 3.5.` Patch application remains unimplemented.
+
+The method is not an apply trigger. It must not write workspace files, apply patches, execute shell or git commands, use network access, or store/return raw file content, raw diffs, raw input JSON, canonical absolute paths, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

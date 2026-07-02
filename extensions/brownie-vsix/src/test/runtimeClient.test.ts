@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApproveResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApproveResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -189,6 +189,11 @@ describe('protocol validation', () => {
     expect(isProposalReadinessResult({ proposal: { ...result.proposals[0], approval_status: 'Approved', approved_at: '2026-06-30T00:00:00Z', latest_snapshot: snapshot, latest_apply_plan: applyPlan }, report })).toBe(true);
     expect(isProposalReadinessResult({ proposal: result.proposals[0], report: { ...report, file_content: 'secret' } })).toBe(false);
     expect(isProposalReadinessResult({ proposal: result.proposals[0], report: { ...report, checklist: [{ ...report.checklist[0], diff: 'raw' }] } })).toBe(false);
+    const capability = { proposal_id: 'proposal_1', capability_id: 'apply_capability_1', apply_supported: false, apply_enabled: false, mode: 'dry_run_only', reason: 'Patch apply is not implemented in Phase 3.5.', required_gates: ['proposal_valid', 'runtime_apply_supported'], can_apply_now: false, checked_at: '2026-07-01T00:00:00Z', check_count: 2, failed_checks: [], blocked_checks: ['apply_execution_disabled'], checklist: [{ name: 'apply_execution_disabled', status: 'Blocked', reason: 'Patch apply execution is not enabled in Phase 3.5.' }, { name: 'no_raw_content_exposed', status: 'Pass', reason: null }] };
+    expect(isProposalApplyCapabilityResult({ proposal: result.proposals[0], capability })).toBe(true);
+    expect(isProposalApplyCapabilityResult({ proposal: result.proposals[0], capability: { ...capability, apply_enabled: true } })).toBe(false);
+    expect(isProposalApplyCapabilityResult({ proposal: result.proposals[0], capability: { ...capability, raw_input: { patch: 'raw' } } })).toBe(false);
+    expect(isProposalApplyCapabilityResult({ proposal: result.proposals[0], capability: { ...capability, checklist: [{ ...capability.checklist[0], diff: 'raw' }] } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -447,6 +452,14 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, report } });
     await expect(new RuntimeClient(transport).readinessProposal('run_1', 'proposal_1')).resolves.toEqual({ proposal, report });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.readiness', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
+  });
+
+  it('creates a proposal.applyCapability request', async () => {
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
+    const capability = { proposal_id: 'proposal_1', capability_id: 'apply_capability_1', apply_supported: false, apply_enabled: false, mode: 'dry_run_only', reason: 'Patch apply is not implemented in Phase 3.5.', required_gates: ['proposal_valid', 'runtime_apply_supported'], can_apply_now: false, checked_at: '2026-07-01T00:00:00Z', check_count: 1, failed_checks: [], blocked_checks: ['apply_execution_disabled'], checklist: [{ name: 'apply_execution_disabled', status: 'Blocked', reason: 'Patch apply execution is not enabled in Phase 3.5.' }] };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, capability } });
+    await expect(new RuntimeClient(transport).inspectApplyCapability('run_1', 'proposal_1')).resolves.toEqual({ proposal, capability });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.applyCapability', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {
