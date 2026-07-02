@@ -1,67 +1,171 @@
-# Phase 3.4 Implementation Prompt
+# Brownie Phase 3.4.1 Fix 指示
 
-## Phase
+対象リポジトリ:
 
-3.4 = Apply readiness report / user-visible final pre-apply review
+```text
+https://github.com/globalpocket/brownie
+```
 
-## Objective
+## 背景
 
-Add a user-visible final pre-apply review surface for Brownie. This phase must improve apply readiness reporting only. It must not execute apply, write user files, commit changes, start or stop services, add network behavior, or introduce any hidden process execution beyond the explicitly requested test/check commands.
+Phase 3.4 で `proposal.readiness` と readiness report が実装された。
 
-## Safety Boundaries
+PR #34:
 
-- Do not auto-merge any PR.
-- Do not push directly to `main`.
-- Do not add apply execution, patch application, file write, shell execution, network access, or service control capabilities unless this prompt explicitly requests them.
-- Do not copy code from Zoo Code or ZooCodeCustom.
-- Preserve Brownie's existing safety policy and no-write / no-apply boundaries.
-- Do not expose raw content, raw input, absolute paths, or canonical paths in user-visible output.
-- Do not automatically continue from a blocked state.
+* `proposal.readiness`
+* `WorkspacePatchReadinessReportSummary`
+* `WorkspacePatchReadinessCheckSummary`
+* `WorkspacePatchReadinessReportCreated`
+* VSIX readiness command
+* docs/tests
 
-## Required Implementation
+PR #35:
 
-1. Locate the existing pre-apply, apply-planning, safety, ledger, protocol, runtime, and VSIX surfaces in the repository.
-2. Add or extend an apply readiness report that is visible to the user before any apply-capable phase.
-3. The report must summarize readiness without exposing raw content, raw input, absolute paths, canonical paths, or unsafe implementation details.
-4. The report must include enough structured information for the operator to understand:
-   - Whether the current request is apply-ready.
-   - Which safety gates were checked.
-   - Which capabilities remain disabled.
-   - Which follow-up action is expected from the operator.
-5. Keep the phase strictly review/report oriented. No real apply path should be enabled in this phase.
-6. Keep protocol, runtime, VSIX, and ledger sanitizer types aligned where applicable.
-7. Update docs/spec files when behavior, protocol fields, or operator-facing output changes.
-8. Add focused tests covering the readiness report and safety redaction behavior.
+* `proposal.readiness` の NotReady / Blocked coverage 追加
+
+Phase 3.4 は概ね合格だが、readiness report の ledger sanitizer allowlist と phase-loop state の整合性に follow-up が必要。
+
+## 目的
+
+Phase 3.4.1 では以下を修正する。
+
+```text
+- WorkspacePatchReadinessReportCreated の ledger payload が inspection / run.events で落ちないように sanitizer allowlist を補正する
+- readiness report 関連 metadata が raw content を含まず安全に観測できることを test で保証する
+- phase-loop state が Phase 3.4.1 実行後に review task へ渡せるように維持する
+```
+
+## 重要な制約
+
+1. 実ファイルを書き換えない。
+2. patch apply しない。
+3. git command / shell command の新規 runtime 機能を追加しない。
+4. process.exec / network / service control / destructive operation / subtask.spawn を追加しない。
+5. canonical absolute path を返さない。
+6. file content を保存しない。
+7. full content / raw_content / full_content / patch / raw_input を保存しない。
+8. secret-like text を report/checklist/summary に出さない。
+9. Zoo Code / ZooCodeCustom からコードをコピーしない。
+
+## 修正内容
+
+### 1. Runtime sanitizer allowlist を補正する
+
+`WorkspacePatchReadinessReportCreated` の payload で使われる summary-only fields を `sanitize_ledger_payload()` の allowlist に追加する。
+
+追加候補:
+
+```text
+report_id
+readiness_status
+readiness_reason
+generated_at
+blocked_checks
+```
+
+既に `check_count` / `failed_checks` がある場合は維持する。
+
+禁止 field は追加しない。
+
+禁止 field:
+
+```text
+content
+raw_content
+full_content
+patch
+diff
+raw_input
+canonical_path
+absolute_path
+file_content
+```
+
+### 2. Readiness report ledger event の test を追加する
+
+最低限、以下を確認する。
+
+```text
+- proposal.readiness 実行後に WorkspacePatchReadinessReportCreated が ledger に存在する
+- run.events または inspect 系 summary で report_id / readiness_status / generated_at / check_count / failed_checks / blocked_checks が観測できる
+- forbidden raw fields が payload に含まれない
+- readiness report generation は workspace file を変更しない
+```
+
+### 3. VSIX validator の維持確認
+
+既存の `hasNoForbiddenRawFields` が以下を reject することを維持する。
+
+```text
+content
+raw_content
+full_content
+patch
+diff
+raw_input
+canonical_path
+absolute_path
+file_content
+```
+
+必要なら readiness report validator test を補強する。
+
+## phase-state の扱い
+
+この PR は Phase 3.4.1 の実装 PR とする。
+
+PR 作成時:
+
+```json
+{
+  "current_phase": "3.4.1",
+  "status": "awaiting_review",
+  "latest_pr": <created_pr_number>,
+  "last_reviewed_pr": 35
+}
+```
+
+レビュー task が合格判定した後に、次の Phase 3.5 へ進める。
 
 ## Required Verification
-
-Run the following commands before creating the PR:
 
 ```bash
 cargo fmt --check
 cargo check --workspace
 cargo test --workspace
+
+pnpm install
 pnpm --filter brownie-vsix check
 pnpm --filter brownie-vsix test
 pnpm --filter brownie-vsix build
 ```
 
-If a command cannot run because the repository does not currently contain that toolchain or package, record the exact reason in the PR body and in the phase implementation summary. Do not silently skip commands.
+## PR description に書くこと
 
-## PR Requirements
+```text
+## Summary
+- Added readiness report ledger sanitizer fields.
+- Added tests ensuring WorkspacePatchReadinessReportCreated is observable through sanitized ledger output.
+- Confirmed forbidden raw fields remain excluded.
+- Confirmed no write/apply behavior was introduced.
 
-- Create a branch for this phase using the current phase from `.brownie-control/phase-state.json`.
-- Open a PR for the implementation.
-- Do not merge the PR.
-- Do not push directly to `main`.
-- Include a concise implementation summary, safety notes, and verification results in the PR body.
+## Testing
+- cargo fmt --check
+- cargo check --workspace
+- cargo test --workspace
+- pnpm install
+- pnpm --filter brownie-vsix check
+- pnpm --filter brownie-vsix test
+- pnpm --filter brownie-vsix build
+```
 
-## Completion Criteria
+## 禁止事項
 
-The phase is complete only when:
-
-- The requested readiness report behavior is implemented.
-- Safety boundaries remain intact.
-- Tests and docs/spec updates have been added where needed.
-- Required verification has been run or explicitly explained if unavailable.
-- A PR has been opened and recorded in `.brownie-control/phase-state.json`.
+```text
+- patch apply しない
+- workspace file を書き換えない
+- main に直接 push しない
+- PR を自動 merge しない
+- blocked 状態から自動復帰しない
+- Zoo Code / ZooCodeCustom からコードをコピーしない
+```
