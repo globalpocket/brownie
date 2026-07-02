@@ -3573,6 +3573,37 @@ mod tests {
             .expect("valid response")
     }
 
+    fn append_test_patch_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        validation_status: &str,
+        diff_preview: Option<&str>,
+        diff_redacted: bool,
+    ) {
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(json!({
+                    "proposal_id": proposal_id,
+                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                    "path": "README.md",
+                    "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+                    "content_preview": if validation_status == "Blocked" { "[redacted]" } else { "updated README" },
+                    "content_chars": 14,
+                    "truncated": false,
+                    "validation_status": validation_status,
+                    "validation_reason": if validation_status == "Blocked" { Some("proposed content contains sensitive-like data") } else { None },
+                    "diff_preview": diff_preview,
+                    "diff_truncated": false,
+                    "diff_redacted": diff_redacted,
+                })),
+            )
+            .expect("append proposal");
+    }
+
     #[test]
     fn runtime_status_reports_ready() {
         let status = runtime_status();
@@ -4276,6 +4307,111 @@ mod tests {
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn proposal_readiness_reports_not_ready_for_unapproved_proposal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "review readiness".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("start task");
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "proposal_unapproved",
+            "Valid",
+            Some("--- a/README.md\n+++ b/README.md"),
+            false,
+        );
+
+        let (_proposal, report) = readiness_proposal(&store, &record.run_id, "proposal_unapproved")
+            .expect("readiness report");
+
+        assert_eq!(report.readiness_status, "NotReady");
+        assert_eq!(
+            report
+                .checklist
+                .iter()
+                .find(|check| check.name == "proposal_is_approved")
+                .expect("approval check")
+                .status,
+            "Fail"
+        );
+    }
+
+    #[test]
+    fn proposal_readiness_reports_not_ready_without_preflight() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "review readiness".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("start task");
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "proposal_no_preflight",
+            "Valid",
+            Some("--- a/README.md\n+++ b/README.md"),
+            false,
+        );
+        approve_proposal(&store, &record.run_id, "proposal_no_preflight", None)
+            .expect("approve proposal");
+
+        let (_proposal, report) =
+            readiness_proposal(&store, &record.run_id, "proposal_no_preflight")
+                .expect("readiness report");
+
+        assert_eq!(report.readiness_status, "NotReady");
+        assert_eq!(
+            report
+                .checklist
+                .iter()
+                .find(|check| check.name == "proposal_has_preflight_snapshot")
+                .expect("preflight check")
+                .status,
+            "Fail"
+        );
+    }
+
+    #[test]
+    fn proposal_readiness_reports_blocked_for_blocked_proposal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "review readiness".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("start task");
+        append_test_patch_proposal(&store, &record, "proposal_blocked", "Blocked", None, true);
+
+        let (_proposal, report) = readiness_proposal(&store, &record.run_id, "proposal_blocked")
+            .expect("readiness report");
+
+        assert_eq!(report.readiness_status, "Blocked");
+        assert_eq!(
+            report
+                .checklist
+                .iter()
+                .find(|check| check.name == "no_sensitive_content_detected")
+                .expect("sensitive check")
+                .status,
+            "Blocked"
+        );
+        assert!(!report.summary.contains("original README"));
     }
 
     #[test]
