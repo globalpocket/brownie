@@ -1,8 +1,8 @@
 {
   "project": "brownie",
-  "current_phase": "3.4",
+  "current_phase": "3.4.1",
   "status": "ready_to_implement",
-  "last_reviewed_pr": 33,
+  "last_reviewed_pr": 35,
   "latest_pr": null,
   "current_phase_prompt_path": ".brownie-control/current-phase-prompt.md",
   "latest_review_path": ".brownie-control/latest-review.md",
