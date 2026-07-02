@@ -357,6 +357,12 @@ pub struct ProposalPreflightParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReadinessParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -438,6 +444,24 @@ pub struct WorkspacePatchApplyCheckSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReadinessReportSummary {
+    pub proposal_id: String,
+    pub report_id: String,
+    pub readiness_status: String,
+    pub readiness_reason: Option<String>,
+    pub generated_at: String,
+    pub checklist: Vec<WorkspacePatchReadinessCheckSummary>,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReadinessCheckSummary {
+    pub name: String,
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -464,6 +488,12 @@ pub struct ProposalPreflightResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub snapshot: WorkspacePatchPreflightSnapshotSummary,
     pub apply_plan: WorkspacePatchApplyPlanSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReadinessResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub report: WorkspacePatchReadinessReportSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

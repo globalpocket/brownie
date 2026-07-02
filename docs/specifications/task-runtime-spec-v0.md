@@ -193,3 +193,11 @@ After `proposal.approve`, the runtime creates a blocked apply-plan summary. The 
 After a patch proposal is approved, callers may invoke `proposal.preflight` to capture metadata needed for stale detection before any future apply implementation. Preflight records a snapshot with SHA-256 hashes for the canonical path and readable regular-file content, records a blocked apply plan, and updates proposal inspection with `latest_snapshot`.
 
 Phase 3.3 preserves the no-write/no-apply guarantee: approval and preflight are ledger-only operations and do not modify workspace files. The runtime redacts secret-like approval and rejection reasons before storing or returning them.
+
+## Phase 3.4 proposal readiness
+
+After approval and preflight, callers may invoke `proposal.readiness` to create a final human-review report. The report summarizes whether the proposal is `Ready`, `NotReady`, or `Blocked` by relying on ledger reconstruction and the latest preflight snapshot rather than applying the patch.
+
+Readiness does not write workspace files, does not apply patches, and does not run process, network, service-control, destructive, or subtask actions. A `Ready` report means the proposal is ready for final human review only; patch apply remains unimplemented in Phase 3.4.
+
+Readiness ledger events are summary-only and must exclude raw content fields (`content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, `file_content`) and secret-like text.

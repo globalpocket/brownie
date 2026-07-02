@@ -296,3 +296,13 @@ Diff previews are synthetic unified diff previews only. They are capped before l
 `WorkspacePatchPreflightSnapshotSummary` contains metadata only: `proposal_id`, `snapshot_id`, workspace-relative `path`, `canonical_path_hash`, `file_exists`, `file_kind` (`File`, `Directory`, `Missing`, `Other`, or `Unreadable`), `file_size_bytes`, `file_modified_unix_ms`, `file_sha256`, `captured_at`, `stale`, and `stale_reason`. The runtime hashes canonical paths instead of returning absolute paths, and it never returns file content, raw content, full content, patches, diffs, or raw input JSON.
 
 `WorkspacePatchProposalSummary` includes `latest_snapshot` and `approval_reason_redacted`. Secret-like approval or rejection reasons are represented as `[redacted]` and are not stored raw. Preflight appends ledger metadata only and never writes files or applies patches.
+
+## Phase 3.4 `proposal.readiness`
+
+`proposal.readiness` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "report": WorkspacePatchReadinessReportSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchReadinessReportSummary` contains `proposal_id`, `report_id`, `readiness_status`, `readiness_reason`, `generated_at`, a bounded checklist of `WorkspacePatchReadinessCheckSummary`, and a deterministic human-readable summary. Allowed readiness statuses are `Ready`, `NotReady`, and `Blocked`; allowed check statuses are `Pass`, `Fail`, `Blocked`, and `Skipped`.
+
+The method uses the reconstructed proposal summary and latest preflight snapshot. It does not need a fresh target-file read in normal operation, does not write files, and does not apply patches. `Ready` means ready for final human review, not ready to apply; the `apply_not_implemented` check is always `Skipped` with the Phase 3.4 reason.
+
+`WorkspacePatchReadinessReportCreated` is appended as summary-only ledger metadata. Readiness reports, checklists, snapshots, and ledger payloads must not expose raw file content, raw proposed content, raw input JSON, full patch content, raw diffs, canonical absolute paths, absolute paths, or secret-like text. Forbidden raw field names are `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, and `file_content`.

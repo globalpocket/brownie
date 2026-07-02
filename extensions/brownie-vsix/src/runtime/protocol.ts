@@ -309,6 +309,27 @@ export interface ProposalApproveResult {
   apply_plan: WorkspacePatchApplyPlanSummary;
 }
 
+export interface WorkspacePatchReadinessReportSummary {
+  proposal_id: string;
+  report_id: string;
+  readiness_status: 'Ready' | 'NotReady' | 'Blocked';
+  readiness_reason: string | null;
+  generated_at: string;
+  checklist: WorkspacePatchReadinessCheckSummary[];
+  summary: string;
+}
+
+export interface WorkspacePatchReadinessCheckSummary {
+  name: string;
+  status: 'Pass' | 'Fail' | 'Blocked' | 'Skipped';
+  reason: string | null;
+}
+
+export interface ProposalReadinessResult {
+  proposal: WorkspacePatchProposalSummary;
+  report: WorkspacePatchReadinessReportSummary;
+}
+
 export interface ProposalRejectResult {
   proposal: WorkspacePatchProposalSummary;
 }
@@ -487,7 +508,7 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
 }
 
 export function hasNoForbiddenRawFields(value: object): boolean {
-  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path');
+  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content');
 }
 
 export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
@@ -515,6 +536,14 @@ export function isWorkspacePatchApplyCheckSummary(value: unknown): value is Work
 
 export function isWorkspacePatchApplyPlanSummary(value: unknown): value is WorkspacePatchApplyPlanSummary {
   return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.plan_id === 'string' && typeof value.status === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyCheckSummary) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
+  return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReadinessReportSummary(value: unknown): value is WorkspacePatchReadinessReportSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.report_id === 'string' && (value.readiness_status === 'Ready' || value.readiness_status === 'NotReady' || value.readiness_status === 'Blocked') && (typeof value.readiness_reason === 'string' || value.readiness_reason === null) && typeof value.generated_at === 'string' && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchReadinessCheckSummary) && typeof value.summary === 'string' && hasNoForbiddenRawFields(value);
 }
 
 export function isWorkspacePatchProposalSummary(value: unknown): value is WorkspacePatchProposalSummary {
@@ -568,6 +597,10 @@ export function isProposalPreflightResult(value: unknown): value is ProposalPref
 
 export function isProposalRejectResult(value: unknown): value is ProposalRejectResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal);
+}
+
+export function isProposalReadinessResult(value: unknown): value is ProposalReadinessResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchReadinessReportSummary(value.report) && hasNoForbiddenRawFields(value);
 }
 
 export function isToolExecuteResult(value: unknown): value is ToolExecuteResult {

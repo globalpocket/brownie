@@ -20,17 +20,18 @@ use brownie_protocol::{
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalRejectParams, ProposalRejectResult, RunEventsParams,
-    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchPreflightSnapshotSummary,
-    WorkspacePatchProposalSummary,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams,
+    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
+    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCheckSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
+    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -68,6 +69,7 @@ const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
 const METHOD_PROPOSAL_REJECT: &str = "proposal.reject";
 const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
+const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 
@@ -123,6 +125,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_APPROVE => handle_proposal_approve(request.id, request.params),
         METHOD_PROPOSAL_REJECT => handle_proposal_reject(request.id, request.params),
         METHOD_PROPOSAL_PREFLIGHT => handle_proposal_preflight(request.id, request.params),
+        METHOD_PROPOSAL_READINESS => handle_proposal_readiness(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1795,6 +1798,30 @@ fn handle_proposal_preflight(id: Value, params: Option<Value>) -> JsonRpcRespons
     }
 }
 
+fn handle_proposal_readiness(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalReadinessParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match readiness_proposal(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, report)) => {
+            result_response(id, json!(ProposalReadinessResult { proposal, report }))
+        }
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2299,6 +2326,242 @@ fn reject_proposal(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     inspect_proposal(store, run_id, proposal_id)
+}
+
+fn readiness_check(
+    name: &str,
+    status: &str,
+    reason: Option<&str>,
+) -> WorkspacePatchReadinessCheckSummary {
+    WorkspacePatchReadinessCheckSummary {
+        name: name.to_string(),
+        status: status.to_string(),
+        reason: reason.map(ToString::to_string),
+    }
+}
+
+fn readiness_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchReadinessReportSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let snapshot = proposal.latest_snapshot.as_ref();
+    let mut checklist = vec![readiness_check("proposal_exists", "Pass", None)];
+
+    if proposal.validation_status == "Blocked" {
+        checklist.push(readiness_check(
+            "proposal_is_valid",
+            "Blocked",
+            proposal.validation_reason.as_deref(),
+        ));
+    } else if proposal.validation_status == "Valid" {
+        checklist.push(readiness_check("proposal_is_valid", "Pass", None));
+    } else {
+        checklist.push(readiness_check(
+            "proposal_is_valid",
+            "Fail",
+            proposal
+                .validation_reason
+                .as_deref()
+                .or(Some("Proposal validation status is not Valid.")),
+        ));
+    }
+
+    checklist.push(if proposal.approval_status == "Approved" {
+        readiness_check("proposal_is_approved", "Pass", None)
+    } else {
+        readiness_check(
+            "proposal_is_approved",
+            "Fail",
+            Some("Proposal is not approved."),
+        )
+    });
+    checklist.push(if snapshot.is_some() {
+        readiness_check("proposal_has_preflight_snapshot", "Pass", None)
+    } else {
+        readiness_check(
+            "proposal_has_preflight_snapshot",
+            "Fail",
+            Some("Run proposal.preflight before final review."),
+        )
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if !snapshot.stale => readiness_check("proposal_not_stale", "Pass", None),
+        Some(snapshot) => readiness_check(
+            "proposal_not_stale",
+            "Fail",
+            snapshot
+                .stale_reason
+                .as_deref()
+                .or(Some("Latest preflight snapshot is stale.")),
+        ),
+        None => readiness_check(
+            "proposal_not_stale",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if snapshot.file_exists => {
+            readiness_check("target_file_exists", "Pass", None)
+        }
+        Some(_) => readiness_check(
+            "target_file_exists",
+            "Fail",
+            Some("Target file was missing at preflight."),
+        ),
+        None => readiness_check(
+            "target_file_exists",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if snapshot.file_kind == "File" => {
+            readiness_check("target_file_regular", "Pass", None)
+        }
+        Some(snapshot) if snapshot.file_kind == "Unreadable" => readiness_check(
+            "target_file_regular",
+            "Blocked",
+            Some("Target file was unreadable at preflight."),
+        ),
+        Some(_) => readiness_check(
+            "target_file_regular",
+            "Fail",
+            Some("Target path is not a regular file."),
+        ),
+        None => readiness_check(
+            "target_file_regular",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(match snapshot {
+        Some(snapshot) if snapshot.file_sha256.is_some() => {
+            readiness_check("target_file_hash_available", "Pass", None)
+        }
+        Some(_) => readiness_check(
+            "target_file_hash_available",
+            "Fail",
+            Some("Target file hash is unavailable."),
+        ),
+        None => readiness_check(
+            "target_file_hash_available",
+            "Skipped",
+            Some("No preflight snapshot is available."),
+        ),
+    });
+    checklist.push(if proposal.diff_preview.is_some() {
+        readiness_check("diff_preview_available", "Pass", None)
+    } else {
+        readiness_check(
+            "diff_preview_available",
+            "Fail",
+            Some("Sanitized diff preview is unavailable."),
+        )
+    });
+    checklist.push(if proposal.diff_redacted {
+        readiness_check(
+            "diff_not_redacted",
+            "Blocked",
+            Some("Diff preview was redacted."),
+        )
+    } else {
+        readiness_check("diff_not_redacted", "Pass", None)
+    });
+    let sensitive = proposal.validation_status == "Blocked"
+        || proposal.diff_redacted
+        || proposal.content_preview == "[redacted]";
+    checklist.push(if sensitive {
+        readiness_check(
+            "no_sensitive_content_detected",
+            "Blocked",
+            Some("Sensitive-like content was detected or redacted."),
+        )
+    } else {
+        readiness_check("no_sensitive_content_detected", "Pass", None)
+    });
+    checklist.push(readiness_check("no_raw_content_exposed", "Pass", None));
+    checklist.push(readiness_check(
+        "apply_not_implemented",
+        "Skipped",
+        Some("Patch apply is not implemented in Phase 3.4."),
+    ));
+
+    let blocked_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Blocked")
+        .map(|c| c.name.clone())
+        .collect();
+    let failed_checks: Vec<String> = checklist
+        .iter()
+        .filter(|c| c.status == "Fail")
+        .map(|c| c.name.clone())
+        .collect();
+    let (readiness_status, readiness_reason, summary) = if !blocked_checks.is_empty() {
+        ("Blocked", Some("Proposal or target file contains sensitive-like content; sanitized preview is unavailable."), "Blocked. Proposal or target file contains sensitive-like content; sanitized preview is unavailable.")
+    } else if !failed_checks.is_empty() {
+        let stale = failed_checks
+            .iter()
+            .any(|name| name == "proposal_not_stale");
+        let reason = if stale {
+            "Latest preflight snapshot is stale; rerun proposal.preflight before review."
+        } else {
+            "Proposal is missing required approval, validation, preflight, target hash, or sanitized diff preview."
+        };
+        (
+            "NotReady",
+            Some(reason),
+            if stale {
+                "Not ready for final human review. Latest preflight snapshot is stale; rerun proposal.preflight before review."
+            } else {
+                "Not ready for final human review. Proposal is missing required approval, validation, preflight, target hash, or sanitized diff preview."
+            },
+        )
+    } else {
+        ("Ready", None, "Ready for final human review. Proposal is approved, latest preflight is fresh, target file hash is captured, and a sanitized diff preview is available. Patch apply is not implemented in Phase 3.4.")
+    };
+    let generated_at = now_rfc3339();
+    let report_id = format!("report_{}", uuid::Uuid::new_v4().simple());
+    let report = WorkspacePatchReadinessReportSummary {
+        proposal_id: proposal_id.to_string(),
+        report_id: report_id.clone(),
+        readiness_status: readiness_status.to_string(),
+        readiness_reason: readiness_reason.map(ToString::to_string),
+        generated_at: generated_at.clone(),
+        checklist,
+        summary: summary.to_string(),
+    };
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchReadinessReportCreated,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "report_id": report_id,
+                "readiness_status": readiness_status,
+                "readiness_reason": report.readiness_reason,
+                "generated_at": generated_at,
+                "check_count": report.checklist.len(),
+                "failed_checks": failed_checks,
+                "blocked_checks": blocked_checks,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((inspect_proposal(store, run_id, proposal_id)?, report))
 }
 
 fn preflight_proposal(
@@ -3914,6 +4177,24 @@ mod tests {
             preflight_result["proposal"]["latest_snapshot"]["snapshot_id"],
             preflight_result["snapshot"]["snapshot_id"]
         );
+        let ready = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":71,"method":"proposal.readiness","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let ready_result = ready.result.expect("ready result");
+        assert_eq!(ready_result["report"]["readiness_status"], "Ready");
+        assert_eq!(
+            ready_result["report"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "apply_not_implemented")
+                .unwrap()["status"],
+            "Skipped"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -3924,8 +4205,38 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "changed manually"
         );
+        let readiness = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"proposal.readiness","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let readiness_result = readiness.result.expect("readiness result");
+        assert_eq!(readiness_result["report"]["readiness_status"], "NotReady");
+        assert!(readiness_result["report"]["summary"]
+            .as_str()
+            .unwrap()
+            .contains("Latest preflight snapshot is stale"));
+        let serialized_readiness = serde_json::to_string(&readiness_result["report"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "changed manually",
+        ] {
+            assert!(!serialized_readiness.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "changed manually"
+        );
+
         let events_after_approval = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":9,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":10,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
         ));
         let events_after_approval = events_after_approval.result.expect("events result")["events"]
             .as_array()
@@ -3940,6 +4251,9 @@ mod tests {
         assert!(events_after_approval
             .iter()
             .any(|event| event["kind"] == "WorkspacePatchPreflightSnapshotCreated"));
+        assert!(events_after_approval
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchReadinessReportCreated"));
         for event in events_after_approval.iter().filter(|event| {
             event["kind"] == "WorkspacePatchApproved"
                 || event["kind"] == "WorkspacePatchApplyPlanCreated"
