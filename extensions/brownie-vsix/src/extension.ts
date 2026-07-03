@@ -501,6 +501,23 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
+  const proposalAuditTrailCommand = vscode.commands.registerCommand('brownie.proposalAuditTrail', async () => {
+    const runId = await vscode.window.showInputBox({ prompt: 'Run ID', placeHolder: 'run_...', ignoreFocusOut: true });
+    if (runId === undefined) { return; }
+    const proposalId = await vscode.window.showInputBox({ prompt: 'Proposal ID', placeHolder: 'proposal_...', ignoreFocusOut: true });
+    if (proposalId === undefined) { return; }
+    try {
+      const result = await runtimeClient.auditTrailProposal(runId.trim(), proposalId.trim());
+      output.appendLine(`proposal.auditTrail:`);
+      output.appendLine(JSON.stringify(result, null, 2));
+      output.show(true);
+      await vscode.window.showInformationMessage(`Brownie patch proposal audit trail: ${result.audit_trail.event_count} events (no apply performed)`);
+    } catch (error) {
+      output.appendLine(`proposal.auditTrail failed: ${formatError(error)}`);
+      await vscode.window.showErrorMessage(`Brownie proposal audit trail failed: ${formatError(error)}`);
+    }
+  });
+
   const toolExecuteReadCommand = vscode.commands.registerCommand('brownie.toolExecuteRead', async () => {
     const modeIdInput = await vscode.window.showInputBox({
       prompt: 'Mode ID',
@@ -536,7 +553,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }
   });
 
-  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand, proposalApplyCapabilityCommand, proposalApplyDryRunCommand, proposalApplyDryRunHistoryCommand);
+  context.subscriptions.push(output, statusCommand, llmStatusCommand, llmHealthCommand, runtimeConfigCommand, modeListCommand, taskStartCommand, taskListCommand, permissionCheckCommand, taskRunCommand, toolPlanCommand, toolIntentParseCommand, toolExecuteReadCommand, taskInspectCommand, runInspectCommand, proposalListCommand, proposalInspectCommand, proposalApproveCommand, proposalRejectCommand, proposalPreflightCommand, proposalReadinessCommand, proposalApplyCapabilityCommand, proposalApplyDryRunCommand, proposalApplyDryRunHistoryCommand, proposalAuditTrailCommand);
 }
 
 export function deactivate(): void {
