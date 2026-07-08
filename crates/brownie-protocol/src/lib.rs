@@ -393,6 +393,12 @@ pub struct ProposalReviewBundleParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewVerdictParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -607,6 +613,19 @@ pub struct WorkspacePatchReviewBundleSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewVerdictSummary {
+    pub proposal_id: String,
+    pub verdict_status: String,
+    pub verdict_reason: String,
+    pub evidence_status: String,
+    pub blocking_reasons: Vec<String>,
+    pub missing_signals: Vec<String>,
+    pub latest_review_bundle_status: String,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -669,6 +688,12 @@ pub struct ProposalAuditTrailResult {
 pub struct ProposalReviewBundleResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub review_bundle: WorkspacePatchReviewBundleSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewVerdictResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub review_verdict: WorkspacePatchReviewVerdictSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
