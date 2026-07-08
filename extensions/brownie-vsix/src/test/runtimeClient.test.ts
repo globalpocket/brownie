@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -211,6 +211,12 @@ describe('protocol validation', () => {
     expect(isProposalAuditTrailResult({ proposal: result.proposals[0], audit_trail: { ...auditTrail, raw_input: { diff: 'raw' } } })).toBe(false);
     expect(isProposalAuditTrailResult({ proposal: result.proposals[0], audit_trail: { ...auditTrail, events: [{ ...auditEntry, metadata: { ...auditEntry.metadata, patch: 'raw' } }] } })).toBe(false);
     expect(isProposalAuditTrailResult({ proposal: result.proposals[0], audit_trail: { ...auditTrail, latest_event: { ...auditEntry, file_content: 'secret' } } })).toBe(false);
+    const reviewSignal = { status: 'Ready', reason: null, generated_at: '2026-07-01T00:00:00Z', source_id: 'report_1' };
+    const reviewBundle = { proposal_id: 'proposal_1', review_status: 'Complete', review_reason: 'All proposal review signals are available for final human review.', latest_readiness: reviewSignal, latest_apply_capability: { status: 'false', reason: 'Patch apply is not implemented in Phase 3.5.', generated_at: '2026-07-01T00:00:00Z', source_id: 'apply_capability_1' }, latest_apply_dry_run: { status: 'Completed', reason: 'Dry run completed without applying a patch or changing workspace files.', generated_at: '2026-07-01T00:00:00Z', source_id: 'apply_dry_run_1' }, audit_event_count: 1, latest_audit_event: auditEntry, required_next_actions: [], generated_at: '2026-07-01T00:01:00Z' };
+    expect(isProposalReviewBundleResult({ proposal: result.proposals[0], review_bundle: reviewBundle })).toBe(true);
+    expect(isProposalReviewBundleResult({ proposal: result.proposals[0], review_bundle: { ...reviewBundle, patch: 'raw' } })).toBe(false);
+    expect(isProposalReviewBundleResult({ proposal: result.proposals[0], review_bundle: { ...reviewBundle, latest_readiness: { ...reviewSignal, file_content: 'secret' } } })).toBe(false);
+    expect(isProposalReviewBundleResult({ proposal: result.proposals[0], review_bundle: { ...reviewBundle, latest_audit_event: { ...auditEntry, metadata: { diff: 'raw' } } } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -503,6 +509,15 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, audit_trail } });
     await expect(new RuntimeClient(transport).auditTrail('run_1', 'proposal_1')).resolves.toEqual({ proposal, audit_trail });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.auditTrail', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
+  });
+
+  it('creates a proposal.reviewBundle request', async () => {
+    const proposal = { proposal_id: 'proposal_1', path: 'README.md', operation: 'replace_file', content_preview: 'new', content_chars: 3, truncated: false, validation_status: 'Valid', validation_reason: null, diff_preview: '--- a/README.md', diff_truncated: false, diff_redacted: false, approval_status: 'Approved', approval_reason: 'ok', approved_at: '2026-06-30T00:00:00Z', rejected_at: null, approval_reason_redacted: false };
+    const entry = { event_id: 'event_1', audit_event: 'apply_dry_run_checked', event_kind: 'WorkspacePatchApplyDryRunChecked', timestamp: '2026-07-01T00:00:00Z', proposal_id: 'proposal_1', summary: 'Apply dry-run check recorded without applying a patch.', metadata: { dry_run_id: 'apply_dry_run_1', no_patch_applied: true, apply_executed: false, workspace_files_changed: false } };
+    const review_bundle = { proposal_id: 'proposal_1', review_status: 'Complete', review_reason: 'All proposal review signals are available for final human review.', latest_readiness: { status: 'Ready', reason: null, generated_at: '2026-07-01T00:00:00Z', source_id: 'report_1' }, latest_apply_capability: { status: 'false', reason: 'Patch apply is not implemented in Phase 3.5.', generated_at: '2026-07-01T00:00:00Z', source_id: 'apply_capability_1' }, latest_apply_dry_run: { status: 'Completed', reason: 'Dry run completed without applying a patch or changing workspace files.', generated_at: '2026-07-01T00:00:00Z', source_id: 'apply_dry_run_1' }, audit_event_count: 1, latest_audit_event: entry, required_next_actions: [], generated_at: '2026-07-01T00:01:00Z' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, review_bundle } });
+    await expect(new RuntimeClient(transport).reviewBundle('run_1', 'proposal_1')).resolves.toEqual({ proposal, review_bundle });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewBundle', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

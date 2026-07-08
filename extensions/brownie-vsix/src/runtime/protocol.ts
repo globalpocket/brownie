@@ -380,6 +380,26 @@ export interface WorkspacePatchAuditTrailSummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewSignalSummary {
+  status: string;
+  reason: string | null;
+  generated_at: string | null;
+  source_id: string | null;
+}
+
+export interface WorkspacePatchReviewBundleSummary {
+  proposal_id: string;
+  review_status: 'Complete' | 'NeedsAction';
+  review_reason: string;
+  latest_readiness: WorkspacePatchReviewSignalSummary | null;
+  latest_apply_capability: WorkspacePatchReviewSignalSummary | null;
+  latest_apply_dry_run: WorkspacePatchReviewSignalSummary | null;
+  audit_event_count: number;
+  latest_audit_event: WorkspacePatchAuditTrailEntry | null;
+  required_next_actions: string[];
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -412,6 +432,11 @@ export interface ProposalApplyDryRunHistoryResult {
 export interface ProposalAuditTrailResult {
   proposal: WorkspacePatchProposalSummary;
   audit_trail: WorkspacePatchAuditTrailSummary;
+}
+
+export interface ProposalReviewBundleResult {
+  proposal: WorkspacePatchProposalSummary;
+  review_bundle: WorkspacePatchReviewBundleSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -679,6 +704,14 @@ export function isWorkspacePatchAuditTrailSummary(value: unknown): value is Work
   return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.event_count) && (value.latest_event === null || isWorkspacePatchAuditTrailEntry(value.latest_event)) && Array.isArray(value.events) && value.events.every(isWorkspacePatchAuditTrailEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewSignalSummary(value: unknown): value is WorkspacePatchReviewSignalSummary {
+  return isRecord(value) && typeof value.status === 'string' && (typeof value.reason === 'string' || value.reason === null) && (typeof value.generated_at === 'string' || value.generated_at === null) && (typeof value.source_id === 'string' || value.source_id === null) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReviewBundleSummary(value: unknown): value is WorkspacePatchReviewBundleSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && (value.review_status === 'Complete' || value.review_status === 'NeedsAction') && typeof value.review_reason === 'string' && (value.latest_readiness === null || isWorkspacePatchReviewSignalSummary(value.latest_readiness)) && (value.latest_apply_capability === null || isWorkspacePatchReviewSignalSummary(value.latest_apply_capability)) && (value.latest_apply_dry_run === null || isWorkspacePatchReviewSignalSummary(value.latest_apply_dry_run)) && isNonNegativeInteger(value.audit_event_count) && (value.latest_audit_event === null || isWorkspacePatchAuditTrailEntry(value.latest_audit_event)) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -746,6 +779,10 @@ export function isProposalApplyDryRunHistoryResult(value: unknown): value is Pro
 
 export function isProposalAuditTrailResult(value: unknown): value is ProposalAuditTrailResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchAuditTrailSummary(value.audit_trail) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewBundleResult(value: unknown): value is ProposalReviewBundleResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchReviewBundleSummary(value.review_bundle) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
