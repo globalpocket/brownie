@@ -88,3 +88,15 @@ The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only met
 The dry-run result includes `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, `workspace_files_changed`, and a bounded checklist. Phase 3.6 always reports `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
 
 The runtime appends `WorkspacePatchApplyDryRunChecked` with summary-only metadata. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.7 apply dry-run history
+
+`proposal.applyDryRunHistory` accepts `{ "run_id": string, "proposal_id": string }` for an existing proposal and returns `{ "proposal": WorkspacePatchProposalSummary, "history": WorkspacePatchApplyDryRunHistorySummary }`. It reconstructs the dry-run count, latest dry-run check, and 10 newest dry-run entries from existing sanitized `WorkspacePatchApplyDryRunChecked` ledger events.
+
+The method appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.8 proposal audit trail inspection
+
+`proposal.auditTrail` accepts `{ "run_id": string, "proposal_id": string }` for an existing proposal and returns `{ "proposal": WorkspacePatchProposalSummary, "audit_trail": WorkspacePatchAuditTrailSummary }`. The audit trail reconstructs the ordered proposal lifecycle from existing sanitized ledger events: proposal creation, approval or rejection, preflight snapshots, apply plans, readiness checks, apply capability checks, and apply dry-run checks.
+
+The response includes `proposal_id`, total `event_count`, `latest_event`, a bounded ordered `events` list, and `generated_at`. Audit entries contain stable event names, timestamps, summaries, and selected summary-only metadata. The method appends no ledger event and must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
