@@ -337,14 +337,6 @@ Each history entry is summary-only metadata reconstructed from sanitized `Worksp
 
 `proposal.auditTrail` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "audit_trail": WorkspacePatchAuditTrailSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
 
-`WorkspacePatchAuditTrailSummary` contains `proposal_id`, total `event_count`, `latest_event`, bounded ordered `events`, and `generated_at`. Each `WorkspacePatchAuditTrailEntry` contains `event_id`, stable `event_name`, `event_kind`, `timestamp`, `proposal_id`, `summary`, and selected summary-only `metadata`.
-
-`proposal.auditTrail` reconstructs proposal creation, approval or rejection, preflight snapshots, apply plans, readiness checks, apply capability checks, and apply dry-run checks from existing sanitized ledger events. It appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
-
-## Phase 3.8 `proposal.auditTrail`
-
-`proposal.auditTrail` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "audit_trail": WorkspacePatchAuditTrailSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
-
 `WorkspacePatchAuditTrailSummary` contains `proposal_id`, `event_count`, `latest_event`, `events`, and `generated_at`. `event_count` reports the total proposal lifecycle entries reconstructed from the ledger. `events` contains up to the 50 newest lifecycle entries in ledger order, and `latest_event` identifies the newest lifecycle entry even when the returned list is bounded.
 
 Each `WorkspacePatchAuditTrailEntry` contains `event_id`, `audit_event`, `event_kind`, `timestamp`, `proposal_id`, `summary`, and `metadata`. Audit event names are stable high-level lifecycle names such as `proposal_created`, `proposal_approved`, `proposal_rejected`, `preflight_snapshot_created`, `apply_plan_created`, `readiness_checked`, `apply_capability_checked`, and `apply_dry_run_checked`.
