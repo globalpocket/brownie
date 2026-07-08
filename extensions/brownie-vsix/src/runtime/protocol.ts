@@ -400,6 +400,18 @@ export interface WorkspacePatchReviewBundleSummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewVerdictSummary {
+  proposal_id: string;
+  verdict_status: 'ReadyForHumanReview' | 'NeedsSignals' | 'BlockedForReview';
+  verdict_reason: string;
+  evidence_status: 'Complete' | 'Incomplete' | 'Blocked';
+  blocking_reasons: string[];
+  missing_signals: string[];
+  latest_review_bundle_status: 'Complete' | 'NeedsAction';
+  apply_authorized: false;
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -437,6 +449,11 @@ export interface ProposalAuditTrailResult {
 export interface ProposalReviewBundleResult {
   proposal: WorkspacePatchProposalSummary;
   review_bundle: WorkspacePatchReviewBundleSummary;
+}
+
+export interface ProposalReviewVerdictResult {
+  proposal: WorkspacePatchProposalSummary;
+  review_verdict: WorkspacePatchReviewVerdictSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -712,6 +729,10 @@ export function isWorkspacePatchReviewBundleSummary(value: unknown): value is Wo
   return isRecord(value) && typeof value.proposal_id === 'string' && (value.review_status === 'Complete' || value.review_status === 'NeedsAction') && typeof value.review_reason === 'string' && (value.latest_readiness === null || isWorkspacePatchReviewSignalSummary(value.latest_readiness)) && (value.latest_apply_capability === null || isWorkspacePatchReviewSignalSummary(value.latest_apply_capability)) && (value.latest_apply_dry_run === null || isWorkspacePatchReviewSignalSummary(value.latest_apply_dry_run)) && isNonNegativeInteger(value.audit_event_count) && (value.latest_audit_event === null || isWorkspacePatchAuditTrailEntry(value.latest_audit_event)) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewVerdictSummary(value: unknown): value is WorkspacePatchReviewVerdictSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && (value.verdict_status === 'ReadyForHumanReview' || value.verdict_status === 'NeedsSignals' || value.verdict_status === 'BlockedForReview') && typeof value.verdict_reason === 'string' && (value.evidence_status === 'Complete' || value.evidence_status === 'Incomplete' || value.evidence_status === 'Blocked') && Array.isArray(value.blocking_reasons) && value.blocking_reasons.every((reason) => typeof reason === 'string') && Array.isArray(value.missing_signals) && value.missing_signals.every((signal) => typeof signal === 'string') && (value.latest_review_bundle_status === 'Complete' || value.latest_review_bundle_status === 'NeedsAction') && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -783,6 +804,10 @@ export function isProposalAuditTrailResult(value: unknown): value is ProposalAud
 
 export function isProposalReviewBundleResult(value: unknown): value is ProposalReviewBundleResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchReviewBundleSummary(value.review_bundle) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewVerdictResult(value: unknown): value is ProposalReviewVerdictResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchReviewVerdictSummary(value.review_verdict) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

@@ -25,22 +25,24 @@ use brownie_protocol::{
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
     ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, RunEventsParams, RunEventsResult, RunInspectParams,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
-    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
-    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    ProposalReviewBundleResult, ProposalReviewVerdictParams, ProposalReviewVerdictResult,
+    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
+    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
+    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
     WorkspacePatchReviewBundleSummary, WorkspacePatchReviewSignalSummary,
+    WorkspacePatchReviewVerdictSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -84,6 +86,7 @@ const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
 const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory";
 const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
 const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
+const METHOD_PROPOSAL_REVIEW_VERDICT: &str = "proposal.reviewVerdict";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -151,6 +154,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_PROPOSAL_AUDIT_TRAIL => handle_proposal_audit_trail(request.id, request.params),
         METHOD_PROPOSAL_REVIEW_BUNDLE => handle_proposal_review_bundle(request.id, request.params),
+        METHOD_PROPOSAL_REVIEW_VERDICT => {
+            handle_proposal_review_verdict(request.id, request.params)
+        }
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1983,6 +1989,34 @@ fn handle_proposal_review_bundle(id: Value, params: Option<Value>) -> JsonRpcRes
     }
 }
 
+fn handle_proposal_review_verdict(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewVerdictParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_verdict(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, review_verdict)) => result_response(
+            id,
+            json!(ProposalReviewVerdictResult {
+                proposal,
+                review_verdict
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3054,6 +3088,160 @@ fn inspect_proposal_review_bundle(
         generated_at: now_rfc3339(),
     };
     Ok((proposal, review_bundle))
+}
+
+fn inspect_proposal_review_verdict(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchReviewVerdictSummary,
+    ),
+    String,
+> {
+    let (proposal, review_bundle) = inspect_proposal_review_bundle(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let missing_signals = review_bundle.required_next_actions.clone();
+    let mut blocking_reasons = Vec::new();
+
+    if proposal.validation_status == "Blocked" {
+        blocking_reasons.push(
+            proposal
+                .validation_reason
+                .clone()
+                .unwrap_or_else(|| "Proposal validation is blocked.".to_string()),
+        );
+    }
+    if proposal.diff_redacted || proposal.content_preview == "[redacted]" {
+        blocking_reasons
+            .push("Proposal review evidence is redacted or sensitive-like.".to_string());
+    }
+
+    if let Some(readiness) = &review_bundle.latest_readiness {
+        if readiness.status != "Ready" {
+            blocking_reasons.push(format!(
+                "Latest readiness is {}{}",
+                readiness.status,
+                reason_suffix(readiness.reason.as_deref())
+            ));
+        }
+    }
+
+    if let Some(capability) = &review_bundle.latest_apply_capability {
+        if capability.status == "true" {
+            blocking_reasons
+                .push("Apply capability indicates apply may be available; final review verdict remains inspect-only.".to_string());
+        }
+    }
+
+    if let Some(dry_run) = &review_bundle.latest_apply_dry_run {
+        if dry_run.status != "Completed" {
+            blocking_reasons.push(format!(
+                "Latest apply dry-run is {}{}",
+                dry_run.status,
+                reason_suffix(dry_run.reason.as_deref())
+            ));
+        }
+        match latest_apply_dry_run_safety(&events, proposal_id, dry_run.source_id.as_deref()) {
+            Some(safety) => {
+                if !safety.no_patch_applied {
+                    blocking_reasons.push(
+                        "Latest apply dry-run does not prove no patch was applied.".to_string(),
+                    );
+                }
+                if safety.apply_executed {
+                    blocking_reasons.push(
+                        "Latest apply dry-run indicates apply execution occurred.".to_string(),
+                    );
+                }
+                if safety.workspace_files_changed {
+                    blocking_reasons.push(
+                        "Latest apply dry-run indicates workspace files changed.".to_string(),
+                    );
+                }
+            }
+            None => blocking_reasons
+                .push("Latest apply dry-run safety evidence is incomplete.".to_string()),
+        }
+    }
+
+    let (verdict_status, evidence_status, verdict_reason) = if !missing_signals.is_empty() {
+        (
+            "NeedsSignals".to_string(),
+            "Incomplete".to_string(),
+            format!(
+                "Missing proposal review signals: {}.",
+                missing_signals.join(", ")
+            ),
+        )
+    } else if !blocking_reasons.is_empty() {
+        (
+            "BlockedForReview".to_string(),
+            "Blocked".to_string(),
+            "Recorded review evidence blocks final human review.".to_string(),
+        )
+    } else {
+        (
+            "ReadyForHumanReview".to_string(),
+            "Complete".to_string(),
+            "Recorded review evidence supports final human review; patch apply remains unauthorized.".to_string(),
+        )
+    };
+
+    let review_verdict = WorkspacePatchReviewVerdictSummary {
+        proposal_id: proposal_id.to_string(),
+        verdict_status,
+        verdict_reason,
+        evidence_status,
+        blocking_reasons,
+        missing_signals,
+        latest_review_bundle_status: review_bundle.review_status,
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    };
+    Ok((proposal, review_verdict))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ApplyDryRunSafety {
+    no_patch_applied: bool,
+    apply_executed: bool,
+    workspace_files_changed: bool,
+}
+
+fn latest_apply_dry_run_safety(
+    events: &[LedgerEvent],
+    proposal_id: &str,
+    dry_run_id: Option<&str>,
+) -> Option<ApplyDryRunSafety> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyDryRunChecked {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            return None;
+        }
+        if let Some(dry_run_id) = dry_run_id {
+            if payload.get("dry_run_id").and_then(Value::as_str) != Some(dry_run_id) {
+                return None;
+            }
+        }
+        Some(ApplyDryRunSafety {
+            no_patch_applied: payload.get("no_patch_applied")?.as_bool()?,
+            apply_executed: payload.get("apply_executed")?.as_bool()?,
+            workspace_files_changed: payload.get("workspace_files_changed")?.as_bool()?,
+        })
+    })
+}
+
+fn reason_suffix(reason: Option<&str>) -> String {
+    reason
+        .filter(|reason| !reason.trim().is_empty())
+        .map(|reason| format!(": {reason}."))
+        .unwrap_or_else(|| ".".to_string())
 }
 
 fn latest_review_signal(
@@ -5245,6 +5433,44 @@ mod tests {
             events_after_missing_review.len(),
             events_before_missing_review.len()
         );
+        let missing_review_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":54,"method":"proposal.reviewVerdict","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let missing_review_verdict_result = missing_review_verdict
+            .result
+            .expect("missing review verdict result");
+        assert_eq!(
+            missing_review_verdict_result["review_verdict"]["verdict_status"],
+            "NeedsSignals"
+        );
+        assert_eq!(
+            missing_review_verdict_result["review_verdict"]["evidence_status"],
+            "Incomplete"
+        );
+        assert_eq!(
+            missing_review_verdict_result["review_verdict"]["apply_authorized"],
+            false
+        );
+        assert!(
+            missing_review_verdict_result["review_verdict"]["missing_signals"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|signal| signal == "proposal.readiness")
+        );
+        let events_after_missing_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":55,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_missing_verdict = events_after_missing_verdict
+            .result
+            .expect("events after missing verdict")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_missing_verdict.len(),
+            events_after_missing_review.len()
+        );
         let approve = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct sk-test-secret"}}}}"#
         ));
@@ -5648,6 +5874,71 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(events_after_review_bundle.len(), events_after_audit.len());
+        let review_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":739,"method":"proposal.reviewVerdict","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let review_verdict_result = review_verdict.result.expect("review verdict result");
+        assert_eq!(
+            review_verdict_result["review_verdict"]["proposal_id"],
+            proposal_id
+        );
+        assert_eq!(
+            review_verdict_result["review_verdict"]["verdict_status"],
+            "ReadyForHumanReview"
+        );
+        assert_eq!(
+            review_verdict_result["review_verdict"]["evidence_status"],
+            "Complete"
+        );
+        assert_eq!(
+            review_verdict_result["review_verdict"]["latest_review_bundle_status"],
+            "Complete"
+        );
+        assert_eq!(
+            review_verdict_result["review_verdict"]["apply_authorized"],
+            false
+        );
+        assert!(review_verdict_result["review_verdict"]["blocking_reasons"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        assert!(review_verdict_result["review_verdict"]["missing_signals"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+        let serialized_review_verdict =
+            serde_json::to_string(&review_verdict_result["review_verdict"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_review_verdict.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_review_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":740,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_review_verdict = events_after_review_verdict
+            .result
+            .expect("events after review verdict")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_review_verdict.len(),
+            events_after_review_bundle.len()
+        );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -5686,6 +5977,54 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "changed manually"
+        );
+        let blocked_review_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":91,"method":"proposal.reviewVerdict","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let blocked_review_verdict_result = blocked_review_verdict
+            .result
+            .expect("blocked review verdict result");
+        assert_eq!(
+            blocked_review_verdict_result["review_verdict"]["verdict_status"],
+            "BlockedForReview"
+        );
+        assert_eq!(
+            blocked_review_verdict_result["review_verdict"]["evidence_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            blocked_review_verdict_result["review_verdict"]["apply_authorized"],
+            false
+        );
+        assert!(
+            blocked_review_verdict_result["review_verdict"]["blocking_reasons"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|reason| reason
+                    .as_str()
+                    .unwrap()
+                    .contains("Latest readiness is NotReady"))
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "changed manually"
+        );
+        let events_after_blocked_verdict = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":92,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_blocked_verdict = events_after_blocked_verdict
+            .result
+            .expect("events after blocked verdict")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_blocked_verdict
+                .iter()
+                .filter(|event| event["kind"] == "WorkspacePatchReadinessReportCreated")
+                .count(),
+            2
         );
 
         let events_after_approval = parse_line(&format!(
