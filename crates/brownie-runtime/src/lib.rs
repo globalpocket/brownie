@@ -3167,7 +3167,13 @@ fn inspect_proposal_review_verdict(
         }
     }
 
-    let (verdict_status, evidence_status, verdict_reason) = if !missing_signals.is_empty() {
+    let (verdict_status, evidence_status, verdict_reason) = if !blocking_reasons.is_empty() {
+        (
+            "BlockedForReview".to_string(),
+            "Blocked".to_string(),
+            "Recorded review evidence blocks final human review.".to_string(),
+        )
+    } else if !missing_signals.is_empty() {
         (
             "NeedsSignals".to_string(),
             "Incomplete".to_string(),
@@ -3175,12 +3181,6 @@ fn inspect_proposal_review_verdict(
                 "Missing proposal review signals: {}.",
                 missing_signals.join(", ")
             ),
-        )
-    } else if !blocking_reasons.is_empty() {
-        (
-            "BlockedForReview".to_string(),
-            "Blocked".to_string(),
-            "Recorded review evidence blocks final human review.".to_string(),
         )
     } else {
         (
@@ -6351,6 +6351,48 @@ mod tests {
             "Blocked"
         );
         assert!(!report.summary.contains("original README"));
+    }
+
+    #[test]
+    fn proposal_review_verdict_prioritizes_blocking_evidence_over_missing_signals() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "review verdict".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("start task");
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "proposal_blocked_missing_signals",
+            "Blocked",
+            None,
+            true,
+        );
+
+        let (_proposal, verdict) = inspect_proposal_review_verdict(
+            &store,
+            &record.run_id,
+            "proposal_blocked_missing_signals",
+        )
+        .expect("review verdict");
+
+        assert_eq!(verdict.verdict_status, "BlockedForReview");
+        assert_eq!(verdict.evidence_status, "Blocked");
+        assert!(!verdict.blocking_reasons.is_empty());
+        assert!(verdict
+            .missing_signals
+            .iter()
+            .any(|signal| signal == "proposal.readiness"));
+        assert!(!verdict.apply_authorized);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
     }
 
     #[test]
