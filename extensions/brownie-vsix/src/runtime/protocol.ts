@@ -362,6 +362,24 @@ export interface WorkspacePatchApplyDryRunHistorySummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchAuditTrailEntry {
+  proposal_id: string;
+  event_id: string;
+  event_kind: string;
+  audit_event: string;
+  timestamp: string;
+  summary: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface WorkspacePatchAuditTrailSummary {
+  proposal_id: string;
+  event_count: number;
+  latest_event: WorkspacePatchAuditTrailEntry | null;
+  events: WorkspacePatchAuditTrailEntry[];
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -389,6 +407,11 @@ export interface ProposalApplyDryRunResult {
 export interface ProposalApplyDryRunHistoryResult {
   proposal: WorkspacePatchProposalSummary;
   history: WorkspacePatchApplyDryRunHistorySummary;
+}
+
+export interface ProposalAuditTrailResult {
+  proposal: WorkspacePatchProposalSummary;
+  audit_trail: WorkspacePatchAuditTrailSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -593,6 +616,16 @@ export function hasNoForbiddenRawFields(value: object): boolean {
   return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content');
 }
 
+function hasNoForbiddenRawFieldsDeep(value: unknown): boolean {
+  if (Array.isArray(value)) {
+    return value.every(hasNoForbiddenRawFieldsDeep);
+  }
+  if (!isRecord(value)) {
+    return true;
+  }
+  return hasNoForbiddenRawFields(value) && Object.values(value).every(hasNoForbiddenRawFieldsDeep);
+}
+
 export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
   return (
     isRecord(value) &&
@@ -642,6 +675,14 @@ export function isWorkspacePatchApplyDryRunHistoryEntry(value: unknown): value i
 
 export function isWorkspacePatchApplyDryRunHistorySummary(value: unknown): value is WorkspacePatchApplyDryRunHistorySummary {
   return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.dry_run_count) && (value.latest_dry_run === null || isWorkspacePatchApplyDryRunHistoryEntry(value.latest_dry_run)) && Array.isArray(value.dry_runs) && value.dry_runs.every(isWorkspacePatchApplyDryRunHistoryEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchAuditTrailEntry(value: unknown): value is WorkspacePatchAuditTrailEntry {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.event_id === 'string' && typeof value.event_kind === 'string' && typeof value.audit_event === 'string' && typeof value.timestamp === 'string' && typeof value.summary === 'string' && isRecord(value.metadata) && hasNoForbiddenRawFields(value) && hasNoForbiddenRawFieldsDeep(value.metadata);
+}
+
+export function isWorkspacePatchAuditTrailSummary(value: unknown): value is WorkspacePatchAuditTrailSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.event_count) && (value.latest_event === null || isWorkspacePatchAuditTrailEntry(value.latest_event)) && Array.isArray(value.events) && value.events.every(isWorkspacePatchAuditTrailEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
@@ -707,6 +748,10 @@ export function isProposalApplyDryRunResult(value: unknown): value is ProposalAp
 
 export function isProposalApplyDryRunHistoryResult(value: unknown): value is ProposalApplyDryRunHistoryResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyDryRunHistorySummary(value.history) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalAuditTrailResult(value: unknown): value is ProposalAuditTrailResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchAuditTrailSummary(value.audit_trail) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

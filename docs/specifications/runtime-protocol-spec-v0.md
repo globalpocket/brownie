@@ -332,3 +332,13 @@ The method uses the reconstructed proposal summary and latest preflight snapshot
 Each history entry is summary-only metadata reconstructed from sanitized `WorkspacePatchApplyDryRunChecked` payloads: `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, and `workspace_files_changed`. Every exposed entry must report `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
 
 `proposal.applyDryRunHistory` appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.8 `proposal.auditTrail`
+
+`proposal.auditTrail` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "audit_trail": WorkspacePatchAuditTrailSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchAuditTrailSummary` contains `proposal_id`, `event_count`, `latest_event`, `events`, and `generated_at`. `event_count` is the total number of lifecycle entries reconstructed for the proposal, while `events` contains up to the 50 newest lifecycle entries in ledger order. `latest_event` identifies the newest lifecycle entry even when the returned list is bounded.
+
+Each `WorkspacePatchAuditTrailEntry` contains `proposal_id`, `event_id`, `event_kind`, `audit_event`, `timestamp`, `summary`, and `metadata`. Audit event names are stable high-level lifecycle names such as `proposal_created`, `proposal_approved`, `proposal_rejected`, `preflight_snapshot_created`, `apply_plan_created`, `readiness_checked`, `apply_capability_checked`, and `apply_dry_run_checked`.
+
+`proposal.auditTrail` is reconstructed from existing sanitized ledger events and appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
