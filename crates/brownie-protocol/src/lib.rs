@@ -381,6 +381,12 @@ pub struct ProposalApplyDryRunHistoryParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalAuditTrailParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -553,6 +559,24 @@ pub struct WorkspacePatchApplyDryRunHistorySummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalAuditTrailEntry {
+    pub proposal_id: String,
+    pub event_name: String,
+    pub ledger_kind: String,
+    pub occurred_at: String,
+    pub metadata: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalAuditTrailSummary {
+    pub proposal_id: String,
+    pub event_count: usize,
+    pub latest_event: Option<ProposalAuditTrailEntry>,
+    pub events: Vec<ProposalAuditTrailEntry>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -603,6 +627,12 @@ pub struct ProposalApplyDryRunResult {
 pub struct ProposalApplyDryRunHistoryResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub history: WorkspacePatchApplyDryRunHistorySummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalAuditTrailResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub audit_trail: ProposalAuditTrailSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

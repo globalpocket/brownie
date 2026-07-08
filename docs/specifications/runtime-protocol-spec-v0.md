@@ -332,3 +332,13 @@ The method uses the reconstructed proposal summary and latest preflight snapshot
 Each history entry is summary-only metadata reconstructed from sanitized `WorkspacePatchApplyDryRunChecked` payloads: `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, and `workspace_files_changed`. Every exposed entry must report `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
 
 `proposal.applyDryRunHistory` appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.8 `proposal.auditTrail`
+
+`proposal.auditTrail` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "audit_trail": ProposalAuditTrailSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`ProposalAuditTrailSummary` contains `proposal_id`, `event_count`, `latest_event`, `events`, and `generated_at`. `events` is ordered by the original ledger order and includes summary-only lifecycle entries for proposal creation, approval or rejection, preflight snapshots, readiness checks, apply plans, apply capability checks, and apply dry-run checks. `latest_event` is the newest matching lifecycle entry or `null` when no matching lifecycle entries exist.
+
+Each `ProposalAuditTrailEntry` contains `proposal_id`, `event_name`, `ledger_kind`, `occurred_at`, and `metadata`. `event_name` is a stable high-level lifecycle name such as `proposal_created`, `proposal_approved`, `preflight_snapshot_created`, `readiness_checked`, `apply_capability_checked`, or `apply_dry_run_checked`. `metadata` is reconstructed from sanitized ledger payload fields and excludes raw content, raw diffs, diff previews, content previews, path fields, raw input, canonical paths, and absolute paths.
+
+`proposal.auditTrail` appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

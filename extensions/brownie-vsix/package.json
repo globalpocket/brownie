@@ -112,6 +112,10 @@
       {
         "command": "brownie.proposalApplyDryRunHistory",
         "title": "Brownie: Patch Proposal Apply Dry Run History"
+      },
+      {
+        "command": "brownie.proposalAuditTrail",
+        "title": "Brownie: Patch Proposal Audit Trail"
       }
     ]
   },

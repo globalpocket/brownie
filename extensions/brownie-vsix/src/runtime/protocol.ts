@@ -362,6 +362,22 @@ export interface WorkspacePatchApplyDryRunHistorySummary {
   generated_at: string;
 }
 
+export interface ProposalAuditTrailEntry {
+  proposal_id: string;
+  event_name: string;
+  ledger_kind: string;
+  occurred_at: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface ProposalAuditTrailSummary {
+  proposal_id: string;
+  event_count: number;
+  latest_event: ProposalAuditTrailEntry | null;
+  events: ProposalAuditTrailEntry[];
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -389,6 +405,11 @@ export interface ProposalApplyDryRunResult {
 export interface ProposalApplyDryRunHistoryResult {
   proposal: WorkspacePatchProposalSummary;
   history: WorkspacePatchApplyDryRunHistorySummary;
+}
+
+export interface ProposalAuditTrailResult {
+  proposal: WorkspacePatchProposalSummary;
+  audit_trail: ProposalAuditTrailSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -644,6 +665,14 @@ export function isWorkspacePatchApplyDryRunHistorySummary(value: unknown): value
   return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.dry_run_count) && (value.latest_dry_run === null || isWorkspacePatchApplyDryRunHistoryEntry(value.latest_dry_run)) && Array.isArray(value.dry_runs) && value.dry_runs.every(isWorkspacePatchApplyDryRunHistoryEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isProposalAuditTrailEntry(value: unknown): value is ProposalAuditTrailEntry {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.event_name === 'string' && typeof value.ledger_kind === 'string' && typeof value.occurred_at === 'string' && isRecord(value.metadata) && hasNoForbiddenRawFields(value) && hasNoForbiddenRawFields(value.metadata);
+}
+
+export function isProposalAuditTrailSummary(value: unknown): value is ProposalAuditTrailSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && isNonNegativeInteger(value.event_count) && (value.latest_event === null || isProposalAuditTrailEntry(value.latest_event)) && Array.isArray(value.events) && value.events.every(isProposalAuditTrailEntry) && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -707,6 +736,10 @@ export function isProposalApplyDryRunResult(value: unknown): value is ProposalAp
 
 export function isProposalApplyDryRunHistoryResult(value: unknown): value is ProposalApplyDryRunHistoryResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchApplyDryRunHistorySummary(value.history) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalAuditTrailResult(value: unknown): value is ProposalAuditTrailResult {
+  return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isProposalAuditTrailSummary(value.audit_trail) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

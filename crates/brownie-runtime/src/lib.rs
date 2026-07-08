@@ -20,18 +20,19 @@ use brownie_protocol::{
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
     ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailEntry, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalAuditTrailSummary, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
+    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult, RunEventsParams,
+    RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
@@ -79,6 +80,7 @@ const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
 const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
 const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
 const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory";
+const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -143,6 +145,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY => {
             handle_proposal_apply_dry_run_history(request.id, request.params)
         }
+        METHOD_PROPOSAL_AUDIT_TRAIL => handle_proposal_audit_trail(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1919,6 +1922,34 @@ fn handle_proposal_apply_dry_run_history(
     }
 }
 
+fn handle_proposal_audit_trail(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalAuditTrailParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_audit_trail(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, audit_trail)) => result_response(
+            id,
+            json!(ProposalAuditTrailResult {
+                proposal,
+                audit_trail
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2894,6 +2925,114 @@ fn dry_run_history_entry_from_payload(
         apply_executed,
         workspace_files_changed,
     })
+}
+
+fn inspect_proposal_audit_trail(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<(WorkspacePatchProposalSummary, ProposalAuditTrailSummary), String> {
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let entries: Vec<ProposalAuditTrailEntry> = events
+        .iter()
+        .filter_map(|event| proposal_audit_entry(event, proposal_id))
+        .collect();
+    let event_count = entries.len();
+    let latest_event = entries.last().cloned();
+    let audit_trail = ProposalAuditTrailSummary {
+        proposal_id: proposal_id.to_string(),
+        event_count,
+        latest_event,
+        events: entries,
+        generated_at: now_rfc3339(),
+    };
+    Ok((proposal, audit_trail))
+}
+
+fn proposal_audit_entry(event: &LedgerEvent, proposal_id: &str) -> Option<ProposalAuditTrailEntry> {
+    let event_name = match event.kind {
+        LedgerEventKind::WorkspacePatchProposed => "proposal_created",
+        LedgerEventKind::WorkspacePatchApprovalRequested => "approval_requested",
+        LedgerEventKind::WorkspacePatchApproved => "proposal_approved",
+        LedgerEventKind::WorkspacePatchRejected => "proposal_rejected",
+        LedgerEventKind::WorkspacePatchPreflightSnapshotCreated => "preflight_snapshot_created",
+        LedgerEventKind::WorkspacePatchApplyPlanCreated => "apply_plan_created",
+        LedgerEventKind::WorkspacePatchApplyCapabilityChecked => "apply_capability_checked",
+        LedgerEventKind::WorkspacePatchApplyDryRunChecked => "apply_dry_run_checked",
+        LedgerEventKind::WorkspacePatchReadinessReportCreated => "readiness_checked",
+        _ => return None,
+    };
+    let payload = sanitize_ledger_payload(event.payload.clone())?;
+    if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+        return None;
+    }
+    Some(ProposalAuditTrailEntry {
+        proposal_id: proposal_id.to_string(),
+        event_name: event_name.to_string(),
+        ledger_kind: format!("{:?}", event.kind),
+        occurred_at: event.timestamp.clone(),
+        metadata: proposal_audit_metadata(&payload),
+    })
+}
+
+fn proposal_audit_metadata(payload: &Value) -> Value {
+    let Value::Object(map) = payload else {
+        return json!({});
+    };
+    const AUDIT_METADATA_KEYS: &[&str] = &[
+        "proposal_id",
+        "operation",
+        "content_chars",
+        "truncated",
+        "validation_status",
+        "validation_reason",
+        "diff_truncated",
+        "diff_redacted",
+        "approval_status",
+        "approval_reason",
+        "approval_reason_redacted",
+        "approved_at",
+        "rejected_at",
+        "snapshot_id",
+        "canonical_path_hash",
+        "file_exists",
+        "file_kind",
+        "file_size_bytes",
+        "file_modified_unix_ms",
+        "file_sha256",
+        "captured_at",
+        "stale",
+        "stale_reason",
+        "plan_id",
+        "status",
+        "capability_id",
+        "apply_supported",
+        "apply_enabled",
+        "mode",
+        "required_gates",
+        "can_apply_now",
+        "checked_at",
+        "dry_run_id",
+        "dry_run_status",
+        "dry_run_reason",
+        "no_patch_applied",
+        "apply_executed",
+        "workspace_files_changed",
+        "report_id",
+        "readiness_status",
+        "readiness_reason",
+        "generated_at",
+        "check_count",
+        "failed_checks",
+        "blocked_checks",
+    ];
+    Value::Object(
+        map.iter()
+            .filter(|(key, _)| AUDIT_METADATA_KEYS.contains(&key.as_str()))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect(),
+    )
 }
 
 fn string_array_field(payload: &Value, key: &str) -> Option<Vec<String>> {
@@ -5020,6 +5159,71 @@ mod tests {
                 .count(),
             2
         );
+        let audit = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":735,"method":"proposal.auditTrail","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let audit_result = audit.result.expect("proposal audit trail result");
+        assert_eq!(audit_result["audit_trail"]["proposal_id"], proposal_id);
+        let audit_events = audit_result["audit_trail"]["events"].as_array().unwrap();
+        assert_eq!(
+            audit_result["audit_trail"]["event_count"],
+            audit_events.len()
+        );
+        let audit_names: Vec<&str> = audit_events
+            .iter()
+            .map(|event| event["event_name"].as_str().unwrap())
+            .collect();
+        assert!(audit_names.contains(&"proposal_created"));
+        assert!(audit_names.contains(&"proposal_approved"));
+        assert!(audit_names.contains(&"preflight_snapshot_created"));
+        assert!(audit_names.contains(&"readiness_checked"));
+        assert!(audit_names.contains(&"apply_capability_checked"));
+        assert_eq!(
+            audit_names
+                .iter()
+                .filter(|name| **name == "apply_dry_run_checked")
+                .count(),
+            2
+        );
+        assert_eq!(audit_events[0]["event_name"], "proposal_created");
+        assert_eq!(
+            audit_result["audit_trail"]["latest_event"]["event_name"],
+            "apply_dry_run_checked"
+        );
+        assert_eq!(
+            audit_result["audit_trail"]["latest_event"]["metadata"]["dry_run_id"],
+            second_dry_run_result["dry_run"]["dry_run_id"]
+        );
+        let serialized_audit = serde_json::to_string(&audit_result["audit_trail"]).unwrap();
+        for forbidden in [
+            "content",
+            "content_preview",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "diff_preview",
+            "raw_input",
+            "path",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_audit.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_audit = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":736,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_audit = events_after_audit.result.expect("events after audit")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(events_after_audit.len(), events_after_history.len());
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
