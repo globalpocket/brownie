@@ -362,3 +362,11 @@ The latest signal fields are compact `WorkspacePatchReviewSignalSummary` values 
 `NeedsSignals` is returned when readiness, apply capability, or apply dry-run evidence is missing. `BlockedForReview` is returned when latest readiness is not `Ready`, dry-run evidence is incomplete or indicates patch application or workspace file changes, or proposal evidence is blocked or redacted. Apply capability values of `false` are expected safety-boundary evidence and are not apply authorization.
 
 `proposal.reviewVerdict` is reconstructed from existing sanitized ledger events and appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.11 `proposal.reviewReport`
+
+`proposal.reviewReport` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "review_report": WorkspacePatchReviewReportSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchReviewReportSummary` is summary-only and contains `proposal_id`, `report_status`, `report_reason`, `review_bundle`, `review_verdict`, `audit_event_count`, `recent_audit_events`, `required_next_actions`, `apply_authorized`, and `generated_at`. `report_status` is `Complete` only when the review bundle is complete and the verdict is `ReadyForHumanReview`, `NeedsAction` when signals are missing, and `Blocked` when the verdict is `BlockedForReview`. `recent_audit_events` contains at most the five newest sanitized lifecycle entries in newest-first order. `apply_authorized` is always `false`.
+
+`proposal.reviewReport` is reconstructed from existing sanitized ledger events and appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

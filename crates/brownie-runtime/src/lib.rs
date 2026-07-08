@@ -25,24 +25,24 @@ use brownie_protocol::{
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
     ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewVerdictParams, ProposalReviewVerdictResult,
-    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
-    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
-    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
-    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
-    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
-    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
-    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
-    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
-    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
-    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
-    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    ProposalReviewBundleResult, ProposalReviewReportParams, ProposalReviewReportResult,
+    ProposalReviewVerdictParams, ProposalReviewVerdictResult, RunEventsParams, RunEventsResult,
+    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
+    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
+    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
-    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewSignalSummary,
-    WorkspacePatchReviewVerdictSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewReportSummary,
+    WorkspacePatchReviewSignalSummary, WorkspacePatchReviewVerdictSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -87,10 +87,12 @@ const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory
 const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
 const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
 const METHOD_PROPOSAL_REVIEW_VERDICT: &str = "proposal.reviewVerdict";
+const METHOD_PROPOSAL_REVIEW_REPORT: &str = "proposal.reviewReport";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
+const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -157,6 +159,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_PROPOSAL_REVIEW_VERDICT => {
             handle_proposal_review_verdict(request.id, request.params)
         }
+        METHOD_PROPOSAL_REVIEW_REPORT => handle_proposal_review_report(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -2017,6 +2020,34 @@ fn handle_proposal_review_verdict(id: Value, params: Option<Value>) -> JsonRpcRe
     }
 }
 
+fn handle_proposal_review_report(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewReportParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_report(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, review_report)) => result_response(
+            id,
+            json!(ProposalReviewReportResult {
+                proposal,
+                review_report
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3202,6 +3233,68 @@ fn inspect_proposal_review_verdict(
         generated_at: now_rfc3339(),
     };
     Ok((proposal, review_verdict))
+}
+
+fn inspect_proposal_review_report(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchReviewReportSummary,
+    ),
+    String,
+> {
+    let (proposal, review_bundle) = inspect_proposal_review_bundle(store, run_id, proposal_id)?;
+    let (_proposal, review_verdict) = inspect_proposal_review_verdict(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let audit_entries: Vec<WorkspacePatchAuditTrailEntry> = events
+        .iter()
+        .filter_map(|event| proposal_audit_entry(event, proposal_id))
+        .collect();
+    let recent_audit_events = audit_entries
+        .iter()
+        .rev()
+        .take(MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS)
+        .cloned()
+        .collect();
+
+    let (report_status, report_reason) = match review_verdict.verdict_status.as_str() {
+        "BlockedForReview" => (
+            "Blocked".to_string(),
+            "Recorded review evidence blocks final human review.".to_string(),
+        ),
+        "ReadyForHumanReview" if review_bundle.review_status == "Complete" => (
+            "Complete".to_string(),
+            "Review bundle and verdict are complete for final human review; patch apply remains unauthorized.".to_string(),
+        ),
+        _ => (
+            "NeedsAction".to_string(),
+            "Additional proposal review signals are required before final human review.".to_string(),
+        ),
+    };
+
+    let mut required_next_actions = review_bundle.required_next_actions.clone();
+    for signal in &review_verdict.missing_signals {
+        if !required_next_actions.contains(signal) {
+            required_next_actions.push(signal.clone());
+        }
+    }
+
+    let review_report = WorkspacePatchReviewReportSummary {
+        proposal_id: proposal_id.to_string(),
+        report_status,
+        report_reason,
+        review_bundle,
+        review_verdict,
+        audit_event_count: audit_entries.len(),
+        recent_audit_events,
+        required_next_actions,
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    };
+    Ok((proposal, review_report))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -5471,6 +5564,55 @@ mod tests {
             events_after_missing_verdict.len(),
             events_after_missing_review.len()
         );
+        let missing_review_report = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":56,"method":"proposal.reviewReport","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let missing_review_report_result = missing_review_report
+            .result
+            .expect("missing review report result");
+        assert_eq!(
+            missing_review_report_result["review_report"]["report_status"],
+            "NeedsAction"
+        );
+        assert_eq!(
+            missing_review_report_result["review_report"]["review_bundle"]["review_status"],
+            "NeedsAction"
+        );
+        assert_eq!(
+            missing_review_report_result["review_report"]["review_verdict"]["verdict_status"],
+            "NeedsSignals"
+        );
+        assert_eq!(
+            missing_review_report_result["review_report"]["apply_authorized"],
+            false
+        );
+        assert!(
+            missing_review_report_result["review_report"]["required_next_actions"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|signal| signal == "proposal.readiness")
+        );
+        assert!(
+            missing_review_report_result["review_report"]["recent_audit_events"]
+                .as_array()
+                .unwrap()
+                .len()
+                <= MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS
+        );
+        let events_after_missing_report = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":57,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_missing_report = events_after_missing_report
+            .result
+            .expect("events after missing report")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_missing_report.len(),
+            events_after_missing_verdict.len()
+        );
         let approve = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct sk-test-secret"}}}}"#
         ));
@@ -5939,6 +6081,81 @@ mod tests {
             events_after_review_verdict.len(),
             events_after_review_bundle.len()
         );
+        let review_report = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":741,"method":"proposal.reviewReport","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let review_report_result = review_report.result.expect("review report result");
+        assert_eq!(
+            review_report_result["review_report"]["proposal_id"],
+            proposal_id
+        );
+        assert_eq!(
+            review_report_result["review_report"]["report_status"],
+            "Complete"
+        );
+        assert_eq!(
+            review_report_result["review_report"]["review_bundle"]["review_status"],
+            "Complete"
+        );
+        assert_eq!(
+            review_report_result["review_report"]["review_verdict"]["verdict_status"],
+            "ReadyForHumanReview"
+        );
+        assert_eq!(
+            review_report_result["review_report"]["audit_event_count"],
+            audit_result["audit_trail"]["event_count"]
+        );
+        assert_eq!(
+            review_report_result["review_report"]["apply_authorized"],
+            false
+        );
+        assert!(
+            review_report_result["review_report"]["required_next_actions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let recent_report_audit = review_report_result["review_report"]["recent_audit_events"]
+            .as_array()
+            .unwrap();
+        assert_eq!(recent_report_audit.len(), 5);
+        assert_eq!(
+            recent_report_audit[0]["audit_event"],
+            "apply_dry_run_checked"
+        );
+        let serialized_review_report =
+            serde_json::to_string(&review_report_result["review_report"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_review_report.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_review_report = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":742,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_review_report = events_after_review_report
+            .result
+            .expect("events after review report")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_review_report.len(),
+            events_after_review_verdict.len()
+        );
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
@@ -6005,6 +6222,31 @@ mod tests {
                     .as_str()
                     .unwrap()
                     .contains("Latest readiness is NotReady"))
+        );
+        let blocked_review_report = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":93,"method":"proposal.reviewReport","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let blocked_review_report_result = blocked_review_report
+            .result
+            .expect("blocked review report result");
+        assert_eq!(
+            blocked_review_report_result["review_report"]["report_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            blocked_review_report_result["review_report"]["review_verdict"]["verdict_status"],
+            "BlockedForReview"
+        );
+        assert_eq!(
+            blocked_review_report_result["review_report"]["apply_authorized"],
+            false
+        );
+        assert!(
+            blocked_review_report_result["review_report"]["recent_audit_events"]
+                .as_array()
+                .unwrap()
+                .len()
+                <= MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS
         );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
