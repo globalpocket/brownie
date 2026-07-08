@@ -342,3 +342,13 @@ Each history entry is summary-only metadata reconstructed from sanitized `Worksp
 Each `WorkspacePatchAuditTrailEntry` contains `event_id`, `audit_event`, `event_kind`, `timestamp`, `proposal_id`, `summary`, and `metadata`. Audit event names are stable high-level lifecycle names such as `proposal_created`, `proposal_approved`, `proposal_rejected`, `preflight_snapshot_created`, `apply_plan_created`, `readiness_checked`, `apply_capability_checked`, and `apply_dry_run_checked`.
 
 `proposal.auditTrail` is reconstructed from existing sanitized ledger events and appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## Phase 3.9 `proposal.reviewBundle`
+
+`proposal.reviewBundle` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "review_bundle": WorkspacePatchReviewBundleSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
+
+`WorkspacePatchReviewBundleSummary` contains `proposal_id`, `review_status`, `review_reason`, `latest_readiness`, `latest_apply_capability`, `latest_apply_dry_run`, `audit_event_count`, `latest_audit_event`, `required_next_actions`, and `generated_at`. `review_status` is `Complete` when the latest readiness, apply capability, and apply dry-run signals all exist, otherwise `NeedsAction`. Missing signals are listed as RPC names in `required_next_actions`.
+
+The latest signal fields are compact `WorkspacePatchReviewSignalSummary` values containing only `status`, optional `reason`, optional `generated_at`, and optional `source_id`. `latest_audit_event` reuses the sanitized `WorkspacePatchAuditTrailEntry` shape.
+
+`proposal.reviewBundle` is reconstructed from existing sanitized ledger events and appends no ledger event. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.

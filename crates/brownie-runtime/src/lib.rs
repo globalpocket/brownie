@@ -24,7 +24,8 @@ use brownie_protocol::{
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
     ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, RunEventsParams, RunEventsResult, RunInspectParams,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, RunEventsParams, RunEventsResult, RunInspectParams,
     RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
     RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
     TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
@@ -39,6 +40,7 @@ use brownie_protocol::{
     WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewSignalSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -81,6 +83,7 @@ const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
 const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
 const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory";
 const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
+const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -147,6 +150,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
             handle_proposal_apply_dry_run_history(request.id, request.params)
         }
         METHOD_PROPOSAL_AUDIT_TRAIL => handle_proposal_audit_trail(request.id, request.params),
+        METHOD_PROPOSAL_REVIEW_BUNDLE => handle_proposal_review_bundle(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -1951,6 +1955,34 @@ fn handle_proposal_audit_trail(id: Value, params: Option<Value>) -> JsonRpcRespo
     }
 }
 
+fn handle_proposal_review_bundle(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewBundleParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id and proposal_id are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_bundle(&store, &params.run_id, &params.proposal_id) {
+        Ok((proposal, review_bundle)) => result_response(
+            id,
+            json!(ProposalReviewBundleResult {
+                proposal,
+                review_bundle
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -2937,6 +2969,135 @@ fn inspect_proposal_audit_trail(
         generated_at: now_rfc3339(),
     };
     Ok((proposal, audit_trail))
+}
+
+fn inspect_proposal_review_bundle(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchReviewBundleSummary,
+    ),
+    String,
+> {
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let events = read_existing_run_events(store, run_id)?;
+    let audit_entries: Vec<WorkspacePatchAuditTrailEntry> = events
+        .iter()
+        .filter_map(|event| proposal_audit_entry(event, proposal_id))
+        .collect();
+    let latest_readiness = latest_review_signal(
+        &events,
+        proposal_id,
+        LedgerEventKind::WorkspacePatchReadinessReportCreated,
+        "readiness_status",
+        "readiness_reason",
+        "generated_at",
+        "report_id",
+    );
+    let latest_apply_capability = latest_review_signal(
+        &events,
+        proposal_id,
+        LedgerEventKind::WorkspacePatchApplyCapabilityChecked,
+        "can_apply_now",
+        "reason",
+        "checked_at",
+        "capability_id",
+    );
+    let latest_apply_dry_run = latest_review_signal(
+        &events,
+        proposal_id,
+        LedgerEventKind::WorkspacePatchApplyDryRunChecked,
+        "dry_run_status",
+        "dry_run_reason",
+        "checked_at",
+        "dry_run_id",
+    );
+    let mut required_next_actions = Vec::new();
+    if latest_readiness.is_none() {
+        required_next_actions.push("proposal.readiness".to_string());
+    }
+    if latest_apply_capability.is_none() {
+        required_next_actions.push("proposal.applyCapability".to_string());
+    }
+    if latest_apply_dry_run.is_none() {
+        required_next_actions.push("proposal.applyDryRun".to_string());
+    }
+
+    let (review_status, review_reason) = if required_next_actions.is_empty() {
+        (
+            "Complete".to_string(),
+            "All proposal review signals are available for final human review.".to_string(),
+        )
+    } else {
+        (
+            "NeedsAction".to_string(),
+            format!(
+                "Missing proposal review signals: {}.",
+                required_next_actions.join(", ")
+            ),
+        )
+    };
+
+    let review_bundle = WorkspacePatchReviewBundleSummary {
+        proposal_id: proposal_id.to_string(),
+        review_status,
+        review_reason,
+        latest_readiness,
+        latest_apply_capability,
+        latest_apply_dry_run,
+        audit_event_count: audit_entries.len(),
+        latest_audit_event: audit_entries.last().cloned(),
+        required_next_actions,
+        generated_at: now_rfc3339(),
+    };
+    Ok((proposal, review_bundle))
+}
+
+fn latest_review_signal(
+    events: &[LedgerEvent],
+    proposal_id: &str,
+    kind: LedgerEventKind,
+    status_key: &str,
+    reason_key: &str,
+    generated_at_key: &str,
+    source_id_key: &str,
+) -> Option<WorkspacePatchReviewSignalSummary> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != kind {
+            return None;
+        }
+        let payload = sanitize_ledger_payload(event.payload.clone())?;
+        if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
+            return None;
+        }
+        Some(WorkspacePatchReviewSignalSummary {
+            status: review_signal_status(&payload, status_key)?,
+            reason: payload
+                .get(reason_key)
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            generated_at: payload
+                .get(generated_at_key)
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            source_id: payload
+                .get(source_id_key)
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        })
+    })
+}
+
+fn review_signal_status(payload: &Value, key: &str) -> Option<String> {
+    payload.get(key).and_then(|value| {
+        value
+            .as_str()
+            .map(ToString::to_string)
+            .or_else(|| value.as_bool().map(|value| value.to_string()))
+    })
 }
 
 fn proposal_audit_entry(
@@ -5027,6 +5188,63 @@ mod tests {
             inspect.result.expect("inspect result")["proposal"]["proposal_id"],
             proposal_id
         );
+        let events_before_missing_review = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":51,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_before_missing_review = events_before_missing_review
+            .result
+            .expect("events before missing review")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let missing_review_bundle = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":52,"method":"proposal.reviewBundle","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let missing_review_bundle_result = missing_review_bundle
+            .result
+            .expect("missing review bundle result");
+        assert_eq!(
+            missing_review_bundle_result["review_bundle"]["review_status"],
+            "NeedsAction"
+        );
+        assert_eq!(
+            missing_review_bundle_result["review_bundle"]["latest_readiness"],
+            Value::Null
+        );
+        assert_eq!(
+            missing_review_bundle_result["review_bundle"]["latest_apply_capability"],
+            Value::Null
+        );
+        assert_eq!(
+            missing_review_bundle_result["review_bundle"]["latest_apply_dry_run"],
+            Value::Null
+        );
+        let required_next_actions = missing_review_bundle_result["review_bundle"]
+            ["required_next_actions"]
+            .as_array()
+            .unwrap();
+        assert!(required_next_actions
+            .iter()
+            .any(|action| action == "proposal.readiness"));
+        assert!(required_next_actions
+            .iter()
+            .any(|action| action == "proposal.applyCapability"));
+        assert!(required_next_actions
+            .iter()
+            .any(|action| action == "proposal.applyDryRun"));
+        let events_after_missing_review = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":53,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_missing_review = events_after_missing_review
+            .result
+            .expect("events after missing review")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(
+            events_after_missing_review.len(),
+            events_before_missing_review.len()
+        );
         let approve = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"looks correct sk-test-secret"}}}}"#
         ));
@@ -5362,6 +5580,74 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(events_after_audit.len(), events_after_history.len());
+        let review_bundle = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":737,"method":"proposal.reviewBundle","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let review_bundle_result = review_bundle.result.expect("review bundle result");
+        assert_eq!(
+            review_bundle_result["review_bundle"]["proposal_id"],
+            proposal_id
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["review_status"],
+            "Complete"
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["latest_readiness"]["status"],
+            "Ready"
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["latest_apply_capability"]["status"],
+            "false"
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["latest_apply_dry_run"]["source_id"],
+            second_dry_run_result["dry_run"]["dry_run_id"]
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["audit_event_count"],
+            audit_result["audit_trail"]["event_count"]
+        );
+        assert_eq!(
+            review_bundle_result["review_bundle"]["latest_audit_event"]["audit_event"],
+            "apply_dry_run_checked"
+        );
+        assert!(
+            review_bundle_result["review_bundle"]["required_next_actions"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        let serialized_review_bundle =
+            serde_json::to_string(&review_bundle_result["review_bundle"]).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_review_bundle.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        let events_after_review_bundle = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":738,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events_after_review_bundle = events_after_review_bundle
+            .result
+            .expect("events after review bundle")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(events_after_review_bundle.len(), events_after_audit.len());
         std::fs::write(temp.path().join("README.md"), "changed manually").expect("manual change");
         let second_preflight = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#

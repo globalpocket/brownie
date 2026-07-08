@@ -387,6 +387,12 @@ pub struct ProposalAuditTrailParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewBundleParams {
+    pub run_id: String,
+    pub proposal_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -579,6 +585,28 @@ pub struct WorkspacePatchAuditTrailSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewSignalSummary {
+    pub status: String,
+    pub reason: Option<String>,
+    pub generated_at: Option<String>,
+    pub source_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewBundleSummary {
+    pub proposal_id: String,
+    pub review_status: String,
+    pub review_reason: String,
+    pub latest_readiness: Option<WorkspacePatchReviewSignalSummary>,
+    pub latest_apply_capability: Option<WorkspacePatchReviewSignalSummary>,
+    pub latest_apply_dry_run: Option<WorkspacePatchReviewSignalSummary>,
+    pub audit_event_count: usize,
+    pub latest_audit_event: Option<WorkspacePatchAuditTrailEntry>,
+    pub required_next_actions: Vec<String>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -635,6 +663,12 @@ pub struct ProposalApplyDryRunHistoryResult {
 pub struct ProposalAuditTrailResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub audit_trail: WorkspacePatchAuditTrailSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewBundleResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub review_bundle: WorkspacePatchReviewBundleSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
