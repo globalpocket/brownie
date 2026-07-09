@@ -425,6 +425,11 @@ pub struct ProposalReviewQueueDiagnosticsReportParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -771,6 +776,25 @@ pub struct WorkspacePatchReviewQueueDiagnosticsReportSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestSummary {
+    pub run_id: String,
+    pub digest_status: String,
+    pub digest_reason: String,
+    pub queue_status: String,
+    pub diagnostics_status: String,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub failed_check_count: usize,
+    pub blocked_check_count: usize,
+    pub required_next_action_count: usize,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -865,6 +889,11 @@ pub struct ProposalReviewQueueDiagnosticsHistoryResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalReviewQueueDiagnosticsReportResult {
     pub review_queue_diagnostics_report: WorkspacePatchReviewQueueDiagnosticsReportSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestResult {
+    pub review_queue_diagnostics_digest: WorkspacePatchReviewQueueDiagnosticsDigestSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
