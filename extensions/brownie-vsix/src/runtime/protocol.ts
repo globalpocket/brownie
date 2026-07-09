@@ -454,6 +454,30 @@ export interface WorkspacePatchReviewQueueSummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewQueueDiagnosticsCheckSummary {
+  name: string;
+  status: 'Pass' | 'Fail' | 'Blocked';
+  reason: string | null;
+}
+
+export interface WorkspacePatchReviewQueueDiagnosticsSummary {
+  run_id: string;
+  diagnostics_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  diagnostics_reason: string;
+  queue_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  proposal_count: number;
+  complete_count: number;
+  needs_action_count: number;
+  blocked_count: number;
+  check_count: number;
+  failed_checks: string[];
+  blocked_checks: string[];
+  checks: WorkspacePatchReviewQueueDiagnosticsCheckSummary[];
+  required_next_actions: string[];
+  apply_authorized: false;
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -505,6 +529,10 @@ export interface ProposalReviewReportResult {
 
 export interface ProposalReviewQueueResult {
   review_queue: WorkspacePatchReviewQueueSummary;
+}
+
+export interface ProposalReviewQueueDiagnosticsResult {
+  review_queue_diagnostics: WorkspacePatchReviewQueueDiagnosticsSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -796,6 +824,14 @@ export function isWorkspacePatchReviewQueueSummary(value: unknown): value is Wor
   return isRecord(value) && typeof value.run_id === 'string' && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && typeof value.queue_reason === 'string' && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && Array.isArray(value.items) && value.items.every(isWorkspacePatchReviewQueueItemSummary) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewQueueDiagnosticsCheckSummary(value: unknown): value is WorkspacePatchReviewQueueDiagnosticsCheckSummary {
+  return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReviewQueueDiagnosticsSummary(value: unknown): value is WorkspacePatchReviewQueueDiagnosticsSummary {
+  return isRecord(value) && typeof value.run_id === 'string' && (value.diagnostics_status === 'Complete' || value.diagnostics_status === 'NeedsAction' || value.diagnostics_status === 'Blocked') && typeof value.diagnostics_reason === 'string' && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.checks) && value.checks.every(isWorkspacePatchReviewQueueDiagnosticsCheckSummary) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -879,6 +915,10 @@ export function isProposalReviewReportResult(value: unknown): value is ProposalR
 
 export function isProposalReviewQueueResult(value: unknown): value is ProposalReviewQueueResult {
   return isRecord(value) && isWorkspacePatchReviewQueueSummary(value.review_queue) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewQueueDiagnosticsResult(value: unknown): value is ProposalReviewQueueDiagnosticsResult {
+  return isRecord(value) && isWorkspacePatchReviewQueueDiagnosticsSummary(value.review_queue_diagnostics) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
