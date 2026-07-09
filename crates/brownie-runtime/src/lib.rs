@@ -25,7 +25,8 @@ use brownie_protocol::{
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
     ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsParams,
+    ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
     ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
     ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
     RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
@@ -42,7 +43,8 @@ use brownie_protocol::{
     WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
-    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueItemSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticCheckSummary,
+    WorkspacePatchReviewQueueDiagnosticsSummary, WorkspacePatchReviewQueueItemSummary,
     WorkspacePatchReviewQueueSummary, WorkspacePatchReviewReportSummary,
     WorkspacePatchReviewSignalSummary, WorkspacePatchReviewVerdictSummary,
 };
@@ -91,6 +93,7 @@ const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
 const METHOD_PROPOSAL_REVIEW_VERDICT: &str = "proposal.reviewVerdict";
 const METHOD_PROPOSAL_REVIEW_REPORT: &str = "proposal.reviewReport";
 const METHOD_PROPOSAL_REVIEW_QUEUE: &str = "proposal.reviewQueue";
+const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS: &str = "proposal.reviewQueueDiagnostics";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -164,6 +167,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_PROPOSAL_REVIEW_REPORT => handle_proposal_review_report(request.id, request.params),
         METHOD_PROPOSAL_REVIEW_QUEUE => handle_proposal_review_queue(request.id, request.params),
+        METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS => {
+            handle_proposal_review_queue_diagnostics(request.id, request.params)
+        }
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -2070,6 +2076,32 @@ fn handle_proposal_review_queue(id: Value, params: Option<Value>) -> JsonRpcResp
     }
 }
 
+fn handle_proposal_review_queue_diagnostics(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewQueueDiagnosticsParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id is required");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_queue_diagnostics(&store, &params.run_id) {
+        Ok(review_queue_diagnostics) => result_response(
+            id,
+            json!(ProposalReviewQueueDiagnosticsResult {
+                review_queue_diagnostics
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3389,6 +3421,191 @@ fn inspect_proposal_review_queue(
         required_next_actions,
         generated_at: now_rfc3339(),
     })
+}
+
+fn inspect_proposal_review_queue_diagnostics(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<WorkspacePatchReviewQueueDiagnosticsSummary, String> {
+    let review_queue = inspect_proposal_review_queue(store, run_id)?;
+    Ok(diagnose_proposal_review_queue(review_queue))
+}
+
+fn diagnose_proposal_review_queue(
+    review_queue: WorkspacePatchReviewQueueSummary,
+) -> WorkspacePatchReviewQueueDiagnosticsSummary {
+    let mut checks = Vec::new();
+
+    let actual_complete = review_queue
+        .items
+        .iter()
+        .filter(|item| item.report_status == "Complete")
+        .count();
+    let actual_blocked = review_queue
+        .items
+        .iter()
+        .filter(|item| item.report_status == "Blocked")
+        .count();
+    let actual_needs_action = review_queue
+        .items
+        .iter()
+        .filter(|item| item.report_status != "Complete" && item.report_status != "Blocked")
+        .count();
+    let counts_match = review_queue.proposal_count == review_queue.items.len()
+        && review_queue.complete_count == actual_complete
+        && review_queue.needs_action_count == actual_needs_action
+        && review_queue.blocked_count == actual_blocked;
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "queue_counts_match_item_statuses".to_string(),
+        status: if counts_match { "Pass" } else { "Fail" }.to_string(),
+        reason: if counts_match {
+            None
+        } else {
+            Some("Queue counts do not match item report statuses.".to_string())
+        },
+    });
+
+    let expected_queue_status = if actual_blocked > 0 {
+        "Blocked"
+    } else if actual_needs_action > 0 {
+        "NeedsAction"
+    } else {
+        "Complete"
+    };
+    let status_matches = review_queue.queue_status == expected_queue_status;
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "queue_status_matches_item_statuses".to_string(),
+        status: if status_matches { "Pass" } else { "Fail" }.to_string(),
+        reason: if status_matches {
+            None
+        } else {
+            Some(format!(
+                "Queue status should be {expected_queue_status} for the current item statuses."
+            ))
+        },
+    });
+
+    let apply_authorized_items: Vec<String> = review_queue
+        .items
+        .iter()
+        .filter(|item| item.apply_authorized)
+        .map(|item| item.proposal_id.clone())
+        .collect();
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "queue_items_do_not_authorize_apply".to_string(),
+        status: if apply_authorized_items.is_empty() {
+            "Pass"
+        } else {
+            "Blocked"
+        }
+        .to_string(),
+        reason: if apply_authorized_items.is_empty() {
+            None
+        } else {
+            Some(format!(
+                "{} queue item(s) unexpectedly authorize apply.",
+                apply_authorized_items.len()
+            ))
+        },
+    });
+
+    let compact_evidence = review_queue.items.iter().all(|item| {
+        !item.proposal_id.trim().is_empty()
+            && !item.path.trim().is_empty()
+            && !item.path.starts_with('/')
+            && !item.path.contains(":\\")
+            && !item.report_reason.trim().is_empty()
+            && !item.generated_at.trim().is_empty()
+    });
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "queue_items_have_compact_review_evidence".to_string(),
+        status: if compact_evidence { "Pass" } else { "Fail" }.to_string(),
+        reason: if compact_evidence {
+            None
+        } else {
+            Some(
+                "One or more queue items lack compact review evidence or expose an absolute path."
+                    .to_string(),
+            )
+        },
+    });
+
+    let mut deduped_actions = Vec::new();
+    for action in &review_queue.required_next_actions {
+        if !deduped_actions.contains(action) {
+            deduped_actions.push(action.clone());
+        }
+    }
+    let actions_deduplicated = deduped_actions.len() == review_queue.required_next_actions.len();
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "required_next_actions_are_deduplicated".to_string(),
+        status: if actions_deduplicated { "Pass" } else { "Fail" }.to_string(),
+        reason: if actions_deduplicated {
+            None
+        } else {
+            Some("Queue required next actions contain duplicate summary strings.".to_string())
+        },
+    });
+
+    checks.push(WorkspacePatchReviewQueueDiagnosticCheckSummary {
+        name: "diagnostics_are_inspection_only".to_string(),
+        status: "Pass".to_string(),
+        reason: Some(
+            "Diagnostics are reconstructed from the existing review queue and do not authorize apply."
+                .to_string(),
+        ),
+    });
+
+    let failed_checks: Vec<String> = checks
+        .iter()
+        .filter(|check| check.status == "Fail")
+        .map(|check| check.name.clone())
+        .collect();
+    let blocked_checks: Vec<String> = checks
+        .iter()
+        .filter(|check| check.status == "Blocked")
+        .map(|check| check.name.clone())
+        .collect();
+
+    let (diagnostics_status, diagnostics_reason) = if !failed_checks.is_empty()
+        || !blocked_checks.is_empty()
+        || review_queue.blocked_count > 0
+    {
+        (
+            "Blocked".to_string(),
+            "Review queue diagnostics found blocking or inconsistent queue evidence.".to_string(),
+        )
+    } else if review_queue.needs_action_count > 0 {
+        (
+            "NeedsAction".to_string(),
+            "Review queue diagnostics are consistent, but queue items need additional signals."
+                .to_string(),
+        )
+    } else {
+        (
+                "Complete".to_string(),
+                "Review queue diagnostics are consistent and complete; patch apply remains unauthorized."
+                    .to_string(),
+            )
+    };
+
+    WorkspacePatchReviewQueueDiagnosticsSummary {
+        run_id: review_queue.run_id,
+        diagnostics_status,
+        diagnostics_reason,
+        queue_status: review_queue.queue_status,
+        proposal_count: review_queue.proposal_count,
+        complete_count: review_queue.complete_count,
+        needs_action_count: review_queue.needs_action_count,
+        blocked_count: review_queue.blocked_count,
+        check_count: checks.len(),
+        failed_checks,
+        blocked_checks,
+        checks,
+        required_next_actions: deduped_actions,
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6773,6 +6990,20 @@ mod tests {
         assert_eq!(complete_queue.needs_action_count, 0);
         assert_eq!(complete_queue.blocked_count, 0);
         assert!(complete_queue.required_next_actions.is_empty());
+        let complete_diagnostics =
+            inspect_proposal_review_queue_diagnostics(&store, &record.run_id)
+                .expect("complete diagnostics");
+        assert_eq!(complete_diagnostics.diagnostics_status, "Complete");
+        assert_eq!(complete_diagnostics.queue_status, "Complete");
+        assert_eq!(complete_diagnostics.proposal_count, 1);
+        assert_eq!(complete_diagnostics.complete_count, 1);
+        assert_eq!(
+            complete_diagnostics.check_count,
+            complete_diagnostics.checks.len()
+        );
+        assert!(complete_diagnostics.failed_checks.is_empty());
+        assert!(complete_diagnostics.blocked_checks.is_empty());
+        assert!(!complete_diagnostics.apply_authorized);
         assert_eq!(
             read_existing_run_events(&store, &record.run_id)
                 .expect("events after complete queue")
@@ -6812,6 +7043,18 @@ mod tests {
         assert!(needs_action_queue.items.iter().any(|item| {
             item.proposal_id == "proposal_needs_action" && item.report_status == "NeedsAction"
         }));
+        let needs_action_diagnostics =
+            inspect_proposal_review_queue_diagnostics(&store, &record.run_id)
+                .expect("needs-action diagnostics");
+        assert_eq!(needs_action_diagnostics.diagnostics_status, "NeedsAction");
+        assert_eq!(needs_action_diagnostics.queue_status, "NeedsAction");
+        assert!(needs_action_diagnostics
+            .required_next_actions
+            .iter()
+            .any(|action| action == "proposal.readiness"));
+        assert!(needs_action_diagnostics.failed_checks.is_empty());
+        assert!(needs_action_diagnostics.blocked_checks.is_empty());
+        assert!(!needs_action_diagnostics.apply_authorized);
         assert_eq!(
             read_existing_run_events(&store, &record.run_id)
                 .expect("events after needs-action queue")
@@ -6838,6 +7081,14 @@ mod tests {
         assert_eq!(blocked_item.report_status, "Blocked");
         assert_eq!(blocked_item.verdict_status, "BlockedForReview");
         assert!(!blocked_item.apply_authorized);
+        let blocked_diagnostics = inspect_proposal_review_queue_diagnostics(&store, &record.run_id)
+            .expect("blocked diagnostics");
+        assert_eq!(blocked_diagnostics.diagnostics_status, "Blocked");
+        assert_eq!(blocked_diagnostics.queue_status, "Blocked");
+        assert_eq!(blocked_diagnostics.blocked_count, 1);
+        assert!(blocked_diagnostics.failed_checks.is_empty());
+        assert!(blocked_diagnostics.blocked_checks.is_empty());
+        assert!(!blocked_diagnostics.apply_authorized);
         let serialized_queue = serde_json::to_string(&blocked_queue).unwrap();
         for forbidden in [
             "content",
@@ -6853,6 +7104,21 @@ mod tests {
         ] {
             assert!(!serialized_queue.contains(&format!(r#"\"{forbidden}\""#)));
         }
+        let serialized_diagnostics = serde_json::to_string(&blocked_diagnostics).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_diagnostics.contains(&format!(r#"\"{forbidden}\""#)));
+        }
         assert_eq!(
             read_existing_run_events(&store, &record.run_id)
                 .expect("events after blocked queue")
@@ -6863,6 +7129,24 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
         );
+
+        let mut mismatched_queue = complete_queue.clone();
+        mismatched_queue.complete_count = 0;
+        let mismatched_diagnostics = diagnose_proposal_review_queue(mismatched_queue);
+        assert_eq!(mismatched_diagnostics.diagnostics_status, "Blocked");
+        assert!(mismatched_diagnostics
+            .failed_checks
+            .iter()
+            .any(|check| check == "queue_counts_match_item_statuses"));
+
+        let mut apply_authorized_queue = complete_queue;
+        apply_authorized_queue.items[0].apply_authorized = true;
+        let apply_authorized_diagnostics = diagnose_proposal_review_queue(apply_authorized_queue);
+        assert_eq!(apply_authorized_diagnostics.diagnostics_status, "Blocked");
+        assert!(apply_authorized_diagnostics
+            .blocked_checks
+            .iter()
+            .any(|check| check == "queue_items_do_not_authorize_apply"));
     }
 
     #[test]

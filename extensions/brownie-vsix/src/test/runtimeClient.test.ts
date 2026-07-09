@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -232,6 +232,11 @@ describe('protocol validation', () => {
     expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, items: [{ ...reviewQueue.items[0], apply_authorized: true }] } })).toBe(false);
     expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, patch: 'raw' } })).toBe(false);
     expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, items: [{ ...reviewQueue.items[0], latest_audit_event: { ...auditEntry, metadata: { diff: 'raw' } } }] } })).toBe(false);
+    const reviewQueueDiagnostics = { run_id: 'run_1', diagnostics_status: 'Complete', diagnostics_reason: 'Review queue diagnostics are consistent and complete; patch apply remains unauthorized.', queue_status: 'Complete', proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, check_count: 2, failed_checks: [], blocked_checks: [], checks: [{ name: 'queue_counts_match_item_statuses', status: 'Pass', reason: null }, { name: 'diagnostics_are_inspection_only', status: 'Pass', reason: 'Diagnostics are reconstructed from the existing review queue and do not authorize apply.' }], required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:01:00Z' };
+    expect(isProposalReviewQueueDiagnosticsResult({ review_queue_diagnostics: reviewQueueDiagnostics })).toBe(true);
+    expect(isProposalReviewQueueDiagnosticsResult({ review_queue_diagnostics: { ...reviewQueueDiagnostics, apply_authorized: true } })).toBe(false);
+    expect(isProposalReviewQueueDiagnosticsResult({ review_queue_diagnostics: { ...reviewQueueDiagnostics, raw_input: { diff: 'raw' } } })).toBe(false);
+    expect(isProposalReviewQueueDiagnosticsResult({ review_queue_diagnostics: { ...reviewQueueDiagnostics, checks: [{ ...reviewQueueDiagnostics.checks[0], patch: 'raw' }] } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -560,6 +565,13 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { review_queue } });
     await expect(new RuntimeClient(transport).reviewQueue('run_1')).resolves.toEqual({ review_queue });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewQueue', params: { run_id: 'run_1' } }]);
+  });
+
+  it('creates a proposal.reviewQueueDiagnostics request', async () => {
+    const review_queue_diagnostics = { run_id: 'run_1', diagnostics_status: 'Complete', diagnostics_reason: 'Review queue diagnostics are consistent and complete; patch apply remains unauthorized.', queue_status: 'Complete', proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, check_count: 1, failed_checks: [], blocked_checks: [], checks: [{ name: 'queue_counts_match_item_statuses', status: 'Pass', reason: null }], required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:01:00Z' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { review_queue_diagnostics } });
+    await expect(new RuntimeClient(transport).reviewQueueDiagnostics('run_1')).resolves.toEqual({ review_queue_diagnostics });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewQueueDiagnostics', params: { run_id: 'run_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {
