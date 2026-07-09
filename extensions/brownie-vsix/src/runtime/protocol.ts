@@ -504,6 +504,25 @@ export interface WorkspacePatchReviewQueueDiagnosticsHistorySummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewQueueDiagnosticsReportSummary {
+  run_id: string;
+  report_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  report_reason: string;
+  queue_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  diagnostics_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  diagnostics_count: number;
+  proposal_count: number;
+  complete_count: number;
+  needs_action_count: number;
+  blocked_count: number;
+  failed_checks: string[];
+  blocked_checks: string[];
+  required_next_actions: string[];
+  latest_diagnostics: WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary | null;
+  apply_authorized: false;
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -563,6 +582,10 @@ export interface ProposalReviewQueueDiagnosticsResult {
 
 export interface ProposalReviewQueueDiagnosticsHistoryResult {
   review_queue_diagnostics_history: WorkspacePatchReviewQueueDiagnosticsHistorySummary;
+}
+
+export interface ProposalReviewQueueDiagnosticsReportResult {
+  review_queue_diagnostics_report: WorkspacePatchReviewQueueDiagnosticsReportSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -870,6 +893,10 @@ export function isWorkspacePatchReviewQueueDiagnosticsHistorySummary(value: unkn
   return isRecord(value) && typeof value.run_id === 'string' && (value.history_status === 'Complete' || value.history_status === 'NeedsAction' || value.history_status === 'Blocked') && typeof value.history_reason === 'string' && isNonNegativeInteger(value.diagnostics_count) && (value.latest_diagnostics === null || isWorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary(value.latest_diagnostics)) && Array.isArray(value.entries) && value.entries.every(isWorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary) && value.diagnostics_count === value.entries.length && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewQueueDiagnosticsReportSummary(value: unknown): value is WorkspacePatchReviewQueueDiagnosticsReportSummary {
+  return isRecord(value) && typeof value.run_id === 'string' && (value.report_status === 'Complete' || value.report_status === 'NeedsAction' || value.report_status === 'Blocked') && typeof value.report_reason === 'string' && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && (value.diagnostics_status === 'Complete' || value.diagnostics_status === 'NeedsAction' || value.diagnostics_status === 'Blocked') && isNonNegativeInteger(value.diagnostics_count) && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && (value.latest_diagnostics === null || isWorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary(value.latest_diagnostics)) && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -961,6 +988,10 @@ export function isProposalReviewQueueDiagnosticsResult(value: unknown): value is
 
 export function isProposalReviewQueueDiagnosticsHistoryResult(value: unknown): value is ProposalReviewQueueDiagnosticsHistoryResult {
   return isRecord(value) && isWorkspacePatchReviewQueueDiagnosticsHistorySummary(value.review_queue_diagnostics_history) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewQueueDiagnosticsReportResult(value: unknown): value is ProposalReviewQueueDiagnosticsReportResult {
+  return isRecord(value) && isWorkspacePatchReviewQueueDiagnosticsReportSummary(value.review_queue_diagnostics_report) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
