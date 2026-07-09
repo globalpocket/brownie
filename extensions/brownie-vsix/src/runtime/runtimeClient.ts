@@ -1,6 +1,6 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunResult, ProposalApproveResult, ProposalAuditTrailResult, ProposalPreflightResult, ProposalReadinessResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueResult, ProposalReviewReportResult, ProposalReviewVerdictResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
-import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
+import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunResult, ProposalApproveResult, ProposalAuditTrailResult, ProposalPreflightResult, ProposalReadinessResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsReportResult, ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueResult, ProposalReviewReportResult, ProposalReviewVerdictResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
+import { isLlmHealthResult, isLlmStatusResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isModeListResult, isModeSummary, isPermissionCheckResult, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRunEventsResult, isRunInspectResult, isRuntimeStatusResult, isTaskInspectResult, isTaskRecord, isTaskRunResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, isTaskStartResult } from './protocol';
 import type { RuntimeTransport } from './runtimeProcess';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
@@ -284,6 +284,16 @@ export class RuntimeClient {
 
     if (!isProposalReviewQueueDiagnosticsHistoryResult(result)) {
       throw new RuntimeProtocolError('proposal.reviewQueueDiagnosticsHistory returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async reviewQueueDiagnosticsReport(runId: string): Promise<ProposalReviewQueueDiagnosticsReportResult> {
+    const result = await this.call<ProposalReviewQueueDiagnosticsReportResult>('proposal.reviewQueueDiagnosticsReport', { run_id: runId });
+
+    if (!isProposalReviewQueueDiagnosticsReportResult(result)) {
+      throw new RuntimeProtocolError('proposal.reviewQueueDiagnosticsReport returned an invalid result');
     }
 
     return result;

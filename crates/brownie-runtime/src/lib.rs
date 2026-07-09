@@ -27,6 +27,7 @@ use brownie_protocol::{
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
     ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsHistoryParams,
     ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsParams,
+    ProposalReviewQueueDiagnosticsReportParams, ProposalReviewQueueDiagnosticsReportResult,
     ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
     ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
     ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
@@ -47,9 +48,10 @@ use brownie_protocol::{
     WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsHistorySummary,
-    WorkspacePatchReviewQueueDiagnosticsSummary, WorkspacePatchReviewQueueItemSummary,
-    WorkspacePatchReviewQueueSummary, WorkspacePatchReviewReportSummary,
-    WorkspacePatchReviewSignalSummary, WorkspacePatchReviewVerdictSummary,
+    WorkspacePatchReviewQueueDiagnosticsReportSummary, WorkspacePatchReviewQueueDiagnosticsSummary,
+    WorkspacePatchReviewQueueItemSummary, WorkspacePatchReviewQueueSummary,
+    WorkspacePatchReviewReportSummary, WorkspacePatchReviewSignalSummary,
+    WorkspacePatchReviewVerdictSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
@@ -99,6 +101,8 @@ const METHOD_PROPOSAL_REVIEW_QUEUE: &str = "proposal.reviewQueue";
 const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS: &str = "proposal.reviewQueueDiagnostics";
 const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_HISTORY: &str =
     "proposal.reviewQueueDiagnosticsHistory";
+const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_REPORT: &str =
+    "proposal.reviewQueueDiagnosticsReport";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -177,6 +181,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_HISTORY => {
             handle_proposal_review_queue_diagnostics_history(request.id, request.params)
+        }
+        METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_REPORT => {
+            handle_proposal_review_queue_diagnostics_report(request.id, request.params)
         }
         _ => error_response(request.id, -32601, "method not found"),
     }
@@ -2136,6 +2143,32 @@ fn handle_proposal_review_queue_diagnostics_history(
     }
 }
 
+fn handle_proposal_review_queue_diagnostics_report(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewQueueDiagnosticsReportParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id is required");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_queue_diagnostics_report(&store, &params.run_id) {
+        Ok(review_queue_diagnostics_report) => result_response(
+            id,
+            json!(ProposalReviewQueueDiagnosticsReportResult {
+                review_queue_diagnostics_report
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3513,6 +3546,86 @@ fn build_proposal_review_queue_diagnostics_history(
         diagnostics_count: 1,
         latest_diagnostics: Some(entry.clone()),
         entries: vec![entry],
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    }
+}
+
+fn inspect_proposal_review_queue_diagnostics_report(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<WorkspacePatchReviewQueueDiagnosticsReportSummary, String> {
+    let history = inspect_proposal_review_queue_diagnostics_history(store, run_id)?;
+    Ok(build_proposal_review_queue_diagnostics_report(history))
+}
+
+fn build_proposal_review_queue_diagnostics_report(
+    history: WorkspacePatchReviewQueueDiagnosticsHistorySummary,
+) -> WorkspacePatchReviewQueueDiagnosticsReportSummary {
+    let latest = history.latest_diagnostics.clone();
+    let (
+        queue_status,
+        diagnostics_status,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_checks,
+        blocked_checks,
+        required_next_actions,
+    ) = match latest.as_ref() {
+        Some(entry) => (
+            entry.queue_status.clone(),
+            entry.diagnostics_status.clone(),
+            entry.proposal_count,
+            entry.complete_count,
+            entry.needs_action_count,
+            entry.blocked_count,
+            entry.failed_checks.clone(),
+            entry.blocked_checks.clone(),
+            entry.required_next_actions.clone(),
+        ),
+        None => (
+            history.history_status.clone(),
+            history.history_status.clone(),
+            0,
+            0,
+            0,
+            0,
+            Vec::new(),
+            Vec::new(),
+            Vec::new(),
+        ),
+    };
+    let report_reason = match diagnostics_status.as_str() {
+        "Complete" => {
+            "Review queue diagnostics report is complete; patch apply remains unauthorized."
+        }
+        "NeedsAction" => {
+            "Review queue diagnostics report needs operator action; patch apply remains unauthorized."
+        }
+        "Blocked" => {
+            "Review queue diagnostics report is blocked; patch apply remains unauthorized."
+        }
+        _ => "Review queue diagnostics report was reconstructed; patch apply remains unauthorized.",
+    }
+    .to_string();
+
+    WorkspacePatchReviewQueueDiagnosticsReportSummary {
+        run_id: history.run_id,
+        report_status: diagnostics_status.clone(),
+        report_reason,
+        queue_status,
+        diagnostics_status,
+        diagnostics_count: history.diagnostics_count,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_checks,
+        blocked_checks,
+        required_next_actions,
+        latest_diagnostics: latest,
         apply_authorized: false,
         generated_at: now_rfc3339(),
     }
@@ -7163,6 +7276,9 @@ mod tests {
         let blocked_diagnostics_history =
             inspect_proposal_review_queue_diagnostics_history(&store, &record.run_id)
                 .expect("blocked queue diagnostics history");
+        let blocked_diagnostics_report =
+            inspect_proposal_review_queue_diagnostics_report(&store, &record.run_id)
+                .expect("blocked queue diagnostics report");
         assert_eq!(blocked_queue.queue_status, "Blocked");
         assert_eq!(blocked_diagnostics.diagnostics_status, "Blocked");
         assert_eq!(blocked_diagnostics.queue_status, "Blocked");
@@ -7182,6 +7298,13 @@ mod tests {
         assert_eq!(latest_diagnostics.queue_status, "Blocked");
         assert_eq!(latest_diagnostics.proposal_count, 3);
         assert!(!latest_diagnostics.apply_authorized);
+        assert_eq!(blocked_diagnostics_report.report_status, "Blocked");
+        assert_eq!(blocked_diagnostics_report.queue_status, "Blocked");
+        assert_eq!(blocked_diagnostics_report.diagnostics_status, "Blocked");
+        assert_eq!(blocked_diagnostics_report.diagnostics_count, 1);
+        assert_eq!(blocked_diagnostics_report.proposal_count, 3);
+        assert!(blocked_diagnostics_report.latest_diagnostics.is_some());
+        assert!(!blocked_diagnostics_report.apply_authorized);
         assert!(blocked_diagnostics
             .blocked_checks
             .iter()
@@ -7218,6 +7341,8 @@ mod tests {
         let serialized_diagnostics = serde_json::to_string(&blocked_diagnostics).unwrap();
         let serialized_diagnostics_history =
             serde_json::to_string(&blocked_diagnostics_history).unwrap();
+        let serialized_diagnostics_report =
+            serde_json::to_string(&blocked_diagnostics_report).unwrap();
         for forbidden in [
             "content",
             "raw_content",
@@ -7232,6 +7357,7 @@ mod tests {
         ] {
             assert!(!serialized_diagnostics.contains(&format!(r#"\"{forbidden}\""#)));
             assert!(!serialized_diagnostics_history.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_diagnostics_report.contains(&format!(r#"\"{forbidden}\""#)));
         }
         let mut tampered_queue = blocked_queue.clone();
         tampered_queue.proposal_count += 1;
