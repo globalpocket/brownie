@@ -425,6 +425,35 @@ export interface WorkspacePatchReviewReportSummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewQueueItemSummary {
+  proposal_id: string;
+  path: string;
+  validation_status: 'Valid' | 'Invalid' | 'Blocked';
+  approval_status: 'Pending' | 'Approved' | 'Rejected' | 'Superseded';
+  report_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  report_reason: string;
+  verdict_status: 'ReadyForHumanReview' | 'NeedsSignals' | 'BlockedForReview';
+  review_status: 'Complete' | 'NeedsAction';
+  audit_event_count: number;
+  latest_audit_event: WorkspacePatchAuditTrailEntry | null;
+  required_next_actions: string[];
+  apply_authorized: false;
+  generated_at: string;
+}
+
+export interface WorkspacePatchReviewQueueSummary {
+  run_id: string;
+  queue_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  queue_reason: string;
+  proposal_count: number;
+  complete_count: number;
+  needs_action_count: number;
+  blocked_count: number;
+  items: WorkspacePatchReviewQueueItemSummary[];
+  required_next_actions: string[];
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -472,6 +501,10 @@ export interface ProposalReviewVerdictResult {
 export interface ProposalReviewReportResult {
   proposal: WorkspacePatchProposalSummary;
   review_report: WorkspacePatchReviewReportSummary;
+}
+
+export interface ProposalReviewQueueResult {
+  review_queue: WorkspacePatchReviewQueueSummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -755,6 +788,14 @@ export function isWorkspacePatchReviewReportSummary(value: unknown): value is Wo
   return isRecord(value) && typeof value.proposal_id === 'string' && (value.report_status === 'Complete' || value.report_status === 'NeedsAction' || value.report_status === 'Blocked') && typeof value.report_reason === 'string' && isWorkspacePatchReviewBundleSummary(value.review_bundle) && isWorkspacePatchReviewVerdictSummary(value.review_verdict) && isNonNegativeInteger(value.audit_event_count) && Array.isArray(value.recent_audit_events) && value.recent_audit_events.every(isWorkspacePatchAuditTrailEntry) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewQueueItemSummary(value: unknown): value is WorkspacePatchReviewQueueItemSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.path === 'string' && (value.validation_status === 'Valid' || value.validation_status === 'Invalid' || value.validation_status === 'Blocked') && (value.approval_status === 'Pending' || value.approval_status === 'Approved' || value.approval_status === 'Rejected' || value.approval_status === 'Superseded') && (value.report_status === 'Complete' || value.report_status === 'NeedsAction' || value.report_status === 'Blocked') && typeof value.report_reason === 'string' && (value.verdict_status === 'ReadyForHumanReview' || value.verdict_status === 'NeedsSignals' || value.verdict_status === 'BlockedForReview') && (value.review_status === 'Complete' || value.review_status === 'NeedsAction') && isNonNegativeInteger(value.audit_event_count) && (value.latest_audit_event === null || isWorkspacePatchAuditTrailEntry(value.latest_audit_event)) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReviewQueueSummary(value: unknown): value is WorkspacePatchReviewQueueSummary {
+  return isRecord(value) && typeof value.run_id === 'string' && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && typeof value.queue_reason === 'string' && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && Array.isArray(value.items) && value.items.every(isWorkspacePatchReviewQueueItemSummary) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -834,6 +875,10 @@ export function isProposalReviewVerdictResult(value: unknown): value is Proposal
 
 export function isProposalReviewReportResult(value: unknown): value is ProposalReviewReportResult {
   return isRecord(value) && isWorkspacePatchProposalSummary(value.proposal) && isWorkspacePatchReviewReportSummary(value.review_report) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewQueueResult(value: unknown): value is ProposalReviewQueueResult {
+  return isRecord(value) && isWorkspacePatchReviewQueueSummary(value.review_queue) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {

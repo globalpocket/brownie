@@ -405,6 +405,11 @@ pub struct ProposalReviewReportParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -646,6 +651,37 @@ pub struct WorkspacePatchReviewReportSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueItemSummary {
+    pub proposal_id: String,
+    pub path: String,
+    pub validation_status: String,
+    pub approval_status: String,
+    pub report_status: String,
+    pub report_reason: String,
+    pub verdict_status: String,
+    pub review_status: String,
+    pub audit_event_count: usize,
+    pub latest_audit_event: Option<WorkspacePatchAuditTrailEntry>,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueSummary {
+    pub run_id: String,
+    pub queue_status: String,
+    pub queue_reason: String,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub items: Vec<WorkspacePatchReviewQueueItemSummary>,
+    pub required_next_actions: Vec<String>,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -720,6 +756,11 @@ pub struct ProposalReviewVerdictResult {
 pub struct ProposalReviewReportResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub review_report: WorkspacePatchReviewReportSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueResult {
+    pub review_queue: WorkspacePatchReviewQueueSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
