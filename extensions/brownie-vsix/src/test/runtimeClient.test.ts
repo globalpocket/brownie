@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -227,6 +227,11 @@ describe('protocol validation', () => {
     expect(isProposalReviewReportResult({ proposal: result.proposals[0], review_report: { ...reviewReport, apply_authorized: true } })).toBe(false);
     expect(isProposalReviewReportResult({ proposal: result.proposals[0], review_report: { ...reviewReport, patch: 'raw' } })).toBe(false);
     expect(isProposalReviewReportResult({ proposal: result.proposals[0], review_report: { ...reviewReport, recent_audit_events: [{ ...auditEntry, metadata: { diff: 'raw' } }] } })).toBe(false);
+    const reviewQueue = { run_id: 'run_1', queue_status: 'Complete', queue_reason: 'All proposal review queue items are complete for final human review; patch apply remains unauthorized.', proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, items: [{ proposal_id: 'proposal_1', path: 'README.md', validation_status: 'Valid', approval_status: 'Approved', report_status: 'Complete', report_reason: reviewReport.report_reason, verdict_status: 'ReadyForHumanReview', review_status: 'Complete', audit_event_count: 1, latest_audit_event: auditEntry, required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:01:00Z' }], required_next_actions: [], generated_at: '2026-07-01T00:01:00Z' };
+    expect(isProposalReviewQueueResult({ review_queue: reviewQueue })).toBe(true);
+    expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, items: [{ ...reviewQueue.items[0], apply_authorized: true }] } })).toBe(false);
+    expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, patch: 'raw' } })).toBe(false);
+    expect(isProposalReviewQueueResult({ review_queue: { ...reviewQueue, items: [{ ...reviewQueue.items[0], latest_audit_event: { ...auditEntry, metadata: { diff: 'raw' } } }] } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -547,6 +552,14 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { proposal, review_report } });
     await expect(new RuntimeClient(transport).reviewReport('run_1', 'proposal_1')).resolves.toEqual({ proposal, review_report });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewReport', params: { run_id: 'run_1', proposal_id: 'proposal_1' } }]);
+  });
+
+  it('creates a proposal.reviewQueue request', async () => {
+    const latest_audit_event = { event_id: 'event_1', audit_event: 'apply_dry_run_checked', event_kind: 'WorkspacePatchApplyDryRunChecked', timestamp: '2026-07-01T00:00:00Z', proposal_id: 'proposal_1', summary: 'Apply dry-run check recorded without applying a patch.', metadata: { dry_run_id: 'apply_dry_run_1', no_patch_applied: true, apply_executed: false, workspace_files_changed: false } };
+    const review_queue = { run_id: 'run_1', queue_status: 'Complete', queue_reason: 'All proposal review queue items are complete for final human review; patch apply remains unauthorized.', proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, items: [{ proposal_id: 'proposal_1', path: 'README.md', validation_status: 'Valid', approval_status: 'Approved', report_status: 'Complete', report_reason: 'Review bundle and verdict are complete for final human review; patch apply remains unauthorized.', verdict_status: 'ReadyForHumanReview', review_status: 'Complete', audit_event_count: 1, latest_audit_event, required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:01:00Z' }], required_next_actions: [], generated_at: '2026-07-01T00:01:00Z' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { review_queue } });
+    await expect(new RuntimeClient(transport).reviewQueue('run_1')).resolves.toEqual({ review_queue });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewQueue', params: { run_id: 'run_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

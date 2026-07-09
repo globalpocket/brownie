@@ -25,23 +25,25 @@ use brownie_protocol::{
     ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
     ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewReportParams, ProposalReviewReportResult,
-    ProposalReviewVerdictParams, ProposalReviewVerdictResult, RunEventsParams, RunEventsResult,
-    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    ProposalReviewBundleResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
+    ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
+    ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
+    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
+    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
     WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
-    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewReportSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueItemSummary,
+    WorkspacePatchReviewQueueSummary, WorkspacePatchReviewReportSummary,
     WorkspacePatchReviewSignalSummary, WorkspacePatchReviewVerdictSummary,
 };
 use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
@@ -88,6 +90,7 @@ const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
 const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
 const METHOD_PROPOSAL_REVIEW_VERDICT: &str = "proposal.reviewVerdict";
 const METHOD_PROPOSAL_REVIEW_REPORT: &str = "proposal.reviewReport";
+const METHOD_PROPOSAL_REVIEW_QUEUE: &str = "proposal.reviewQueue";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -160,6 +163,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
             handle_proposal_review_verdict(request.id, request.params)
         }
         METHOD_PROPOSAL_REVIEW_REPORT => handle_proposal_review_report(request.id, request.params),
+        METHOD_PROPOSAL_REVIEW_QUEUE => handle_proposal_review_queue(request.id, request.params),
         _ => error_response(request.id, -32601, "method not found"),
     }
 }
@@ -2048,6 +2052,24 @@ fn handle_proposal_review_report(id: Value, params: Option<Value>) -> JsonRpcRes
     }
 }
 
+fn handle_proposal_review_queue(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewQueueParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id is required");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_queue(&store, &params.run_id) {
+        Ok(review_queue) => result_response(id, json!(ProposalReviewQueueResult { review_queue })),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3295,6 +3317,78 @@ fn inspect_proposal_review_report(
         generated_at: now_rfc3339(),
     };
     Ok((proposal, review_report))
+}
+
+fn inspect_proposal_review_queue(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<WorkspacePatchReviewQueueSummary, String> {
+    let proposals = list_proposals(store, run_id)?;
+    let mut items = Vec::with_capacity(proposals.len());
+    let mut required_next_actions = Vec::new();
+    let mut complete_count = 0;
+    let mut needs_action_count = 0;
+    let mut blocked_count = 0;
+
+    for proposal in proposals {
+        let (_proposal, review_report) =
+            inspect_proposal_review_report(store, run_id, &proposal.proposal_id)?;
+        match review_report.report_status.as_str() {
+            "Complete" => complete_count += 1,
+            "Blocked" => blocked_count += 1,
+            _ => needs_action_count += 1,
+        }
+        for action in &review_report.required_next_actions {
+            if !required_next_actions.contains(action) {
+                required_next_actions.push(action.clone());
+            }
+        }
+        items.push(WorkspacePatchReviewQueueItemSummary {
+            proposal_id: proposal.proposal_id,
+            path: proposal.path,
+            validation_status: proposal.validation_status,
+            approval_status: proposal.approval_status,
+            report_status: review_report.report_status,
+            report_reason: review_report.report_reason,
+            verdict_status: review_report.review_verdict.verdict_status,
+            review_status: review_report.review_bundle.review_status,
+            audit_event_count: review_report.audit_event_count,
+            latest_audit_event: review_report.review_bundle.latest_audit_event,
+            required_next_actions: review_report.required_next_actions,
+            apply_authorized: false,
+            generated_at: review_report.generated_at,
+        });
+    }
+
+    let (queue_status, queue_reason) = if blocked_count > 0 {
+        (
+            "Blocked".to_string(),
+            format!("{blocked_count} proposal review item(s) are blocked."),
+        )
+    } else if needs_action_count > 0 {
+        (
+            "NeedsAction".to_string(),
+            format!("{needs_action_count} proposal review item(s) need additional signals."),
+        )
+    } else {
+        (
+            "Complete".to_string(),
+            "All proposal review queue items are complete for final human review; patch apply remains unauthorized.".to_string(),
+        )
+    };
+
+    Ok(WorkspacePatchReviewQueueSummary {
+        run_id: run_id.to_string(),
+        queue_status,
+        queue_reason,
+        proposal_count: items.len(),
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        items,
+        required_next_actions,
+        generated_at: now_rfc3339(),
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -6631,6 +6725,123 @@ mod tests {
             .iter()
             .any(|signal| signal == "proposal.readiness"));
         assert!(!verdict.apply_authorized);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+    }
+
+    #[test]
+    fn proposal_review_queue_summarizes_all_proposals_without_mutating() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "review queue".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("start task");
+
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "proposal_complete",
+            "Valid",
+            Some("--- a/README.md\n+++ b/README.md"),
+            false,
+        );
+        approve_proposal(&store, &record.run_id, "proposal_complete", None)
+            .expect("approve complete proposal");
+        preflight_proposal(&store, &record.run_id, "proposal_complete")
+            .expect("preflight complete proposal");
+        readiness_proposal(&store, &record.run_id, "proposal_complete")
+            .expect("readiness complete proposal");
+        inspect_apply_capability(&store, &record.run_id, "proposal_complete")
+            .expect("capability complete proposal");
+        inspect_apply_dry_run(&store, &record.run_id, "proposal_complete")
+            .expect("dry run complete proposal");
+
+        append_test_patch_proposal(
+            &store,
+            &record,
+            "proposal_needs_action",
+            "Valid",
+            Some("--- a/README.md\n+++ b/README.md"),
+            false,
+        );
+
+        let events_before_queue = read_existing_run_events(&store, &record.run_id)
+            .expect("events before needs-action queue");
+        let needs_action_queue =
+            inspect_proposal_review_queue(&store, &record.run_id).expect("needs-action queue");
+        assert_eq!(needs_action_queue.queue_status, "NeedsAction");
+        assert_eq!(needs_action_queue.proposal_count, 2);
+        assert_eq!(needs_action_queue.complete_count, 1);
+        assert_eq!(needs_action_queue.needs_action_count, 1);
+        assert_eq!(needs_action_queue.blocked_count, 0);
+        assert!(needs_action_queue
+            .required_next_actions
+            .iter()
+            .any(|action| action == "proposal.readiness"));
+        assert!(needs_action_queue
+            .items
+            .iter()
+            .all(|item| !item.apply_authorized));
+        assert!(needs_action_queue.items.iter().any(|item| {
+            item.proposal_id == "proposal_complete" && item.report_status == "Complete"
+        }));
+        assert!(needs_action_queue.items.iter().any(|item| {
+            item.proposal_id == "proposal_needs_action" && item.report_status == "NeedsAction"
+        }));
+        assert_eq!(
+            read_existing_run_events(&store, &record.run_id)
+                .expect("events after needs-action queue")
+                .len(),
+            events_before_queue.len()
+        );
+
+        append_test_patch_proposal(&store, &record, "proposal_blocked", "Blocked", None, true);
+        let events_before_blocked_queue =
+            read_existing_run_events(&store, &record.run_id).expect("events before blocked queue");
+        let blocked_queue =
+            inspect_proposal_review_queue(&store, &record.run_id).expect("blocked queue");
+        assert_eq!(blocked_queue.queue_status, "Blocked");
+        assert_eq!(blocked_queue.proposal_count, 3);
+        assert_eq!(blocked_queue.complete_count, 1);
+        assert_eq!(blocked_queue.needs_action_count, 1);
+        assert_eq!(blocked_queue.blocked_count, 1);
+        let blocked_item = blocked_queue
+            .items
+            .iter()
+            .find(|item| item.proposal_id == "proposal_blocked")
+            .expect("blocked item");
+        assert_eq!(blocked_item.validation_status, "Blocked");
+        assert_eq!(blocked_item.report_status, "Blocked");
+        assert_eq!(blocked_item.verdict_status, "BlockedForReview");
+        assert!(!blocked_item.apply_authorized);
+        let serialized_queue = serde_json::to_string(&blocked_queue).unwrap();
+        for forbidden in [
+            "content",
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+        ] {
+            assert!(!serialized_queue.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        assert_eq!(
+            read_existing_run_events(&store, &record.run_id)
+                .expect("events after blocked queue")
+                .len(),
+            events_before_blocked_queue.len()
+        );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
