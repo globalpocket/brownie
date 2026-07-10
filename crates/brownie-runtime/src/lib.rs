@@ -34,6 +34,8 @@ use brownie_protocol::{
     ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult,
     ProposalReviewQueueDiagnosticsDigestReportVerdictParams,
+    ProposalReviewQueueDiagnosticsDigestReportVerdictReportParams,
+    ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult,
     ProposalReviewQueueDiagnosticsDigestReportVerdictResult,
     ProposalReviewQueueDiagnosticsDigestResult, ProposalReviewQueueDiagnosticsHistoryParams,
     ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsParams,
@@ -63,6 +65,7 @@ use brownie_protocol::{
     WorkspacePatchReviewQueueDiagnosticsDigestReportSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary,
+    WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestSummary,
     WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary,
@@ -134,6 +137,8 @@ const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT_VERDICT: &str =
     "proposal.reviewQueueDiagnosticsDigestReportVerdict";
 const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT_VERDICT_HISTORY: &str =
     "proposal.reviewQueueDiagnosticsDigestReportVerdictHistory";
+const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT_VERDICT_REPORT: &str =
+    "proposal.reviewQueueDiagnosticsDigestReportVerdictReport";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -239,6 +244,12 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT_VERDICT_HISTORY => {
             handle_proposal_review_queue_diagnostics_digest_report_verdict_history(
+                request.id,
+                request.params,
+            )
+        }
+        METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT_VERDICT_REPORT => {
+            handle_proposal_review_queue_diagnostics_digest_report_verdict_report(
                 request.id,
                 request.params,
             )
@@ -2391,6 +2402,38 @@ fn handle_proposal_review_queue_diagnostics_digest_report_verdict_history(
     }
 }
 
+fn handle_proposal_review_queue_diagnostics_digest_report_verdict_report(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewQueueDiagnosticsDigestReportVerdictReportParams =
+        match parse_params(params) {
+            Ok(params) => params,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id is required");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_queue_diagnostics_digest_report_verdict_report(
+        &store,
+        &params.run_id,
+    ) {
+        Ok(review_queue_diagnostics_digest_report_verdict_report) => result_response(
+            id,
+            json!(
+                ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult {
+                    review_queue_diagnostics_digest_report_verdict_report
+                }
+            ),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -4216,6 +4259,93 @@ fn build_proposal_review_queue_diagnostics_digest_report_verdict_history(
         verdict_count: 1,
         latest_verdict: Some(entry.clone()),
         entries: vec![entry],
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    }
+}
+
+fn inspect_proposal_review_queue_diagnostics_digest_report_verdict_report(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary, String> {
+    let history =
+        inspect_proposal_review_queue_diagnostics_digest_report_verdict_history(store, run_id)?;
+    Ok(build_proposal_review_queue_diagnostics_digest_report_verdict_report(history))
+}
+
+fn build_proposal_review_queue_diagnostics_digest_report_verdict_report(
+    history: WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary,
+) -> WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary {
+    let latest = history.latest_verdict.as_ref();
+    let (
+        verdict_status,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_check_count,
+        blocked_check_count,
+        required_next_action_count,
+        required_next_actions,
+    ) = latest
+        .map(|entry| {
+            (
+                entry.verdict_status.clone(),
+                entry.proposal_count,
+                entry.complete_count,
+                entry.needs_action_count,
+                entry.blocked_count,
+                entry.failed_check_count,
+                entry.blocked_check_count,
+                entry.required_next_action_count,
+                entry.required_next_actions.clone(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                history.history_status.clone(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Vec::new(),
+            )
+        });
+    let report_reason = match history.history_status.as_str() {
+        "Complete" => {
+            "Diagnostics digest report verdict history is complete; patch apply remains unauthorized."
+        }
+        "NeedsAction" => {
+            "Diagnostics digest report verdict history needs operator action; patch apply remains unauthorized."
+        }
+        "Blocked" => {
+            "Diagnostics digest report verdict history is blocked; patch apply remains unauthorized."
+        }
+        _ => {
+            "Diagnostics digest report verdict history was reconstructed; patch apply remains unauthorized."
+        }
+    }
+    .to_string();
+
+    WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary {
+        run_id: history.run_id,
+        report_status: history.history_status.clone(),
+        report_reason,
+        history_status: history.history_status,
+        verdict_status,
+        verdict_count: history.verdict_count,
+        latest_verdict: history.latest_verdict,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_check_count,
+        blocked_check_count,
+        required_next_action_count,
+        required_next_actions,
         apply_authorized: false,
         generated_at: now_rfc3339(),
     }
@@ -7890,6 +8020,12 @@ mod tests {
                 &record.run_id,
             )
             .expect("blocked queue diagnostics digest report verdict history");
+        let blocked_diagnostics_digest_report_verdict_report =
+            inspect_proposal_review_queue_diagnostics_digest_report_verdict_report(
+                &store,
+                &record.run_id,
+            )
+            .expect("blocked queue diagnostics digest report verdict report");
         assert_eq!(blocked_queue.queue_status, "Blocked");
         assert_eq!(blocked_diagnostics.diagnostics_status, "Blocked");
         assert_eq!(blocked_diagnostics.queue_status, "Blocked");
@@ -8024,6 +8160,36 @@ mod tests {
         assert_eq!(latest_verdict.report_status, "Blocked");
         assert_eq!(latest_verdict.proposal_count, 3);
         assert!(!latest_verdict.apply_authorized);
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.report_status,
+            "Blocked"
+        );
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.history_status,
+            "Blocked"
+        );
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.verdict_status,
+            "Blocked"
+        );
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.verdict_count,
+            1
+        );
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.proposal_count,
+            3
+        );
+        assert_eq!(
+            blocked_diagnostics_digest_report_verdict_report.required_next_action_count,
+            blocked_diagnostics_digest_report_verdict_report
+                .required_next_actions
+                .len()
+        );
+        assert!(blocked_diagnostics_digest_report_verdict_report
+            .latest_verdict
+            .is_some());
+        assert!(!blocked_diagnostics_digest_report_verdict_report.apply_authorized);
         assert!(blocked_diagnostics
             .blocked_checks
             .iter()
@@ -8074,6 +8240,8 @@ mod tests {
             serde_json::to_string(&blocked_diagnostics_digest_report_verdict).unwrap();
         let serialized_diagnostics_digest_report_verdict_history =
             serde_json::to_string(&blocked_diagnostics_digest_report_verdict_history).unwrap();
+        let serialized_diagnostics_digest_report_verdict_report =
+            serde_json::to_string(&blocked_diagnostics_digest_report_verdict_report).unwrap();
         for forbidden in [
             "content",
             "raw_content",
@@ -8097,6 +8265,8 @@ mod tests {
             assert!(!serialized_diagnostics_digest_report_verdict
                 .contains(&format!(r#"\"{forbidden}\""#)));
             assert!(!serialized_diagnostics_digest_report_verdict_history
+                .contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_diagnostics_digest_report_verdict_report
                 .contains(&format!(r#"\"{forbidden}\""#)));
         }
         let mut tampered_queue = blocked_queue.clone();
