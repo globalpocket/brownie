@@ -465,6 +465,11 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryParams 
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -1019,6 +1024,26 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryS
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestSummary {
+    pub run_id: String,
+    pub digest_status: String,
+    pub digest_reason: String,
+    pub history_status: String,
+    pub report_status: String,
+    pub report_count: usize,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub failed_check_count: usize,
+    pub blocked_check_count: usize,
+    pub required_next_action_count: usize,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -1160,6 +1185,12 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult {
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_report_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistorySummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult {
+    pub review_queue_diagnostics_digest_report_verdict_report_history_digest:
+        WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
