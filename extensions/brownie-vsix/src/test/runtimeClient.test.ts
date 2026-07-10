@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
+import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -259,6 +259,11 @@ describe('protocol validation', () => {
     expect(isProposalReviewQueueDiagnosticsDigestHistoryResult({ review_queue_diagnostics_digest_history: { ...reviewQueueDiagnosticsDigestHistory, apply_authorized: true } })).toBe(false);
     expect(isProposalReviewQueueDiagnosticsDigestHistoryResult({ review_queue_diagnostics_digest_history: { ...reviewQueueDiagnosticsDigestHistory, entries: [{ ...reviewQueueDiagnosticsDigestHistoryEntry, diff: 'raw' }] } })).toBe(false);
     expect(isProposalReviewQueueDiagnosticsDigestHistoryResult({ review_queue_diagnostics_digest_history: { ...reviewQueueDiagnosticsDigestHistory, digest_count: 2 } })).toBe(false);
+    const reviewQueueDiagnosticsDigestReport = { run_id: 'run_1', report_status: 'Complete', report_reason: 'Diagnostics digest history report is complete; patch apply remains unauthorized.', digest_status: 'Complete', history_status: 'Complete', digest_count: 1, latest_digest: reviewQueueDiagnosticsDigestHistoryEntry, proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, failed_check_count: 0, blocked_check_count: 0, required_next_action_count: 0, required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:06:00Z' };
+    expect(isProposalReviewQueueDiagnosticsDigestReportResult({ review_queue_diagnostics_digest_report: reviewQueueDiagnosticsDigestReport })).toBe(true);
+    expect(isProposalReviewQueueDiagnosticsDigestReportResult({ review_queue_diagnostics_digest_report: { ...reviewQueueDiagnosticsDigestReport, apply_authorized: true } })).toBe(false);
+    expect(isProposalReviewQueueDiagnosticsDigestReportResult({ review_queue_diagnostics_digest_report: { ...reviewQueueDiagnosticsDigestReport, latest_digest: { ...reviewQueueDiagnosticsDigestHistoryEntry, raw_input: 'raw' } } })).toBe(false);
+    expect(isProposalReviewQueueDiagnosticsDigestReportResult({ review_queue_diagnostics_digest_report: { ...reviewQueueDiagnosticsDigestReport, required_next_action_count: 1 } })).toBe(false);
     expect(isProposalRejectResult({ proposal: { ...result.proposals[0], approval_status: 'Rejected', rejected_at: '2026-06-30T00:00:00Z' } })).toBe(true);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, raw_content: 'secret' } })).toBe(false);
     expect(isProposalApproveResult({ proposal: result.proposals[0], apply_plan: { ...applyPlan, canonical_path: '/tmp/README.md' } })).toBe(false);
@@ -625,6 +630,14 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { review_queue_diagnostics_digest_history } });
     await expect(new RuntimeClient(transport).reviewQueueDiagnosticsDigestHistory('run_1')).resolves.toEqual({ review_queue_diagnostics_digest_history });
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewQueueDiagnosticsDigestHistory', params: { run_id: 'run_1' } }]);
+  });
+
+  it('creates a proposal.reviewQueueDiagnosticsDigestReport request', async () => {
+    const latest_digest = { digest_id: 'review_queue_digest_1', digest_status: 'Complete', queue_status: 'Complete', diagnostics_status: 'Complete', proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, failed_check_count: 0, blocked_check_count: 0, required_next_action_count: 0, required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:04:00Z' };
+    const review_queue_diagnostics_digest_report = { run_id: 'run_1', report_status: 'Complete', report_reason: 'Diagnostics digest history report is complete; patch apply remains unauthorized.', digest_status: 'Complete', history_status: 'Complete', digest_count: 1, latest_digest, proposal_count: 1, complete_count: 1, needs_action_count: 0, blocked_count: 0, failed_check_count: 0, blocked_check_count: 0, required_next_action_count: 0, required_next_actions: [], apply_authorized: false, generated_at: '2026-07-01T00:06:00Z' };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { review_queue_diagnostics_digest_report } });
+    await expect(new RuntimeClient(transport).reviewQueueDiagnosticsDigestReport('run_1')).resolves.toEqual({ review_queue_diagnostics_digest_report });
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'proposal.reviewQueueDiagnosticsDigestReport', params: { run_id: 'run_1' } }]);
   });
 
   it('creates a tool.execute request', async () => {

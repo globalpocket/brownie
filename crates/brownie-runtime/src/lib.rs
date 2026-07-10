@@ -27,29 +27,32 @@ use brownie_protocol::{
     ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
     ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
-    ProposalReviewQueueDiagnosticsDigestResult, ProposalReviewQueueDiagnosticsHistoryParams,
-    ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsParams,
-    ProposalReviewQueueDiagnosticsReportParams, ProposalReviewQueueDiagnosticsReportResult,
-    ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
-    ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
-    ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
-    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
-    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    ProposalReviewQueueDiagnosticsDigestReportParams,
+    ProposalReviewQueueDiagnosticsDigestReportResult, ProposalReviewQueueDiagnosticsDigestResult,
+    ProposalReviewQueueDiagnosticsHistoryParams, ProposalReviewQueueDiagnosticsHistoryResult,
+    ProposalReviewQueueDiagnosticsParams, ProposalReviewQueueDiagnosticsReportParams,
+    ProposalReviewQueueDiagnosticsReportResult, ProposalReviewQueueDiagnosticsResult,
+    ProposalReviewQueueParams, ProposalReviewQueueResult, ProposalReviewReportParams,
+    ProposalReviewReportResult, ProposalReviewVerdictParams, ProposalReviewVerdictResult,
+    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
+    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
+    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
     WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
+    WorkspacePatchReviewQueueDiagnosticsDigestReportSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestSummary,
     WorkspacePatchReviewQueueDiagnosticsHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsHistorySummary,
@@ -112,6 +115,8 @@ const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST: &str =
     "proposal.reviewQueueDiagnosticsDigest";
 const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_HISTORY: &str =
     "proposal.reviewQueueDiagnosticsDigestHistory";
+const METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT: &str =
+    "proposal.reviewQueueDiagnosticsDigestReport";
 const DEFAULT_DIFF_PREVIEW_CHARS: usize = 4000;
 const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
@@ -199,6 +204,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_HISTORY => {
             handle_proposal_review_queue_diagnostics_digest_history(request.id, request.params)
+        }
+        METHOD_PROPOSAL_REVIEW_QUEUE_DIAGNOSTICS_DIGEST_REPORT => {
+            handle_proposal_review_queue_diagnostics_digest_report(request.id, request.params)
         }
         _ => error_response(request.id, -32601, "method not found"),
     }
@@ -2236,6 +2244,32 @@ fn handle_proposal_review_queue_diagnostics_digest_history(
     }
 }
 
+fn handle_proposal_review_queue_diagnostics_digest_report(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ProposalReviewQueueDiagnosticsDigestReportParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty() {
+        return error_response(id, -32602, "invalid params: run_id is required");
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match inspect_proposal_review_queue_diagnostics_digest_report(&store, &params.run_id) {
+        Ok(review_queue_diagnostics_digest_report) => result_response(
+            id,
+            json!(ProposalReviewQueueDiagnosticsDigestReportResult {
+                review_queue_diagnostics_digest_report
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: TaskInspectParams = match parse_params(params) {
         Ok(params) => params,
@@ -3774,6 +3808,95 @@ fn build_proposal_review_queue_diagnostics_digest_history(
         digest_count: 1,
         latest_digest: Some(entry.clone()),
         entries: vec![entry],
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    }
+}
+
+fn inspect_proposal_review_queue_diagnostics_digest_report(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<WorkspacePatchReviewQueueDiagnosticsDigestReportSummary, String> {
+    let history = inspect_proposal_review_queue_diagnostics_digest_history(store, run_id)?;
+    Ok(build_proposal_review_queue_diagnostics_digest_report(
+        history,
+    ))
+}
+
+fn build_proposal_review_queue_diagnostics_digest_report(
+    history: WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
+) -> WorkspacePatchReviewQueueDiagnosticsDigestReportSummary {
+    let latest = history.latest_digest.clone();
+    let (
+        digest_status,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_check_count,
+        blocked_check_count,
+        required_next_action_count,
+        required_next_actions,
+    ) = latest
+        .as_ref()
+        .map(|entry| {
+            (
+                entry.digest_status.clone(),
+                entry.proposal_count,
+                entry.complete_count,
+                entry.needs_action_count,
+                entry.blocked_count,
+                entry.failed_check_count,
+                entry.blocked_check_count,
+                entry.required_next_action_count,
+                entry.required_next_actions.clone(),
+            )
+        })
+        .unwrap_or_else(|| {
+            (
+                history.history_status.clone(),
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                Vec::new(),
+            )
+        });
+    let report_reason = match history.history_status.as_str() {
+        "Complete" => {
+            "Diagnostics digest history report is complete; patch apply remains unauthorized."
+        }
+        "NeedsAction" => {
+            "Diagnostics digest history report needs operator action; patch apply remains unauthorized."
+        }
+        "Blocked" => {
+            "Diagnostics digest history report is blocked; patch apply remains unauthorized."
+        }
+        _ => {
+            "Diagnostics digest history report was reconstructed; patch apply remains unauthorized."
+        }
+    }
+    .to_string();
+
+    WorkspacePatchReviewQueueDiagnosticsDigestReportSummary {
+        run_id: history.run_id,
+        report_status: history.history_status.clone(),
+        report_reason,
+        digest_status,
+        history_status: history.history_status,
+        digest_count: history.digest_count,
+        latest_digest: latest,
+        proposal_count,
+        complete_count,
+        needs_action_count,
+        blocked_count,
+        failed_check_count,
+        blocked_check_count,
+        required_next_action_count,
+        required_next_actions,
         apply_authorized: false,
         generated_at: now_rfc3339(),
     }
@@ -7433,6 +7556,9 @@ mod tests {
         let blocked_diagnostics_digest_history =
             inspect_proposal_review_queue_diagnostics_digest_history(&store, &record.run_id)
                 .expect("blocked queue diagnostics digest history");
+        let blocked_diagnostics_digest_report =
+            inspect_proposal_review_queue_diagnostics_digest_report(&store, &record.run_id)
+                .expect("blocked queue diagnostics digest report");
         assert_eq!(blocked_queue.queue_status, "Blocked");
         assert_eq!(blocked_diagnostics.diagnostics_status, "Blocked");
         assert_eq!(blocked_diagnostics.queue_status, "Blocked");
@@ -7480,6 +7606,20 @@ mod tests {
         assert_eq!(latest_digest.queue_status, "Blocked");
         assert_eq!(latest_digest.proposal_count, 3);
         assert!(!latest_digest.apply_authorized);
+        assert_eq!(blocked_diagnostics_digest_report.report_status, "Blocked");
+        assert_eq!(blocked_diagnostics_digest_report.digest_status, "Blocked");
+        assert_eq!(blocked_diagnostics_digest_report.history_status, "Blocked");
+        assert_eq!(blocked_diagnostics_digest_report.digest_count, 1);
+        assert_eq!(blocked_diagnostics_digest_report.proposal_count, 3);
+        assert_eq!(blocked_diagnostics_digest_report.blocked_check_count, 1);
+        assert_eq!(
+            blocked_diagnostics_digest_report.required_next_action_count,
+            blocked_diagnostics_digest_report
+                .required_next_actions
+                .len()
+        );
+        assert!(blocked_diagnostics_digest_report.latest_digest.is_some());
+        assert!(!blocked_diagnostics_digest_report.apply_authorized);
         assert!(blocked_diagnostics
             .blocked_checks
             .iter()
@@ -7522,6 +7662,8 @@ mod tests {
             serde_json::to_string(&blocked_diagnostics_digest).unwrap();
         let serialized_diagnostics_digest_history =
             serde_json::to_string(&blocked_diagnostics_digest_history).unwrap();
+        let serialized_diagnostics_digest_report =
+            serde_json::to_string(&blocked_diagnostics_digest_report).unwrap();
         for forbidden in [
             "content",
             "raw_content",
@@ -7539,6 +7681,7 @@ mod tests {
             assert!(!serialized_diagnostics_report.contains(&format!(r#"\"{forbidden}\""#)));
             assert!(!serialized_diagnostics_digest.contains(&format!(r#"\"{forbidden}\""#)));
             assert!(!serialized_diagnostics_digest_history.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_diagnostics_digest_report.contains(&format!(r#"\"{forbidden}\""#)));
         }
         let mut tampered_queue = blocked_queue.clone();
         tampered_queue.proposal_count += 1;
