@@ -440,6 +440,11 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -856,6 +861,37 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary {
+    pub report_id: String,
+    pub report_status: String,
+    pub digest_status: String,
+    pub history_status: String,
+    pub digest_count: usize,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub failed_check_count: usize,
+    pub blocked_check_count: usize,
+    pub required_next_action_count: usize,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportHistorySummary {
+    pub run_id: String,
+    pub history_status: String,
+    pub history_reason: String,
+    pub report_count: usize,
+    pub latest_report: Option<WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary>,
+    pub entries: Vec<WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -967,6 +1003,12 @@ pub struct ProposalReviewQueueDiagnosticsDigestHistoryResult {
 pub struct ProposalReviewQueueDiagnosticsDigestReportResult {
     pub review_queue_diagnostics_digest_report:
         WorkspacePatchReviewQueueDiagnosticsDigestReportSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryResult {
+    pub review_queue_diagnostics_digest_report_history:
+        WorkspacePatchReviewQueueDiagnosticsDigestReportHistorySummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
