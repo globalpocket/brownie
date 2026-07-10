@@ -450,6 +450,11 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -917,6 +922,38 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary {
+    pub verdict_id: String,
+    pub verdict_status: String,
+    pub history_status: String,
+    pub report_status: String,
+    pub report_count: usize,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub failed_check_count: usize,
+    pub blocked_check_count: usize,
+    pub required_next_action_count: usize,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary {
+    pub run_id: String,
+    pub history_status: String,
+    pub history_reason: String,
+    pub verdict_count: usize,
+    pub latest_verdict:
+        Option<WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary>,
+    pub entries: Vec<WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -1040,6 +1077,12 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportHistoryResult {
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictResult {
     pub review_queue_diagnostics_digest_report_verdict:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult {
+    pub review_queue_diagnostics_digest_report_verdict_history:
+        WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
