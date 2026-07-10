@@ -541,6 +541,34 @@ export interface WorkspacePatchReviewQueueDiagnosticsDigestSummary {
   generated_at: string;
 }
 
+export interface WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary {
+  digest_id: string;
+  digest_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  queue_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  diagnostics_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  proposal_count: number;
+  complete_count: number;
+  needs_action_count: number;
+  blocked_count: number;
+  failed_check_count: number;
+  blocked_check_count: number;
+  required_next_action_count: number;
+  required_next_actions: string[];
+  apply_authorized: false;
+  generated_at: string;
+}
+
+export interface WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary {
+  run_id: string;
+  history_status: 'Complete' | 'NeedsAction' | 'Blocked';
+  history_reason: string;
+  digest_count: number;
+  latest_digest: WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary | null;
+  entries: WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary[];
+  apply_authorized: false;
+  generated_at: string;
+}
+
 export interface ProposalListResult {
   run_id: string;
   proposals: WorkspacePatchProposalSummary[];
@@ -608,6 +636,10 @@ export interface ProposalReviewQueueDiagnosticsReportResult {
 
 export interface ProposalReviewQueueDiagnosticsDigestResult {
   review_queue_diagnostics_digest: WorkspacePatchReviewQueueDiagnosticsDigestSummary;
+}
+
+export interface ProposalReviewQueueDiagnosticsDigestHistoryResult {
+  review_queue_diagnostics_digest_history: WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary;
 }
 
 export interface WorkspacePatchReadinessReportSummary {
@@ -923,6 +955,14 @@ export function isWorkspacePatchReviewQueueDiagnosticsDigestSummary(value: unkno
   return isRecord(value) && typeof value.run_id === 'string' && (value.digest_status === 'Complete' || value.digest_status === 'NeedsAction' || value.digest_status === 'Blocked') && typeof value.digest_reason === 'string' && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && (value.diagnostics_status === 'Complete' || value.diagnostics_status === 'NeedsAction' || value.diagnostics_status === 'Blocked') && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && isNonNegativeInteger(value.failed_check_count) && isNonNegativeInteger(value.blocked_check_count) && isNonNegativeInteger(value.required_next_action_count) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && value.required_next_action_count === value.required_next_actions.length && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary(value: unknown): value is WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary {
+  return isRecord(value) && typeof value.digest_id === 'string' && (value.digest_status === 'Complete' || value.digest_status === 'NeedsAction' || value.digest_status === 'Blocked') && (value.queue_status === 'Complete' || value.queue_status === 'NeedsAction' || value.queue_status === 'Blocked') && (value.diagnostics_status === 'Complete' || value.diagnostics_status === 'NeedsAction' || value.diagnostics_status === 'Blocked') && isNonNegativeInteger(value.proposal_count) && isNonNegativeInteger(value.complete_count) && isNonNegativeInteger(value.needs_action_count) && isNonNegativeInteger(value.blocked_count) && isNonNegativeInteger(value.failed_check_count) && isNonNegativeInteger(value.blocked_check_count) && isNonNegativeInteger(value.required_next_action_count) && Array.isArray(value.required_next_actions) && value.required_next_actions.every((action) => typeof action === 'string') && value.required_next_action_count === value.required_next_actions.length && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
+export function isWorkspacePatchReviewQueueDiagnosticsDigestHistorySummary(value: unknown): value is WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary {
+  return isRecord(value) && typeof value.run_id === 'string' && (value.history_status === 'Complete' || value.history_status === 'NeedsAction' || value.history_status === 'Blocked') && typeof value.history_reason === 'string' && isNonNegativeInteger(value.digest_count) && (value.latest_digest === null || isWorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary(value.latest_digest)) && Array.isArray(value.entries) && value.entries.every(isWorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary) && value.digest_count === value.entries.length && value.apply_authorized === false && typeof value.generated_at === 'string' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchReadinessCheckSummary(value: unknown): value is WorkspacePatchReadinessCheckSummary {
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
@@ -1022,6 +1062,10 @@ export function isProposalReviewQueueDiagnosticsReportResult(value: unknown): va
 
 export function isProposalReviewQueueDiagnosticsDigestResult(value: unknown): value is ProposalReviewQueueDiagnosticsDigestResult {
   return isRecord(value) && isWorkspacePatchReviewQueueDiagnosticsDigestSummary(value.review_queue_diagnostics_digest) && hasNoForbiddenRawFields(value);
+}
+
+export function isProposalReviewQueueDiagnosticsDigestHistoryResult(value: unknown): value is ProposalReviewQueueDiagnosticsDigestHistoryResult {
+  return isRecord(value) && isWorkspacePatchReviewQueueDiagnosticsDigestHistorySummary(value.review_queue_diagnostics_digest_history) && hasNoForbiddenRawFields(value);
 }
 
 export function isProposalPreflightResult(value: unknown): value is ProposalPreflightResult {
