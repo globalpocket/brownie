@@ -455,6 +455,11 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportParams {
+    pub run_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskInspectParams {
     pub task_id: String,
 }
@@ -954,6 +959,28 @@ pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary {
+    pub run_id: String,
+    pub report_status: String,
+    pub report_reason: String,
+    pub history_status: String,
+    pub verdict_status: String,
+    pub verdict_count: usize,
+    pub latest_verdict:
+        Option<WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistoryEntrySummary>,
+    pub proposal_count: usize,
+    pub complete_count: usize,
+    pub needs_action_count: usize,
+    pub blocked_count: usize,
+    pub failed_check_count: usize,
+    pub blocked_check_count: usize,
+    pub required_next_action_count: usize,
+    pub required_next_actions: Vec<String>,
+    pub apply_authorized: bool,
+    pub generated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListResult {
     pub run_id: String,
     pub proposals: Vec<WorkspacePatchProposalSummary>,
@@ -1083,6 +1110,12 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictResult {
 pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult {
     pub review_queue_diagnostics_digest_report_verdict_history:
         WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictHistorySummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult {
+    pub review_queue_diagnostics_digest_report_verdict_report:
+        WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
