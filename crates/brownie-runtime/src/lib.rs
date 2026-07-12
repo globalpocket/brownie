@@ -6143,15 +6143,39 @@ fn inspect_proposal_review_queue_diagnostics_digest_report_verdict_report_histor
     WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary,
     String,
 >{
-    let digest =
-        inspect_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest(
-            store, run_id,
-        )?;
+    let digest = match inspect_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest(
+        store, run_id,
+    ) {
+        Ok(digest) => digest,
+        Err(message) if message == "invalid params: run not found" => {
+            return Ok(
+                empty_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history(
+                    run_id,
+                ),
+            );
+        }
+        Err(message) => return Err(message),
+    };
     Ok(
         build_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history(
             digest,
         ),
     )
+}
+
+fn empty_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history(
+    run_id: &str,
+) -> WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary{
+    WorkspacePatchReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistorySummary {
+        run_id: run_id.to_string(),
+        history_status: "Blocked".to_string(),
+        history_reason: "No diagnostics digest report verdict report history digest history report history digest history report history digest history report history digest is available; patch apply remains unauthorized.".to_string(),
+        digest_count: 0,
+        latest_digest: None,
+        entries: Vec::new(),
+        apply_authorized: false,
+        generated_at: now_rfc3339(),
+    }
 }
 
 fn build_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history(
@@ -10739,6 +10763,36 @@ mod tests {
         );
         assert!(
             !latest_history_report_history_digest_history_report_history_digest_history
+                .apply_authorized
+        );
+        let missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history =
+            inspect_proposal_review_queue_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history(
+                &store,
+                "missing_run",
+            )
+            .expect("missing queue diagnostics digest report verdict report history digest history report history digest history report history digest history report history digest history");
+        assert_eq!(
+            missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
+                .history_status,
+            "Blocked"
+        );
+        assert_eq!(
+            missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
+                .digest_count,
+            0
+        );
+        assert!(
+            missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
+                .latest_digest
+                .is_none()
+        );
+        assert!(
+            missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
+                .entries
+                .is_empty()
+        );
+        assert!(
+            !missing_diagnostics_digest_report_verdict_report_history_digest_history_report_history_digest_history_report_history_digest_history_report_history_digest_history
                 .apply_authorized
         );
         assert!(blocked_diagnostics
