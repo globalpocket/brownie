@@ -121,7 +121,7 @@
   },
   "scripts": {
     "build": "tsc -p .",
-    "check": "tsc -p . --noEmit",
+    "check": "pnpm --workspace-root guard:diagnostics && tsc -p . --noEmit",
     "test": "vitest run"
   },
   "devDependencies": {
