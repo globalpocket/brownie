@@ -194,6 +194,7 @@ fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brownie_context::{ContextWindowSummary, MAX_LEDGER_CONTEXT_EVENTS};
     use brownie_llm::FAKE_LLM_MODEL;
 
     #[test]
@@ -221,6 +222,14 @@ mod tests {
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
             tool_execution_summary: vec![],
+            context_window: ContextWindowSummary {
+                total_events: 2,
+                included_events: 2,
+                omitted_events: 0,
+                max_events: MAX_LEDGER_CONTEXT_EVENTS,
+                first_included_event: Some("TaskStarted".into()),
+                last_included_event: Some("TaskRunning".into()),
+            },
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -250,6 +259,14 @@ mod tests {
             tool_execution_summary: vec![
                 "workspace.read: Completed bytes_read=12 truncated=false".into()
             ],
+            context_window: ContextWindowSummary {
+                total_events: 1,
+                included_events: 1,
+                omitted_events: 0,
+                max_events: MAX_LEDGER_CONTEXT_EVENTS,
+                first_included_event: Some("ToolExecutionCompleted".into()),
+                last_included_event: Some("ToolExecutionCompleted".into()),
+            },
             ledger_summary: vec!["ToolExecutionCompleted".into()],
         });
 

@@ -30,6 +30,31 @@ pub struct PromptView {
     pub messages: Vec<PromptMessage>,
 }
 
+pub const MAX_LEDGER_CONTEXT_EVENTS: usize = 12;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextWindowSummary {
+    pub total_events: usize,
+    pub included_events: usize,
+    pub omitted_events: usize,
+    pub max_events: usize,
+    pub first_included_event: Option<String>,
+    pub last_included_event: Option<String>,
+}
+
+impl ContextWindowSummary {
+    pub fn empty() -> Self {
+        Self {
+            total_events: 0,
+            included_events: 0,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: None,
+            last_included_event: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PromptBuildInput {
     pub task_id: String,
@@ -41,6 +66,7 @@ pub struct PromptBuildInput {
     pub tool_plan_summary: Vec<String>,
     pub tool_intent_summary: Vec<String>,
     pub tool_execution_summary: Vec<String>,
+    pub context_window: ContextWindowSummary,
     pub ledger_summary: Vec<String>,
 }
 
@@ -71,12 +97,7 @@ impl ContextMaterializer {
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
         let tool_intent_summary = format_tool_intent_summary(&input.ledger_events);
         let tool_execution_summary = format_tool_execution_summary(&input.ledger_events);
-
-        let ledger_summary = input
-            .ledger_events
-            .iter()
-            .map(|event| format!("{:?}", event.kind))
-            .collect();
+        let (ledger_summary, context_window) = format_ledger_context_window(&input.ledger_events);
 
         PromptBuildInput {
             task_id: input.task.task_id,
@@ -88,9 +109,33 @@ impl ContextMaterializer {
             tool_plan_summary,
             tool_intent_summary,
             tool_execution_summary,
+            context_window,
             ledger_summary,
         }
     }
+}
+
+fn format_ledger_context_window(events: &[LedgerEvent]) -> (Vec<String>, ContextWindowSummary) {
+    let total_events = events.len();
+    let start = total_events.saturating_sub(MAX_LEDGER_CONTEXT_EVENTS);
+    let included = &events[start..];
+    let ledger_summary = included
+        .iter()
+        .map(|event| format!("{:?}", event.kind))
+        .collect::<Vec<_>>();
+    let first_included_event = ledger_summary.first().cloned();
+    let last_included_event = ledger_summary.last().cloned();
+    (
+        ledger_summary,
+        ContextWindowSummary {
+            total_events,
+            included_events: included.len(),
+            omitted_events: start,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event,
+            last_included_event,
+        },
+    )
 }
 
 fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
@@ -230,6 +275,24 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
         .collect()
 }
 
+fn format_context_window_summary(summary: &ContextWindowSummary) -> String {
+    format!(
+        "total_events: {}\nincluded_events: {}\nomitted_events: {}\nmax_events: {}\nfirst_included_event: {}\nlast_included_event: {}",
+        summary.total_events,
+        summary.included_events,
+        summary.omitted_events,
+        summary.max_events,
+        summary
+            .first_included_event
+            .as_deref()
+            .unwrap_or("<none>"),
+        summary
+            .last_included_event
+            .as_deref()
+            .unwrap_or("<none>")
+    )
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -281,6 +344,7 @@ impl PromptBuilder {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        let context_window = format_context_window_summary(&input.context_window);
 
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
@@ -302,8 +366,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -372,6 +436,14 @@ mod tests {
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
             tool_execution_summary: vec![],
+            context_window: ContextWindowSummary {
+                total_events: 2,
+                included_events: 2,
+                omitted_events: 0,
+                max_events: MAX_LEDGER_CONTEXT_EVENTS,
+                first_included_event: Some("TaskStarted".into()),
+                last_included_event: Some("TaskRunning".into()),
+            },
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -404,10 +476,70 @@ mod tests {
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(materialized.goal, "Ship Phase 1.2");
         assert_eq!(materialized.ledger_summary, vec!["TaskStarted"]);
+        assert_eq!(materialized.context_window.total_events, 1);
+        assert_eq!(materialized.context_window.included_events, 1);
+        assert_eq!(materialized.context_window.omitted_events, 0);
         assert_eq!(
             materialized.mode_policy_summary,
             Some("Mode Policy:\n<unresolved>".into())
         );
+    }
+
+    #[test]
+    fn context_materializer_bounds_ledger_summary_to_recent_events() {
+        let kinds = [
+            LedgerEventKind::TaskStarted,
+            LedgerEventKind::ModeResolved,
+            LedgerEventKind::PermissionChecked,
+            LedgerEventKind::ToolPlanned,
+            LedgerEventKind::ToolPermissionChecked,
+            LedgerEventKind::ToolPlanApproved,
+            LedgerEventKind::AgentLoopStarted,
+            LedgerEventKind::PromptBuilt,
+            LedgerEventKind::LlmRequestCreated,
+            LedgerEventKind::LlmResponseReceived,
+            LedgerEventKind::ToolIntentParsed,
+            LedgerEventKind::ToolIntentPermissionChecked,
+            LedgerEventKind::ToolExecutionRequested,
+            LedgerEventKind::ToolExecutionCompleted,
+            LedgerEventKind::TaskCompleted,
+        ];
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: kinds
+                .iter()
+                .enumerate()
+                .map(|(index, kind)| LedgerEvent {
+                    event_id: format!("event_{index}"),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: kind.clone(),
+                    timestamp: "2026-01-01T00:00:00Z".into(),
+                    payload: None,
+                })
+                .collect(),
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(materialized.context_window.total_events, kinds.len());
+        assert_eq!(
+            materialized.context_window.included_events,
+            MAX_LEDGER_CONTEXT_EVENTS
+        );
+        assert_eq!(materialized.context_window.omitted_events, 3);
+        assert_eq!(materialized.ledger_summary.len(), MAX_LEDGER_CONTEXT_EVENTS);
+        assert_eq!(materialized.ledger_summary.first().unwrap(), "ToolPlanned");
+        assert_eq!(materialized.ledger_summary.last().unwrap(), "TaskCompleted");
+        assert!(!materialized
+            .ledger_summary
+            .contains(&"TaskStarted".to_string()));
+
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1].content.contains("Context Window:"));
+        assert!(prompt.messages[1].content.contains("omitted_events: 3"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("first_included_event: ToolPlanned"));
     }
 
     #[test]

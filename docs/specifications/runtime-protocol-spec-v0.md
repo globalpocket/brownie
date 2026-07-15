@@ -218,6 +218,14 @@ Phase 1.9 introduces a second-pass Fake LLM feedback loop inside `task.run` afte
 
 The second pass runs only when at least one `ToolExecutionCompleted` event exists. `workspace.read` results are summarized into prompt materialization as metadata such as status, `bytes_read`, and `truncated`; full file content is not persisted in the ledger. Phase 1.9 does not add write, process, network, service-control, destructive, or subtask execution, and it continues to use only the in-process Fake LLM.
 
+## M4 bounded task context window
+
+M4 strengthens the existing `task.run` prompt materialization path without adding a new endpoint. The runtime-owned `ContextMaterializer` now assembles a deterministic bounded ledger context window for prompts. The prompt `Ledger` section includes only the latest 12 ledger event kinds, while a `Context Window` section records `total_events`, `included_events`, `omitted_events`, `max_events`, `first_included_event`, and `last_included_event`.
+
+`PromptBuilt` and `SecondPassPromptBuilt` ledger payloads persist the same summary-only context evidence as `context_total_events`, `context_included_events`, `context_omitted_events`, `context_max_events`, `context_window_bounded`, `context_first_included_event`, and `context_last_included_event`. These fields let callers and future agent-loop stages reason about bounded context reuse without exposing raw prompt text when sensitive guards redact previews.
+
+M4 does not add patch apply, direct workspace mutation, unrestricted process execution, network fetch, service-control, destructive actions, or new diagnostics wrapper RPCs. It only changes how existing task/run context is selected, summarized, and recorded.
+
 ## Phase 1.10 run inspection methods
 
 The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JSON-RPC methods. They return sanitized ledger previews and run summaries only; full file content and raw tool output are not returned through inspection responses. Unknown run or task IDs return `-32602 invalid params`.

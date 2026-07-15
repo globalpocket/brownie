@@ -7,7 +7,7 @@ use brownie_agentmodes::{
 use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
 };
-use brownie_context::{ContextMaterializer, ContextMaterializerInput};
+use brownie_context::{ContextMaterializer, ContextMaterializerInput, ContextWindowSummary};
 use brownie_llm::{
     redact_secret, scan_prompt_for_sensitive_content, validate_llm_request_budget, FakeLlmProvider,
     LlmMessage, LlmProvider, LlmProviderKind, LlmProviderStatus, LlmRequestBudget,
@@ -1776,6 +1776,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         task: running.clone(),
         ledger_events,
     });
+    let prompt_context_window = prompt_input.context_window.clone();
     let provider = match llm_provider_from_workspace_for_task_run(store.workspace_root()) {
         Ok(provider) => provider,
         Err(error) => {
@@ -1861,6 +1862,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             provider_selection.budget.response_preview_chars,
             provider_selection.budget.max_prompt_chars,
             &result.sensitive_scan,
+            &prompt_context_window,
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -1913,6 +1915,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             task: running.clone(),
             ledger_events: second_pass_events,
         });
+        let second_pass_context_window = second_pass_prompt_input.context_window.clone();
         let second_pass = match AgentLoop::run_second_pass_with_llm(
             second_pass_prompt_input,
             provider.as_ref(),
@@ -1962,6 +1965,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 provider_selection.budget.response_preview_chars,
                 provider_selection.budget.max_prompt_chars,
                 &second_pass.sensitive_scan,
+                &second_pass_context_window,
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -9972,10 +9976,37 @@ fn prompt_built_payload(
     response_preview_chars: usize,
     max_prompt_chars: usize,
     sensitive_scan: &PromptSensitiveScanResult,
+    context_window: &ContextWindowSummary,
 ) -> Value {
     let mut payload = serde_json::Map::new();
     payload.insert("message_count".to_string(), json!(message_count));
     payload.insert("max_prompt_chars".to_string(), json!(max_prompt_chars));
+    payload.insert(
+        "context_total_events".to_string(),
+        json!(context_window.total_events),
+    );
+    payload.insert(
+        "context_included_events".to_string(),
+        json!(context_window.included_events),
+    );
+    payload.insert(
+        "context_omitted_events".to_string(),
+        json!(context_window.omitted_events),
+    );
+    payload.insert(
+        "context_max_events".to_string(),
+        json!(context_window.max_events),
+    );
+    payload.insert(
+        "context_window_bounded".to_string(),
+        json!(context_window.omitted_events > 0),
+    );
+    if let Some(first) = context_window.first_included_event.as_deref() {
+        payload.insert("context_first_included_event".to_string(), json!(first));
+    }
+    if let Some(last) = context_window.last_included_event.as_deref() {
+        payload.insert("context_last_included_event".to_string(), json!(last));
+    }
     if sensitive_scan.findings.is_empty() {
         payload.insert(
             "prompt_preview".to_string(),
@@ -10050,6 +10081,7 @@ fn error_response(id: Value, code: i64, message: &str) -> JsonRpcResponse<Value>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brownie_context::MAX_LEDGER_CONTEXT_EVENTS;
     use brownie_protocol::{TaskRecord, TaskStatus};
     use std::sync::Mutex;
 
@@ -10200,6 +10232,31 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
+        let second_prompt = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt)
+            .expect("second pass prompt");
+        let second_prompt_payload = second_prompt.payload.as_ref().expect("prompt payload");
+        assert!(
+            second_prompt_payload["context_total_events"]
+                .as_u64()
+                .expect("context total")
+                > 0
+        );
+        assert_eq!(
+            second_prompt_payload["context_max_events"].as_u64(),
+            Some(MAX_LEDGER_CONTEXT_EVENTS as u64)
+        );
+        assert!(
+            second_prompt_payload["context_included_events"]
+                .as_u64()
+                .expect("context included")
+                <= MAX_LEDGER_CONTEXT_EVENTS as u64
+        );
+        assert_eq!(
+            second_prompt_payload["context_last_included_event"],
+            "LlmResponseReceived"
+        );
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
