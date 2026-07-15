@@ -93,3 +93,9 @@ This lets later prompt passes see that queued evidence was consumed into parent-
 The `Subtask Orchestration` section also summarizes `SubtaskSchedulerReadinessRecorded` ledger events using compact fields such as readiness id, readiness status, handoff count, queued count, `dispatch_enabled`, and `next_action`.
 
 This lets later prompt passes see that prepared handoff state was evaluated for scheduler readiness and remains blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.3 subtask dispatch plan prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchPlanPrepared` ledger events using compact fields such as plan id, dispatch plan status, readiness count, queued count, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that scheduler-readiness evidence was converted into a deterministic dispatch plan and remains blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.

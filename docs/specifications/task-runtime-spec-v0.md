@@ -237,3 +237,9 @@ The handoff state is visible through the ledger, through `run.inspect` / `task.i
 M5.2 turns prepared handoff state into deterministic scheduler readiness evidence. After `SubtaskHandoffPrepared` exists, `task.run` appends a summary-only `SubtaskSchedulerReadinessRecorded` event that records how many handoffs were evaluated, how many queued subtasks they cover, and why dispatch remains blocked.
 
 The readiness state is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.2 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.3 subtask dispatch plan preparation
+
+M5.3 turns scheduler-readiness evidence into deterministic parent-run dispatch plan state. After `SubtaskSchedulerReadinessRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchPlanPrepared` event that records which readiness evidence was consumed, how many queued subtasks the plan covers, and why dispatch remains blocked.
+
+The dispatch plan is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.3 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
