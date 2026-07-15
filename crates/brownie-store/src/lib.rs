@@ -285,6 +285,8 @@ pub enum LedgerEventKind {
     WorkspacePatchApplyDryRunChecked,
     WorkspacePatchReadinessReportCreated,
     TaskRunning,
+    AgentLoopStarted,
+    AgentLoopCompleted,
     PromptBuilt,
     PromptSensitiveScanCompleted,
     PromptSensitiveScanFailed,

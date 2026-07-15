@@ -200,6 +200,12 @@ export interface TaskRunResult {
   task_id: string;
   run_id: string;
   status: TaskStatus;
+  agent_loop: AgentLoopRunSummary;
+}
+
+export interface AgentLoopRunSummary {
+  final_state: string;
+  completion_summary: string;
 }
 
 export interface TaskRecord {
@@ -2472,7 +2478,16 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isRecord(value) &&
     typeof value.task_id === 'string' &&
     typeof value.run_id === 'string' &&
-    isTaskStatus(value.status)
+    isTaskStatus(value.status) &&
+    isAgentLoopRunSummary(value.agent_loop)
+  );
+}
+
+export function isAgentLoopRunSummary(value: unknown): value is AgentLoopRunSummary {
+  return (
+    isRecord(value) &&
+    typeof value.final_state === 'string' &&
+    typeof value.completion_summary === 'string'
   );
 }
 

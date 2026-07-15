@@ -639,6 +639,13 @@ pub struct TaskRunResult {
     pub task_id: String,
     pub run_id: String,
     pub status: TaskStatus,
+    pub agent_loop: TaskRunAgentLoopSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunAgentLoopSummary {
+    pub final_state: String,
+    pub completion_summary: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

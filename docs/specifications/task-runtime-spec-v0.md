@@ -141,6 +141,10 @@ Phase 1.9 introduces a second-pass Fake LLM feedback loop inside `task.run` afte
 
 The second pass runs only when at least one `ToolExecutionCompleted` event exists. `workspace.read` results are summarized into prompt materialization as metadata such as status, `bytes_read`, and `truncated`; full file content is not persisted in the ledger. Phase 1.9 does not add write, process, network, service-control, destructive, or subtask execution, and it continues to use only the in-process Fake LLM.
 
+## M1 agent-loop runtime summary
+
+M1 keeps `task.run` as the runtime-owned execution path and exposes the agent-loop transition directly. The runtime records `AgentLoopStarted` before invoking the Rust `brownie-agent-loop` path and records `AgentLoopCompleted` before the terminal task status update. The `task.run` result includes `agent_loop.final_state` and `agent_loop.completion_summary`, so callers can distinguish a completed agent-loop execution from a bare task status update.
+
 ## Phase 1.10 task inspection
 
 `task.inspect` is the preferred task-centric inspection method for VSIX clients. It returns the persisted `TaskRecord` plus the associated sanitized `RunInspectSummary` without changing task state or executing additional work.
