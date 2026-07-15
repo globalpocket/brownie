@@ -103,12 +103,12 @@ use brownie_protocol::{
     ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
     RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
     RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunAgentLoopSummary, TaskRunParams,
+    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
@@ -1800,6 +1800,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
     let provider_strict = provider_selection.strict;
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::AgentLoopStarted,
+        Some(json!({
+            "entrypoint": METHOD_TASK_RUN,
+            "state": agent_loop_state_name(AgentLoopState::BuildingContext),
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
     let result = match AgentLoop::run_with_llm(
         prompt_input,
         provider.as_ref(),
@@ -1828,6 +1838,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             );
         }
     };
+    let mut agent_loop_final_state = result.final_state;
+    let mut agent_loop_completion_summary = result.completion_summary.clone();
 
     if let Err(error) = append_sensitive_scan_event(
         &store,
@@ -1928,6 +1940,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 );
             }
         };
+        agent_loop_final_state = second_pass.final_state;
+        agent_loop_completion_summary = second_pass.completion_summary.clone();
         if let Err(error) = append_sensitive_scan_event(
             &store,
             &running,
@@ -1977,7 +1991,18 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
-    let final_status = match result.final_state {
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::AgentLoopCompleted,
+        Some(json!({
+            "final_state": agent_loop_state_name(agent_loop_final_state),
+            "completion_summary": agent_loop_completion_summary.clone(),
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+
+    let final_status = match agent_loop_final_state {
         AgentLoopState::Completed => TaskStatus::Completed,
         AgentLoopState::Cancelled => TaskStatus::Cancelled,
         AgentLoopState::Failed => TaskStatus::Failed,
@@ -2000,6 +2025,10 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 task_id: record.task_id,
                 run_id: record.run_id,
                 status: record.status,
+                agent_loop: TaskRunAgentLoopSummary {
+                    final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
+                    completion_summary: agent_loop_completion_summary,
+                },
             }),
         ),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
@@ -9051,6 +9080,10 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "check_count",
         "failed_checks",
         "blocked_checks",
+        "entrypoint",
+        "state",
+        "final_state",
+        "completion_summary",
     ];
     let sanitized = map
         .into_iter()
@@ -9075,6 +9108,9 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "provider",
             "model",
             "message_count",
+            "state",
+            "final_state",
+            "completion_summary",
             "proposal_id",
             "operation",
             "path",
@@ -9097,6 +9133,24 @@ fn resolve_task_start_policy(mode_id: Option<&str>) -> Result<CompiledModePolicy
         Some(mode_id) if !mode_id.trim().is_empty() => BuiltinModeRegistry::get(mode_id)
             .ok_or_else(|| "invalid params: unknown mode_id".to_string()),
         _ => Ok(BuiltinModeRegistry::default_policy()),
+    }
+}
+
+fn agent_loop_state_name(state: AgentLoopState) -> &'static str {
+    match state {
+        AgentLoopState::Created => "Created",
+        AgentLoopState::LoadingMode => "LoadingMode",
+        AgentLoopState::BuildingContext => "BuildingContext",
+        AgentLoopState::CallingLlm => "CallingLlm",
+        AgentLoopState::ParsingResponse => "ParsingResponse",
+        AgentLoopState::ExecutingTool => "ExecutingTool",
+        AgentLoopState::ApplyingPatch => "ApplyingPatch",
+        AgentLoopState::SpawningSubtask => "SpawningSubtask",
+        AgentLoopState::Waiting => "Waiting",
+        AgentLoopState::Verifying => "Verifying",
+        AgentLoopState::Completed => "Completed",
+        AgentLoopState::Failed => "Failed",
+        AgentLoopState::Cancelled => "Cancelled",
     }
 }
 
@@ -10205,6 +10259,11 @@ mod tests {
         assert_eq!(result["task_id"], task_id);
         assert_eq!(result["run_id"], run_id);
         assert_eq!(result["status"], "Completed");
+        assert_eq!(result["agent_loop"]["final_state"], "Completed");
+        assert!(result["agent_loop"]["completion_summary"]
+            .as_str()
+            .expect("completion summary")
+            .contains(&task_id));
 
         let get = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.get","params":{{"task_id":"{task_id}"}}}}"#
@@ -10234,17 +10293,32 @@ mod tests {
         .expect("ledger");
         assert!(ledger.contains("TaskStarted"));
         assert!(ledger.contains("TaskRunning"));
+        assert!(ledger.contains("AgentLoopStarted"));
+        assert!(ledger.contains("AgentLoopCompleted"));
         assert!(ledger.contains("PromptBuilt"));
         assert!(ledger.contains("LlmRequestCreated"));
         assert!(ledger.contains("LlmResponseReceived"));
         assert!(ledger.contains("TaskCompleted"));
-        let events: Vec<LedgerEventKind> = ledger
+        let ledger_events: Vec<brownie_store::LedgerEvent> = ledger
             .lines()
-            .map(|line| {
-                serde_json::from_str::<brownie_store::LedgerEvent>(line)
-                    .expect("event")
-                    .kind
-            })
+            .map(|line| serde_json::from_str::<brownie_store::LedgerEvent>(line).expect("event"))
+            .collect();
+        let completion_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::AgentLoopCompleted)
+            .expect("agent loop completed event");
+        let completion_payload = completion_event
+            .payload
+            .as_ref()
+            .expect("agent loop completion payload");
+        assert_eq!(completion_payload["final_state"], "Completed");
+        assert!(completion_payload["completion_summary"]
+            .as_str()
+            .expect("completion summary")
+            .contains(&task_id));
+        let events: Vec<LedgerEventKind> = ledger_events
+            .iter()
+            .map(|event| event.kind.clone())
             .collect();
         assert_eq!(
             events,
@@ -10265,6 +10339,7 @@ mod tests {
                 LedgerEventKind::ToolPlanDenied,
                 LedgerEventKind::ToolPermissionChecked,
                 LedgerEventKind::ToolPlanApproved,
+                LedgerEventKind::AgentLoopStarted,
                 LedgerEventKind::PromptBuilt,
                 LedgerEventKind::LlmRequestCreated,
                 LedgerEventKind::ToolIntentParsed,
@@ -10278,6 +10353,7 @@ mod tests {
                 LedgerEventKind::ToolExecutionPermissionChecked,
                 LedgerEventKind::ToolExecutionFailed,
                 LedgerEventKind::LlmResponseReceived,
+                LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
             ]
         );

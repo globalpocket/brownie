@@ -110,7 +110,7 @@ Request line:
 Expected response line:
 
 ```json
-{"jsonrpc":"2.0","id":2,"result":{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Completed"}}
+{"jsonrpc":"2.0","id":2,"result":{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Completed","agent_loop":{"final_state":"Completed","completion_summary":"LLM agent loop completed for task_<uuid>"}}}
 ```
 
 Unknown tasks and tasks whose status is not `Created` return `-32602`. Phase 1.1 does not call an LLM, execute tools, parse AgentModes, use Qdrant, use llama-server, or run an indexer.
@@ -163,6 +163,10 @@ TaskCompleted
 The response still reports `Completed` on success. The additional ledger events contain metadata only, such as message counts, fake model name, and short previews. Full prompt text is not persisted by default.
 
 The fake LLM adapter is deterministic and local-only. Phase 1.2 performs no real LLM network calls and does not introduce tool execution, AgentModes parsing, Mode Pack fetch or activation, Qdrant, llama-server, or indexing behavior.
+
+## M1 agent-loop runtime summary
+
+M1 makes the existing Rust-owned agent-loop execution visible on the task runtime path without adding a new RPC. During `task.run`, the runtime records `AgentLoopStarted` and `AgentLoopCompleted` ledger events around the agent-loop call. Successful responses include an `agent_loop` summary with `final_state` and `completion_summary`, allowing VSIX and headless callers to confirm that the runtime path exercised the agent loop rather than only observing task status.
 
 ## Phase 1.3 mode protocol methods
 

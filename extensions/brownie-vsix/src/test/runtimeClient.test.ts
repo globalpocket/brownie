@@ -568,10 +568,11 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a task.run request', async () => {
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { task_id: 'task_1', run_id: 'run_1', status: 'Completed' } });
+    const result = { task_id: 'task_1', run_id: 'run_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'LLM agent loop completed for task_1' } };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
-    await expect(client.runTask('task_1')).resolves.toEqual({ task_id: 'task_1', run_id: 'run_1', status: 'Completed' });
+    await expect(client.runTask('task_1')).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
   });
 
