@@ -176,6 +176,14 @@ Phase 1.3 adds `mode.list` and `mode.get` JSON-RPC methods backed by the built-i
 
 Unknown mode IDs passed to `mode.get` return JSON-RPC `-32602 invalid params`. `task.start` applies the same unknown-mode rejection, while omitted or `null` `mode_id` defaults to `orchestrator`.
 
+## M2 local Mode Pack runtime behavior
+
+M2 extends the existing mode RPCs without adding a new endpoint. When `.brownie/modepack.json` exists under the workspace root, `mode.list`, `mode.get`, `permission.check`, and explicit `task.start` mode resolution include local Mode Pack modes after validating the file through the Rust `brownie-modepack` crate.
+
+Invalid Mode Pack files fail these mode-resolution paths with an internal runtime error rather than silently falling back. Local Mode Pack modes must not duplicate existing mode IDs and must remain read-only without workspace write, process execution, network access, service control, or destructive permissions.
+
+`task.start` records the resolved policy snapshot in the run ledger. `task.run` uses that ledger snapshot so already-started tasks are not affected by later edits to `.brownie/modepack.json`.
+
 ## Phase 1.4 permission gate update
 
 Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
