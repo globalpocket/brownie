@@ -273,6 +273,7 @@ pub enum LedgerEventKind {
     SubtaskOrchestrationQueued,
     SubtaskHandoffPrepared,
     SubtaskSchedulerReadinessRecorded,
+    SubtaskDispatchPlanPrepared,
     ToolExecutionRequested,
     ToolExecutionPermissionChecked,
     ToolExecutionCompleted,

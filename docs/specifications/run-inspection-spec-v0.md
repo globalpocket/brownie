@@ -31,6 +31,8 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - `subtask_handoff_count`
 - `has_subtask_scheduler_readiness`
 - `subtask_scheduler_readiness_count`
+- `has_subtask_dispatch_plan_prepared`
+- `subtask_dispatch_plan_count`
 - `has_second_pass`
 - `final_response_preview`, preferring `SecondPassLlmResponseReceived.content_preview` over `LlmResponseReceived.content_preview`
 - a compact human-readable `timeline`
@@ -44,6 +46,10 @@ Run inspection reports both queued subtask orchestration evidence and prepared h
 ## M5.2 subtask scheduler readiness inspection
 
 Run inspection also reports scheduler readiness evidence for prepared subtask handoff state. `has_subtask_scheduler_readiness` / `subtask_scheduler_readiness_count` count `SubtaskSchedulerReadinessRecorded` events. These fields indicate that the runtime evaluated dispatch readiness; in M5.2 dispatch remains blocked and no child task execution is implied.
+
+## M5.3 subtask dispatch plan inspection
+
+Run inspection also reports prepared dispatch plan evidence. `has_subtask_dispatch_plan_prepared` / `subtask_dispatch_plan_count` count `SubtaskDispatchPlanPrepared` events. These fields indicate that the runtime converted readiness evidence into a deterministic dispatch plan; in M5.3 dispatch remains blocked and no child task execution is implied.
 
 ## Phase 2.1 LLM metadata redaction
 

@@ -127,3 +127,9 @@ This remains a scheduling foundation only. No child task is launched, no workspa
 M5.2 evaluates prepared subtask handoff state for scheduler readiness. The runtime appends `SubtaskSchedulerReadinessRecorded` after `SubtaskHandoffPrepared`, records that dispatch remains blocked, and exposes the blocker in later prompt materialization.
 
 This is still not child execution. No child task is launched, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.
+
+## M5.3 subtask dispatch plan preparation
+
+M5.3 converts scheduler-readiness evidence into deterministic parent-run dispatch plan state. The runtime appends `SubtaskDispatchPlanPrepared` after `SubtaskSchedulerReadinessRecorded`, records why dispatch is still blocked, and exposes the plan blocker in later prompt materialization.
+
+This remains planning only. No child task is launched, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.
