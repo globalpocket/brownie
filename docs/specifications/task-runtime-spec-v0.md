@@ -141,6 +141,14 @@ Phase 1.9 introduces a second-pass Fake LLM feedback loop inside `task.run` afte
 
 The second pass runs only when at least one `ToolExecutionCompleted` event exists. `workspace.read` results are summarized into prompt materialization as metadata such as status, `bytes_read`, and `truncated`; full file content is not persisted in the ledger. Phase 1.9 does not add write, process, network, service-control, destructive, or subtask execution, and it continues to use only the in-process Fake LLM.
 
+## M4 bounded task context window
+
+M4 keeps `task.run` as the runtime-owned context assembly path and bounds the ledger context materialized into prompts. Prompt materialization now includes a `Context Window` summary and limits the prompt `Ledger` section to the latest 12 ledger event kinds. Older events are counted as omitted instead of being copied into the prompt.
+
+`PromptBuilt` and `SecondPassPromptBuilt` ledger events record summary-only context evidence: total, included, omitted, and maximum event counts plus first/last included event kinds. This makes context selection deterministic and inspectable for future autonomous runs without persisting raw prompt text, raw file content, raw tool output, or raw provider responses.
+
+M4 does not add patch apply, direct workspace mutation, process execution, network access, service-control, destructive actions, or diagnostics wrapper capability.
+
 ## M1 agent-loop runtime summary
 
 M1 keeps `task.run` as the runtime-owned execution path and exposes the agent-loop transition directly. The runtime records `AgentLoopStarted` before invoking the Rust `brownie-agent-loop` path and records `AgentLoopCompleted` before the terminal task status update. The `task.run` result includes `agent_loop.final_state` and `agent_loop.completion_summary`, so callers can distinguish a completed agent-loop execution from a bare task status update.
