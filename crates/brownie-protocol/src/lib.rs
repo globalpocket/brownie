@@ -2302,6 +2302,8 @@ pub struct RunInspectSummary {
     pub subtask_scheduler_readiness_count: usize,
     pub has_subtask_dispatch_plan_prepared: bool,
     pub subtask_dispatch_plan_count: usize,
+    pub has_subtask_dispatch_contract_prepared: bool,
+    pub subtask_dispatch_contract_count: usize,
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,

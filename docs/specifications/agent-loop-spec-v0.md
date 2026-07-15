@@ -133,3 +133,9 @@ This is still not child execution. No child task is launched, no workspace file 
 M5.3 converts scheduler-readiness evidence into deterministic parent-run dispatch plan state. The runtime appends `SubtaskDispatchPlanPrepared` after `SubtaskSchedulerReadinessRecorded`, records why dispatch is still blocked, and exposes the plan blocker in later prompt materialization.
 
 This remains planning only. No child task is launched, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.
+
+## M5.4 subtask dispatch contract preparation
+
+M5.4 converts dispatch-plan evidence into deterministic parent-run dispatch contract and eligibility-gate state. The runtime appends `SubtaskDispatchContractPrepared` after `SubtaskDispatchPlanPrepared`, records the required preconditions for future dispatch, and exposes the contract blocker in later prompt materialization.
+
+This remains contract preparation only. No child task is launched, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.

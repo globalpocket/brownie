@@ -1900,6 +1900,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_plan_prepared(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_dispatch_contract_prepared(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9133,6 +9136,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchPlanPrepared)
         .count();
+    let subtask_dispatch_contract_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9153,6 +9160,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_scheduler_readiness_count,
         has_subtask_dispatch_plan_prepared: subtask_dispatch_plan_count > 0,
         subtask_dispatch_plan_count,
+        has_subtask_dispatch_contract_prepared: subtask_dispatch_contract_count > 0,
+        subtask_dispatch_contract_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9223,12 +9232,17 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "queued_subtask_ids",
         "handoff_count",
         "readiness_count",
+        "plan_count",
         "source_event_count",
         "next_action",
         "dispatch_enabled",
         "dispatch_plan_status",
         "dispatch_reason",
+        "dispatch_contract_status",
+        "dispatch_contract_reason",
+        "eligibility_status",
         "required_capability",
+        "required_preconditions",
         "tool_ids",
         "finding_count",
         "categories",
@@ -9263,6 +9277,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "stale",
         "stale_reason",
         "plan_id",
+        "contract_id",
         "capability_id",
         "apply_supported",
         "apply_enabled",
@@ -9311,15 +9326,19 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "handoff_id",
             "readiness_id",
             "plan_id",
+            "contract_id",
             "queue_position",
             "queued_count",
             "handoff_count",
             "readiness_count",
+            "plan_count",
             "execution_enabled",
             "dispatch_enabled",
             "next_action",
             "readiness_status",
             "dispatch_plan_status",
+            "dispatch_contract_status",
+            "eligibility_status",
             "bytes_read",
             "truncated",
             "reason",
@@ -9972,6 +9991,86 @@ fn append_subtask_dispatch_plan_prepared(
     )
 }
 
+fn append_subtask_dispatch_contract_prepared(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
+    {
+        return Ok(());
+    }
+
+    let dispatch_plans = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchPlanPrepared)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let plan_id = payload.get("plan_id")?.as_str()?.to_string();
+            let queued_count = payload
+                .get("queued_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            Some((plan_id, queued_count))
+        })
+        .collect::<Vec<_>>();
+    if dispatch_plans.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let plan_ids = dispatch_plans
+        .iter()
+        .map(|(plan_id, _)| plan_id.clone())
+        .collect::<Vec<_>>();
+    let plan_count = dispatch_plans.len();
+    let queued_count = dispatch_plans
+        .iter()
+        .map(|(_, queued_count)| *queued_count)
+        .sum::<u64>();
+    let required_preconditions = vec![
+        "runtime_subtask_dispatcher_implemented",
+        "child_task_execution_guard_enabled",
+        "dispatch_audit_ledger_ready",
+    ];
+    let blocked_checks = vec![
+        "runtime_dispatcher_not_implemented",
+        "dispatch_contract_not_executable",
+        "child_task_execution_disabled",
+    ];
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchContractPrepared,
+        Some(json!({
+            "contract_id": format!("subtask_dispatch_contract_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "plan_id": plan_ids[0],
+            "plan_count": plan_count,
+            "queued_count": queued_count,
+            "source_event_count": plan_count,
+            "status": "Blocked",
+            "dispatch_contract_status": "Blocked",
+            "eligibility_status": "Blocked",
+            "dispatch_contract_reason": "Dispatch contract is blocked until the runtime dispatcher can honor required preconditions.",
+            "required_capability": "runtime_subtask_dispatcher",
+            "required_preconditions": required_preconditions,
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_dispatch_contract_implementation",
+            "reason": "Dispatch plan evidence converted into a dispatch contract and eligibility gate; no subtask was spawned in M5.4."
+        })),
+    )
+}
+
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -10545,6 +10644,9 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::SubtaskDispatchPlanPrepared));
         assert!(events
             .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared));
+        assert!(events
+            .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
         let second_prompt = events
             .iter()
@@ -10583,6 +10685,9 @@ mod tests {
         assert!(second_prompt_preview.contains("await_runtime_scheduler_dispatch"));
         assert!(second_prompt_preview.contains("Blocked readiness_count=1"));
         assert!(second_prompt_preview.contains("await_runtime_subtask_dispatcher"));
+        assert!(second_prompt_preview.contains("Blocked plan_count=1"));
+        assert!(second_prompt_preview.contains("eligibility_status=Blocked"));
+        assert!(second_prompt_preview.contains("await_dispatch_contract_implementation"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -10657,6 +10762,8 @@ mod tests {
         assert_eq!(summary["subtask_scheduler_readiness_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_plan_prepared"], true);
         assert_eq!(summary["subtask_dispatch_plan_count"], 1);
+        assert_eq!(summary["has_subtask_dispatch_contract_prepared"], true);
+        assert_eq!(summary["subtask_dispatch_contract_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -10714,7 +10821,13 @@ mod tests {
             "readiness_reason": "Prepared subtask handoff is not dispatch-ready until a runtime scheduler exists.",
             "dispatch_plan_status": "Blocked",
             "dispatch_reason": "Scheduler readiness is blocked, so dispatch plan is recorded as blocked without execution.",
+            "contract_id": "subtask_dispatch_contract_run_1_1",
+            "plan_count": 1,
+            "dispatch_contract_status": "Blocked",
+            "dispatch_contract_reason": "Dispatch contract is blocked until the runtime dispatcher can honor required preconditions.",
+            "eligibility_status": "Blocked",
             "required_capability": "runtime_subtask_dispatcher",
+            "required_preconditions": ["runtime_subtask_dispatcher_implemented", "child_task_execution_guard_enabled"],
             "check_count": 2,
             "blocked_checks": ["child_task_execution_disabled", "runtime_dispatcher_not_implemented"],
             "dispatch_enabled": false
@@ -10750,8 +10863,23 @@ mod tests {
             "Scheduler readiness is blocked, so dispatch plan is recorded as blocked without execution."
         );
         assert_eq!(
+            sanitized["contract_id"],
+            "subtask_dispatch_contract_run_1_1"
+        );
+        assert_eq!(sanitized["plan_count"], 1);
+        assert_eq!(sanitized["dispatch_contract_status"], "Blocked");
+        assert_eq!(
+            sanitized["dispatch_contract_reason"],
+            "Dispatch contract is blocked until the runtime dispatcher can honor required preconditions."
+        );
+        assert_eq!(sanitized["eligibility_status"], "Blocked");
+        assert_eq!(
             sanitized["required_capability"],
             "runtime_subtask_dispatcher"
+        );
+        assert_eq!(
+            sanitized["required_preconditions"][0],
+            "runtime_subtask_dispatcher_implemented"
         );
         assert_eq!(sanitized["check_count"], 2);
         assert_eq!(
@@ -11165,6 +11293,67 @@ mod tests {
             "runtime_dispatcher_not_implemented"
         );
         assert!(dispatch_plan_payload.get("input").is_none());
+        let dispatch_contract_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
+            .expect("subtask dispatch contract event");
+        let dispatch_contract_payload = dispatch_contract_event
+            .payload
+            .as_ref()
+            .expect("subtask dispatch contract payload");
+        assert_eq!(dispatch_contract_payload["status"], "Blocked");
+        assert_eq!(
+            dispatch_contract_payload["dispatch_contract_status"],
+            "Blocked"
+        );
+        assert_eq!(dispatch_contract_payload["eligibility_status"], "Blocked");
+        assert_eq!(
+            dispatch_contract_payload["dispatch_contract_reason"],
+            "Dispatch contract is blocked until the runtime dispatcher can honor required preconditions."
+        );
+        assert_eq!(
+            dispatch_contract_payload["required_capability"],
+            "runtime_subtask_dispatcher"
+        );
+        assert_eq!(dispatch_contract_payload["plan_count"], 1);
+        assert_eq!(dispatch_contract_payload["queued_count"], 1);
+        assert_eq!(dispatch_contract_payload["source_event_count"], 1);
+        assert_eq!(dispatch_contract_payload["execution_enabled"], false);
+        assert_eq!(dispatch_contract_payload["dispatch_enabled"], false);
+        assert_eq!(
+            dispatch_contract_payload["next_action"],
+            "await_dispatch_contract_implementation"
+        );
+        assert_eq!(
+            dispatch_contract_payload["reason"],
+            "Dispatch plan evidence converted into a dispatch contract and eligibility gate; no subtask was spawned in M5.4."
+        );
+        assert_eq!(
+            dispatch_contract_payload["plan_id"],
+            dispatch_plan_payload["plan_id"]
+        );
+        assert!(dispatch_contract_payload["contract_id"]
+            .as_str()
+            .expect("contract id")
+            .starts_with("subtask_dispatch_contract_run_"));
+        assert_eq!(dispatch_contract_payload["check_count"], 3);
+        assert_eq!(
+            dispatch_contract_payload["required_preconditions"][0],
+            "runtime_subtask_dispatcher_implemented"
+        );
+        assert_eq!(
+            dispatch_contract_payload["blocked_checks"][0],
+            "runtime_dispatcher_not_implemented"
+        );
+        assert_eq!(
+            dispatch_contract_payload["blocked_checks"][1],
+            "dispatch_contract_not_executable"
+        );
+        assert_eq!(
+            dispatch_contract_payload["blocked_checks"][2],
+            "child_task_execution_disabled"
+        );
+        assert!(dispatch_contract_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -11205,6 +11394,7 @@ mod tests {
                 LedgerEventKind::SubtaskHandoffPrepared,
                 LedgerEventKind::SubtaskSchedulerReadinessRecorded,
                 LedgerEventKind::SubtaskDispatchPlanPrepared,
+                LedgerEventKind::SubtaskDispatchContractPrepared,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,

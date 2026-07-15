@@ -61,3 +61,9 @@ M5.2 does not execute the requested subtask. It only records scheduler-readiness
 After scheduler-readiness state exists, `task.run` may convert it into a summary-only `SubtaskDispatchPlanPrepared` event. This dispatch plan record references the readiness evidence, records `dispatch_enabled = false`, and includes deterministic blocked checks explaining why no child task can be dispatched yet.
 
 M5.3 does not execute the requested subtask. It only records dispatch-plan evidence for future runtime dispatch.
+
+## M5.4 subtask dispatch contract preparation
+
+After dispatch-plan state exists, `task.run` may convert it into a summary-only `SubtaskDispatchContractPrepared` event. This dispatch contract record references the dispatch plan, records `dispatch_enabled = false`, includes required preconditions for future dispatch, and preserves deterministic blocked checks explaining why the contract is not executable yet.
+
+M5.4 does not execute the requested subtask. It only records dispatch-contract and eligibility-gate evidence for future runtime dispatch.

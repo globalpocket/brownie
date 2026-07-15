@@ -99,3 +99,9 @@ This lets later prompt passes see that prepared handoff state was evaluated for 
 The `Subtask Orchestration` section also summarizes `SubtaskDispatchPlanPrepared` ledger events using compact fields such as plan id, dispatch plan status, readiness count, queued count, `dispatch_enabled`, and `next_action`.
 
 This lets later prompt passes see that scheduler-readiness evidence was converted into a deterministic dispatch plan and remains blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.4 subtask dispatch contract prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchContractPrepared` ledger events using compact fields such as contract id, dispatch contract status, plan count, queued count, eligibility status, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that dispatch-plan evidence was converted into a deterministic dispatch contract and eligibility gate while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
