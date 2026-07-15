@@ -14,6 +14,7 @@ use brownie_llm::{
     OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
     PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
+use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
     DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
     LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
@@ -1671,18 +1672,18 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         return error_response(id, -32602, "invalid params: goal must not be empty");
     }
 
-    let policy = match resolve_task_start_policy(params.mode_id.as_deref()) {
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let policy = match resolve_task_start_policy(params.mode_id.as_deref(), &store) {
         Ok(policy) => policy,
         Err(message) => return error_response(id, -32602, &message),
     };
     let params = TaskStartParams {
         goal: params.goal,
         mode_id: Some(policy.mode_id.clone()),
-    };
-
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
-        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
     match store.tasks().start_task(params) {
@@ -3925,10 +3926,14 @@ fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
 }
 
 fn handle_mode_list(id: Value) -> JsonRpcResponse<Value> {
-    let modes = BuiltinModeRegistry::list()
-        .into_iter()
-        .map(mode_summary)
-        .collect();
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let modes = match workspace_mode_policies(&store) {
+        Ok(policies) => policies.into_iter().map(mode_summary).collect(),
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
     result_response(id, json!(ModeListResult { modes }))
 }
 
@@ -3938,9 +3943,14 @@ fn handle_permission_check(id: Value, params: Option<Value>) -> JsonRpcResponse<
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    let policy = match BuiltinModeRegistry::get(&params.mode_id) {
-        Some(policy) => policy,
-        None => return error_response(id, -32602, "invalid params: unknown mode_id"),
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let policy = match resolve_workspace_mode_policy(&store, &params.mode_id) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => return error_response(id, -32602, "invalid params: unknown mode_id"),
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
     let action = runtime_action_from_name(&params.action);
     let decision = RuntimePermissionGate::check(&policy, action);
@@ -3962,9 +3972,15 @@ fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    match BuiltinModeRegistry::get(&params.mode_id) {
-        Some(policy) => result_response(id, json!(mode_summary(policy))),
-        None => error_response(id, -32602, "invalid params: unknown mode_id"),
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    match resolve_workspace_mode_policy(&store, &params.mode_id) {
+        Ok(Some(policy)) => result_response(id, json!(mode_summary(policy))),
+        Ok(None) => error_response(id, -32602, "invalid params: unknown mode_id"),
+        Err(message) => error_response(id, -32603, &format!("internal error: {message}")),
     }
 }
 
@@ -9022,6 +9038,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "strict",
         "mode_id",
         "display_name",
+        "role_definition",
+        "completion_rules",
         "permissions",
         "required_action",
         "allowed",
@@ -9128,12 +9146,48 @@ fn timeline_entry(event: &LedgerEvent) -> String {
     parts.join(" ")
 }
 
-fn resolve_task_start_policy(mode_id: Option<&str>) -> Result<CompiledModePolicy, String> {
+fn resolve_task_start_policy(
+    mode_id: Option<&str>,
+    store: &BrownieStore,
+) -> Result<CompiledModePolicy, String> {
     match mode_id {
-        Some(mode_id) if !mode_id.trim().is_empty() => BuiltinModeRegistry::get(mode_id)
-            .ok_or_else(|| "invalid params: unknown mode_id".to_string()),
+        Some(mode_id) if !mode_id.trim().is_empty() => {
+            resolve_workspace_mode_policy(store, mode_id)?
+                .ok_or_else(|| "invalid params: unknown mode_id".to_string())
+        }
         _ => Ok(BuiltinModeRegistry::default_policy()),
     }
+}
+
+fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolicy>, String> {
+    let mut policies = BuiltinModeRegistry::list();
+    let Some(snapshot) = load_workspace_modepack(store.workspace_root())
+        .map_err(|error| format!("modepack load failed: {error}"))?
+    else {
+        return Ok(policies);
+    };
+    for policy in snapshot.modes {
+        if policies
+            .iter()
+            .any(|existing| existing.mode_id == policy.mode_id)
+        {
+            return Err(format!(
+                "modepack mode duplicates existing mode_id: {}",
+                policy.mode_id
+            ));
+        }
+        policies.push(policy);
+    }
+    Ok(policies)
+}
+
+fn resolve_workspace_mode_policy(
+    store: &BrownieStore,
+    mode_id: &str,
+) -> Result<Option<CompiledModePolicy>, String> {
+    Ok(workspace_mode_policies(store)?
+        .into_iter()
+        .find(|policy| policy.mode_id == mode_id))
 }
 
 fn agent_loop_state_name(state: AgentLoopState) -> &'static str {
@@ -9175,6 +9229,8 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
     json!({
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
+        "role_definition": policy.role_definition,
+        "completion_rules": policy.completion_rules,
         "permissions": {
             "read_only": policy.permissions.read_only,
             "workspace_write": policy.permissions.workspace_write,
@@ -9191,15 +9247,25 @@ fn resolve_policy_for_task_run(
     record: &brownie_protocol::TaskRecord,
     store: &BrownieStore,
 ) -> Result<CompiledModePolicy, String> {
-    if let Some(mode_id) = record.mode_id.as_deref() {
-        return BuiltinModeRegistry::get(mode_id)
-            .ok_or_else(|| format!("stored task has unknown mode_id: {mode_id}"));
-    }
-
     let events = store
         .tasks()
         .read_ledger_events(&record.run_id)
         .map_err(|error| error.to_string())?;
+    if let Some(policy) = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+        .and_then(compiled_mode_policy_from_payload)
+    {
+        return Ok(policy);
+    }
+
+    if let Some(mode_id) = record.mode_id.as_deref() {
+        return resolve_workspace_mode_policy(store, mode_id)?
+            .ok_or_else(|| format!("stored task has unknown mode_id: {mode_id}"));
+    }
+
     let mode_id = events
         .iter()
         .rev()
@@ -9208,8 +9274,37 @@ fn resolve_policy_for_task_run(
         .and_then(|payload| payload.get("mode_id"))
         .and_then(|value| value.as_str())
         .unwrap_or(DEFAULT_MODE_ID_FOR_RUN);
-    BuiltinModeRegistry::get(mode_id)
+    resolve_workspace_mode_policy(store, mode_id)?
         .ok_or_else(|| format!("ledger has unknown mode_id: {mode_id}"))
+}
+
+fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePolicy> {
+    let permissions = payload.get("permissions")?;
+    let completion_rules = payload
+        .get("completion_rules")
+        .and_then(Value::as_array)
+        .map(|rules| {
+            rules
+                .iter()
+                .filter_map(|rule| rule.as_str().map(ToString::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    Some(CompiledModePolicy {
+        mode_id: payload.get("mode_id")?.as_str()?.to_string(),
+        display_name: payload.get("display_name")?.as_str()?.to_string(),
+        role_definition: payload.get("role_definition")?.as_str()?.to_string(),
+        permissions: brownie_agentmodes::ModePermissions {
+            read_only: permissions.get("read_only")?.as_bool()?,
+            workspace_write: permissions.get("workspace_write")?.as_bool()?,
+            process_exec: permissions.get("process_exec")?.as_bool()?,
+            network_access: permissions.get("network_access")?.as_bool()?,
+            service_control: permissions.get("service_control")?.as_bool()?,
+            destructive: permissions.get("destructive")?.as_bool()?,
+            can_spawn_subtasks: permissions.get("can_spawn_subtasks")?.as_bool()?,
+        },
+        completion_rules,
+    })
 }
 
 fn tool_summary(tool: brownie_tools::ToolDefinition) -> ToolSummary {
@@ -9831,6 +9926,36 @@ mod tests {
     pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
             .expect("valid response")
+    }
+
+    fn write_test_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "local-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review local changes without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
     }
 
     fn append_test_patch_proposal(
@@ -13979,6 +14104,10 @@ mod tests {
 
     #[test]
     fn mode_list_and_get_return_builtin_modes() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"mode.list"}"#);
         let modes = list.result.expect("list result")["modes"]
             .as_array()
@@ -13991,10 +14120,105 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
         );
         assert_eq!(get.result.expect("get result")["mode_id"], "orchestrator");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn mode_list_get_and_permission_check_include_local_modepack_modes() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .expect("modes")
+            .clone();
+        assert_eq!(modes.len(), 4);
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "reviewer-lite"));
+
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"reviewer-lite"}}"#,
+        );
+        let mode = get.result.expect("get result");
+        assert_eq!(mode["display_name"], "Reviewer Lite");
+        assert_eq!(mode["permissions"]["workspace_write"], false);
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"permission.check","params":{"mode_id":"reviewer-lite","action":"WriteWorkspace"}}"#,
+        );
+        let permission_result = permission.result.expect("permission result");
+        assert_eq!(permission_result["allowed"], false);
+        assert!(permission_result["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("reviewer-lite"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_start_uses_local_modepack_snapshot_for_task_run() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use local mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json")).expect("remove modepack");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .expect("mode resolved");
+        let payload = mode_resolved.payload.as_ref().expect("payload");
+        assert_eq!(payload["mode_id"], "reviewer-lite");
+        assert_eq!(
+            payload["role_definition"],
+            "Review local changes without writing files."
+        );
+        assert_eq!(payload["permissions"]["can_spawn_subtasks"], false);
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::AgentLoopCompleted));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
     fn permission_check_returns_allowed_and_denied_decisions() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let denied = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"permission.check","params":{"mode_id":"orchestrator","action":"WriteWorkspace"}}"#,
         );
@@ -14012,15 +14236,23 @@ mod tests {
             r#"{"jsonrpc":"2.0","id":2,"method":"permission.check","params":{"mode_id":"implementer","action":"WriteWorkspace"}}"#,
         );
         assert_eq!(allowed.result.expect("allowed result")["allowed"], true);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
     fn permission_check_unknown_mode_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"permission.check","params":{"mode_id":"unknown-mode","action":"WriteWorkspace"}}"#,
         );
         assert!(response.result.is_none());
         assert_eq!(response.error.expect("error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
@@ -14175,11 +14407,17 @@ mod tests {
 
     #[test]
     fn mode_get_unknown_returns_invalid_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"mode.get","params":{"mode_id":"unknown-mode"}}"#,
         );
         assert!(response.result.is_none());
         assert_eq!(response.error.expect("error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

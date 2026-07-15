@@ -101,6 +101,13 @@ dependencies = [
 [[package]]
 name = "brownie-modepack"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "brownie-agentmodes",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
 
 [[package]]
 name = "brownie-protocol"
@@ -124,6 +131,7 @@ dependencies = [
  "brownie-config",
  "brownie-context",
  "brownie-llm",
+ "brownie-modepack",
  "brownie-protocol",
  "brownie-store",
  "brownie-tools",
