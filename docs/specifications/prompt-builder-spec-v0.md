@@ -87,3 +87,9 @@ The section is informational context for future runtime scheduling. It does not 
 The `Subtask Orchestration` section also summarizes `SubtaskHandoffPrepared` ledger events using compact fields such as handoff id, status, queued count, `execution_enabled`, and `next_action`.
 
 This lets later prompt passes see that queued evidence was consumed into parent-run handoff state. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.2 subtask scheduler readiness prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskSchedulerReadinessRecorded` ledger events using compact fields such as readiness id, readiness status, handoff count, queued count, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that prepared handoff state was evaluated for scheduler readiness and remains blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.

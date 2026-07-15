@@ -1894,6 +1894,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_handoff_prepared(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_scheduler_readiness_recorded(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9119,6 +9122,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskHandoffPrepared)
         .count();
+    let subtask_scheduler_readiness_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskSchedulerReadinessRecorded)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9135,6 +9142,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_queue_count,
         has_subtask_handoff_prepared: subtask_handoff_count > 0,
         subtask_handoff_count,
+        has_subtask_scheduler_readiness: subtask_scheduler_readiness_count > 0,
+        subtask_scheduler_readiness_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9200,10 +9209,13 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "queue_position",
         "execution_enabled",
         "handoff_id",
+        "readiness_id",
         "queued_count",
         "queued_subtask_ids",
+        "handoff_count",
         "source_event_count",
         "next_action",
+        "dispatch_enabled",
         "tool_ids",
         "finding_count",
         "categories",
@@ -9284,10 +9296,14 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "status",
             "subtask_id",
             "handoff_id",
+            "readiness_id",
             "queue_position",
             "queued_count",
+            "handoff_count",
             "execution_enabled",
+            "dispatch_enabled",
             "next_action",
+            "readiness_status",
             "bytes_read",
             "truncated",
             "reason",
@@ -9793,6 +9809,77 @@ fn append_subtask_handoff_prepared(
             "execution_enabled": false,
             "next_action": "await_future_runtime_scheduler",
             "reason": "Queued subtask evidence consumed into parent-run handoff state; no subtask was spawned in M5.1."
+        })),
+    )
+}
+
+fn append_subtask_scheduler_readiness_recorded(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskSchedulerReadinessRecorded)
+    {
+        return Ok(());
+    }
+
+    let handoffs = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskHandoffPrepared)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let handoff_id = payload.get("handoff_id")?.as_str()?.to_string();
+            let queued_count = payload
+                .get("queued_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            Some((handoff_id, queued_count))
+        })
+        .collect::<Vec<_>>();
+    if handoffs.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let handoff_ids = handoffs
+        .iter()
+        .map(|(handoff_id, _)| handoff_id.clone())
+        .collect::<Vec<_>>();
+    let handoff_count = handoffs.len();
+    let queued_count = handoffs
+        .iter()
+        .map(|(_, queued_count)| *queued_count)
+        .sum::<u64>();
+    let blocked_checks = vec![
+        "child_task_execution_disabled",
+        "runtime_scheduler_not_implemented",
+    ];
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskSchedulerReadinessRecorded,
+        Some(json!({
+            "readiness_id": format!("subtask_scheduler_readiness_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "handoff_id": handoff_ids[0],
+            "handoff_count": handoff_count,
+            "queued_count": queued_count,
+            "source_event_count": handoff_count,
+            "status": "Blocked",
+            "readiness_status": "Blocked",
+            "readiness_reason": "Prepared subtask handoff is not dispatch-ready until a runtime scheduler exists.",
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_runtime_scheduler_dispatch",
+            "reason": "Prepared handoff evidence evaluated for scheduler readiness; no subtask was spawned in M5.2."
         })),
     )
 }
@@ -10364,6 +10451,9 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::SubtaskHandoffPrepared));
         assert!(events
             .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskSchedulerReadinessRecorded));
+        assert!(events
+            .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
         let second_prompt = events
             .iter()
@@ -10397,6 +10487,9 @@ mod tests {
         assert!(second_prompt_preview.contains("execution_enabled=false"));
         assert!(second_prompt_preview.contains("Prepared queued_count=1"));
         assert!(second_prompt_preview.contains("await_future_runtime_scheduler"));
+        assert!(second_prompt_preview.contains("Blocked handoff_count=1"));
+        assert!(second_prompt_preview.contains("dispatch_enabled=false"));
+        assert!(second_prompt_preview.contains("await_runtime_scheduler_dispatch"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -10467,6 +10560,8 @@ mod tests {
         assert_eq!(summary["subtask_queue_count"], 1);
         assert_eq!(summary["has_subtask_handoff_prepared"], true);
         assert_eq!(summary["subtask_handoff_count"], 1);
+        assert_eq!(summary["has_subtask_scheduler_readiness"], true);
+        assert_eq!(summary["subtask_scheduler_readiness_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -10514,8 +10609,15 @@ mod tests {
             "handoff_id": "subtask_handoff_run_1_1",
             "queued_count": 1,
             "queued_subtask_ids": ["subtask_run_1_1"],
+            "handoff_count": 1,
             "source_event_count": 1,
-            "next_action": "await_future_runtime_scheduler"
+            "next_action": "await_runtime_scheduler_dispatch",
+            "readiness_id": "subtask_scheduler_readiness_run_1_1",
+            "readiness_status": "Blocked",
+            "readiness_reason": "Prepared subtask handoff is not dispatch-ready until a runtime scheduler exists.",
+            "check_count": 2,
+            "blocked_checks": ["child_task_execution_disabled", "runtime_scheduler_not_implemented"],
+            "dispatch_enabled": false
         })))
         .expect("sanitized");
         assert_eq!(sanitized["output_preview"], "safe");
@@ -10528,8 +10630,24 @@ mod tests {
         assert_eq!(sanitized["handoff_id"], "subtask_handoff_run_1_1");
         assert_eq!(sanitized["queued_count"], 1);
         assert_eq!(sanitized["queued_subtask_ids"][0], "subtask_run_1_1");
+        assert_eq!(sanitized["handoff_count"], 1);
         assert_eq!(sanitized["source_event_count"], 1);
-        assert_eq!(sanitized["next_action"], "await_future_runtime_scheduler");
+        assert_eq!(sanitized["next_action"], "await_runtime_scheduler_dispatch");
+        assert_eq!(
+            sanitized["readiness_id"],
+            "subtask_scheduler_readiness_run_1_1"
+        );
+        assert_eq!(sanitized["readiness_status"], "Blocked");
+        assert_eq!(
+            sanitized["readiness_reason"],
+            "Prepared subtask handoff is not dispatch-ready until a runtime scheduler exists."
+        );
+        assert_eq!(sanitized["check_count"], 2);
+        assert_eq!(
+            sanitized["blocked_checks"][0],
+            "child_task_execution_disabled"
+        );
+        assert_eq!(sanitized["dispatch_enabled"], false);
         assert!(sanitized.get("content").is_none());
         assert!(sanitized.get("full_content").is_none());
         assert!(sanitized.get("file_content").is_none());
@@ -10842,6 +10960,51 @@ mod tests {
             queued_payload["subtask_id"]
         );
         assert!(handoff_payload.get("input").is_none());
+        let readiness_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskSchedulerReadinessRecorded)
+            .expect("subtask scheduler readiness event");
+        let readiness_payload = readiness_event
+            .payload
+            .as_ref()
+            .expect("subtask scheduler readiness payload");
+        assert_eq!(readiness_payload["status"], "Blocked");
+        assert_eq!(readiness_payload["readiness_status"], "Blocked");
+        assert_eq!(
+            readiness_payload["readiness_reason"],
+            "Prepared subtask handoff is not dispatch-ready until a runtime scheduler exists."
+        );
+        assert_eq!(readiness_payload["handoff_count"], 1);
+        assert_eq!(readiness_payload["queued_count"], 1);
+        assert_eq!(readiness_payload["source_event_count"], 1);
+        assert_eq!(readiness_payload["execution_enabled"], false);
+        assert_eq!(readiness_payload["dispatch_enabled"], false);
+        assert_eq!(
+            readiness_payload["next_action"],
+            "await_runtime_scheduler_dispatch"
+        );
+        assert_eq!(
+            readiness_payload["reason"],
+            "Prepared handoff evidence evaluated for scheduler readiness; no subtask was spawned in M5.2."
+        );
+        assert_eq!(
+            readiness_payload["handoff_id"],
+            handoff_payload["handoff_id"]
+        );
+        assert!(readiness_payload["readiness_id"]
+            .as_str()
+            .expect("readiness id")
+            .starts_with("subtask_scheduler_readiness_run_"));
+        assert_eq!(readiness_payload["check_count"], 2);
+        assert_eq!(
+            readiness_payload["blocked_checks"][0],
+            "child_task_execution_disabled"
+        );
+        assert_eq!(
+            readiness_payload["blocked_checks"][1],
+            "runtime_scheduler_not_implemented"
+        );
+        assert!(readiness_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -10880,6 +11043,7 @@ mod tests {
                 LedgerEventKind::ToolExecutionFailed,
                 LedgerEventKind::SubtaskOrchestrationQueued,
                 LedgerEventKind::SubtaskHandoffPrepared,
+                LedgerEventKind::SubtaskSchedulerReadinessRecorded,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
