@@ -723,6 +723,8 @@ pub struct WorkspacePatchReadinessReportSummary {
     pub report_id: String,
     pub readiness_status: String,
     pub readiness_reason: Option<String>,
+    pub readiness_fingerprint: String,
+    pub fingerprint_input_count: usize,
     pub generated_at: String,
     pub checklist: Vec<WorkspacePatchReadinessCheckSummary>,
     pub summary: String,
