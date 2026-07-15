@@ -161,6 +161,10 @@ describe('protocol validation', () => {
       status: 'Completed',
       event_count: 3,
       has_tool_execution_completed: true,
+      has_subtask_orchestration_queued: true,
+      subtask_queue_count: 1,
+      has_subtask_handoff_prepared: true,
+      subtask_handoff_count: 1,
       has_second_pass: true,
       final_response_preview: 'done',
       timeline: ['TaskStarted'],
@@ -168,6 +172,7 @@ describe('protocol validation', () => {
     expect(isRunInspectSummary(summary)).toBe(true);
     expect(isRunInspectSummary({ ...summary, has_second_pass: 'true' })).toBe(false);
     expect(isRunInspectSummary({ ...summary, event_count: -1 })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, subtask_handoff_count: -1 })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -597,7 +602,7 @@ describe('RuntimeClient', () => {
   it('creates a task.inspect request', async () => {
     const result = {
       task: { ...taskRecord, status: 'Completed' },
-      run: { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_second_pass: true, final_response_preview: 'done', timeline: ['TaskStarted'] },
+      run: { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_second_pass: true, final_response_preview: 'done', timeline: ['TaskStarted'] },
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
@@ -607,7 +612,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a run.inspect request', async () => {
-    const run = { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_second_pass: false, final_response_preview: 'done', timeline: ['TaskStarted'] };
+    const run = { run_id: 'run_1', task_id: 'task_1', status: 'Completed', event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_second_pass: false, final_response_preview: 'done', timeline: ['TaskStarted'] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { run } });
     const client = new RuntimeClient(transport);
 

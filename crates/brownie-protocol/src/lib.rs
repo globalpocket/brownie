@@ -2296,6 +2296,8 @@ pub struct RunInspectSummary {
     pub has_tool_execution_completed: bool,
     pub has_subtask_orchestration_queued: bool,
     pub subtask_queue_count: usize,
+    pub has_subtask_handoff_prepared: bool,
+    pub subtask_handoff_count: usize,
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,

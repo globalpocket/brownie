@@ -233,6 +233,10 @@ export interface RunInspectSummary {
   status?: TaskStatus | null;
   event_count: number;
   has_tool_execution_completed: boolean;
+  has_subtask_orchestration_queued: boolean;
+  subtask_queue_count: number;
+  has_subtask_handoff_prepared: boolean;
+  subtask_handoff_count: number;
   has_second_pass: boolean;
   final_response_preview?: string | null;
   timeline: string[];
@@ -2529,6 +2533,14 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     Number.isInteger(value.event_count) &&
     value.event_count >= 0 &&
     typeof value.has_tool_execution_completed === 'boolean' &&
+    typeof value.has_subtask_orchestration_queued === 'boolean' &&
+    typeof value.subtask_queue_count === 'number' &&
+    Number.isInteger(value.subtask_queue_count) &&
+    value.subtask_queue_count >= 0 &&
+    typeof value.has_subtask_handoff_prepared === 'boolean' &&
+    typeof value.subtask_handoff_count === 'number' &&
+    Number.isInteger(value.subtask_handoff_count) &&
+    value.subtask_handoff_count >= 0 &&
     typeof value.has_second_pass === 'boolean' &&
     (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string') &&
     Array.isArray(value.timeline) &&

@@ -282,34 +282,65 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
 fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
     events
         .iter()
-        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
         .filter_map(|event| {
             let payload = event.payload.as_ref()?;
-            let subtask_id = payload
-                .get("subtask_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("<unknown>");
-            let status = payload
-                .get("status")
-                .and_then(|value| value.as_str())
-                .unwrap_or("<unknown>");
-            let tool_id = payload
-                .get("tool_id")
-                .and_then(|value| value.as_str())
-                .unwrap_or("<unknown>");
-            let queue_position = payload
-                .get("queue_position")
-                .and_then(|value| value.as_u64())
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            let execution_enabled = payload
-                .get("execution_enabled")
-                .and_then(|value| value.as_bool())
-                .map(|value| value.to_string())
-                .unwrap_or_else(|| "<unknown>".to_string());
-            Some(format!(
-                "{subtask_id}: {status} tool_id={tool_id} queue_position={queue_position} execution_enabled={execution_enabled}"
-            ))
+            match event.kind {
+                LedgerEventKind::SubtaskOrchestrationQueued => {
+                    let subtask_id = payload
+                        .get("subtask_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let status = payload
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let tool_id = payload
+                        .get("tool_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let queue_position = payload
+                        .get("queue_position")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let execution_enabled = payload
+                        .get("execution_enabled")
+                        .and_then(|value| value.as_bool())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    Some(format!(
+                        "{subtask_id}: {status} tool_id={tool_id} queue_position={queue_position} execution_enabled={execution_enabled}"
+                    ))
+                }
+                LedgerEventKind::SubtaskHandoffPrepared => {
+                    let handoff_id = payload
+                        .get("handoff_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let status = payload
+                        .get("status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let queued_count = payload
+                        .get("queued_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let execution_enabled = payload
+                        .get("execution_enabled")
+                        .and_then(|value| value.as_bool())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let next_action = payload
+                        .get("next_action")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    Some(format!(
+                        "{handoff_id}: {status} queued_count={queued_count} execution_enabled={execution_enabled} next_action={next_action}"
+                    ))
+                }
+                _ => None,
+            }
         })
         .collect()
 }
@@ -725,31 +756,48 @@ mod tests {
     fn context_materializer_and_prompt_include_subtask_orchestration_summary() {
         let input = ContextMaterializerInput {
             task: task_record(),
-            ledger_events: vec![LedgerEvent {
-                event_id: "event_1".into(),
-                task_id: "task_1".into(),
-                run_id: "run_1".into(),
-                kind: LedgerEventKind::SubtaskOrchestrationQueued,
-                timestamp: "2026-01-01T00:00:00Z".into(),
-                payload: Some(serde_json::json!({
-                    "subtask_id": "subtask_run_1_1",
-                    "tool_id": "subtask.spawn",
-                    "status": "Queued",
-                    "queue_position": 1,
-                    "execution_enabled": false,
-                    "input_summary": {
-                        "has_path": false,
-                        "field_count": 0
-                    }
-                })),
-            }],
+            ledger_events: vec![
+                LedgerEvent {
+                    event_id: "event_1".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::SubtaskOrchestrationQueued,
+                    timestamp: "2026-01-01T00:00:00Z".into(),
+                    payload: Some(serde_json::json!({
+                        "subtask_id": "subtask_run_1_1",
+                        "tool_id": "subtask.spawn",
+                        "status": "Queued",
+                        "queue_position": 1,
+                        "execution_enabled": false,
+                        "input_summary": {
+                            "has_path": false,
+                            "field_count": 0
+                        }
+                    })),
+                },
+                LedgerEvent {
+                    event_id: "event_2".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::SubtaskHandoffPrepared,
+                    timestamp: "2026-01-01T00:00:01Z".into(),
+                    payload: Some(serde_json::json!({
+                        "handoff_id": "subtask_handoff_run_1_1",
+                        "status": "Prepared",
+                        "queued_count": 1,
+                        "execution_enabled": false,
+                        "next_action": "await_future_runtime_scheduler"
+                    })),
+                },
+            ],
         };
 
         let materialized = ContextMaterializer::materialize(input);
         assert_eq!(
             materialized.subtask_orchestration_summary,
             vec![
-                "subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false"
+                "subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false",
+                "subtask_handoff_run_1_1: Prepared queued_count=1 execution_enabled=false next_action=await_future_runtime_scheduler"
             ]
         );
         let prompt = PromptBuilder::build(materialized);
@@ -759,6 +807,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- subtask_handoff_run_1_1: Prepared queued_count=1 execution_enabled=false next_action=await_future_runtime_scheduler"));
     }
 
     #[test]

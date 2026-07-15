@@ -43,3 +43,9 @@ Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema
 Approved `subtask.spawn` assistant intent is not executed in M5. Instead, `task.run` records a summary-only `SubtaskOrchestrationQueued` ledger event with `status = "Queued"`, queue position, `request_reason`, and `input_summary`. The ledger event must not include raw request input or raw provider output.
 
 Denied or rejected `subtask.spawn` intent follows the existing denied/rejected tool-intent path. M5 does not add child task execution, process execution, network access, service control, patch apply, or direct workspace mutation.
+
+## M5.1 subtask handoff preparation
+
+After approved `subtask.spawn` intent is queued, `task.run` may consume the queued evidence into a summary-only `SubtaskHandoffPrepared` event. This handoff record references queued subtask ids and marks `execution_enabled = false`; it must not include raw request input or raw provider output.
+
+M5.1 does not execute the requested subtask. It only prepares deterministic parent-run handoff state for future runtime scheduling.
