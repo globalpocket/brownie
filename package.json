@@ -6,6 +6,7 @@
   "scripts": {
     "build": "pnpm --filter brownie-vsix build",
     "check": "pnpm --filter brownie-vsix check",
+    "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
     "test": "pnpm --filter brownie-vsix test"
   },
   "packageManager": "pnpm@9.0.0",

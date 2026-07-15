@@ -1,0 +1,218 @@
+{
+  "schema_version": 1,
+  "family": "proposal.reviewQueueDiagnostics legacy wrapper API",
+  "status": "deprecated_candidate_family",
+  "introduced_range": "Phase 3.13 through Phase 3.51",
+  "canonical_inventory_ref": "docs/architecture/diagnostics-api-consolidation.md",
+  "runtime_history_ref": "docs/architecture/diagnostics-wrapper-history.md",
+  "long_name_threshold": 80,
+  "method_prefix": "proposal.reviewQueueDiagnostics",
+  "protocol_type_prefix": "ProposalReviewQueueDiagnostics",
+  "runtime_client_method_prefix": "reviewQueueDiagnostics",
+  "derived_legacy_type_suffixes": [
+    "Params",
+    "Result"
+  ],
+  "legacy_methods": [
+    {
+      "name": "proposal.reviewQueueDiagnostics",
+      "status": "keep_and_consolidate",
+      "introduced_by_phase": "3.13"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.14"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.15"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.16"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.17"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.18"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.19"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdict",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.20"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.21"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.22"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.23"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.24"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.25"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.26"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.27"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.28"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.29"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.30"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.31"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.32"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.33"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.34"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.35"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.36"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.37"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.38"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.39"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.40"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.41"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.42"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.43"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.44"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.45"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.46"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.47"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigest",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.48"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.49"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReport",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.50"
+    },
+    {
+      "name": "proposal.reviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistory",
+      "status": "deprecated_candidate",
+      "introduced_by_phase": "3.51"
+    }
+  ],
+  "deprecation_rules": [
+    "Treat every method except proposal.reviewQueueDiagnostics as compatibility-only.",
+    "Do not add more wrapper-only diagnostics endpoints, types, VSIX validators, or RuntimeClient methods.",
+    "A later consolidation phase may replace deprecated candidates with a smaller diagnostics API only after documenting migration behavior."
+  ]
+}

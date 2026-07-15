@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "phase": "R1.1",
+  "milestone": "architecture_recovery",
+  "target_capability": "diagnostics_enforcement_and_deprecation_foundation",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "project_objective": "Build an independent Rust-owned autonomous development runtime with a thin Code-OSS VSIX, supporting agent loop execution, external Mode Packs, runtime-enforced permissions, controlled tools, persistent state, and headless long-running development workflows.",
+  "strategic_capability_mapping": [
+    {
+      "capability": "agent_loop",
+      "relationship": "Removes diagnostics wrapper growth as a blocker before returning to M1 Agent Loop Integration."
+    },
+    {
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Keeps future diagnostics API work tied to permission and safety semantics instead of wrapper-only reports."
+    },
+    {
+      "capability": "controlled_workspace_tools",
+      "relationship": "Preserves the no-write/no-apply boundary while enforcing a clearer API surface for controlled tools."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Prevents unattended phase execution from spending more phases on reconstructable diagnostics wrappers."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic_capabilities does this phase advance?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What new user-visible or runtime capability does it add?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing functionality not substitute for this work?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What concrete product gap remains if this is not implemented?"
+      },
+      {
+        "id": "objective_alignment",
+        "question": "How does this move Brownie closer to project_objective?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Is it semantically non-duplicative with the previous three phases?"
+      }
+    ],
+    "answers": {
+      "strategic_capabilities": "Indirectly advances agent_loop, runtime_permission_enforcement, controlled_workspace_tools, and headless_autonomous_development by removing the documented diagnostics-wrapper blocker before M1.",
+      "new_capability": "Adds repository and CI/review enforcement that detects wrapper-only diagnostics API growth, long diagnostics names outside the legacy metadata, empty strategic capability mapping, and missing value-gate answers.",
+      "why_existing_functionality_is_insufficient": "PR #85 documented the desired guardrails, but Markdown cannot reject future code changes or CI runs by itself.",
+      "product_gap_if_skipped": "The phase loop could regress into more long diagnostics wrapper phases even after R1 documented that pattern as invalid.",
+      "objective_alignment": "It protects the roadmap so Brownie can return to the autonomous runtime, permission, tool, and headless execution capabilities named in the product objective.",
+      "non_duplicative": "Yes. R1.1 turns R1's planning documents into machine-checkable enforcement and deprecation metadata; it does not add another diagnostics wrapper."
+    }
+  },
+  "review_value_gate": {
+    "required": true,
+    "reject_when": [
+      "A PR adds no strategic capability and removes no documented blocker.",
+      "A PR only wraps existing diagnostics output in another endpoint, type, validator, or RuntimeClient method.",
+      "A PR cannot state a concrete user-visible or runtime capability gain.",
+      "A PR treats CI success as sufficient product value without answering the value gate.",
+      "A PR expands the diagnostics wrapper family outside the legacy allowlist."
+    ]
+  },
+  "diagnostics_wrapper_freeze": {
+    "metadata_ref": "docs/architecture/diagnostics-legacy-api-metadata.json",
+    "long_name_threshold": 80,
+    "rules": [
+      "No new proposal.reviewQueueDiagnostics... RPC method may be added unless it already appears in the legacy allowlist.",
+      "No new ProposalReviewQueueDiagnostics... protocol type or RuntimeClient method may be added unless it is derived from an allowlisted legacy RPC.",
+      "Long diagnostics RPC or type names over the configured threshold must be legacy/deprecated metadata entries.",
+      "The current legacy family remains compatibility-only until a later consolidation phase removes or replaces it."
+    ]
+  },
+  "next_milestone_after_r1_1": "agent_loop_integration"
+}
