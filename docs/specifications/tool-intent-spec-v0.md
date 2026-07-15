@@ -49,3 +49,9 @@ Denied or rejected `subtask.spawn` intent follows the existing denied/rejected t
 After approved `subtask.spawn` intent is queued, `task.run` may consume the queued evidence into a summary-only `SubtaskHandoffPrepared` event. This handoff record references queued subtask ids and marks `execution_enabled = false`; it must not include raw request input or raw provider output.
 
 M5.1 does not execute the requested subtask. It only prepares deterministic parent-run handoff state for future runtime scheduling.
+
+## M5.2 subtask scheduler readiness
+
+After prepared handoff state exists, `task.run` may evaluate it into a summary-only `SubtaskSchedulerReadinessRecorded` event. This readiness record references the handoff, records `dispatch_enabled = false`, and includes deterministic blocked checks explaining why the handoff is not yet scheduler-ready.
+
+M5.2 does not execute the requested subtask. It only records scheduler-readiness evidence for future runtime dispatch.

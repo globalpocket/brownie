@@ -231,3 +231,9 @@ Queued subtask evidence is available through the ledger, through `run.inspect` /
 M5.1 turns queued subtask evidence into deterministic parent-run handoff state. After approved `subtask.spawn` intent has been queued, `task.run` appends a summary-only `SubtaskHandoffPrepared` event that records which queued subtask ids were consumed, how many source events were used, and that execution remains disabled.
 
 The handoff state is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.1 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.2 subtask scheduler readiness
+
+M5.2 turns prepared handoff state into deterministic scheduler readiness evidence. After `SubtaskHandoffPrepared` exists, `task.run` appends a summary-only `SubtaskSchedulerReadinessRecorded` event that records how many handoffs were evaluated, how many queued subtasks they cover, and why dispatch remains blocked.
+
+The readiness state is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.2 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
