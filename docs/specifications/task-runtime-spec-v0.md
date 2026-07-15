@@ -219,3 +219,9 @@ M3 records a summary-only readiness fingerprint when `proposal.readiness` runs. 
 The M3 fingerprint is a readiness gate only. It does not enable patch apply, does not write workspace files, and does not expose raw file content, raw diffs, raw input JSON, canonical absolute paths, process output, environment values, or network-derived content.
 
 Readiness ledger events are summary-only and must exclude raw content fields (`content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, `file_content`) and secret-like text.
+
+## M5 subtask orchestration queue
+
+M5 keeps `task.run` as the only runtime-owned execution path and adds a deterministic queue record for approved `subtask.spawn` assistant intent. The runtime appends `SubtaskOrchestrationQueued` with a stable parent run reference, queue position, summary-only input metadata, and `execution_enabled = false`.
+
+Queued subtask evidence is available through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization for later feedback passes. M5 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.

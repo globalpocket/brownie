@@ -37,3 +37,9 @@ Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema
 ## Phase 3.0 workspace.write dry-run proposals
 
 `workspace.write` supports only `replace_file` input for Phase 3.0. The parser preflights `path`, `operation`, and `content`, and invalid input is rejected with `code = "invalid_input"` without returning raw content. Approved intents remain dry-run and produce patch proposals only; the runtime does not write files or apply patches.
+
+## M5 subtask orchestration queue
+
+Approved `subtask.spawn` assistant intent is not executed in M5. Instead, `task.run` records a summary-only `SubtaskOrchestrationQueued` ledger event with `status = "Queued"`, queue position, `request_reason`, and `input_summary`. The ledger event must not include raw request input or raw provider output.
+
+Denied or rejected `subtask.spawn` intent follows the existing denied/rejected tool-intent path. M5 does not add child task execution, process execution, network access, service control, patch apply, or direct workspace mutation.
