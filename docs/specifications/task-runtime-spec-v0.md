@@ -243,3 +243,9 @@ The readiness state is visible through the ledger, through `run.inspect` / `task
 M5.3 turns scheduler-readiness evidence into deterministic parent-run dispatch plan state. After `SubtaskSchedulerReadinessRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchPlanPrepared` event that records which readiness evidence was consumed, how many queued subtasks the plan covers, and why dispatch remains blocked.
 
 The dispatch plan is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.3 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.4 subtask dispatch contract preparation
+
+M5.4 turns dispatch-plan evidence into deterministic parent-run dispatch contract and eligibility-gate state. After `SubtaskDispatchPlanPrepared` exists, `task.run` appends a summary-only `SubtaskDispatchContractPrepared` event that records which dispatch plan was consumed, how many queued subtasks it covers, which preconditions future dispatch must satisfy, and why dispatch remains blocked.
+
+The dispatch contract is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.4 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.

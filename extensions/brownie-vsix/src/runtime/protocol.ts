@@ -241,6 +241,8 @@ export interface RunInspectSummary {
   subtask_scheduler_readiness_count: number;
   has_subtask_dispatch_plan_prepared: boolean;
   subtask_dispatch_plan_count: number;
+  has_subtask_dispatch_contract_prepared: boolean;
+  subtask_dispatch_contract_count: number;
   has_second_pass: boolean;
   final_response_preview?: string | null;
   timeline: string[];
@@ -2553,6 +2555,10 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     typeof value.subtask_dispatch_plan_count === 'number' &&
     Number.isInteger(value.subtask_dispatch_plan_count) &&
     value.subtask_dispatch_plan_count >= 0 &&
+    typeof value.has_subtask_dispatch_contract_prepared === 'boolean' &&
+    typeof value.subtask_dispatch_contract_count === 'number' &&
+    Number.isInteger(value.subtask_dispatch_contract_count) &&
+    value.subtask_dispatch_contract_count >= 0 &&
     typeof value.has_second_pass === 'boolean' &&
     (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string') &&
     Array.isArray(value.timeline) &&
