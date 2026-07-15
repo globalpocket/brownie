@@ -2294,6 +2294,8 @@ pub struct RunInspectSummary {
     pub status: Option<TaskStatus>,
     pub event_count: usize,
     pub has_tool_execution_completed: bool,
+    pub has_subtask_orchestration_queued: bool,
+    pub subtask_queue_count: usize,
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,

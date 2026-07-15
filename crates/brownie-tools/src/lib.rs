@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
 pub const WORKSPACE_WRITE_TOOL_ID: &str = "workspace.write";
+pub const SUBTASK_SPAWN_TOOL_ID: &str = "subtask.spawn";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
@@ -67,7 +68,7 @@ impl BuiltinToolRegistry {
             tool("workspace.read", "Workspace Read", "Dry-run definition for workspace read requests.", RuntimeAction::ReadWorkspace),
             tool("workspace.write", "Workspace Write", "Dry-run definition for workspace write requests; no writes are executed in Phase 1.6.", RuntimeAction::WriteWorkspace),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
-            tool("subtask.spawn", "Subtask Spawn", "Dry-run definition for subtask spawn requests; no subtasks are spawned in Phase 1.6.", RuntimeAction::SpawnSubtask),
+            tool(SUBTASK_SPAWN_TOOL_ID, "Subtask Spawn", "Dry-run definition for subtask spawn requests; no subtasks are spawned in Phase 1.6.", RuntimeAction::SpawnSubtask),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
             tool("service.control", "Service Control", "Dry-run definition for service control requests.", RuntimeAction::ControlService),
             tool("destructive.operation", "Destructive Operation", "Dry-run definition for destructive operation requests.", RuntimeAction::DestructiveOperation),

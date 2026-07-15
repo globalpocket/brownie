@@ -66,6 +66,7 @@ pub struct PromptBuildInput {
     pub tool_plan_summary: Vec<String>,
     pub tool_intent_summary: Vec<String>,
     pub tool_execution_summary: Vec<String>,
+    pub subtask_orchestration_summary: Vec<String>,
     pub context_window: ContextWindowSummary,
     pub ledger_summary: Vec<String>,
 }
@@ -97,6 +98,8 @@ impl ContextMaterializer {
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
         let tool_intent_summary = format_tool_intent_summary(&input.ledger_events);
         let tool_execution_summary = format_tool_execution_summary(&input.ledger_events);
+        let subtask_orchestration_summary =
+            format_subtask_orchestration_summary(&input.ledger_events);
         let (ledger_summary, context_window) = format_ledger_context_window(&input.ledger_events);
 
         PromptBuildInput {
@@ -109,6 +112,7 @@ impl ContextMaterializer {
             tool_plan_summary,
             tool_intent_summary,
             tool_execution_summary,
+            subtask_orchestration_summary,
             context_window,
             ledger_summary,
         }
@@ -275,6 +279,41 @@ fn format_tool_execution_summary(events: &[LedgerEvent]) -> Vec<String> {
         .collect()
 }
 
+fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
+    events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let subtask_id = payload
+                .get("subtask_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<unknown>");
+            let status = payload
+                .get("status")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<unknown>");
+            let tool_id = payload
+                .get("tool_id")
+                .and_then(|value| value.as_str())
+                .unwrap_or("<unknown>");
+            let queue_position = payload
+                .get("queue_position")
+                .and_then(|value| value.as_u64())
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let execution_enabled = payload
+                .get("execution_enabled")
+                .and_then(|value| value.as_bool())
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            Some(format!(
+                "{subtask_id}: {status} tool_id={tool_id} queue_position={queue_position} execution_enabled={execution_enabled}"
+            ))
+        })
+        .collect()
+}
+
 fn format_context_window_summary(summary: &ContextWindowSummary) -> String {
     format!(
         "total_events: {}\nincluded_events: {}\nomitted_events: {}\nmax_events: {}\nfirst_included_event: {}\nlast_included_event: {}",
@@ -344,6 +383,16 @@ impl PromptBuilder {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        let subtask_orchestration = if input.subtask_orchestration_summary.is_empty() {
+            "- <none>".to_string()
+        } else {
+            input
+                .subtask_orchestration_summary
+                .iter()
+                .map(|entry| format!("- {entry}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
         let context_window = format_context_window_summary(&input.context_window);
 
         let ledger = if input.ledger_summary.is_empty() {
@@ -366,8 +415,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nSubtask Orchestration:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, subtask_orchestration, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -436,6 +485,7 @@ mod tests {
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
             tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
             context_window: ContextWindowSummary {
                 total_events: 2,
                 included_events: 2,
@@ -669,6 +719,46 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- workspace.read: Completed bytes_read=123 truncated=false"));
+    }
+
+    #[test]
+    fn context_materializer_and_prompt_include_subtask_orchestration_summary() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::SubtaskOrchestrationQueued,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "subtask_id": "subtask_run_1_1",
+                    "tool_id": "subtask.spawn",
+                    "status": "Queued",
+                    "queue_position": 1,
+                    "execution_enabled": false,
+                    "input_summary": {
+                        "has_path": false,
+                        "field_count": 0
+                    }
+                })),
+            }],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(
+            materialized.subtask_orchestration_summary,
+            vec![
+                "subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false"
+            ]
+        );
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1]
+            .content
+            .contains("Subtask Orchestration:"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false"));
     }
 
     #[test]

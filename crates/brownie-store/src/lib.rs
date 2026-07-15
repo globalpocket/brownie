@@ -270,6 +270,7 @@ pub enum LedgerEventKind {
     ToolIntentPermissionChecked,
     ToolIntentApproved,
     ToolIntentDenied,
+    SubtaskOrchestrationQueued,
     ToolExecutionRequested,
     ToolExecutionPermissionChecked,
     ToolExecutionCompleted,

@@ -222,6 +222,7 @@ mod tests {
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
             tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
             context_window: ContextWindowSummary {
                 total_events: 2,
                 included_events: 2,
@@ -259,6 +260,7 @@ mod tests {
             tool_execution_summary: vec![
                 "workspace.read: Completed bytes_read=12 truncated=false".into()
             ],
+            subtask_orchestration_summary: vec![],
             context_window: ContextWindowSummary {
                 total_events: 1,
                 included_events: 1,

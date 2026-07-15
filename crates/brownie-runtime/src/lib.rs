@@ -183,7 +183,8 @@ use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
     ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
-    DEFAULT_PROPOSAL_PREVIEW_CHARS, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, SUBTASK_SPAWN_TOOL_ID, WORKSPACE_READ_TOOL_ID,
+    WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -9107,6 +9108,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
     let has_tool_execution_completed = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted);
+    let subtask_queue_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9119,6 +9124,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         status: task.as_ref().map(|task| task.status.clone()),
         event_count: events.len(),
         has_tool_execution_completed,
+        has_subtask_orchestration_queued: subtask_queue_count > 0,
+        subtask_queue_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9178,6 +9185,11 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "required_action",
         "allowed",
         "request_reason",
+        "subtask_id",
+        "parent_task_id",
+        "parent_run_id",
+        "queue_position",
+        "execution_enabled",
         "tool_ids",
         "finding_count",
         "categories",
@@ -9256,6 +9268,9 @@ fn timeline_entry(event: &LedgerEvent) -> String {
         for key in [
             "tool_id",
             "status",
+            "subtask_id",
+            "queue_position",
+            "execution_enabled",
             "bytes_read",
             "truncated",
             "reason",
@@ -9622,6 +9637,10 @@ fn handle_approved_workspace_intents(
             append_workspace_patch_proposal(store, record, &decision)?;
             continue;
         }
+        if decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
+            append_subtask_orchestration_queued(store, record, &decision)?;
+            continue;
+        }
         if decision.tool_id != WORKSPACE_READ_TOOL_ID {
             continue;
         }
@@ -9668,6 +9687,47 @@ fn handle_approved_workspace_intents(
         )?;
     }
     Ok(())
+}
+
+fn append_subtask_orchestration_queued(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    decision: &ToolIntentDecision,
+) -> anyhow::Result<()> {
+    let queue_position = next_subtask_queue_position(store, &record.run_id)?;
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let subtask_id = format!("subtask_{run_fragment}_{queue_position}");
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskOrchestrationQueued,
+        Some(json!({
+            "subtask_id": subtask_id,
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "tool_id": decision.tool_id,
+            "required_action": runtime_action_name(&decision.required_action),
+            "status": "Queued",
+            "queue_position": queue_position,
+            "request_reason": decision.request_reason,
+            "input_summary": summarize_intent_input(&decision.input),
+            "execution_enabled": false,
+            "reason": "Subtask orchestration queued for future runtime scheduling; no subtask was spawned in M5."
+        })),
+    )
+}
+
+fn next_subtask_queue_position(store: &BrownieStore, run_id: &str) -> anyhow::Result<usize> {
+    Ok(store
+        .tasks()
+        .read_ledger_events(run_id)?
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+        .count()
+        + 1)
 }
 
 fn append_workspace_patch_proposal(
@@ -10231,6 +10291,9 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted));
         assert!(events
             .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+        assert!(events
+            .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
         let second_prompt = events
             .iter()
@@ -10257,6 +10320,11 @@ mod tests {
             second_prompt_payload["context_last_included_event"],
             "LlmResponseReceived"
         );
+        let second_prompt_preview = second_prompt_payload["prompt_preview"]
+            .as_str()
+            .expect("prompt preview");
+        assert!(second_prompt_preview.contains("Subtask Orchestration:"));
+        assert!(second_prompt_preview.contains("execution_enabled=false"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -10323,6 +10391,8 @@ mod tests {
         let summary = inspect.result.expect("inspect result")["run"].clone();
         assert!(summary["event_count"].as_u64().expect("event_count") > 0);
         assert_eq!(summary["has_tool_execution_completed"], true);
+        assert_eq!(summary["has_subtask_orchestration_queued"], true);
+        assert_eq!(summary["subtask_queue_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -10363,13 +10433,19 @@ mod tests {
             "content": "secret",
             "full_content": "secret",
             "file_content": "secret",
-            "raw_output": "secret"
+            "raw_output": "secret",
+            "subtask_id": "subtask_run_1_1",
+            "queue_position": 1,
+            "execution_enabled": false
         })))
         .expect("sanitized");
         assert_eq!(sanitized["output_preview"], "safe");
         assert_eq!(sanitized["bytes_read"], 42);
         assert_eq!(sanitized["truncated"], false);
         assert_eq!(sanitized["reason"], "ok");
+        assert_eq!(sanitized["subtask_id"], "subtask_run_1_1");
+        assert_eq!(sanitized["queue_position"], 1);
+        assert_eq!(sanitized["execution_enabled"], false);
         assert!(sanitized.get("content").is_none());
         assert!(sanitized.get("full_content").is_none());
         assert!(sanitized.get("file_content").is_none());
@@ -10630,6 +10706,29 @@ mod tests {
             .as_str()
             .expect("completion summary")
             .contains(&task_id));
+        let queued_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .expect("subtask orchestration queued event");
+        let queued_payload = queued_event
+            .payload
+            .as_ref()
+            .expect("subtask orchestration payload");
+        assert_eq!(queued_payload["tool_id"], SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(queued_payload["status"], "Queued");
+        assert_eq!(queued_payload["queue_position"], 1);
+        assert_eq!(queued_payload["execution_enabled"], false);
+        assert_eq!(
+            queued_payload["reason"],
+            "Subtask orchestration queued for future runtime scheduling; no subtask was spawned in M5."
+        );
+        assert!(queued_payload["subtask_id"]
+            .as_str()
+            .expect("subtask id")
+            .starts_with("subtask_run_"));
+        assert_eq!(queued_payload["input_summary"]["has_path"], false);
+        assert_eq!(queued_payload["input_summary"]["field_count"], 0);
+        assert!(queued_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -10666,6 +10765,7 @@ mod tests {
                 LedgerEventKind::ToolExecutionRequested,
                 LedgerEventKind::ToolExecutionPermissionChecked,
                 LedgerEventKind::ToolExecutionFailed,
+                LedgerEventKind::SubtaskOrchestrationQueued,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
