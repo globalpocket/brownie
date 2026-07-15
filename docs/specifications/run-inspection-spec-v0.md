@@ -25,11 +25,19 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - optional task `status`
 - `event_count`
 - `has_tool_execution_completed`
+- `has_subtask_orchestration_queued`
+- `subtask_queue_count`
+- `has_subtask_handoff_prepared`
+- `subtask_handoff_count`
 - `has_second_pass`
 - `final_response_preview`, preferring `SecondPassLlmResponseReceived.content_preview` over `LlmResponseReceived.content_preview`
 - a compact human-readable `timeline`
 
 The APIs do not call real LLM services, do not execute tools, and do not perform writes.
+
+## M5.1 subtask orchestration inspection
+
+Run inspection reports both queued subtask orchestration evidence and prepared handoff state. `has_subtask_orchestration_queued` / `subtask_queue_count` count `SubtaskOrchestrationQueued` events, while `has_subtask_handoff_prepared` / `subtask_handoff_count` count `SubtaskHandoffPrepared` events. These fields are summary-only and do not imply child task execution.
 
 ## Phase 2.1 LLM metadata redaction
 

@@ -225,3 +225,9 @@ Readiness ledger events are summary-only and must exclude raw content fields (`c
 M5 keeps `task.run` as the only runtime-owned execution path and adds a deterministic queue record for approved `subtask.spawn` assistant intent. The runtime appends `SubtaskOrchestrationQueued` with a stable parent run reference, queue position, summary-only input metadata, and `execution_enabled = false`.
 
 Queued subtask evidence is available through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization for later feedback passes. M5 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.1 subtask handoff preparation
+
+M5.1 turns queued subtask evidence into deterministic parent-run handoff state. After approved `subtask.spawn` intent has been queued, `task.run` appends a summary-only `SubtaskHandoffPrepared` event that records which queued subtask ids were consumed, how many source events were used, and that execution remains disabled.
+
+The handoff state is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.1 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
