@@ -313,7 +313,7 @@ Diff previews are synthetic unified diff previews only. They are capped before l
 
 `proposal.readiness` accepts `{ "run_id": string, "proposal_id": string }` and returns `{ "proposal": WorkspacePatchProposalSummary, "report": WorkspacePatchReadinessReportSummary }`. Empty IDs, unknown runs, and unknown proposals return JSON-RPC `-32602`.
 
-`WorkspacePatchReadinessReportSummary` contains `proposal_id`, `report_id`, `readiness_status`, `readiness_reason`, `generated_at`, a bounded checklist of `WorkspacePatchReadinessCheckSummary`, and a deterministic human-readable summary. Allowed readiness statuses are `Ready`, `NotReady`, and `Blocked`; allowed check statuses are `Pass`, `Fail`, `Blocked`, and `Skipped`.
+`WorkspacePatchReadinessReportSummary` contains `proposal_id`, `report_id`, `readiness_status`, `readiness_reason`, `readiness_fingerprint`, `fingerprint_input_count`, `generated_at`, a bounded checklist of `WorkspacePatchReadinessCheckSummary`, and a deterministic human-readable summary. Allowed readiness statuses are `Ready`, `NotReady`, and `Blocked`; allowed check statuses are `Pass`, `Fail`, `Blocked`, and `Skipped`.
 
 The method uses the reconstructed proposal summary and latest preflight snapshot. It does not need a fresh target-file read in normal operation, does not write files, and does not apply patches. `Ready` means ready for final human review, not ready to apply; the `apply_not_implemented` check is always `Skipped` with the Phase 3.4 reason.
 
@@ -334,6 +334,12 @@ The method uses the reconstructed proposal summary and latest preflight snapshot
 `WorkspacePatchApplyDryRunSummary` contains summary metadata only: `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, `workspace_files_changed`, and a bounded checklist of `WorkspacePatchApplyDryRunCheckSummary`. In Phase 3.6, dry-run inspection never applies a patch and never writes workspace files, so `no_patch_applied` is always `true`, `apply_executed` is always `false`, and `workspace_files_changed` is always `false`.
 
 `proposal.applyDryRun` appends `WorkspacePatchApplyDryRunChecked` with summary-only metadata. It may inspect existing proposal, approval, preflight, readiness, and apply-disabled state, but it must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## M3 controlled apply readiness fingerprint
+
+M3 strengthens the existing `proposal.readiness` and `proposal.applyDryRun` paths without adding a new endpoint. `proposal.readiness` records a `readiness_fingerprint` over stable summary-only proposal evidence, approval state, latest preflight snapshot metadata, and readiness checklist status. `proposal.applyDryRun` recomputes that fingerprint from the current reconstructed proposal state and fails the `readiness_fingerprint_current` gate when the latest readiness report no longer matches current evidence.
+
+The fingerprint is summary-only. It must not include raw file content, raw diffs, raw input JSON, canonical absolute paths, shell command text, stdout/stderr, environment values, or network-derived content. M3 still never applies patches, writes workspace files, runs shell or git commands, fetches network resources, or authorizes apply.
 
 ## Phase 3.7 `proposal.applyDryRunHistory`
 

@@ -4506,10 +4506,16 @@ fn inspect_apply_capability(
     Ok((inspect_proposal(store, run_id, proposal_id)?, capability))
 }
 
-fn latest_readiness_status(
+struct LatestReadinessEvidence {
+    status: String,
+    reason: Option<String>,
+    fingerprint: Option<String>,
+}
+
+fn latest_readiness_evidence(
     events: &[LedgerEvent],
     proposal_id: &str,
-) -> Option<(String, Option<String>)> {
+) -> Option<LatestReadinessEvidence> {
     events.iter().rev().find_map(|event| {
         if event.kind != LedgerEventKind::WorkspacePatchReadinessReportCreated {
             return None;
@@ -4518,13 +4524,17 @@ fn latest_readiness_status(
         if payload.get("proposal_id").and_then(Value::as_str) != Some(proposal_id) {
             return None;
         }
-        Some((
-            payload.get("readiness_status")?.as_str()?.to_string(),
-            payload
+        Some(LatestReadinessEvidence {
+            status: payload.get("readiness_status")?.as_str()?.to_string(),
+            reason: payload
                 .get("readiness_reason")
                 .and_then(Value::as_str)
                 .map(ToString::to_string),
-        ))
+            fingerprint: payload
+                .get("readiness_fingerprint")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+        })
     })
 }
 
@@ -4546,7 +4556,10 @@ fn inspect_apply_dry_run(
         .ok_or_else(|| "invalid params: run not found".to_string())?;
     let proposal = inspect_proposal(store, run_id, proposal_id)?;
     let events = read_existing_run_events(store, run_id)?;
-    let latest_readiness = latest_readiness_status(&events, proposal_id);
+    let latest_readiness = latest_readiness_evidence(&events, proposal_id);
+    let current_readiness_checklist = build_readiness_checklist(&proposal);
+    let (current_readiness_fingerprint, _) =
+        readiness_fingerprint(&proposal, &current_readiness_checklist);
     let snapshot = proposal.latest_snapshot.as_ref();
     let mut checklist = vec![apply_dry_run_check("proposal_exists", "Pass", None)];
 
@@ -4615,25 +4628,49 @@ fn inspect_apply_dry_run(
         )
     });
     checklist.push(match latest_readiness.as_ref() {
-        Some((status, _)) if status == "Ready" => {
+        Some(evidence) if evidence.status == "Ready" => {
             apply_dry_run_check("readiness_ready", "Pass", None)
         }
-        Some((status, reason)) if status == "Blocked" => apply_dry_run_check(
+        Some(evidence) if evidence.status == "Blocked" => apply_dry_run_check(
             "readiness_ready",
             "Blocked",
-            reason
+            evidence
+                .reason
                 .as_deref()
                 .or(Some("Latest readiness report is blocked.")),
         ),
-        Some((_, reason)) => apply_dry_run_check(
+        Some(evidence) => apply_dry_run_check(
             "readiness_ready",
             "Fail",
-            reason
+            evidence
+                .reason
                 .as_deref()
                 .or(Some("Latest readiness report is not ready.")),
         ),
         None => apply_dry_run_check(
             "readiness_ready",
+            "Fail",
+            Some("Run proposal.readiness before apply dry-run inspection."),
+        ),
+    });
+    checklist.push(match latest_readiness.as_ref() {
+        Some(evidence)
+            if evidence.fingerprint.as_deref() == Some(current_readiness_fingerprint.as_str()) =>
+        {
+            apply_dry_run_check("readiness_fingerprint_current", "Pass", None)
+        }
+        Some(evidence) if evidence.fingerprint.is_some() => apply_dry_run_check(
+            "readiness_fingerprint_current",
+            "Fail",
+            Some("Latest readiness report does not match current proposal evidence."),
+        ),
+        Some(_) => apply_dry_run_check(
+            "readiness_fingerprint_current",
+            "Fail",
+            Some("Latest readiness report has no machine-checkable fingerprint."),
+        ),
+        None => apply_dry_run_check(
+            "readiness_fingerprint_current",
             "Fail",
             Some("Run proposal.readiness before apply dry-run inspection."),
         ),
@@ -4668,6 +4705,7 @@ fn inspect_apply_dry_run(
         "preflight_snapshot_exists".to_string(),
         "proposal_not_stale".to_string(),
         "readiness_ready".to_string(),
+        "readiness_fingerprint_current".to_string(),
         "operator_dry_run_requested".to_string(),
         "runtime_apply_supported".to_string(),
     ];
@@ -8452,6 +8490,8 @@ fn proposal_audit_entry(
                     "report_id",
                     "readiness_status",
                     "readiness_reason",
+                    "readiness_fingerprint",
+                    "fingerprint_input_count",
                     "generated_at",
                     "check_count",
                     "failed_checks",
@@ -8573,23 +8613,9 @@ fn string_array_field(payload: &Value, key: &str) -> Option<Vec<String>> {
         .collect()
 }
 
-fn readiness_proposal(
-    store: &BrownieStore,
-    run_id: &str,
-    proposal_id: &str,
-) -> Result<
-    (
-        WorkspacePatchProposalSummary,
-        WorkspacePatchReadinessReportSummary,
-    ),
-    String,
-> {
-    let task = store
-        .tasks()
-        .get_task_by_run_id(run_id)
-        .map_err(|e| format!("invalid params: {e}"))?
-        .ok_or_else(|| "invalid params: run not found".to_string())?;
-    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+fn build_readiness_checklist(
+    proposal: &WorkspacePatchProposalSummary,
+) -> Vec<WorkspacePatchReadinessCheckSummary> {
     let snapshot = proposal.latest_snapshot.as_ref();
     let mut checklist = vec![readiness_check("proposal_exists", "Pass", None)];
 
@@ -8732,6 +8758,104 @@ fn readiness_proposal(
         "Skipped",
         Some("Patch apply is not implemented in Phase 3.4."),
     ));
+    checklist
+}
+
+fn readiness_fingerprint(
+    proposal: &WorkspacePatchProposalSummary,
+    checklist: &[WorkspacePatchReadinessCheckSummary],
+) -> (String, usize) {
+    let mut inputs = vec![
+        format!("proposal_id={}", proposal.proposal_id),
+        format!("path={}", proposal.path),
+        format!("operation={}", proposal.operation),
+        format!("content_chars={}", proposal.content_chars),
+        format!("truncated={}", proposal.truncated),
+        format!("validation_status={}", proposal.validation_status),
+        format!(
+            "validation_reason={}",
+            proposal.validation_reason.as_deref().unwrap_or("")
+        ),
+        format!("diff_preview_available={}", proposal.diff_preview.is_some()),
+        format!("diff_truncated={}", proposal.diff_truncated),
+        format!("diff_redacted={}", proposal.diff_redacted),
+        format!("approval_status={}", proposal.approval_status),
+        format!(
+            "approved_at={}",
+            proposal.approved_at.as_deref().unwrap_or("")
+        ),
+        format!(
+            "rejected_at={}",
+            proposal.rejected_at.as_deref().unwrap_or("")
+        ),
+    ];
+    if let Some(snapshot) = proposal.latest_snapshot.as_ref() {
+        inputs.extend([
+            format!("snapshot_id={}", snapshot.snapshot_id),
+            format!("snapshot_path={}", snapshot.path),
+            format!("canonical_path_hash={}", snapshot.canonical_path_hash),
+            format!("file_exists={}", snapshot.file_exists),
+            format!("file_kind={}", snapshot.file_kind),
+            format!(
+                "file_size_bytes={}",
+                snapshot
+                    .file_size_bytes
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            ),
+            format!(
+                "file_modified_unix_ms={}",
+                snapshot
+                    .file_modified_unix_ms
+                    .map(|value| value.to_string())
+                    .unwrap_or_default()
+            ),
+            format!(
+                "file_sha256={}",
+                snapshot.file_sha256.as_deref().unwrap_or("")
+            ),
+            format!("stale={}", snapshot.stale),
+            format!(
+                "stale_reason={}",
+                snapshot.stale_reason.as_deref().unwrap_or("")
+            ),
+        ]);
+    } else {
+        inputs.push("snapshot_id=".to_string());
+    }
+    for (index, check) in checklist.iter().enumerate() {
+        inputs.push(format!(
+            "check[{index}]={}|{}|{}",
+            check.name,
+            check.status,
+            check.reason.as_deref().unwrap_or("")
+        ));
+    }
+    let input_count = inputs.len();
+    (
+        format!("sha256:{}", hex_sha256(inputs.join("\n").as_bytes())),
+        input_count,
+    )
+}
+
+fn readiness_proposal(
+    store: &BrownieStore,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchReadinessReportSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, run_id, proposal_id)?;
+    let checklist = build_readiness_checklist(&proposal);
 
     let blocked_checks: Vec<String> = checklist
         .iter()
@@ -8768,11 +8892,15 @@ fn readiness_proposal(
     };
     let generated_at = now_rfc3339();
     let report_id = format!("report_{}", uuid::Uuid::new_v4().simple());
+    let (readiness_fingerprint, fingerprint_input_count) =
+        readiness_fingerprint(&proposal, &checklist);
     let report = WorkspacePatchReadinessReportSummary {
         proposal_id: proposal_id.to_string(),
         report_id: report_id.clone(),
         readiness_status: readiness_status.to_string(),
         readiness_reason: readiness_reason.map(ToString::to_string),
+        readiness_fingerprint: readiness_fingerprint.clone(),
+        fingerprint_input_count,
         generated_at: generated_at.clone(),
         checklist,
         summary: summary.to_string(),
@@ -8787,6 +8915,8 @@ fn readiness_proposal(
                 "report_id": report_id,
                 "readiness_status": readiness_status,
                 "readiness_reason": report.readiness_reason,
+                "readiness_fingerprint": readiness_fingerprint,
+                "fingerprint_input_count": fingerprint_input_count,
                 "generated_at": generated_at,
                 "check_count": report.checklist.len(),
                 "failed_checks": failed_checks,
@@ -9094,6 +9224,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "report_id",
         "readiness_status",
         "readiness_reason",
+        "readiness_fingerprint",
+        "fingerprint_input_count",
         "generated_at",
         "check_count",
         "failed_checks",
@@ -10764,6 +10896,16 @@ mod tests {
         ));
         let ready_result = ready.result.expect("ready result");
         assert_eq!(ready_result["report"]["readiness_status"], "Ready");
+        assert!(ready_result["report"]["readiness_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(
+            ready_result["report"]["fingerprint_input_count"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
         assert_eq!(
             ready_result["report"]["checklist"]
                 .as_array()
@@ -10852,6 +10994,11 @@ mod tests {
             .unwrap()
             .iter()
             .any(|gate| gate == "readiness_ready"));
+        assert!(dry_run_result["dry_run"]["required_gates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|gate| gate == "readiness_fingerprint_current"));
         assert_eq!(
             dry_run_result["dry_run"]["check_count"],
             dry_run_result["dry_run"]["checklist"]
@@ -10865,6 +11012,15 @@ mod tests {
                 .unwrap()
                 .iter()
                 .find(|check| check["name"] == "readiness_ready")
+                .unwrap()["status"],
+            "Pass"
+        );
+        assert_eq!(
+            dry_run_result["dry_run"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "readiness_fingerprint_current")
                 .unwrap()["status"],
             "Pass"
         );
@@ -11273,6 +11429,26 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "changed manually"
         );
+        let stale_fingerprint_dry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":81,"method":"proposal.applyDryRun","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let stale_fingerprint_dry_run_result = stale_fingerprint_dry_run
+            .result
+            .expect("stale fingerprint dry-run result");
+        assert_eq!(
+            stale_fingerprint_dry_run_result["dry_run"]["checklist"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|check| check["name"] == "readiness_fingerprint_current")
+                .unwrap()["status"],
+            "Fail"
+        );
+        assert!(stale_fingerprint_dry_run_result["dry_run"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "readiness_fingerprint_current"));
         let readiness = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":9,"method":"proposal.readiness","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
         ));
@@ -11413,6 +11589,14 @@ mod tests {
             ready_result["report"]["report_id"]
         );
         assert_eq!(readiness_payload["readiness_status"], "Ready");
+        assert_eq!(
+            readiness_payload["readiness_fingerprint"],
+            ready_result["report"]["readiness_fingerprint"]
+        );
+        assert_eq!(
+            readiness_payload["fingerprint_input_count"],
+            ready_result["report"]["fingerprint_input_count"]
+        );
         assert_eq!(
             readiness_payload["generated_at"],
             ready_result["report"]["generated_at"]

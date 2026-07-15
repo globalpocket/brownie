@@ -204,4 +204,10 @@ After approval and preflight, callers may invoke `proposal.readiness` to create 
 
 Readiness does not write workspace files, does not apply patches, and does not run process, network, service-control, destructive, or subtask actions. A `Ready` report means the proposal is ready for final human review only; patch apply remains unimplemented in Phase 3.4.
 
+## M3 controlled apply readiness fingerprint
+
+M3 records a summary-only readiness fingerprint when `proposal.readiness` runs. The fingerprint covers stable proposal metadata, approval state, latest preflight snapshot metadata, and readiness checklist outcomes. `proposal.applyDryRun` recomputes the fingerprint and fails a `readiness_fingerprint_current` gate if the latest readiness report is stale relative to current proposal evidence.
+
+The M3 fingerprint is a readiness gate only. It does not enable patch apply, does not write workspace files, and does not expose raw file content, raw diffs, raw input JSON, canonical absolute paths, process output, environment values, or network-derived content.
+
 Readiness ledger events are summary-only and must exclude raw content fields (`content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, `file_content`) and secret-like text.
