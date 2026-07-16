@@ -6,6 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
+const phase = 'M5.12';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.12.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -37,54 +39,54 @@ function requireManifestValue(condition, message) {
 }
 
 function validateManifest(manifest) {
-  requireManifestValue(manifest.phase === 'M5.11', 'phase-value-manifest.m5.11.json must describe phase M5.11.');
-  requireManifestValue(manifest.target_capability === 'subtask_orchestration', 'M5.11 target_capability must be subtask_orchestration.');
+  requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
+  requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'minimal_controlled_child_task_materialization',
-    'M5.11 must declare the minimal controlled child task materialization transition.'
+    manifest.concrete_capability_transition === 'explicit_queued_child_task_run_admission',
+    `${phase} must declare the explicit queued child task run admission transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_child_task_materialization',
-    'M5.11 must forbid adding another blocked summary wrapper without child task materialization.'
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_child_task_run_admission',
+    `${phase} must forbid adding another blocked summary wrapper without child task run admission.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
     ? manifest.strategic_capability_mapping
     : [];
-  requireManifestValue(mappings.length > 0, 'M5.11 must include strategic_capability_mapping.');
+  requireManifestValue(mappings.length > 0, `${phase} must include strategic_capability_mapping.`);
   requireManifestValue(
     mappings.some((mapping) => mapping.capability === 'subtask_orchestration' && isNonEmptyString(mapping.relationship)),
-    'M5.11 strategic_capability_mapping must include subtask_orchestration.'
+    `${phase} strategic_capability_mapping must include subtask_orchestration.`
   );
 
   const valueGate = manifest.phase_value_gate ?? {};
   const questions = Array.isArray(valueGate.questions) ? valueGate.questions : [];
   const answers = valueGate.answers ?? {};
-  requireManifestValue(questions.length > 0, 'M5.11 phase_value_gate.questions must be non-empty.');
+  requireManifestValue(questions.length > 0, `${phase} phase_value_gate.questions must be non-empty.`);
   for (const question of questions) {
-    requireManifestValue(isNonEmptyString(question.id), 'Every M5.11 phase_value_gate question must include an id.');
+    requireManifestValue(isNonEmptyString(question.id), `Every ${phase} phase_value_gate question must include an id.`);
     if (isNonEmptyString(question.id)) {
       requireManifestValue(
         isNonEmptyString(answers[question.id]),
-        `M5.11 phase_value_gate.answers.${question.id} must be non-empty.`
+        `${phase} phase_value_gate.answers.${question.id} must be non-empty.`
       );
     }
   }
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'child TaskRecord',
+    'explicit task.run',
     'parent_task_id',
     'parent_run_id',
     'source candidate ID',
     'source handoff envelope fingerprint',
-    'duplicate',
     'Queued',
-    'run.inspect'
+    'Completed',
+    'task.inspect'
   ]) {
     requireManifestValue(
       exitCriteria.some((criterion) => typeof criterion === 'string' && criterion.includes(token)),
-      `M5.11 exit_criteria must mention ${token}.`
+      `${phase} exit_criteria must mention ${token}.`
     );
   }
 }
@@ -114,16 +116,17 @@ function validateSourceEvidence(manifest) {
     'SubtaskDispatchTicketRecorded',
     'SubtaskAdmissionTokenRecorded',
     'SubtaskSchedulerPacketRecorded',
-    'SubtaskHandoffReceiptRecorded'
+    'SubtaskHandoffReceiptRecorded',
+    'SubtaskChildRunAdmissionSummaryRecorded'
   ];
   for (const token of forbiddenWrapperEvents) {
     if (runtimeText.includes(token) || storeText.includes(token)) {
-      errors.push(`M5.11 must not add wrapper-only event ${token}.`);
+      errors.push(`${phase} must not add wrapper-only event ${token}.`);
     }
   }
 }
 
-const manifest = readJson('docs/architecture/phase-value-manifest.m5.11.json');
+const manifest = readJson(manifestPath);
 validateManifest(manifest);
 validateSourceEvidence(manifest);
 
