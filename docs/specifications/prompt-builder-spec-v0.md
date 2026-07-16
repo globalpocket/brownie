@@ -127,3 +127,9 @@ This lets later prompt passes see that dispatch-readiness snapshot evidence was 
 The `Subtask Orchestration` section also summarizes `SubtaskDispatchDecisionRecorded` ledger events using compact fields such as decision id, decision status, guard count, candidate status, dispatch candidate count, eligible candidate count, `dispatch_enabled`, and `next_action`.
 
 This lets later prompt passes see that dispatcher guard verdict evidence was evaluated into a deterministic dispatch decision and per-candidate denial state. It remains informational and does not authorize child task execution, scheduler handoff, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.9 subtask dispatch candidate manifest prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchCandidateManifestRecorded` ledger events using compact fields such as manifest id, manifest status, decision count, candidate count, blocked candidate count, eligible candidate count, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that dispatch decision evidence was mapped to deterministic per-queued-subtask candidate manifest state. It remains informational and does not authorize child task execution, scheduler handoff, process execution, network access, service control, patch apply, or workspace writes.
