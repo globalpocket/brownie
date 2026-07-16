@@ -1906,6 +1906,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_admission_evaluated(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_dispatch_readiness_snapshot_recorded(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9147,6 +9150,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
         .count();
+    let subtask_dispatch_readiness_snapshot_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9171,6 +9178,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_dispatch_contract_count,
         has_subtask_dispatch_admission_evaluated: subtask_dispatch_admission_count > 0,
         subtask_dispatch_admission_count,
+        has_subtask_dispatch_readiness_snapshot: subtask_dispatch_readiness_snapshot_count > 0,
+        subtask_dispatch_readiness_snapshot_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9235,6 +9244,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "parent_run_id",
         "queue_position",
         "execution_enabled",
+        "snapshot_id",
         "handoff_id",
         "readiness_id",
         "admission_id",
@@ -9244,6 +9254,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "readiness_count",
         "plan_count",
         "contract_count",
+        "admission_count",
         "source_event_count",
         "next_action",
         "dispatch_enabled",
@@ -9255,6 +9266,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "admission_status",
         "admission_reason",
         "execution_gate_status",
+        "scheduler_handoff_status",
         "required_capability",
         "required_preconditions",
         "precondition_count",
@@ -9345,12 +9357,14 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "plan_id",
             "contract_id",
             "admission_id",
+            "snapshot_id",
             "queue_position",
             "queued_count",
             "handoff_count",
             "readiness_count",
             "plan_count",
             "contract_count",
+            "admission_count",
             "execution_enabled",
             "dispatch_enabled",
             "next_action",
@@ -9360,6 +9374,9 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "eligibility_status",
             "admission_status",
             "execution_gate_status",
+            "scheduler_handoff_status",
+            "readiness_fingerprint",
+            "fingerprint_input_count",
             "bytes_read",
             "truncated",
             "reason",
@@ -10184,6 +10201,147 @@ fn append_subtask_dispatch_admission_evaluated(
     )
 }
 
+fn append_subtask_dispatch_readiness_snapshot_recorded(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded)
+    {
+        return Ok(());
+    }
+
+    let dispatch_admissions = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let admission_id = payload.get("admission_id")?.as_str()?.to_string();
+            let queued_count = payload
+                .get("queued_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let blocked_preconditions = payload
+                .get("blocked_preconditions")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let blocked_checks = payload
+                .get("blocked_checks")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some((
+                admission_id,
+                queued_count,
+                blocked_preconditions,
+                blocked_checks,
+            ))
+        })
+        .collect::<Vec<_>>();
+    if dispatch_admissions.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let admission_ids = dispatch_admissions
+        .iter()
+        .map(|(admission_id, _, _, _)| admission_id.clone())
+        .collect::<Vec<_>>();
+    let admission_count = dispatch_admissions.len();
+    let queued_count = dispatch_admissions
+        .iter()
+        .map(|(_, queued_count, _, _)| *queued_count)
+        .sum::<u64>();
+    let mut blocked_preconditions = dispatch_admissions
+        .iter()
+        .flat_map(|(_, _, blocked_preconditions, _)| blocked_preconditions.iter().cloned())
+        .collect::<Vec<_>>();
+    blocked_preconditions.sort();
+    blocked_preconditions.dedup();
+    let mut blocked_checks = vec![
+        "dispatch_readiness_snapshot_blocked".to_string(),
+        "scheduler_handoff_not_ready".to_string(),
+    ];
+    blocked_checks.extend(
+        dispatch_admissions
+            .iter()
+            .flat_map(|(_, _, _, checks)| checks.iter().cloned()),
+    );
+    blocked_checks.sort();
+    blocked_checks.dedup();
+
+    let mut fingerprint_inputs = vec![
+        "snapshot_version=m5.6_dispatch_readiness_v1".to_string(),
+        format!("parent_task_id={}", record.task_id),
+        format!("parent_run_id={}", record.run_id),
+        format!("admission_count={admission_count}"),
+        format!("queued_count={queued_count}"),
+    ];
+    for admission_id in &admission_ids {
+        fingerprint_inputs.push(format!("admission_id={admission_id}"));
+    }
+    for precondition in &blocked_preconditions {
+        fingerprint_inputs.push(format!("blocked_precondition={precondition}"));
+    }
+    for check in &blocked_checks {
+        fingerprint_inputs.push(format!("blocked_check={check}"));
+    }
+    let fingerprint_input_count = fingerprint_inputs.len();
+    let readiness_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(fingerprint_inputs.join("\n").as_bytes())
+    );
+
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded,
+        Some(json!({
+            "snapshot_id": format!("subtask_dispatch_readiness_snapshot_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "admission_id": admission_ids[0],
+            "admission_count": admission_count,
+            "queued_count": queued_count,
+            "source_event_count": admission_count,
+            "status": "Blocked",
+            "readiness_status": "Blocked",
+            "scheduler_handoff_status": "Blocked",
+            "readiness_reason": "Dispatch admission is not ready for scheduler handoff until every blocked precondition is satisfied.",
+            "required_capability": "runtime_subtask_dispatcher",
+            "precondition_count": blocked_preconditions.len(),
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": blocked_preconditions,
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "readiness_fingerprint": readiness_fingerprint,
+            "fingerprint_input_count": fingerprint_input_count,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_dispatch_readiness_snapshot_handoff",
+            "reason": "Dispatch admission evidence snapshotted into a stable dispatcher-readiness guard; no subtask was spawned in M5.6."
+        })),
+    )
+}
+
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -10761,6 +10919,9 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded
+        }));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
@@ -10807,6 +10968,7 @@ mod tests {
         assert!(second_prompt_preview.contains("Blocked contract_count=1"));
         assert!(second_prompt_preview.contains("execution_gate_status=Blocked"));
         assert!(second_prompt_preview.contains("await_dispatch_admission_preconditions"));
+        assert!(second_prompt_preview.contains("Blocked admission_count=1"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -10885,6 +11047,8 @@ mod tests {
         assert_eq!(summary["subtask_dispatch_contract_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_admission_evaluated"], true);
         assert_eq!(summary["subtask_dispatch_admission_count"], 1);
+        assert_eq!(summary["has_subtask_dispatch_readiness_snapshot"], true);
+        assert_eq!(summary["subtask_dispatch_readiness_snapshot_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -10952,6 +11116,11 @@ mod tests {
             "admission_status": "Blocked",
             "admission_reason": "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher.",
             "execution_gate_status": "Blocked",
+            "snapshot_id": "subtask_dispatch_readiness_snapshot_run_1_1",
+            "admission_count": 1,
+            "scheduler_handoff_status": "Blocked",
+            "readiness_fingerprint": "sha256:abc123",
+            "fingerprint_input_count": 12,
             "required_capability": "runtime_subtask_dispatcher",
             "required_preconditions": ["runtime_subtask_dispatcher_implemented", "child_task_execution_guard_enabled"],
             "precondition_count": 2,
@@ -11013,6 +11182,14 @@ mod tests {
             "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher."
         );
         assert_eq!(sanitized["execution_gate_status"], "Blocked");
+        assert_eq!(
+            sanitized["snapshot_id"],
+            "subtask_dispatch_readiness_snapshot_run_1_1"
+        );
+        assert_eq!(sanitized["admission_count"], 1);
+        assert_eq!(sanitized["scheduler_handoff_status"], "Blocked");
+        assert_eq!(sanitized["readiness_fingerprint"], "sha256:abc123");
+        assert_eq!(sanitized["fingerprint_input_count"], 12);
         assert_eq!(
             sanitized["required_capability"],
             "runtime_subtask_dispatcher"
@@ -11566,6 +11743,87 @@ mod tests {
             "child_task_execution_disabled"
         );
         assert!(dispatch_admission_payload.get("input").is_none());
+        let dispatch_readiness_snapshot_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded)
+            .expect("subtask dispatch readiness snapshot event");
+        let dispatch_readiness_snapshot_payload = dispatch_readiness_snapshot_event
+            .payload
+            .as_ref()
+            .expect("subtask dispatch readiness snapshot payload");
+        assert_eq!(dispatch_readiness_snapshot_payload["status"], "Blocked");
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["readiness_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["scheduler_handoff_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["readiness_reason"],
+            "Dispatch admission is not ready for scheduler handoff until every blocked precondition is satisfied."
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["required_capability"],
+            "runtime_subtask_dispatcher"
+        );
+        assert_eq!(dispatch_readiness_snapshot_payload["admission_count"], 1);
+        assert_eq!(dispatch_readiness_snapshot_payload["queued_count"], 1);
+        assert_eq!(dispatch_readiness_snapshot_payload["source_event_count"], 1);
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["execution_enabled"],
+            false
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["dispatch_enabled"],
+            false
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["next_action"],
+            "await_dispatch_readiness_snapshot_handoff"
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["reason"],
+            "Dispatch admission evidence snapshotted into a stable dispatcher-readiness guard; no subtask was spawned in M5.6."
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["admission_id"],
+            dispatch_admission_payload["admission_id"]
+        );
+        assert!(dispatch_readiness_snapshot_payload["snapshot_id"]
+            .as_str()
+            .expect("snapshot id")
+            .starts_with("subtask_dispatch_readiness_snapshot_run_"));
+        assert_eq!(dispatch_readiness_snapshot_payload["precondition_count"], 3);
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["satisfied_precondition_count"],
+            0
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["blocked_preconditions"][0],
+            "child_task_execution_guard_enabled"
+        );
+        assert_eq!(dispatch_readiness_snapshot_payload["check_count"], 5);
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["blocked_checks"][0],
+            "child_task_execution_disabled"
+        );
+        assert_eq!(
+            dispatch_readiness_snapshot_payload["blocked_checks"][4],
+            "scheduler_handoff_not_ready"
+        );
+        assert!(dispatch_readiness_snapshot_payload["readiness_fingerprint"]
+            .as_str()
+            .expect("readiness fingerprint")
+            .starts_with("sha256:"));
+        assert!(
+            dispatch_readiness_snapshot_payload["fingerprint_input_count"]
+                .as_u64()
+                .expect("fingerprint input count")
+                >= 12
+        );
+        assert!(dispatch_readiness_snapshot_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -11608,6 +11866,7 @@ mod tests {
                 LedgerEventKind::SubtaskDispatchPlanPrepared,
                 LedgerEventKind::SubtaskDispatchContractPrepared,
                 LedgerEventKind::SubtaskDispatchAdmissionEvaluated,
+                LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
