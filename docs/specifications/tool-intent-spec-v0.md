@@ -79,3 +79,9 @@ M5.5 does not execute the requested subtask. It only records dispatch-admission 
 After dispatch-admission state exists, `task.run` may snapshot it into a summary-only `SubtaskDispatchReadinessSnapshotRecorded` event. This readiness snapshot references the admission decision, records `dispatch_enabled = false`, includes a stable readiness fingerprint, and preserves deterministic scheduler handoff checks explaining why no child task can be handed off yet.
 
 M5.6 does not execute the requested subtask. It only records dispatcher-readiness snapshot and scheduler handoff evidence for future runtime dispatch.
+
+## M5.7 subtask dispatcher guard verdict
+
+After dispatch-readiness snapshot state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatcherGuardVerdictRecorded` event. This dispatcher guard verdict references the snapshot, records `dispatch_enabled = false`, preserves the snapshot fingerprint for scheduler handoff validation, and records deterministic handoff preflight checks explaining why no child task can be handed off yet.
+
+M5.7 does not execute the requested subtask. It only records dispatcher guard verdict and scheduler handoff preflight evidence for future runtime dispatch.

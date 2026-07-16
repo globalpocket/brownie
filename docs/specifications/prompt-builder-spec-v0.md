@@ -116,4 +116,8 @@ This lets later prompt passes see that dispatch-contract evidence was evaluated 
 
 The `Subtask Orchestration` section also summarizes `SubtaskDispatchReadinessSnapshotRecorded` ledger events using compact fields such as snapshot id, readiness status, admission count, queued count, scheduler handoff status, `dispatch_enabled`, fingerprint input count, and `next_action`.
 
-This lets later prompt passes see that dispatch-admission evidence was converted into a stable dispatcher-readiness snapshot while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+## M5.7 subtask dispatcher guard verdict prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatcherGuardVerdictRecorded` ledger events using compact fields such as guard id, guard status, snapshot count, queued count, scheduler handoff preflight status, `dispatch_enabled`, snapshot validity status, and `next_action`.
+
+This lets later prompt passes see that dispatch-readiness snapshot evidence was evaluated into a dispatcher guard verdict while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.

@@ -247,6 +247,8 @@ export interface RunInspectSummary {
   subtask_dispatch_admission_count: number;
   has_subtask_dispatch_readiness_snapshot: boolean;
   subtask_dispatch_readiness_snapshot_count: number;
+  has_subtask_dispatcher_guard_verdict: boolean;
+  subtask_dispatcher_guard_verdict_count: number;
   has_second_pass: boolean;
   final_response_preview?: string | null;
   timeline: string[];
@@ -2571,6 +2573,10 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     typeof value.subtask_dispatch_readiness_snapshot_count === 'number' &&
     Number.isInteger(value.subtask_dispatch_readiness_snapshot_count) &&
     value.subtask_dispatch_readiness_snapshot_count >= 0 &&
+    typeof value.has_subtask_dispatcher_guard_verdict === 'boolean' &&
+    typeof value.subtask_dispatcher_guard_verdict_count === 'number' &&
+    Number.isInteger(value.subtask_dispatcher_guard_verdict_count) &&
+    value.subtask_dispatcher_guard_verdict_count >= 0 &&
     typeof value.has_second_pass === 'boolean' &&
     (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string') &&
     Array.isArray(value.timeline) &&

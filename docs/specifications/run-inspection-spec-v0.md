@@ -39,6 +39,8 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - `subtask_dispatch_admission_count`
 - `has_subtask_dispatch_readiness_snapshot`
 - `subtask_dispatch_readiness_snapshot_count`
+- `has_subtask_dispatcher_guard_verdict`
+- `subtask_dispatcher_guard_verdict_count`
 - `has_second_pass`
 - `final_response_preview`, preferring `SecondPassLlmResponseReceived.content_preview` over `LlmResponseReceived.content_preview`
 - a compact human-readable `timeline`
@@ -68,6 +70,10 @@ Run inspection also reports evaluated dispatch admission evidence. `has_subtask_
 ## M5.6 subtask dispatch readiness snapshot inspection
 
 Run inspection also reports dispatch readiness snapshot evidence. `has_subtask_dispatch_readiness_snapshot` / `subtask_dispatch_readiness_snapshot_count` count `SubtaskDispatchReadinessSnapshotRecorded` events. These fields indicate that the runtime converted dispatch-admission evidence into a stable dispatcher-readiness snapshot and scheduler handoff blocker; in M5.6 dispatch remains blocked and no child task execution is implied.
+
+## M5.7 subtask dispatcher guard verdict inspection
+
+Run inspection also reports dispatcher guard verdict evidence. `has_subtask_dispatcher_guard_verdict` / `subtask_dispatcher_guard_verdict_count` count `SubtaskDispatcherGuardVerdictRecorded` events. These fields indicate that the runtime consumed dispatch-readiness snapshots into a deterministic dispatcher guard verdict and scheduler handoff preflight blocker; in M5.7 dispatch remains blocked and no child task execution is implied.
 
 ## Phase 2.1 LLM metadata redaction
 
