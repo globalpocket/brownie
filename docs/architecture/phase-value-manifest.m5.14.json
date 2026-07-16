@@ -1,0 +1,83 @@
+{
+  "phase": "M5.14",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "child_task_source_intent_materialization",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_child_source_intent_materialization",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes controlled child tasks semantically useful by preserving deterministic, sanitized source-intent metadata from the approved subtask.spawn request."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Gives explicitly run child tasks meaningful goals derived from runtime-approved intent rather than opaque candidate-id wrapper text."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets a headless caller inspect child task intent and provenance without reading raw prompts or raw tool input bodies."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "source_intent_materialized",
+        "prompt": "Does the materialized child task carry sanitized source-intent metadata from approved subtask.spawn?"
+      },
+      {
+        "id": "useful_child_goal",
+        "prompt": "Is the child goal derived from the approved source intent instead of a generic wrapper phrase?"
+      },
+      {
+        "id": "raw_input_excluded",
+        "prompt": "Does the source-intent summary exclude raw input objects, raw prompts, provider responses, file content, and command output?"
+      },
+      {
+        "id": "no_auto_dispatch",
+        "prompt": "Does parent execution remain non-dispatching and require explicit child task.run?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler auto-dispatch, external workers, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "source_intent_materialized": "Yes. TaskRecord and ChildTaskInspectSummary expose optional source_intent_summary with tool_id, required_action, bounded request_reason, and bounded input_summary.",
+      "useful_child_goal": "Yes. Controlled child materialization derives the child goal from the approved subtask.spawn request reason and stable source candidate id.",
+      "raw_input_excluded": "Yes. The summary reuses ToolIntentInputSummary only and rejects raw input objects in VSIX validation.",
+      "no_auto_dispatch": "Yes. Parent task.run still materializes child records only; child execution remains limited to explicit child task.run admission.",
+      "safety_boundary": "Yes. The phase adds no scheduler auto-dispatch, external worker, patch apply, direct workspace mutation path, service control, network bypass, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A materialized child task has a deterministic useful goal derived from approved subtask.spawn source intent.",
+    "TaskRecord exposes source_intent_summary with tool_id, required_action, request_reason, and input_summary.",
+    "ChildTaskInspectSummary exposes source_intent_summary for parent child_tasks inspection.",
+    "The source_intent_summary excludes raw input objects and serialized request bodies.",
+    "Duplicate child prevention by source handoff envelope fingerprint remains intact.",
+    "Parent task.run does not auto-run child tasks.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_store_tokens": [
+      "ChildTaskSourceIntentSummary",
+      "source_intent_summary"
+    ],
+    "rust_protocol_tokens": [
+      "pub struct ChildTaskSourceIntentSummary",
+      "pub source_intent_summary: Option<ChildTaskSourceIntentSummary>"
+    ],
+    "rust_runtime_tokens": [
+      "queued_subtask_source_intent_summary",
+      "child_goal_from_source_intent",
+      "source_intent_summary",
+      "task_run_accepts_valid_queued_child_task_with_provenance"
+    ],
+    "vsix_protocol_tokens": [
+      "ChildTaskSourceIntentSummary",
+      "source_intent_summary",
+      "isChildTaskSourceIntentSummary"
+    ]
+  }
+}

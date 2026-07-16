@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.13';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.13.json';
+const phase = 'M5.14';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.14.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'parent_child_run_result_inspection',
-    `${phase} must declare the parent child run result inspection transition.`
+    manifest.concrete_capability_transition === 'child_task_source_intent_materialization',
+    `${phase} must declare the child task source intent materialization transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_child_result_inspection',
-    `${phase} must forbid adding another blocked summary wrapper without parent child result inspection.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_child_source_intent_materialization',
+    `${phase} must forbid adding another blocked summary wrapper without child source intent materialization.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,14 +75,14 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'structured child task summaries',
-    'parent_task_id',
-    'parent_run_id',
-    'source candidate ID',
-    'source handoff envelope fingerprint',
-    'Queued',
-    'Completed',
-    'child_tasks'
+    'deterministic useful goal',
+    'source_intent_summary',
+    'tool_id',
+    'required_action',
+    'request_reason',
+    'input_summary',
+    'raw input objects',
+    'source handoff envelope fingerprint'
   ]) {
     requireManifestValue(
       exitCriteria.some((criterion) => typeof criterion === 'string' && criterion.includes(token)),

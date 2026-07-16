@@ -2334,11 +2334,20 @@ pub struct ChildTaskInspectSummary {
     pub source_candidate_id: Option<String>,
     pub source_handoff_envelope_id: Option<String>,
     pub source_handoff_envelope_fingerprint: Option<String>,
+    pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
     pub completion_summary_preview: Option<String>,
     pub final_response_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChildTaskSourceIntentSummary {
+    pub tool_id: String,
+    pub required_action: RuntimeActionName,
+    pub request_reason: String,
+    pub input_summary: ToolIntentInputSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2363,6 +2372,7 @@ pub struct TaskRecord {
     pub source_candidate_id: Option<String>,
     pub source_handoff_envelope_id: Option<String>,
     pub source_handoff_envelope_fingerprint: Option<String>,
+    pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
     pub created_at: String,
     pub updated_at: String,
 }

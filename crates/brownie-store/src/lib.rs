@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
-use brownie_protocol::{TaskRecord, TaskStartParams, TaskStatus};
+use brownie_protocol::{ChildTaskSourceIntentSummary, TaskRecord, TaskStartParams, TaskStatus};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
@@ -56,6 +56,7 @@ pub struct ChildTaskStartParams {
     pub source_candidate_id: String,
     pub source_handoff_envelope_id: String,
     pub source_handoff_envelope_fingerprint: String,
+    pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
 }
 
 impl TaskStore {
@@ -80,6 +81,7 @@ impl TaskStore {
             source_candidate_id: None,
             source_handoff_envelope_id: None,
             source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -108,6 +110,7 @@ impl TaskStore {
             source_candidate_id: Some(params.source_candidate_id),
             source_handoff_envelope_id: Some(params.source_handoff_envelope_id),
             source_handoff_envelope_fingerprint: Some(params.source_handoff_envelope_fingerprint),
+            source_intent_summary: params.source_intent_summary,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -126,6 +129,7 @@ impl TaskStore {
                 "source_candidate_id": record.source_candidate_id.clone(),
                 "source_handoff_envelope_id": record.source_handoff_envelope_id.clone(),
                 "source_handoff_envelope_fingerprint": record.source_handoff_envelope_fingerprint.clone(),
+                "source_intent_summary": record.source_intent_summary.clone(),
                 "execution_enabled": false,
                 "scheduler_handoff_enabled": false,
                 "reason": "Controlled child task materialized from parent handoff envelope; child execution remains disabled."
@@ -523,6 +527,15 @@ mod tests {
                 source_candidate_id: "subtask_1".into(),
                 source_handoff_envelope_id: "handoff_envelope_1".into(),
                 source_handoff_envelope_fingerprint: "sha256:child".into(),
+                source_intent_summary: Some(ChildTaskSourceIntentSummary {
+                    tool_id: "subtask.spawn".into(),
+                    required_action: brownie_protocol::RuntimeActionName::SpawnSubtask,
+                    request_reason: "Coordinate child work.".into(),
+                    input_summary: brownie_protocol::ToolIntentInputSummary {
+                        has_path: false,
+                        field_count: 0,
+                    },
+                }),
             })
             .expect("start child");
 
@@ -541,6 +554,20 @@ mod tests {
             child.source_handoff_envelope_fingerprint.as_deref(),
             Some("sha256:child")
         );
+        let source_intent_summary = child
+            .source_intent_summary
+            .as_ref()
+            .expect("source intent summary");
+        assert_eq!(source_intent_summary.tool_id, "subtask.spawn");
+        assert_eq!(
+            source_intent_summary.required_action,
+            brownie_protocol::RuntimeActionName::SpawnSubtask
+        );
+        assert_eq!(
+            source_intent_summary.request_reason,
+            "Coordinate child work."
+        );
+        assert_eq!(source_intent_summary.input_summary.field_count, 0);
         assert_eq!(
             store
                 .find_child_task_by_handoff_fingerprint(&parent.run_id, "sha256:child")
@@ -568,6 +595,11 @@ mod tests {
             payload["source_handoff_envelope_fingerprint"],
             "sha256:child"
         );
+        assert_eq!(
+            payload["source_intent_summary"]["request_reason"],
+            "Coordinate child work."
+        );
+        assert!(payload["source_intent_summary"].get("input").is_none());
         assert_eq!(payload["execution_enabled"], false);
         assert_eq!(payload["scheduler_handoff_enabled"], false);
     }
