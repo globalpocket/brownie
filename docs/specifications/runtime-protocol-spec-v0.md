@@ -786,3 +786,11 @@ M5.11 consumes an accepted `SubtaskDispatchHandoffEnvelopeRecorded` event inside
 The child run receives only a `TaskStarted` ledger event with `status = "Queued"`, parent/source provenance, `execution_enabled = false`, `scheduler_handoff_enabled = false`, and a high-level reason. The runtime prevents duplicate child creation by checking existing child records for the same parent run and `source_handoff_envelope_fingerprint`.
 
 `run.inspect` / `task.inspect` expose `child_task_count` and `child_task_ids` for parent runs. M5.11 does not run the child LLM loop, execute process commands, access the network, control services, apply patches, write workspace files, perform scheduler handoff, or persist raw `input`, raw provider responses, raw prompts, raw file content, command strings, stdout, stderr, environment values, or serialized request bodies.
+
+## M5.12 explicit queued child task run admission
+
+M5.12 admits a materialized child `TaskRecord` with status `Queued` through the existing `task.run` method only when the child has complete controlled provenance. Admission requires non-empty `parent_task_id`, `parent_run_id`, `source_candidate_id`, `source_handoff_envelope_id`, and `source_handoff_envelope_fingerprint`, verifies that the parent task owns the parent run, and verifies that the parent run has a `SubtaskDispatchHandoffEnvelopeRecorded` event covering the child candidate and handoff envelope fingerprint.
+
+After admission, the child uses the same Rust-owned `task.run` lifecycle as a normal `Created` task: it transitions to `Running`, records the existing permission/tool/prompt/LLM ledger sequence, and finishes with the existing terminal task status. `Completed`, `Failed`, `Cancelled`, and already `Running` tasks remain non-rerunnable.
+
+Parent runs still do not auto-run children. `run.inspect` exposes the parent-to-child relation with `child_task_count` and `child_task_ids`, and `task.inspect` on the child exposes the child status plus parent/source provenance. M5.12 does not add scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, or a new blocked summary event wrapper.

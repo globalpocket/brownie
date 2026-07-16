@@ -104,8 +104,8 @@ use brownie_protocol::{
     ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
     RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
     RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRunAgentLoopSummary, TaskRunParams,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRecord, TaskRunAgentLoopSummary,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
     ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
     ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
     ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
@@ -1744,8 +1744,15 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
-    if record.status != TaskStatus::Created {
-        return error_response(id, -32602, "invalid params: task must be Created");
+    if let Err(rejection) = validate_explicit_queued_child_task_run_admission(&record, &store) {
+        return match rejection {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                error_response(id, -32602, message)
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
     }
 
     let running = match store.tasks().update_task_status(
@@ -2115,6 +2122,93 @@ fn append_sensitive_scan_event(
             "message_indexes": message_indexes,
         })),
     )
+}
+
+enum TaskRunAdmissionRejection {
+    InvalidParams(&'static str),
+    Internal(String),
+}
+
+fn validate_explicit_queued_child_task_run_admission(
+    record: &TaskRecord,
+    store: &BrownieStore,
+) -> Result<(), TaskRunAdmissionRejection> {
+    match record.status {
+        TaskStatus::Created => Ok(()),
+        TaskStatus::Queued => validate_controlled_queued_child_task_provenance(record, store),
+        TaskStatus::Running
+        | TaskStatus::Completed
+        | TaskStatus::Failed
+        | TaskStatus::Cancelled => Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: task must be Created or a controlled Queued child task",
+        )),
+    }
+}
+
+fn validate_controlled_queued_child_task_provenance(
+    record: &TaskRecord,
+    store: &BrownieStore,
+) -> Result<(), TaskRunAdmissionRejection> {
+    let parent_task_id = required_task_run_provenance(record.parent_task_id.as_deref())?;
+    let parent_run_id = required_task_run_provenance(record.parent_run_id.as_deref())?;
+    let source_candidate_id = required_task_run_provenance(record.source_candidate_id.as_deref())?;
+    let source_handoff_envelope_id =
+        required_task_run_provenance(record.source_handoff_envelope_id.as_deref())?;
+    let source_handoff_envelope_fingerprint =
+        required_task_run_provenance(record.source_handoff_envelope_fingerprint.as_deref())?;
+
+    let parent = store
+        .tasks()
+        .get_task(parent_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: queued child task parent provenance is invalid",
+        ))?;
+    if parent.run_id != parent_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: queued child task parent provenance is invalid",
+        ));
+    }
+
+    let parent_events = store
+        .tasks()
+        .read_ledger_events(parent_run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    let covered_by_handoff_envelope = parent_events.iter().any(|event| {
+        if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        payload.get("handoff_envelope_id").and_then(Value::as_str)
+            == Some(source_handoff_envelope_id)
+            && payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                == Some(source_handoff_envelope_fingerprint)
+            && (payload_string_array(payload, "candidate_ids")
+                .iter()
+                .any(|candidate| candidate == source_candidate_id)
+                || payload_string_array(payload, "blocked_candidate_ids")
+                    .iter()
+                    .any(|candidate| candidate == source_candidate_id))
+    });
+    if !covered_by_handoff_envelope {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: queued child task source provenance is invalid",
+        ));
+    }
+
+    Ok(())
+}
+
+fn required_task_run_provenance(value: Option<&str>) -> Result<&str, TaskRunAdmissionRejection> {
+    value
+        .filter(|value| !value.trim().is_empty())
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: queued child task must include complete parent/source provenance",
+        ))
 }
 
 fn fail_llm_request(
@@ -13568,6 +13662,202 @@ mod tests {
                 LedgerEventKind::TaskCompleted,
             ]
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    fn start_parent_with_queued_child() -> (String, String, TaskRecord, usize) {
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run parent orchestrator","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let parent_task_id = start_result["task_id"]
+            .as_str()
+            .expect("parent task id")
+            .to_string();
+        let parent_run_id = start_result["run_id"]
+            .as_str()
+            .expect("parent run id")
+            .to_string();
+
+        let parent_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_run.error.is_none());
+        assert_eq!(
+            parent_run.result.expect("parent run result")["status"],
+            "Completed"
+        );
+
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let all_tasks = store.tasks().list_tasks().expect("list tasks");
+        let child = all_tasks
+            .into_iter()
+            .find(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .expect("queued child task");
+        assert_eq!(child.status, TaskStatus::Queued);
+        let parent_event_count = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent ledger")
+            .len();
+
+        (parent_task_id, parent_run_id, child, parent_event_count)
+    }
+
+    #[test]
+    fn task_run_accepts_valid_queued_child_task_with_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, child, parent_event_count) =
+            start_parent_with_queued_child();
+
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.error.is_none());
+        let child_result = child_run.result.expect("child run result");
+        assert_eq!(child_result["task_id"], child.task_id);
+        assert_eq!(child_result["run_id"], child.run_id);
+        assert_eq!(child_result["status"], "Completed");
+
+        let store = BrownieStore::new(temp.path());
+        let completed_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get child")
+            .expect("child record");
+        assert_eq!(completed_child.status, TaskStatus::Completed);
+        assert_eq!(
+            completed_child.parent_task_id.as_deref(),
+            Some(parent_task_id.as_str())
+        );
+        assert_eq!(
+            completed_child.parent_run_id.as_deref(),
+            Some(parent_run_id.as_str())
+        );
+        assert_eq!(
+            completed_child.source_candidate_id.as_deref(),
+            child.source_candidate_id.as_deref()
+        );
+        assert_eq!(
+            completed_child
+                .source_handoff_envelope_fingerprint
+                .as_deref(),
+            child.source_handoff_envelope_fingerprint.as_deref()
+        );
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child ledger");
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::AgentLoopStarted));
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCompleted));
+
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent ledger after child run")
+                .len(),
+            parent_event_count
+        );
+
+        let parent_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        let parent_summary = parent_inspect.result.expect("parent inspect")["run"].clone();
+        assert_eq!(parent_summary["child_task_count"], 1);
+        assert!(parent_summary["child_task_ids"]
+            .as_array()
+            .expect("child ids")
+            .iter()
+            .any(|value| value.as_str() == Some(child.task_id.as_str())));
+
+        let child_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        let inspected_child = child_inspect.result.expect("child inspect")["task"].clone();
+        assert_eq!(inspected_child["status"], "Completed");
+        assert_eq!(inspected_child["parent_task_id"], parent_task_id);
+        assert_eq!(inspected_child["parent_run_id"], parent_run_id);
+        assert_eq!(
+            inspected_child["source_handoff_envelope_fingerprint"],
+            child
+                .source_handoff_envelope_fingerprint
+                .as_deref()
+                .expect("source handoff envelope fingerprint")
+        );
+
+        let rerun = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(rerun.result.is_none());
+        assert_eq!(rerun.error.expect("rerun error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_queued_child_task_without_complete_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent_task_id, _parent_run_id, child, _parent_event_count) =
+            start_parent_with_queued_child();
+        let child_state_path = temp
+            .path()
+            .join(".brownie/runs")
+            .join(&child.run_id)
+            .join("state.json");
+        let mut child_state: Value =
+            serde_json::from_str(&std::fs::read_to_string(&child_state_path).expect("child state"))
+                .expect("child state json");
+        child_state["source_handoff_envelope_fingerprint"] = Value::Null;
+        std::fs::write(
+            &child_state_path,
+            serde_json::to_string_pretty(&child_state).expect("child state serialize"),
+        )
+        .expect("write child state");
+
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.result.is_none());
+        let error = child_run.error.expect("child run error");
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("queued child task must include complete parent/source provenance"));
+
+        let store = BrownieStore::new(temp.path());
+        let rejected_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get child")
+            .expect("child record");
+        assert_eq!(rejected_child.status, TaskStatus::Queued);
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child ledger");
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

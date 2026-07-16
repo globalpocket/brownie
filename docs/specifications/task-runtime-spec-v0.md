@@ -285,3 +285,13 @@ The candidate manifest is visible through the ledger, through `run.inspect` / `t
 M5.10 turns candidate manifest evidence into deterministic parent-run dispatch handoff envelope and replay guard blocker state. After `SubtaskDispatchCandidateManifestRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchHandoffEnvelopeRecorded` event that records which manifest was evaluated, which queued candidate ids are covered by the handoff envelope, why the replay guard remains blocked, and which handoff-ticket checks prevent scheduler dispatch.
 
 The handoff envelope is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.10 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.11 controlled child task materialization
+
+M5.11 materializes one controlled child `TaskRecord` from an accepted parent-run handoff envelope. The child stores `parent_task_id`, `parent_run_id`, `source_candidate_id`, `source_handoff_envelope_id`, and `source_handoff_envelope_fingerprint`, starts with `status = Queued`, and receives only its own `TaskStarted` ledger event. Parent `task.run` does not run the child.
+
+## M5.12 explicit queued child task run admission
+
+M5.12 allows an explicit `task.run` call on a controlled queued child task. The admission gate accepts `TaskStatus::Created` tasks as before, and accepts `TaskStatus::Queued` only when the child has complete parent/source provenance and the parent ledger contains matching handoff envelope evidence for the candidate and fingerprint.
+
+Once admitted, the child uses the existing task-run lifecycle and terminal status rules. Completed, failed, cancelled, and already-running tasks remain non-rerunnable. This phase does not add scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, or another blocked summary event wrapper.

@@ -91,6 +91,12 @@ Run inspection also reports dispatch handoff envelope evidence. `has_subtask_dis
 
 Run inspection reports controlled child materialization with `child_task_count` and `child_task_ids`. These fields are derived from persisted child `TaskRecord` state whose `parent_run_id` matches the inspected run. They expose parent-child relation evidence only; a child listed here is `Queued` and has not executed an LLM loop or scheduler handoff in M5.11.
 
+## M5.12 queued child run inspection
+
+After M5.12, a child listed by parent `run.inspect` may still be `Queued`, or it may have entered the existing child `task.run` lifecycle through an explicit call on the child task id. Reviewers can use the listed `child_task_ids` with `task.inspect` to observe the child status and provenance fields: `parent_task_id`, `parent_run_id`, `source_candidate_id`, `source_handoff_envelope_id`, and `source_handoff_envelope_fingerprint`.
+
+M5.12 does not add scheduler auto-dispatch. Parent run inspection proves relation only; child execution evidence belongs to the child task/run ledger and appears only after explicit `task.run` admission for that child.
+
 ## Phase 2.1 LLM metadata redaction
 
 Run inspection may show LLM provider metadata and `LlmRequestFailed` / `SecondPassLlmRequestFailed` summaries, but all secret-bearing values must be redacted. API keys, Authorization headers, Bearer tokens, and URL query strings are not inspection data. `BROWNIE_LLM_STRICT` and fallback-to-Fake status are observable through `llm.status`; request ledger metadata may include redacted `base_url` and `strict` so users can verify which configured provider path was used.
