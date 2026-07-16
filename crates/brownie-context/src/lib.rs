@@ -639,6 +639,47 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
                         "{manifest_id}: {manifest_status} decision_count={decision_count} candidate_count={candidate_count} blocked_candidate_count={blocked_candidate_count} eligible_candidate_count={eligible_candidate_count} dispatch_enabled={dispatch_enabled} next_action={next_action}"
                     ))
                 }
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded => {
+                    let handoff_envelope_id = payload
+                        .get("handoff_envelope_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let handoff_envelope_status = payload
+                        .get("handoff_envelope_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let manifest_count = payload
+                        .get("manifest_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let candidate_count = payload
+                        .get("candidate_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let handoff_ticket_count = payload
+                        .get("handoff_ticket_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let replay_guard_status = payload
+                        .get("replay_guard_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let dispatch_enabled = payload
+                        .get("dispatch_enabled")
+                        .and_then(|value| value.as_bool())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let next_action = payload
+                        .get("next_action")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    Some(format!(
+                        "{handoff_envelope_id}: {handoff_envelope_status} manifest_count={manifest_count} candidate_count={candidate_count} handoff_ticket_count={handoff_ticket_count} replay_guard_status={replay_guard_status} dispatch_enabled={dispatch_enabled} next_action={next_action}"
+                    ))
+                }
                 _ => None,
             }
         })
@@ -1219,6 +1260,23 @@ mod tests {
                         "next_action": "await_dispatch_candidate_manifest_preconditions"
                     })),
                 },
+                LedgerEvent {
+                    event_id: "event_11".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                    timestamp: "2026-01-01T00:00:10Z".into(),
+                    payload: Some(serde_json::json!({
+                        "handoff_envelope_id": "subtask_dispatch_handoff_envelope_run_1_1",
+                        "handoff_envelope_status": "Blocked",
+                        "manifest_count": 1,
+                        "candidate_count": 1,
+                        "handoff_ticket_count": 0,
+                        "replay_guard_status": "Blocked",
+                        "dispatch_enabled": false,
+                        "next_action": "await_dispatch_handoff_envelope_preconditions"
+                    })),
+                },
             ],
         };
 
@@ -1235,7 +1293,8 @@ mod tests {
                 "subtask_dispatch_readiness_snapshot_run_1_1: Blocked admission_count=1 queued_count=1 scheduler_handoff_status=Blocked dispatch_enabled=false fingerprint_input_count=12 next_action=await_dispatch_readiness_snapshot_handoff",
                 "subtask_dispatcher_guard_run_1_1: Blocked snapshot_count=1 queued_count=1 handoff_preflight_status=Blocked dispatch_enabled=false snapshot_validity_status=Current next_action=await_dispatcher_guard_preconditions",
                 "subtask_dispatch_decision_run_1_1: Blocked guard_count=1 candidate_status=Blocked dispatch_candidate_count=1 eligible_candidate_count=0 dispatch_enabled=false next_action=await_dispatch_decision_preconditions",
-                "subtask_dispatch_candidate_manifest_run_1_1: Blocked decision_count=1 candidate_count=1 blocked_candidate_count=1 eligible_candidate_count=0 dispatch_enabled=false next_action=await_dispatch_candidate_manifest_preconditions"
+                "subtask_dispatch_candidate_manifest_run_1_1: Blocked decision_count=1 candidate_count=1 blocked_candidate_count=1 eligible_candidate_count=0 dispatch_enabled=false next_action=await_dispatch_candidate_manifest_preconditions",
+                "subtask_dispatch_handoff_envelope_run_1_1: Blocked manifest_count=1 candidate_count=1 handoff_ticket_count=0 replay_guard_status=Blocked dispatch_enabled=false next_action=await_dispatch_handoff_envelope_preconditions"
             ]
         );
         let prompt = PromptBuilder::build(materialized);
@@ -1272,6 +1331,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_dispatch_candidate_manifest_run_1_1: Blocked decision_count=1 candidate_count=1 blocked_candidate_count=1 eligible_candidate_count=0 dispatch_enabled=false next_action=await_dispatch_candidate_manifest_preconditions"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- subtask_dispatch_handoff_envelope_run_1_1: Blocked manifest_count=1 candidate_count=1 handoff_ticket_count=0 replay_guard_status=Blocked dispatch_enabled=false next_action=await_dispatch_handoff_envelope_preconditions"));
     }
 
     #[test]

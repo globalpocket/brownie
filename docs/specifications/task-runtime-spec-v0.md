@@ -279,3 +279,9 @@ The dispatch decision is visible through the ledger, through `run.inspect` / `ta
 M5.9 turns dispatch decision evidence into deterministic parent-run per-candidate manifest state. After `SubtaskDispatchDecisionRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchCandidateManifestRecorded` event that records which decision was evaluated, which queued subtask ids are dispatch candidates, which candidates remain blocked, and which decision-derived checks explain the denial.
 
 The candidate manifest is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.9 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.10 subtask dispatch handoff envelope
+
+M5.10 turns candidate manifest evidence into deterministic parent-run dispatch handoff envelope and replay guard blocker state. After `SubtaskDispatchCandidateManifestRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchHandoffEnvelopeRecorded` event that records which manifest was evaluated, which queued candidate ids are covered by the handoff envelope, why the replay guard remains blocked, and which handoff-ticket checks prevent scheduler dispatch.
+
+The handoff envelope is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.10 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.

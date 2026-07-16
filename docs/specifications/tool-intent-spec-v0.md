@@ -97,3 +97,9 @@ M5.8 does not execute the requested subtask or hand it off to a scheduler. It on
 After dispatch decision state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchCandidateManifestRecorded` event. This candidate manifest references the decision, records queued candidate ids, blocked candidate ids, `dispatch_enabled = false`, and deterministic denial checks explaining why no queued subtask is eligible for handoff yet.
 
 M5.9 does not execute the requested subtask or hand it off to a scheduler. It only records per-queued-subtask candidate manifest and denial evidence for future runtime dispatch.
+
+## M5.10 subtask dispatch handoff envelope
+
+After candidate manifest state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchHandoffEnvelopeRecorded` event. This handoff envelope references the manifest, records candidate ids covered by the future handoff ticket, records `dispatch_enabled = false`, records replay guard blocker state, and records deterministic checks explaining why no queued subtask can be replayed or handed off yet.
+
+M5.10 does not execute the requested subtask or hand it off to a scheduler. It only records handoff envelope and replay guard blocker evidence for future runtime dispatch.

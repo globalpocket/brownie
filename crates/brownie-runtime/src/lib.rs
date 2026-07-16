@@ -1918,6 +1918,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_candidate_manifest_recorded(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_dispatch_handoff_envelope_recorded(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9175,6 +9178,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded)
         .count();
+    let subtask_dispatch_handoff_envelope_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9207,6 +9214,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_dispatch_decision_count,
         has_subtask_dispatch_candidate_manifest: subtask_dispatch_candidate_manifest_count > 0,
         subtask_dispatch_candidate_manifest_count,
+        has_subtask_dispatch_handoff_envelope: subtask_dispatch_handoff_envelope_count > 0,
+        subtask_dispatch_handoff_envelope_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9275,6 +9284,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "guard_id",
         "decision_id",
         "manifest_id",
+        "handoff_envelope_id",
         "handoff_id",
         "readiness_id",
         "admission_id",
@@ -9292,6 +9302,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "blocked_candidate_count",
         "candidate_count",
         "decision_count",
+        "manifest_count",
+        "handoff_ticket_count",
         "snapshot_fingerprint_count",
         "source_event_count",
         "next_action",
@@ -9313,13 +9325,18 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "decision_status",
         "candidate_status",
         "manifest_status",
+        "handoff_envelope_status",
+        "handoff_ticket_status",
+        "replay_guard_status",
         "dispatch_decision",
         "dispatch_denial_reason",
         "candidate_denial_reason",
+        "replay_guard_reason",
         "candidate_ids",
         "eligible_candidate_ids",
         "blocked_candidate_ids",
         "candidate_manifest_fingerprint",
+        "handoff_envelope_fingerprint",
         "required_capability",
         "required_preconditions",
         "precondition_count",
@@ -9414,6 +9431,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "guard_id",
             "decision_id",
             "manifest_id",
+            "handoff_envelope_id",
             "queue_position",
             "queued_count",
             "handoff_count",
@@ -9428,6 +9446,8 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "blocked_candidate_count",
             "candidate_count",
             "decision_count",
+            "manifest_count",
+            "handoff_ticket_count",
             "snapshot_fingerprint_count",
             "execution_enabled",
             "dispatch_enabled",
@@ -9446,10 +9466,15 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "decision_status",
             "candidate_status",
             "manifest_status",
+            "handoff_envelope_status",
+            "handoff_ticket_status",
+            "replay_guard_status",
             "dispatch_decision",
             "dispatch_denial_reason",
             "candidate_denial_reason",
+            "replay_guard_reason",
             "candidate_manifest_fingerprint",
+            "handoff_envelope_fingerprint",
             "readiness_fingerprint",
             "fingerprint_input_count",
             "bytes_read",
@@ -11067,6 +11092,262 @@ fn append_subtask_dispatch_candidate_manifest_recorded(
     )
 }
 
+struct SubtaskDispatchHandoffEnvelopeSource {
+    manifest_id: String,
+    decision_id: String,
+    dispatch_decision: String,
+    candidate_status: String,
+    candidate_denial_reason: String,
+    candidate_manifest_fingerprint: String,
+    candidate_ids: Vec<String>,
+    eligible_candidate_ids: Vec<String>,
+    blocked_candidate_ids: Vec<String>,
+    blocked_preconditions: Vec<String>,
+    blocked_checks: Vec<String>,
+}
+
+fn payload_string_array(payload: &Value, key: &str) -> Vec<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn append_subtask_dispatch_handoff_envelope_recorded(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+    {
+        return Ok(());
+    }
+
+    let candidate_manifests = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let manifest_id = payload.get("manifest_id")?.as_str()?.to_string();
+            let decision_id = payload.get("decision_id")?.as_str()?.to_string();
+            let dispatch_decision = payload
+                .get("dispatch_decision")
+                .and_then(Value::as_str)
+                .unwrap_or("Denied")
+                .to_string();
+            let candidate_status = payload
+                .get("candidate_status")
+                .and_then(Value::as_str)
+                .unwrap_or("Blocked")
+                .to_string();
+            let candidate_denial_reason = payload
+                .get("candidate_denial_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("Candidate manifest blocks scheduler handoff.")
+                .to_string();
+            let candidate_manifest_fingerprint = payload
+                .get("candidate_manifest_fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Some(SubtaskDispatchHandoffEnvelopeSource {
+                manifest_id,
+                decision_id,
+                dispatch_decision,
+                candidate_status,
+                candidate_denial_reason,
+                candidate_manifest_fingerprint,
+                candidate_ids: payload_string_array(payload, "candidate_ids"),
+                eligible_candidate_ids: payload_string_array(payload, "eligible_candidate_ids"),
+                blocked_candidate_ids: payload_string_array(payload, "blocked_candidate_ids"),
+                blocked_preconditions: payload_string_array(payload, "blocked_preconditions"),
+                blocked_checks: payload_string_array(payload, "blocked_checks"),
+            })
+        })
+        .collect::<Vec<_>>();
+    if candidate_manifests.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let manifest_count = candidate_manifests.len();
+    let manifest_ids = candidate_manifests
+        .iter()
+        .map(|source| source.manifest_id.clone())
+        .collect::<Vec<_>>();
+    let decision_ids = candidate_manifests
+        .iter()
+        .map(|source| source.decision_id.clone())
+        .collect::<Vec<_>>();
+    let mut candidate_ids = candidate_manifests
+        .iter()
+        .flat_map(|source| source.candidate_ids.iter().cloned())
+        .collect::<Vec<_>>();
+    candidate_ids.sort();
+    candidate_ids.dedup();
+    let mut eligible_candidate_ids = candidate_manifests
+        .iter()
+        .flat_map(|source| source.eligible_candidate_ids.iter().cloned())
+        .collect::<Vec<_>>();
+    eligible_candidate_ids.sort();
+    eligible_candidate_ids.dedup();
+    let mut blocked_candidate_ids = candidate_manifests
+        .iter()
+        .flat_map(|source| source.blocked_candidate_ids.iter().cloned())
+        .collect::<Vec<_>>();
+    blocked_candidate_ids.sort();
+    blocked_candidate_ids.dedup();
+    let candidate_count = candidate_ids.len();
+    let dispatch_decision = if candidate_manifests
+        .iter()
+        .any(|source| source.dispatch_decision == "Denied")
+    {
+        "Denied"
+    } else {
+        candidate_manifests
+            .first()
+            .map(|source| source.dispatch_decision.as_str())
+            .unwrap_or("Denied")
+    };
+    let candidate_status = if candidate_manifests
+        .iter()
+        .any(|source| source.candidate_status == "Blocked")
+    {
+        "Blocked"
+    } else {
+        candidate_manifests
+            .first()
+            .map(|source| source.candidate_status.as_str())
+            .unwrap_or("Blocked")
+    };
+    let candidate_denial_reason = candidate_manifests
+        .first()
+        .map(|source| source.candidate_denial_reason.as_str())
+        .unwrap_or("Candidate manifest blocks scheduler handoff.");
+    let candidate_manifest_fingerprint = candidate_manifests
+        .iter()
+        .find_map(|source| {
+            if source.candidate_manifest_fingerprint.is_empty() {
+                None
+            } else {
+                Some(source.candidate_manifest_fingerprint.clone())
+            }
+        })
+        .unwrap_or_else(|| "<missing>".to_string());
+
+    let mut blocked_preconditions = candidate_manifests
+        .iter()
+        .flat_map(|source| source.blocked_preconditions.iter().cloned())
+        .collect::<Vec<_>>();
+    blocked_preconditions.push("runtime_subtask_dispatcher_implemented".to_string());
+    blocked_preconditions.push("runtime_scheduler_handoff_envelope_admitted".to_string());
+    blocked_preconditions.push("child_task_execution_guard_enabled".to_string());
+    blocked_preconditions.sort();
+    blocked_preconditions.dedup();
+
+    let mut blocked_checks = vec![
+        "dispatch_handoff_envelope_blocked".to_string(),
+        "handoff_ticket_preflight_blocked".to_string(),
+        "candidate_replay_guard_blocked".to_string(),
+        "candidate_manifest_blocked".to_string(),
+        "runtime_scheduler_handoff_not_available".to_string(),
+        "child_task_execution_disabled".to_string(),
+    ];
+    blocked_checks.extend(
+        candidate_manifests
+            .iter()
+            .flat_map(|source| source.blocked_checks.iter().cloned()),
+    );
+    blocked_checks.sort();
+    blocked_checks.dedup();
+
+    let mut fingerprint_inputs = vec![
+        "envelope_version=m5.10_dispatch_handoff_envelope_v1".to_string(),
+        format!("parent_task_id={}", record.task_id),
+        format!("parent_run_id={}", record.run_id),
+        format!("manifest_count={manifest_count}"),
+        format!("candidate_count={candidate_count}"),
+        format!("dispatch_decision={dispatch_decision}"),
+        format!("candidate_status={candidate_status}"),
+        format!("candidate_manifest_fingerprint={candidate_manifest_fingerprint}"),
+    ];
+    for manifest_id in &manifest_ids {
+        fingerprint_inputs.push(format!("manifest_id={manifest_id}"));
+    }
+    for decision_id in &decision_ids {
+        fingerprint_inputs.push(format!("decision_id={decision_id}"));
+    }
+    for candidate_id in &candidate_ids {
+        fingerprint_inputs.push(format!("candidate_id={candidate_id}"));
+    }
+    for check in &blocked_checks {
+        fingerprint_inputs.push(format!("blocked_check={check}"));
+    }
+    let fingerprint_input_count = fingerprint_inputs.len();
+    let handoff_envelope_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(fingerprint_inputs.join("\n").as_bytes())
+    );
+
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+        Some(json!({
+            "handoff_envelope_id": format!("subtask_dispatch_handoff_envelope_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "manifest_id": manifest_ids[0],
+            "manifest_count": manifest_count,
+            "decision_id": decision_ids[0],
+            "queued_count": candidate_count,
+            "source_event_count": manifest_count,
+            "status": "Blocked",
+            "handoff_envelope_status": "Blocked",
+            "handoff_ticket_status": "Blocked",
+            "replay_guard_status": "Blocked",
+            "scheduler_handoff_status": "Blocked",
+            "candidate_status": candidate_status,
+            "dispatch_decision": dispatch_decision,
+            "candidate_denial_reason": candidate_denial_reason,
+            "replay_guard_reason": "Candidate manifest is blocked; handoff envelope cannot replay or dispatch queued candidates.",
+            "candidate_count": candidate_count,
+            "dispatch_candidate_count": candidate_count,
+            "eligible_candidate_count": eligible_candidate_ids.len(),
+            "blocked_candidate_count": blocked_candidate_ids.len(),
+            "handoff_ticket_count": 0,
+            "candidate_ids": candidate_ids,
+            "eligible_candidate_ids": eligible_candidate_ids,
+            "blocked_candidate_ids": blocked_candidate_ids,
+            "candidate_manifest_fingerprint": candidate_manifest_fingerprint,
+            "handoff_envelope_fingerprint": handoff_envelope_fingerprint,
+            "fingerprint_input_count": fingerprint_input_count,
+            "required_capability": "runtime_subtask_dispatcher",
+            "precondition_count": blocked_preconditions.len(),
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": blocked_preconditions,
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_dispatch_handoff_envelope_preconditions",
+            "reason": "Candidate manifest evidence mapped to a dispatch handoff envelope and replay guard blocker; no subtask was spawned in M5.10."
+        })),
+    )
+}
+
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -11656,6 +11937,9 @@ mod tests {
         assert!(events.iter().any(|event| {
             event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded
         }));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+        }));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
@@ -11789,6 +12073,8 @@ mod tests {
         assert_eq!(summary["subtask_dispatch_decision_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_candidate_manifest"], true);
         assert_eq!(summary["subtask_dispatch_candidate_manifest_count"], 1);
+        assert_eq!(summary["has_subtask_dispatch_handoff_envelope"], true);
+        assert_eq!(summary["subtask_dispatch_handoff_envelope_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -11860,6 +12146,7 @@ mod tests {
             "guard_id": "subtask_dispatcher_guard_run_1_1",
             "decision_id": "subtask_dispatch_decision_run_1_1",
             "manifest_id": "subtask_dispatch_candidate_manifest_run_1_1",
+            "handoff_envelope_id": "subtask_dispatch_handoff_envelope_run_1_1",
             "admission_count": 1,
             "snapshot_count": 1,
             "guard_count": 1,
@@ -11868,6 +12155,8 @@ mod tests {
             "blocked_candidate_count": 1,
             "candidate_count": 1,
             "decision_count": 1,
+            "manifest_count": 1,
+            "handoff_ticket_count": 0,
             "snapshot_fingerprint_count": 1,
             "scheduler_handoff_status": "Blocked",
             "guard_status": "Blocked",
@@ -11878,13 +12167,18 @@ mod tests {
             "decision_status": "Blocked",
             "candidate_status": "Blocked",
             "manifest_status": "Blocked",
+            "handoff_envelope_status": "Blocked",
+            "handoff_ticket_status": "Blocked",
+            "replay_guard_status": "Blocked",
             "dispatch_decision": "Denied",
             "dispatch_denial_reason": "Dispatcher guard verdict blocks dispatch until preconditions are satisfied.",
             "candidate_denial_reason": "Dispatcher guard verdict blocks dispatch until preconditions are satisfied.",
+            "replay_guard_reason": "Candidate manifest is blocked; handoff envelope cannot replay or dispatch queued candidates.",
             "candidate_ids": ["subtask_run_1_1"],
             "eligible_candidate_ids": [],
             "blocked_candidate_ids": ["subtask_run_1_1"],
             "candidate_manifest_fingerprint": "sha256:def456",
+            "handoff_envelope_fingerprint": "sha256:feed456",
             "readiness_fingerprint": "sha256:abc123",
             "fingerprint_input_count": 12,
             "required_capability": "runtime_subtask_dispatcher",
@@ -11961,6 +12255,10 @@ mod tests {
             sanitized["manifest_id"],
             "subtask_dispatch_candidate_manifest_run_1_1"
         );
+        assert_eq!(
+            sanitized["handoff_envelope_id"],
+            "subtask_dispatch_handoff_envelope_run_1_1"
+        );
         assert_eq!(sanitized["admission_count"], 1);
         assert_eq!(sanitized["snapshot_count"], 1);
         assert_eq!(sanitized["guard_count"], 1);
@@ -11969,6 +12267,8 @@ mod tests {
         assert_eq!(sanitized["blocked_candidate_count"], 1);
         assert_eq!(sanitized["candidate_count"], 1);
         assert_eq!(sanitized["decision_count"], 1);
+        assert_eq!(sanitized["manifest_count"], 1);
+        assert_eq!(sanitized["handoff_ticket_count"], 0);
         assert_eq!(sanitized["snapshot_fingerprint_count"], 1);
         assert_eq!(sanitized["scheduler_handoff_status"], "Blocked");
         assert_eq!(sanitized["guard_status"], "Blocked");
@@ -11982,6 +12282,9 @@ mod tests {
         assert_eq!(sanitized["decision_status"], "Blocked");
         assert_eq!(sanitized["candidate_status"], "Blocked");
         assert_eq!(sanitized["manifest_status"], "Blocked");
+        assert_eq!(sanitized["handoff_envelope_status"], "Blocked");
+        assert_eq!(sanitized["handoff_ticket_status"], "Blocked");
+        assert_eq!(sanitized["replay_guard_status"], "Blocked");
         assert_eq!(sanitized["dispatch_decision"], "Denied");
         assert_eq!(
             sanitized["dispatch_denial_reason"],
@@ -11990,6 +12293,10 @@ mod tests {
         assert_eq!(
             sanitized["candidate_denial_reason"],
             "Dispatcher guard verdict blocks dispatch until preconditions are satisfied."
+        );
+        assert_eq!(
+            sanitized["replay_guard_reason"],
+            "Candidate manifest is blocked; handoff envelope cannot replay or dispatch queued candidates."
         );
         assert_eq!(sanitized["candidate_ids"][0], "subtask_run_1_1");
         assert_eq!(
@@ -12001,6 +12308,7 @@ mod tests {
         );
         assert_eq!(sanitized["blocked_candidate_ids"][0], "subtask_run_1_1");
         assert_eq!(sanitized["candidate_manifest_fingerprint"], "sha256:def456");
+        assert_eq!(sanitized["handoff_envelope_fingerprint"], "sha256:feed456");
         assert_eq!(sanitized["readiness_fingerprint"], "sha256:abc123");
         assert_eq!(sanitized["fingerprint_input_count"], 12);
         assert_eq!(
@@ -12883,6 +13191,116 @@ mod tests {
             .iter()
             .any(|check| check.as_str() == Some("dispatch_decision_denied")));
         assert!(candidate_manifest_payload.get("input").is_none());
+        let handoff_envelope_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .expect("subtask dispatch handoff envelope event");
+        let handoff_envelope_payload = handoff_envelope_event
+            .payload
+            .as_ref()
+            .expect("subtask dispatch handoff envelope payload");
+        assert_eq!(handoff_envelope_payload["status"], "Blocked");
+        assert_eq!(
+            handoff_envelope_payload["handoff_envelope_status"],
+            "Blocked"
+        );
+        assert_eq!(handoff_envelope_payload["handoff_ticket_status"], "Blocked");
+        assert_eq!(handoff_envelope_payload["replay_guard_status"], "Blocked");
+        assert_eq!(
+            handoff_envelope_payload["scheduler_handoff_status"],
+            "Blocked"
+        );
+        assert_eq!(handoff_envelope_payload["candidate_status"], "Blocked");
+        assert_eq!(handoff_envelope_payload["dispatch_decision"], "Denied");
+        assert_eq!(
+            handoff_envelope_payload["candidate_denial_reason"],
+            candidate_manifest_payload["candidate_denial_reason"]
+        );
+        assert_eq!(
+            handoff_envelope_payload["replay_guard_reason"],
+            "Candidate manifest is blocked; handoff envelope cannot replay or dispatch queued candidates."
+        );
+        assert_eq!(
+            handoff_envelope_payload["required_capability"],
+            "runtime_subtask_dispatcher"
+        );
+        assert_eq!(handoff_envelope_payload["manifest_count"], 1);
+        assert_eq!(handoff_envelope_payload["queued_count"], 1);
+        assert_eq!(handoff_envelope_payload["source_event_count"], 1);
+        assert_eq!(handoff_envelope_payload["candidate_count"], 1);
+        assert_eq!(handoff_envelope_payload["dispatch_candidate_count"], 1);
+        assert_eq!(handoff_envelope_payload["eligible_candidate_count"], 0);
+        assert_eq!(handoff_envelope_payload["blocked_candidate_count"], 1);
+        assert_eq!(handoff_envelope_payload["handoff_ticket_count"], 0);
+        assert_eq!(
+            handoff_envelope_payload["candidate_ids"][0],
+            queued_payload["subtask_id"]
+        );
+        assert_eq!(
+            handoff_envelope_payload["blocked_candidate_ids"][0],
+            queued_payload["subtask_id"]
+        );
+        assert_eq!(
+            handoff_envelope_payload["eligible_candidate_ids"]
+                .as_array()
+                .expect("eligible candidate ids")
+                .len(),
+            0
+        );
+        assert_eq!(handoff_envelope_payload["execution_enabled"], false);
+        assert_eq!(handoff_envelope_payload["dispatch_enabled"], false);
+        assert_eq!(
+            handoff_envelope_payload["next_action"],
+            "await_dispatch_handoff_envelope_preconditions"
+        );
+        assert_eq!(
+            handoff_envelope_payload["reason"],
+            "Candidate manifest evidence mapped to a dispatch handoff envelope and replay guard blocker; no subtask was spawned in M5.10."
+        );
+        assert_eq!(
+            handoff_envelope_payload["manifest_id"],
+            candidate_manifest_payload["manifest_id"]
+        );
+        assert_eq!(
+            handoff_envelope_payload["decision_id"],
+            candidate_manifest_payload["decision_id"]
+        );
+        assert!(handoff_envelope_payload["handoff_envelope_id"]
+            .as_str()
+            .expect("handoff envelope id")
+            .starts_with("subtask_dispatch_handoff_envelope_run_"));
+        assert_eq!(
+            handoff_envelope_payload["candidate_manifest_fingerprint"],
+            candidate_manifest_payload["candidate_manifest_fingerprint"]
+        );
+        assert!(handoff_envelope_payload["handoff_envelope_fingerprint"]
+            .as_str()
+            .expect("handoff envelope fingerprint")
+            .starts_with("sha256:"));
+        assert!(
+            handoff_envelope_payload["fingerprint_input_count"]
+                .as_u64()
+                .expect("fingerprint input count")
+                >= 12
+        );
+        assert!(
+            handoff_envelope_payload["precondition_count"]
+                .as_u64()
+                .expect("precondition count")
+                >= 3
+        );
+        assert_eq!(handoff_envelope_payload["satisfied_precondition_count"], 0);
+        assert!(handoff_envelope_payload["blocked_checks"]
+            .as_array()
+            .expect("blocked checks")
+            .iter()
+            .any(|check| check.as_str() == Some("dispatch_handoff_envelope_blocked")));
+        assert!(handoff_envelope_payload["blocked_checks"]
+            .as_array()
+            .expect("blocked checks")
+            .iter()
+            .any(|check| check.as_str() == Some("candidate_replay_guard_blocked")));
+        assert!(handoff_envelope_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -12929,6 +13347,7 @@ mod tests {
                 LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded,
                 LedgerEventKind::SubtaskDispatchDecisionRecorded,
                 LedgerEventKind::SubtaskDispatchCandidateManifestRecorded,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,
