@@ -52,6 +52,14 @@ After approved `subtask.spawn` intent is queued, `task.run` may consume the queu
 
 After candidate manifest and handoff envelope evidence are accepted, `task.run` may materialize one child `TaskRecord` from the accepted envelope. The child carries parent task/run provenance and source candidate/envelope fingerprint provenance, starts in `Queued`, and is idempotent for the same parent run plus envelope fingerprint. M5.11 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
 
+## M5.15 structured subtask spawn input
+
+`subtask.spawn` accepts a bounded optional input object with only `goal` and `mode_id`. Omitting `input` remains valid. When present, `goal` and `mode_id` must be non-empty strings within parser limits, and unknown fields are rejected with `code = "invalid_input"` before permission evaluation.
+
+The runtime resolves a requested `mode_id` against the built-in plus local Mode Pack policy set before approval, queueing, or child materialization. Unknown requested modes append the existing `ToolIntentDenied` evidence and do not create `ToolIntentApproved`, `SubtaskOrchestrationQueued`, or a child `TaskRecord`. Valid requested input is summarized as `requested_goal_preview` and `requested_mode_id`; raw request input is not persisted.
+
+When a later accepted handoff envelope materializes a child, a valid `requested_goal_preview` becomes the child goal and a valid `requested_mode_id` becomes the child `mode_id`. M5.15 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
+
 M5.1 does not execute the requested subtask. It only prepares deterministic parent-run handoff state for future runtime scheduling.
 
 ## M5.2 subtask scheduler readiness

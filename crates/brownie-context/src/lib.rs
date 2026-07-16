@@ -308,9 +308,21 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
                         .and_then(|value| value.as_bool())
                         .map(|value| value.to_string())
                         .unwrap_or_else(|| "<unknown>".to_string());
-                    Some(format!(
+                    let mut fields = vec![format!(
                         "{subtask_id}: {status} tool_id={tool_id} queue_position={queue_position} execution_enabled={execution_enabled}"
-                    ))
+                    )];
+                    if let Some(goal) = payload
+                        .get("requested_goal_preview")
+                        .and_then(|value| value.as_str())
+                    {
+                        fields.push(format!("requested_goal_preview={goal}"));
+                    }
+                    if let Some(mode_id) =
+                        payload.get("requested_mode_id").and_then(|value| value.as_str())
+                    {
+                        fields.push(format!("requested_mode_id={mode_id}"));
+                    }
+                    Some(fields.join(" "))
                 }
                 LedgerEventKind::SubtaskHandoffPrepared => {
                     let handoff_id = payload
@@ -1116,9 +1128,11 @@ mod tests {
                         "status": "Queued",
                         "queue_position": 1,
                         "execution_enabled": false,
+                        "requested_goal_preview": "Review parser boundary.",
+                        "requested_mode_id": "implementer",
                         "input_summary": {
                             "has_path": false,
-                            "field_count": 0
+                            "field_count": 2
                         }
                     })),
                 },
@@ -1290,7 +1304,7 @@ mod tests {
         assert_eq!(
             materialized.subtask_orchestration_summary,
             vec![
-                "subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false",
+                "subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false requested_goal_preview=Review parser boundary. requested_mode_id=implementer",
                 "subtask_handoff_run_1_1: Prepared queued_count=1 execution_enabled=false next_action=await_future_runtime_scheduler",
                 "subtask_scheduler_readiness_run_1_1: Blocked handoff_count=1 queued_count=1 dispatch_enabled=false next_action=await_runtime_scheduler_dispatch",
                 "subtask_dispatch_plan_run_1_1: Blocked readiness_count=1 queued_count=1 dispatch_enabled=false next_action=await_runtime_subtask_dispatcher",
@@ -1309,7 +1323,7 @@ mod tests {
             .contains("Subtask Orchestration:"));
         assert!(prompt.messages[1]
             .content
-            .contains("- subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false"));
+            .contains("- subtask_run_1_1: Queued tool_id=subtask.spawn queue_position=1 execution_enabled=false requested_goal_preview=Review parser boundary. requested_mode_id=implementer"));
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_handoff_run_1_1: Prepared queued_count=1 execution_enabled=false next_action=await_future_runtime_scheduler"));

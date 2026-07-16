@@ -810,3 +810,11 @@ M5.14 makes the controlled child `TaskRecord` semantically useful by carrying a 
 The materialized child goal is derived from the approved request reason and stable source candidate id rather than only a generic parent/candidate wrapper phrase. `ChildTaskInspectSummary` exposes the same `source_intent_summary` through parent `run.inspect` / `task.inspect` child summaries.
 
 M5.14 preserves duplicate prevention by source handoff envelope fingerprint, preserves explicit child `task.run` admission, and adds no scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, diagnostics wrapper RPCs, or blocked summary event wrappers.
+
+## M5.15 structured subtask spawn child materialization
+
+M5.15 adds bounded structured input for approved `subtask.spawn` intent. The optional input may contain only `goal` and `mode_id`; omitted input remains valid. Parser preflight rejects unknown fields, non-string fields, empty fields, oversized fields, and unsafe `mode_id` syntax before permission evaluation.
+
+Before approval, queueing, or child materialization, the runtime resolves requested `mode_id` values against the workspace mode policy set. Unknown modes use the existing `ToolIntentDenied` event path and do not create `ToolIntentApproved`, queued subtask evidence, or child records. Valid requested inputs are persisted only as sanitized summary fields: `requested_goal_preview` and `requested_mode_id`.
+
+Controlled child materialization uses `requested_goal_preview` as the child `TaskRecord.goal` and `requested_mode_id` as the child `TaskRecord.mode_id` when present. `run.inspect`, `task.inspect`, child `TaskStarted`, and `ChildTaskSourceIntentSummary` expose the same sanitized fields without raw `input` objects or serialized request bodies. M5.15 preserves duplicate prevention, explicit child `task.run` admission, and the no scheduler auto-dispatch / no process / no network / no service-control / no patch-apply / no direct workspace mutation boundary.

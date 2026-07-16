@@ -2347,6 +2347,8 @@ pub struct ChildTaskSourceIntentSummary {
     pub tool_id: String,
     pub required_action: RuntimeActionName,
     pub request_reason: String,
+    pub requested_goal_preview: Option<String>,
+    pub requested_mode_id: Option<String>,
     pub input_summary: ToolIntentInputSummary,
 }
 

@@ -184,8 +184,8 @@ use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
     ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
-    DEFAULT_PROPOSAL_PREVIEW_CHARS, SUBTASK_SPAWN_TOOL_ID, WORKSPACE_READ_TOOL_ID,
-    WORKSPACE_WRITE_TOOL_ID,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID,
+    WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -9944,6 +9944,40 @@ fn summarize_intent_input(input: &Value) -> Value {
     json!(tool_intent_input_summary(input))
 }
 
+fn normalized_subtask_spawn_goal_preview(input: &Value) -> Option<String> {
+    input
+        .get("goal")
+        .and_then(Value::as_str)
+        .map(|goal| goal.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|goal| !goal.is_empty())
+        .map(|goal| preview_with_limit(&goal, MAX_SUBTASK_SPAWN_GOAL_CHARS))
+}
+
+fn normalized_subtask_spawn_mode_id(input: &Value) -> Option<String> {
+    input
+        .get("mode_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|mode_id| !mode_id.is_empty())
+        .map(ToString::to_string)
+}
+
+fn subtask_spawn_input_runtime_rejection_reason(
+    store: &BrownieStore,
+    input: &Value,
+) -> anyhow::Result<Option<&'static str>> {
+    let Some(mode_id) = normalized_subtask_spawn_mode_id(input) else {
+        return Ok(None);
+    };
+    if resolve_workspace_mode_policy(store, &mode_id)
+        .map_err(anyhow::Error::msg)?
+        .is_none()
+    {
+        return Ok(Some("subtask.spawn input.mode_id is unknown."));
+    }
+    Ok(None)
+}
+
 fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecuteResult {
     ToolExecuteResult {
         tool_id: result.tool_id,
@@ -9980,14 +10014,27 @@ fn append_tool_intent_events(
         )?;
     }
     for decision in evaluation.items {
-        let payload = json!({
+        let runtime_rejection_reason =
+            if decision.allowed && decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
+                subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?
+            } else {
+                None
+            };
+        let allowed = decision.allowed && runtime_rejection_reason.is_none();
+        let reason = runtime_rejection_reason.unwrap_or(decision.reason.as_str());
+        let mut payload = json!({
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
-            "allowed": decision.allowed,
-            "reason": decision.reason,
+            "allowed": allowed,
+            "reason": reason,
             "request_reason": decision.request_reason,
             "input_summary": summarize_intent_input(&decision.input),
         });
+        if runtime_rejection_reason.is_some() {
+            if let Some(mode_id) = normalized_subtask_spawn_mode_id(&decision.input) {
+                payload["requested_mode_id"] = json!(mode_id);
+            }
+        }
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentPermissionChecked,
@@ -9995,7 +10042,7 @@ fn append_tool_intent_events(
         )?;
         store.tasks().append_task_event_with_payload(
             record,
-            if decision.allowed {
+            if allowed {
                 LedgerEventKind::ToolIntentApproved
             } else {
                 LedgerEventKind::ToolIntentDenied
@@ -10025,6 +10072,9 @@ fn handle_approved_workspace_intents(
             continue;
         }
         if decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
+            if subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?.is_some() {
+                continue;
+            }
             append_subtask_orchestration_queued(store, record, &decision)?;
             continue;
         }
@@ -10081,6 +10131,18 @@ fn append_subtask_orchestration_queued(
     record: &brownie_protocol::TaskRecord,
     decision: &ToolIntentDecision,
 ) -> anyhow::Result<()> {
+    let requested_goal_preview = normalized_subtask_spawn_goal_preview(&decision.input);
+    let requested_mode_id = normalized_subtask_spawn_mode_id(&decision.input);
+    if let Some(reason) = subtask_spawn_input_runtime_rejection_reason(store, &decision.input)? {
+        return append_subtask_spawn_input_denied(
+            store,
+            record,
+            decision,
+            requested_mode_id.as_deref().unwrap_or_default(),
+            reason,
+        );
+    }
+
     let queue_position = next_subtask_queue_position(store, &record.run_id)?;
     let run_fragment = record
         .run_id
@@ -10088,21 +10150,50 @@ fn append_subtask_orchestration_queued(
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
         .collect::<String>();
     let subtask_id = format!("subtask_{run_fragment}_{queue_position}");
+    let mut payload = json!({
+        "subtask_id": subtask_id,
+        "parent_task_id": record.task_id,
+        "parent_run_id": record.run_id,
+        "tool_id": decision.tool_id,
+        "required_action": runtime_action_name(&decision.required_action),
+        "status": "Queued",
+        "queue_position": queue_position,
+        "request_reason": decision.request_reason,
+        "input_summary": summarize_intent_input(&decision.input),
+        "execution_enabled": false,
+        "reason": "Subtask orchestration queued for controlled child materialization; no scheduler dispatch is performed."
+    });
+    if let Some(goal) = requested_goal_preview {
+        payload["requested_goal_preview"] = json!(goal);
+    }
+    if let Some(mode_id) = requested_mode_id {
+        payload["requested_mode_id"] = json!(mode_id);
+    }
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::SubtaskOrchestrationQueued,
+        Some(payload),
+    )
+}
+
+fn append_subtask_spawn_input_denied(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    decision: &ToolIntentDecision,
+    requested_mode_id: &str,
+    reason: &str,
+) -> anyhow::Result<()> {
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolIntentDenied,
         Some(json!({
-            "subtask_id": subtask_id,
-            "parent_task_id": record.task_id,
-            "parent_run_id": record.run_id,
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
-            "status": "Queued",
-            "queue_position": queue_position,
+            "allowed": false,
+            "reason": reason,
             "request_reason": decision.request_reason,
+            "requested_mode_id": requested_mode_id,
             "input_summary": summarize_intent_input(&decision.input),
-            "execution_enabled": false,
-            "reason": "Subtask orchestration queued for future runtime scheduling; no subtask was spawned in M5."
         })),
     )
 }
@@ -11543,6 +11634,14 @@ fn child_goal_from_source_intent(
     source_candidate_id: &str,
     source_intent_summary: Option<&ChildTaskSourceIntentSummary>,
 ) -> String {
+    if let Some(goal) = source_intent_summary
+        .and_then(|summary| summary.requested_goal_preview.as_deref())
+        .map(|goal| goal.split_whitespace().collect::<Vec<_>>().join(" "))
+        .filter(|goal| !goal.is_empty())
+    {
+        return preview_with_limit(&goal, MAX_SUBTASK_SPAWN_GOAL_CHARS);
+    }
+
     const CHILD_SOURCE_INTENT_GOAL_CHARS: usize = 240;
     let reason = source_intent_summary
         .map(|summary| summary.request_reason.as_str())
@@ -11586,11 +11685,23 @@ fn queued_subtask_source_intent_summary(
                     has_path: false,
                     field_count: 0,
                 });
+            let requested_goal_preview = payload
+                .get("requested_goal_preview")
+                .and_then(Value::as_str)
+                .map(normalize_source_intent_reason);
+            let requested_mode_id = payload
+                .get("requested_mode_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|mode_id| !mode_id.is_empty())
+                .map(ToString::to_string);
 
             Some(ChildTaskSourceIntentSummary {
                 tool_id,
                 required_action,
                 request_reason,
+                requested_goal_preview,
+                requested_mode_id,
                 input_summary,
             })
         })
@@ -11652,12 +11763,16 @@ fn materialize_controlled_child_task_from_handoff_envelope(
 
     let source_intent_summary = queued_subtask_source_intent_summary(&events, &source_candidate_id);
     let goal = child_goal_from_source_intent(&source_candidate_id, source_intent_summary.as_ref());
+    let mode_id = source_intent_summary
+        .as_ref()
+        .and_then(|summary| summary.requested_mode_id.clone())
+        .or_else(|| record.mode_id.clone());
 
     store
         .tasks()
         .start_child_task(ChildTaskStartParams {
             goal,
-            mode_id: record.mode_id.clone(),
+            mode_id,
             parent_task_id: record.task_id.clone(),
             parent_run_id: record.run_id.clone(),
             source_candidate_id,
@@ -12951,7 +13066,7 @@ mod tests {
         assert_eq!(queued_payload["execution_enabled"], false);
         assert_eq!(
             queued_payload["reason"],
-            "Subtask orchestration queued for future runtime scheduling; no subtask was spawned in M5."
+            "Subtask orchestration queued for controlled child materialization; no scheduler dispatch is performed."
         );
         assert!(queued_payload["subtask_id"]
             .as_str()
@@ -13819,6 +13934,211 @@ mod tests {
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn subtask_spawn_structured_input_materializes_child_goal_and_mode() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let decision = ToolIntentDecision {
+            tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+            required_action: RuntimeAction::SpawnSubtask,
+            allowed: true,
+            reason: "Mode orchestrator allows SpawnSubtask.".into(),
+            request_reason: "Create a focused child task.".into(),
+            input: json!({
+                "goal": "   Review the parser boundary\nfor structured subtasks.   ",
+                "mode_id": "implementer"
+            }),
+        };
+
+        append_subtask_orchestration_queued(&store, &parent, &decision).expect("queue subtask");
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        let queued_payload = parent_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .expect("queued payload");
+        assert_eq!(
+            queued_payload["requested_goal_preview"],
+            "Review the parser boundary for structured subtasks."
+        );
+        assert_eq!(queued_payload["requested_mode_id"], "implementer");
+        assert_eq!(queued_payload["input_summary"]["field_count"], 2);
+        assert!(queued_payload.get("input").is_none());
+        let source_candidate_id = queued_payload["subtask_id"]
+            .as_str()
+            .expect("source candidate id")
+            .to_string();
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_structured",
+                    "handoff_envelope_fingerprint": "sha256:structured-subtask",
+                    "candidate_ids": [source_candidate_id],
+                })),
+            )
+            .expect("append handoff envelope");
+
+        let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize child")
+            .expect("child");
+        assert_eq!(
+            child.goal,
+            "Review the parser boundary for structured subtasks."
+        );
+        assert_eq!(child.mode_id.as_deref(), Some("implementer"));
+        assert_eq!(child.status, TaskStatus::Queued);
+        let source_intent_summary = child
+            .source_intent_summary
+            .as_ref()
+            .expect("source intent summary");
+        assert_eq!(
+            source_intent_summary.requested_goal_preview.as_deref(),
+            Some("Review the parser boundary for structured subtasks.")
+        );
+        assert_eq!(
+            source_intent_summary.requested_mode_id.as_deref(),
+            Some("implementer")
+        );
+        assert_eq!(source_intent_summary.input_summary.field_count, 2);
+        assert_eq!(
+            source_intent_summary.request_reason,
+            "Create a focused child task."
+        );
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        let child_started_payload = child_events[0].payload.as_ref().expect("child payload");
+        assert_eq!(
+            child_started_payload["source_intent_summary"]["requested_goal_preview"],
+            "Review the parser boundary for structured subtasks."
+        );
+        assert_eq!(
+            child_started_payload["source_intent_summary"]["requested_mode_id"],
+            "implementer"
+        );
+        assert!(child_started_payload["source_intent_summary"]
+            .get("input")
+            .is_none());
+    }
+
+    #[test]
+    fn subtask_spawn_unknown_mode_id_is_denied_before_approval_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create a focused child task.\",\"input\":{\"goal\":\"Review something bounded.\",\"mode_id\":\"missing-mode\"}}]}\n```";
+
+        append_tool_intent_events(&store, &parent, &policy, assistant_content)
+            .expect("append tool intent events");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("handle approved workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentApproved)
+                .count(),
+            0
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+                .count(),
+            1
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+        let denial_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(denial_payload["allowed"], false);
+        assert_eq!(denial_payload["tool_id"], SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(denial_payload["requested_mode_id"], "missing-mode");
+        assert_eq!(
+            denial_payload["reason"],
+            "subtask.spawn input.mode_id is unknown."
+        );
+        assert!(denial_payload.get("input").is_none());
+    }
+
+    #[test]
+    fn subtask_spawn_unknown_mode_id_is_denied_before_queueing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let decision = ToolIntentDecision {
+            tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+            required_action: RuntimeAction::SpawnSubtask,
+            allowed: true,
+            reason: "Mode orchestrator allows SpawnSubtask.".into(),
+            request_reason: "Create a focused child task.".into(),
+            input: json!({
+                "goal": "Review something bounded.",
+                "mode_id": "missing-mode"
+            }),
+        };
+
+        append_subtask_orchestration_queued(&store, &parent, &decision).expect("deny invalid mode");
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+        let denial_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(denial_payload["tool_id"], SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(denial_payload["requested_mode_id"], "missing-mode");
+        assert_eq!(
+            denial_payload["reason"],
+            "subtask.spawn input.mode_id is unknown."
+        );
+        assert_eq!(denial_payload["input_summary"]["field_count"], 2);
+        assert!(denial_payload.get("input").is_none());
     }
 
     fn start_parent_with_queued_child() -> (String, String, TaskRecord, usize) {

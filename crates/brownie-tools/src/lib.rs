@@ -16,6 +16,8 @@ pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
 pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
+pub const MAX_SUBTASK_SPAWN_GOAL_CHARS: usize = 1_000;
+pub const MAX_SUBTASK_SPAWN_MODE_ID_CHARS: usize = 128;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSideEffectLevel {
@@ -68,7 +70,7 @@ impl BuiltinToolRegistry {
             tool("workspace.read", "Workspace Read", "Dry-run definition for workspace read requests.", RuntimeAction::ReadWorkspace),
             tool("workspace.write", "Workspace Write", "Dry-run definition for workspace write requests; no writes are executed in Phase 1.6.", RuntimeAction::WriteWorkspace),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
-            tool(SUBTASK_SPAWN_TOOL_ID, "Subtask Spawn", "Dry-run definition for subtask spawn requests; no subtasks are spawned in Phase 1.6.", RuntimeAction::SpawnSubtask),
+            subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
             tool("service.control", "Service Control", "Dry-run definition for service control requests.", RuntimeAction::ControlService),
             tool("destructive.operation", "Destructive Operation", "Dry-run definition for destructive operation requests.", RuntimeAction::DestructiveOperation),
@@ -234,6 +236,29 @@ fn tool(
         description: description.to_string(),
         required_action,
         input_schema: ToolInputSchema { fields: Vec::new() },
+    }
+}
+
+fn subtask_spawn_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+        display_name: "Subtask Spawn".to_string(),
+        description: "Request a bounded child-task materialization intent; parent execution only records/materializes controlled child state.".to_string(),
+        required_action: RuntimeAction::SpawnSubtask,
+        input_schema: ToolInputSchema {
+            fields: vec![
+                ToolInputField {
+                    name: "goal".to_string(),
+                    required: false,
+                    description: "Optional bounded child task goal. Must be a non-empty string when provided.".to_string(),
+                },
+                ToolInputField {
+                    name: "mode_id".to_string(),
+                    required: false,
+                    description: "Optional existing mode id for the child task. Must resolve before materialization.".to_string(),
+                },
+            ],
+        },
     }
 }
 
@@ -404,6 +429,47 @@ pub fn preflight_workspace_write_path(relative_path: &str) -> Result<(), &'stati
                 return Err("workspace.write input.path must be workspace-relative.")
             }
             _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub fn preflight_subtask_spawn_input(input: &Value) -> Result<(), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("subtask.spawn input must be an object.");
+    };
+    for key in object.keys() {
+        if key != "goal" && key != "mode_id" {
+            return Err("subtask.spawn input contains unsupported field.");
+        }
+    }
+    if let Some(goal) = object.get("goal") {
+        let Some(goal) = goal.as_str() else {
+            return Err("subtask.spawn input.goal must be a string.");
+        };
+        if goal.split_whitespace().next().is_none() {
+            return Err("subtask.spawn input.goal must not be empty.");
+        }
+        if goal.chars().count() > MAX_SUBTASK_SPAWN_GOAL_CHARS {
+            return Err("subtask.spawn input.goal exceeds parser length limit.");
+        }
+    }
+    if let Some(mode_id) = object.get("mode_id") {
+        let Some(mode_id) = mode_id.as_str() else {
+            return Err("subtask.spawn input.mode_id must be a string.");
+        };
+        let mode_id = mode_id.trim();
+        if mode_id.is_empty() {
+            return Err("subtask.spawn input.mode_id must not be empty.");
+        }
+        if mode_id.chars().count() > MAX_SUBTASK_SPAWN_MODE_ID_CHARS {
+            return Err("subtask.spawn input.mode_id exceeds parser length limit.");
+        }
+        if !mode_id
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        {
+            return Err("subtask.spawn input.mode_id contains unsupported characters.");
         }
     }
     Ok(())
@@ -631,6 +697,12 @@ impl ToolIntentParser {
                     &input,
                     config.max_workspace_write_content_chars,
                 ) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
+            if tool_id_value == SUBTASK_SPAWN_TOOL_ID {
+                if let Err(reason) = preflight_subtask_spawn_input(&input) {
                     rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
                     continue;
                 }
@@ -1059,6 +1131,35 @@ mod tests {
         let input =
             serde_json::json!({"path":"README.md","operation":"replace_file","content":content});
         assert!(preflight_workspace_write_input_with_limit(&input, 100).is_err());
+    }
+
+    #[test]
+    fn parser_accepts_bounded_subtask_spawn_input() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Coordinate focused work.\",\"input\":{\"goal\":\"Check the parser boundary.\",\"mode_id\":\"implementer\"}},{\"tool_id\":\"subtask.spawn\",\"reason\":\"Use default child goal.\"}]}\n```");
+        assert_eq!(parsed.requests.len(), 2);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(
+            parsed.requests[0].input["goal"],
+            "Check the parser boundary."
+        );
+        assert_eq!(parsed.requests[0].input["mode_id"], "implementer");
+        assert_eq!(parsed.requests[1].input, serde_json::json!({}));
+    }
+
+    #[test]
+    fn parser_rejects_invalid_subtask_spawn_inputs() {
+        let oversized_goal = "x".repeat(MAX_SUBTASK_SPAWN_GOAL_CHARS + 1);
+        for (input, reason) in [
+            (serde_json::json!({"raw":"no"}), "unknown field"),
+            (serde_json::json!({"goal":""}), "empty goal"),
+            (serde_json::json!({"goal":123}), "non-string goal"),
+            (serde_json::json!({"goal":oversized_goal}), "oversized goal"),
+            (serde_json::json!({"mode_id":""}), "empty mode"),
+            (serde_json::json!({"mode_id":123}), "non-string mode"),
+            (serde_json::json!({"mode_id":"../mode"}), "unsafe mode"),
+        ] {
+            assert!(preflight_subtask_spawn_input(&input).is_err(), "{reason}");
+        }
     }
 
     #[test]

@@ -1,0 +1,93 @@
+{
+  "phase": "M5.15",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "structured_subtask_spawn_child_materialization",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_structured_child_task_materialization",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns approved structured subtask.spawn input into concrete child TaskRecord goal and mode state instead of adding another parent-run blocked wrapper."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Lets explicitly run child tasks start with caller-requested bounded goals and existing mode policies."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Allows headless callers to request inspectable child task intent without persisting raw tool input bodies."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "bounded_input_schema",
+        "prompt": "Does subtask.spawn define and enforce a bounded structured input schema?"
+      },
+      {
+        "id": "requested_goal_materialized",
+        "prompt": "Does a valid requested child goal materialize onto the child TaskRecord?"
+      },
+      {
+        "id": "requested_mode_materialized",
+        "prompt": "Does a valid requested mode_id materialize onto the child TaskRecord?"
+      },
+      {
+        "id": "invalid_mode_rejected",
+        "prompt": "Are unsafe or unresolved requested modes rejected before child materialization?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler auto-dispatch, external workers, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "bounded_input_schema": "Yes. subtask.spawn accepts only optional string goal and mode_id fields, rejects unknown fields, rejects empty/non-string/oversized values, and preserves no-input behavior.",
+      "requested_goal_materialized": "Yes. A valid requested goal is normalized into requested_goal_preview and becomes the child TaskRecord goal.",
+      "requested_mode_materialized": "Yes. A valid requested_mode_id is resolved against the workspace mode policy set and becomes the child TaskRecord mode_id.",
+      "invalid_mode_rejected": "Yes. Unsafe mode_id syntax is rejected by the parser, and unknown mode_id values append ToolIntentDenied before ToolIntentApproved, queueing, or child materialization.",
+      "safety_boundary": "Yes. The phase adds no scheduler auto-dispatch, external worker, patch apply, direct workspace mutation path, service control, network bypass, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "subtask.spawn has a bounded subtask.spawn input schema with optional goal and mode_id fields.",
+    "Child source_intent_summary exposes requested_goal_preview without raw input objects.",
+    "Child source_intent_summary exposes requested_mode_id without raw input objects.",
+    "A valid requested_goal_preview becomes the child TaskRecord goal.",
+    "A valid requested_mode_id becomes the child TaskRecord mode_id.",
+    "An unknown mode_id is denied before SubtaskOrchestrationQueued and child materialization.",
+    "Parent task.run does not auto-run child tasks.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_tools_tokens": [
+      "preflight_subtask_spawn_input",
+      "MAX_SUBTASK_SPAWN_GOAL_CHARS",
+      "MAX_SUBTASK_SPAWN_MODE_ID_CHARS",
+      "parser_accepts_bounded_subtask_spawn_input",
+      "parser_rejects_invalid_subtask_spawn_inputs"
+    ],
+    "rust_store_tokens": [
+      "requested_goal_preview",
+      "requested_mode_id"
+    ],
+    "rust_protocol_tokens": [
+      "pub requested_goal_preview: Option<String>",
+      "pub requested_mode_id: Option<String>"
+    ],
+    "rust_runtime_tokens": [
+      "normalized_subtask_spawn_goal_preview",
+      "normalized_subtask_spawn_mode_id",
+      "subtask_spawn_input_runtime_rejection_reason",
+      "append_subtask_spawn_input_denied",
+      "subtask_spawn_structured_input_materializes_child_goal_and_mode",
+      "subtask_spawn_unknown_mode_id_is_denied_before_approval_event",
+      "subtask_spawn_unknown_mode_id_is_denied_before_queueing"
+    ],
+    "vsix_protocol_tokens": [
+      "requested_goal_preview?: string | null",
+      "requested_mode_id?: string | null"
+    ]
+  }
+}

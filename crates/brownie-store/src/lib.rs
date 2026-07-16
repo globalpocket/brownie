@@ -531,9 +531,11 @@ mod tests {
                     tool_id: "subtask.spawn".into(),
                     required_action: brownie_protocol::RuntimeActionName::SpawnSubtask,
                     request_reason: "Coordinate child work.".into(),
+                    requested_goal_preview: Some("Review focused parser boundary work.".into()),
+                    requested_mode_id: Some("implementer".into()),
                     input_summary: brownie_protocol::ToolIntentInputSummary {
                         has_path: false,
-                        field_count: 0,
+                        field_count: 2,
                     },
                 }),
             })
@@ -567,7 +569,15 @@ mod tests {
             source_intent_summary.request_reason,
             "Coordinate child work."
         );
-        assert_eq!(source_intent_summary.input_summary.field_count, 0);
+        assert_eq!(
+            source_intent_summary.requested_goal_preview.as_deref(),
+            Some("Review focused parser boundary work.")
+        );
+        assert_eq!(
+            source_intent_summary.requested_mode_id.as_deref(),
+            Some("implementer")
+        );
+        assert_eq!(source_intent_summary.input_summary.field_count, 2);
         assert_eq!(
             store
                 .find_child_task_by_handoff_fingerprint(&parent.run_id, "sha256:child")
@@ -598,6 +608,14 @@ mod tests {
         assert_eq!(
             payload["source_intent_summary"]["request_reason"],
             "Coordinate child work."
+        );
+        assert_eq!(
+            payload["source_intent_summary"]["requested_goal_preview"],
+            "Review focused parser boundary work."
+        );
+        assert_eq!(
+            payload["source_intent_summary"]["requested_mode_id"],
+            "implementer"
         );
         assert!(payload["source_intent_summary"].get("input").is_none());
         assert_eq!(payload["execution_enabled"], false);

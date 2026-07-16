@@ -174,6 +174,8 @@ export interface ChildTaskSourceIntentSummary {
   tool_id: string;
   required_action: RuntimeActionName;
   request_reason: string;
+  requested_goal_preview?: string | null;
+  requested_mode_id?: string | null;
   input_summary: ToolIntentInputSummary;
 }
 
@@ -2484,6 +2486,8 @@ function isChildTaskSourceIntentSummary(value: unknown): value is ChildTaskSourc
     typeof value.tool_id === 'string' &&
     isRuntimeActionName(value.required_action) &&
     typeof value.request_reason === 'string' &&
+    (value.requested_goal_preview === undefined || value.requested_goal_preview === null || typeof value.requested_goal_preview === 'string') &&
+    (value.requested_mode_id === undefined || value.requested_mode_id === null || typeof value.requested_mode_id === 'string') &&
     isToolIntentInputSummary(value.input_summary)
   );
 }
