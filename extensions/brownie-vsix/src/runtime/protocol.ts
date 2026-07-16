@@ -170,6 +170,13 @@ export interface ToolIntentRejectedSummary {
   code: string;
 }
 
+export interface ChildTaskSourceIntentSummary {
+  tool_id: string;
+  required_action: RuntimeActionName;
+  request_reason: string;
+  input_summary: ToolIntentInputSummary;
+}
+
 export interface ToolIntentParseResult {
   mode_id: string;
   parser: ToolIntentParserSummary;
@@ -219,6 +226,7 @@ export interface TaskRecord {
   source_candidate_id?: string | null;
   source_handoff_envelope_id?: string | null;
   source_handoff_envelope_fingerprint?: string | null;
+  source_intent_summary?: ChildTaskSourceIntentSummary | null;
   created_at: string;
   updated_at: string;
 }
@@ -277,6 +285,7 @@ export interface ChildTaskInspectSummary {
   source_candidate_id?: string | null;
   source_handoff_envelope_id?: string | null;
   source_handoff_envelope_fingerprint?: string | null;
+  source_intent_summary?: ChildTaskSourceIntentSummary | null;
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
@@ -2468,6 +2477,17 @@ function isToolIntentDecisionSummary(value: unknown): value is ToolIntentDecisio
   );
 }
 
+function isChildTaskSourceIntentSummary(value: unknown): value is ChildTaskSourceIntentSummary {
+  return (
+    isRecord(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'input') &&
+    typeof value.tool_id === 'string' &&
+    isRuntimeActionName(value.required_action) &&
+    typeof value.request_reason === 'string' &&
+    isToolIntentInputSummary(value.input_summary)
+  );
+}
+
 function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejectedSummary {
   return (
     isRecord(value) &&
@@ -2550,6 +2570,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.source_candidate_id === undefined || value.source_candidate_id === null || typeof value.source_candidate_id === 'string') &&
     (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
+    (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -2581,6 +2602,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     (value.source_candidate_id === undefined || value.source_candidate_id === null || typeof value.source_candidate_id === 'string') &&
     (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
+    (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&

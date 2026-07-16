@@ -16,17 +16,18 @@ use brownie_llm::{
 };
 use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
-    ChildTaskInspectSummary, DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult,
-    ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    ChildTaskInspectSummary, ChildTaskSourceIntentSummary, DiagnosticSeverity, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApproveParams, ProposalApproveResult, ProposalAuditTrailParams,
+    ProposalAuditTrailResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
+    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    ProposalReviewBundleParams, ProposalReviewBundleResult,
+    ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -9382,6 +9383,7 @@ fn child_task_inspect_summary(
         source_candidate_id: task.source_candidate_id.clone(),
         source_handoff_envelope_id: task.source_handoff_envelope_id.clone(),
         source_handoff_envelope_fingerprint: task.source_handoff_envelope_fingerprint.clone(),
+        source_intent_summary: task.source_intent_summary.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
         completion_final_state,
@@ -9449,6 +9451,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "source_candidate_id",
         "source_handoff_envelope_id",
         "source_handoff_envelope_fingerprint",
+        "source_intent_summary",
         "queue_position",
         "execution_enabled",
         "scheduler_handoff_enabled",
@@ -11526,10 +11529,32 @@ fn append_subtask_dispatch_handoff_envelope_recorded(
     )
 }
 
-fn queued_subtask_request_reason(
+fn normalize_source_intent_reason(reason: &str) -> String {
+    const SOURCE_INTENT_REASON_CHARS: usize = 1000;
+    let normalized = reason.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.is_empty() {
+        "Materialized from approved subtask intent.".to_string()
+    } else {
+        preview_with_limit(&normalized, SOURCE_INTENT_REASON_CHARS)
+    }
+}
+
+fn child_goal_from_source_intent(
+    source_candidate_id: &str,
+    source_intent_summary: Option<&ChildTaskSourceIntentSummary>,
+) -> String {
+    const CHILD_SOURCE_INTENT_GOAL_CHARS: usize = 240;
+    let reason = source_intent_summary
+        .map(|summary| summary.request_reason.as_str())
+        .unwrap_or("Materialized from approved subtask intent.");
+    let reason = preview_with_limit(reason, CHILD_SOURCE_INTENT_GOAL_CHARS);
+    format!("Subtask {source_candidate_id}: {reason}")
+}
+
+fn queued_subtask_source_intent_summary(
     events: &[LedgerEvent],
     source_candidate_id: &str,
-) -> Option<String> {
+) -> Option<ChildTaskSourceIntentSummary> {
     events
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
@@ -11538,10 +11563,36 @@ fn queued_subtask_request_reason(
             if payload.get("subtask_id").and_then(Value::as_str) != Some(source_candidate_id) {
                 return None;
             }
-            payload
+            let tool_id = payload
+                .get("tool_id")
+                .and_then(Value::as_str)
+                .unwrap_or(SUBTASK_SPAWN_TOOL_ID)
+                .to_string();
+            let required_action = payload
+                .get("required_action")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or(RuntimeActionName::SpawnSubtask);
+            let request_reason = payload
                 .get("request_reason")
                 .and_then(Value::as_str)
-                .map(ToString::to_string)
+                .map(normalize_source_intent_reason)
+                .unwrap_or_else(|| "Materialized from approved subtask intent.".to_string());
+            let input_summary = payload
+                .get("input_summary")
+                .cloned()
+                .and_then(|value| serde_json::from_value(value).ok())
+                .unwrap_or(ToolIntentInputSummary {
+                    has_path: false,
+                    field_count: 0,
+                });
+
+            Some(ChildTaskSourceIntentSummary {
+                tool_id,
+                required_action,
+                request_reason,
+                input_summary,
+            })
         })
 }
 
@@ -11599,12 +11650,8 @@ fn materialize_controlled_child_task_from_handoff_envelope(
         return Ok(None);
     };
 
-    let request_reason = queued_subtask_request_reason(&events, &source_candidate_id)
-        .unwrap_or_else(|| "Materialized from parent handoff envelope.".to_string());
-    let goal = format!(
-        "Controlled child task for {source_candidate_id} from parent {}: {request_reason}",
-        record.task_id
-    );
+    let source_intent_summary = queued_subtask_source_intent_summary(&events, &source_candidate_id);
+    let goal = child_goal_from_source_intent(&source_candidate_id, source_intent_summary.as_ref());
 
     store
         .tasks()
@@ -11616,6 +11663,7 @@ fn materialize_controlled_child_task_from_handoff_envelope(
             source_candidate_id,
             source_handoff_envelope_id,
             source_handoff_envelope_fingerprint,
+            source_intent_summary,
         })
         .map(Some)
 }
@@ -13610,6 +13658,10 @@ mod tests {
         assert_eq!(child_tasks.len(), 1);
         let child = child_tasks[0];
         assert_eq!(child.status, TaskStatus::Queued);
+        assert!(child.goal.starts_with("Subtask subtask_"));
+        assert!(child
+            .goal
+            .contains("Orchestrator mode may coordinate subtasks."));
         assert_eq!(child.parent_task_id.as_deref(), Some(task_id.as_str()));
         assert_eq!(child.parent_run_id.as_deref(), Some(run_id.as_str()));
         assert_eq!(
@@ -13624,6 +13676,21 @@ mod tests {
             child.source_handoff_envelope_fingerprint.as_deref(),
             handoff_envelope_payload["handoff_envelope_fingerprint"].as_str()
         );
+        let source_intent_summary = child
+            .source_intent_summary
+            .as_ref()
+            .expect("child source intent summary");
+        assert_eq!(source_intent_summary.tool_id, SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(
+            source_intent_summary.required_action,
+            RuntimeActionName::SpawnSubtask
+        );
+        assert_eq!(
+            source_intent_summary.request_reason,
+            "Orchestrator mode may coordinate subtasks."
+        );
+        assert_eq!(source_intent_summary.input_summary.has_path, false);
+        assert_eq!(source_intent_summary.input_summary.field_count, 0);
 
         let child_events = store
             .tasks()
@@ -13641,6 +13708,17 @@ mod tests {
         );
         assert_eq!(child_started_payload["execution_enabled"], false);
         assert_eq!(child_started_payload["scheduler_handoff_enabled"], false);
+        assert_eq!(
+            child_started_payload["source_intent_summary"]["tool_id"],
+            SUBTASK_SPAWN_TOOL_ID
+        );
+        assert_eq!(
+            child_started_payload["source_intent_summary"]["request_reason"],
+            "Orchestrator mode may coordinate subtasks."
+        );
+        assert!(child_started_payload["source_intent_summary"]
+            .get("input")
+            .is_none());
         assert!(!child_events
             .iter()
             .any(|event| event.kind == LedgerEventKind::TaskRunning));
@@ -13884,6 +13962,17 @@ mod tests {
                 .as_deref()
                 .expect("source handoff envelope fingerprint")
         );
+        assert_eq!(
+            child_summary["source_intent_summary"]["tool_id"],
+            SUBTASK_SPAWN_TOOL_ID
+        );
+        assert_eq!(
+            child_summary["source_intent_summary"]["request_reason"],
+            "Orchestrator mode may coordinate subtasks."
+        );
+        assert!(child_summary["source_intent_summary"]
+            .get("input")
+            .is_none());
         assert!(child_summary["event_count"].as_u64().expect("event count") > 1);
         assert_eq!(child_summary["has_agent_loop_completed"], true);
         assert_eq!(child_summary["completion_final_state"], "Completed");
@@ -13911,6 +14000,13 @@ mod tests {
                 .as_deref()
                 .expect("source handoff envelope fingerprint")
         );
+        assert_eq!(
+            inspected_child["source_intent_summary"]["request_reason"],
+            "Orchestrator mode may coordinate subtasks."
+        );
+        assert!(inspected_child["source_intent_summary"]
+            .get("input")
+            .is_none());
 
         let rerun = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,

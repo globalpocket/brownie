@@ -802,3 +802,11 @@ M5.13 extends parent run inspection with structured `child_tasks` summaries whil
 These summaries are derived from persisted child `TaskRecord` state and sanitized child ledger events. They do not persist or expose raw child prompts, raw provider responses, raw file contents, command strings, stdout, stderr, environment values, or serialized request bodies. Parent `task.run` still does not execute children; child execution remains limited to explicit `task.run` admission for the child task.
 
 M5.13 adds no scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, diagnostics wrapper RPCs, or blocked summary event wrappers.
+
+## M5.14 child task source intent materialization
+
+M5.14 makes the controlled child `TaskRecord` semantically useful by carrying a `source_intent_summary` derived from the approved `subtask.spawn` request that led to materialization. The summary includes `tool_id`, `required_action`, bounded `request_reason`, and bounded `input_summary`; it excludes raw `input` objects and serialized request bodies.
+
+The materialized child goal is derived from the approved request reason and stable source candidate id rather than only a generic parent/candidate wrapper phrase. `ChildTaskInspectSummary` exposes the same `source_intent_summary` through parent `run.inspect` / `task.inspect` child summaries.
+
+M5.14 preserves duplicate prevention by source handoff envelope fingerprint, preserves explicit child `task.run` admission, and adds no scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, diagnostics wrapper RPCs, or blocked summary event wrappers.

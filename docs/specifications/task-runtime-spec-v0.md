@@ -301,3 +301,9 @@ Once admitted, the child uses the existing task-run lifecycle and terminal statu
 M5.13 makes child run state visible from the parent inspection path. `RunInspectSummary` keeps `child_task_count` and `child_task_ids`, and adds `child_tasks` with structured summaries for each persisted child whose `parent_run_id` matches the inspected parent run.
 
 Each child summary is derived from child `TaskRecord` state and child ledger metadata. It reports child status, provenance, event count, completion final state, bounded completion summary preview, and sanitized final response preview when available. It does not run child tasks, mutate the parent ledger, expose raw prompts/provider responses/file content/command output, or add scheduler handoff.
+
+## M5.14 child task source intent materialization
+
+M5.14 stores a sanitized `source_intent_summary` on controlled child `TaskRecord` state when the child is materialized from an accepted handoff envelope. The summary is reconstructed from the parent run's approved `SubtaskOrchestrationQueued` evidence and includes only `tool_id`, `required_action`, bounded `request_reason`, and bounded `input_summary`.
+
+The child goal is derived from the approved source intent request reason and stable source candidate id. This keeps child task state useful for explicit child `task.run` without adding scheduler auto-dispatch, external workers, raw input persistence, patch apply, process execution expansion, network bypass, service control, direct workspace mutation, or another blocked summary event wrapper.
