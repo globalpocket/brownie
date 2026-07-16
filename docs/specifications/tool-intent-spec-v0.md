@@ -67,3 +67,9 @@ M5.3 does not execute the requested subtask. It only records dispatch-plan evide
 After dispatch-plan state exists, `task.run` may convert it into a summary-only `SubtaskDispatchContractPrepared` event. This dispatch contract record references the dispatch plan, records `dispatch_enabled = false`, includes required preconditions for future dispatch, and preserves deterministic blocked checks explaining why the contract is not executable yet.
 
 M5.4 does not execute the requested subtask. It only records dispatch-contract and eligibility-gate evidence for future runtime dispatch.
+
+## M5.5 subtask dispatch admission evaluation
+
+After dispatch-contract state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchAdmissionEvaluated` event. This admission record references the dispatch contract, records `dispatch_enabled = false`, includes blocked preconditions for future dispatch, and preserves deterministic execution-gate checks explaining why no child task can be admitted yet.
+
+M5.5 does not execute the requested subtask. It only records dispatch-admission and execution-gate evidence for future runtime dispatch.

@@ -105,3 +105,9 @@ This lets later prompt passes see that scheduler-readiness evidence was converte
 The `Subtask Orchestration` section also summarizes `SubtaskDispatchContractPrepared` ledger events using compact fields such as contract id, dispatch contract status, plan count, queued count, eligibility status, `dispatch_enabled`, and `next_action`.
 
 This lets later prompt passes see that dispatch-plan evidence was converted into a deterministic dispatch contract and eligibility gate while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.5 subtask dispatch admission prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchAdmissionEvaluated` ledger events using compact fields such as admission id, admission status, contract count, queued count, execution gate status, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that dispatch-contract evidence was evaluated into a deterministic admission decision and execution gate while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
