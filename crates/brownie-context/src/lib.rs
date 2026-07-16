@@ -516,6 +516,46 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
                         "{snapshot_id}: {readiness_status} admission_count={admission_count} queued_count={queued_count} scheduler_handoff_status={scheduler_handoff_status} dispatch_enabled={dispatch_enabled} fingerprint_input_count={fingerprint_input_count} next_action={next_action}"
                     ))
                 }
+                LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded => {
+                    let guard_id = payload
+                        .get("guard_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let guard_status = payload
+                        .get("guard_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let snapshot_count = payload
+                        .get("snapshot_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let queued_count = payload
+                        .get("queued_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let handoff_preflight_status = payload
+                        .get("handoff_preflight_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let snapshot_validity_status = payload
+                        .get("snapshot_validity_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let dispatch_enabled = payload
+                        .get("dispatch_enabled")
+                        .and_then(|value| value.as_bool())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let next_action = payload
+                        .get("next_action")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    Some(format!(
+                        "{guard_id}: {guard_status} snapshot_count={snapshot_count} queued_count={queued_count} handoff_preflight_status={handoff_preflight_status} dispatch_enabled={dispatch_enabled} snapshot_validity_status={snapshot_validity_status} next_action={next_action}"
+                    ))
+                }
                 _ => None,
             }
         })
@@ -1045,6 +1085,23 @@ mod tests {
                         "next_action": "await_dispatch_readiness_snapshot_handoff"
                     })),
                 },
+                LedgerEvent {
+                    event_id: "event_8".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded,
+                    timestamp: "2026-01-01T00:00:07Z".into(),
+                    payload: Some(serde_json::json!({
+                        "guard_id": "subtask_dispatcher_guard_run_1_1",
+                        "guard_status": "Blocked",
+                        "snapshot_count": 1,
+                        "queued_count": 1,
+                        "handoff_preflight_status": "Blocked",
+                        "dispatch_enabled": false,
+                        "snapshot_validity_status": "Current",
+                        "next_action": "await_dispatcher_guard_preconditions"
+                    })),
+                },
             ],
         };
 
@@ -1058,7 +1115,8 @@ mod tests {
                 "subtask_dispatch_plan_run_1_1: Blocked readiness_count=1 queued_count=1 dispatch_enabled=false next_action=await_runtime_subtask_dispatcher",
                 "subtask_dispatch_contract_run_1_1: Blocked plan_count=1 queued_count=1 eligibility_status=Blocked dispatch_enabled=false next_action=await_dispatch_contract_implementation",
                 "subtask_dispatch_admission_run_1_1: Blocked contract_count=1 queued_count=1 execution_gate_status=Blocked dispatch_enabled=false next_action=await_dispatch_admission_preconditions",
-                "subtask_dispatch_readiness_snapshot_run_1_1: Blocked admission_count=1 queued_count=1 scheduler_handoff_status=Blocked dispatch_enabled=false fingerprint_input_count=12 next_action=await_dispatch_readiness_snapshot_handoff"
+                "subtask_dispatch_readiness_snapshot_run_1_1: Blocked admission_count=1 queued_count=1 scheduler_handoff_status=Blocked dispatch_enabled=false fingerprint_input_count=12 next_action=await_dispatch_readiness_snapshot_handoff",
+                "subtask_dispatcher_guard_run_1_1: Blocked snapshot_count=1 queued_count=1 handoff_preflight_status=Blocked dispatch_enabled=false snapshot_validity_status=Current next_action=await_dispatcher_guard_preconditions"
             ]
         );
         let prompt = PromptBuilder::build(materialized);
@@ -1086,6 +1144,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_dispatch_readiness_snapshot_run_1_1: Blocked admission_count=1 queued_count=1 scheduler_handoff_status=Blocked dispatch_enabled=false fingerprint_input_count=12 next_action=await_dispatch_readiness_snapshot_handoff"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- subtask_dispatcher_guard_run_1_1: Blocked snapshot_count=1 queued_count=1 handoff_preflight_status=Blocked dispatch_enabled=false snapshot_validity_status=Current next_action=await_dispatcher_guard_preconditions"));
     }
 
     #[test]
