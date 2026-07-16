@@ -2294,6 +2294,7 @@ pub struct RunInspectSummary {
     pub status: Option<TaskStatus>,
     pub child_task_count: usize,
     pub child_task_ids: Vec<String>,
+    pub child_tasks: Vec<ChildTaskInspectSummary>,
     pub event_count: usize,
     pub has_tool_execution_completed: bool,
     pub has_subtask_orchestration_queued: bool,
@@ -2321,6 +2322,23 @@ pub struct RunInspectSummary {
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChildTaskInspectSummary {
+    pub task_id: String,
+    pub run_id: String,
+    pub status: TaskStatus,
+    pub parent_task_id: Option<String>,
+    pub parent_run_id: Option<String>,
+    pub source_candidate_id: Option<String>,
+    pub source_handoff_envelope_id: Option<String>,
+    pub source_handoff_envelope_fingerprint: Option<String>,
+    pub event_count: usize,
+    pub has_agent_loop_completed: bool,
+    pub completion_final_state: Option<String>,
+    pub completion_summary_preview: Option<String>,
+    pub final_response_preview: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

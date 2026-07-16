@@ -166,6 +166,21 @@ describe('protocol validation', () => {
       status: 'Completed',
       child_task_count: 1,
       child_task_ids: ['task_child_1'],
+      child_tasks: [{
+        task_id: 'task_child_1',
+        run_id: 'run_child_1',
+        status: 'Completed',
+        parent_task_id: 'task_1',
+        parent_run_id: 'run_1',
+        source_candidate_id: 'subtask_1',
+        source_handoff_envelope_id: 'handoff_1',
+        source_handoff_envelope_fingerprint: 'sha256:child',
+        event_count: 8,
+        has_agent_loop_completed: true,
+        completion_final_state: 'Completed',
+        completion_summary_preview: 'completed child',
+        final_response_preview: 'done',
+      }],
       event_count: 3,
       has_tool_execution_completed: true,
       has_subtask_orchestration_queued: true,
@@ -198,6 +213,9 @@ describe('protocol validation', () => {
     expect(isRunInspectSummary({ ...summary, has_second_pass: 'true' })).toBe(false);
     expect(isRunInspectSummary({ ...summary, child_task_count: -1 })).toBe(false);
     expect(isRunInspectSummary({ ...summary, child_task_ids: ['task_child_1', 2] })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, child_tasks: [] })).toBe(true);
+    expect(isRunInspectSummary({ ...summary, child_tasks: [{ ...summary.child_tasks[0], status: 'Nope' }] })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, child_tasks: [{ ...summary.child_tasks[0], event_count: -1 }] })).toBe(false);
     expect(isRunInspectSummary({ ...summary, event_count: -1 })).toBe(false);
     expect(isRunInspectSummary({ ...summary, subtask_handoff_count: -1 })).toBe(false);
     expect(isRunInspectSummary({ ...summary, subtask_scheduler_readiness_count: -1 })).toBe(false);
@@ -638,7 +656,7 @@ describe('RuntimeClient', () => {
   it('creates a task.inspect request', async () => {
     const result = {
       task: { ...taskRecord, status: 'Completed' },
-      run: { run_id: 'run_1', task_id: 'task_1', status: 'Completed', child_task_count: 1, child_task_ids: ['task_child_1'], event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_subtask_scheduler_readiness: true, subtask_scheduler_readiness_count: 1, has_subtask_dispatch_plan_prepared: true, subtask_dispatch_plan_count: 1, has_subtask_dispatch_contract_prepared: true, subtask_dispatch_contract_count: 1, has_subtask_dispatch_admission_evaluated: true, subtask_dispatch_admission_count: 1, has_subtask_dispatch_readiness_snapshot: true, subtask_dispatch_readiness_snapshot_count: 1, has_subtask_dispatcher_guard_verdict: true, subtask_dispatcher_guard_verdict_count: 1, has_subtask_dispatch_decision: true, subtask_dispatch_decision_count: 1, has_subtask_dispatch_candidate_manifest: true, subtask_dispatch_candidate_manifest_count: 1, has_subtask_dispatch_handoff_envelope: true, subtask_dispatch_handoff_envelope_count: 1, has_second_pass: true, final_response_preview: 'done', timeline: ['TaskStarted'] },
+      run: { run_id: 'run_1', task_id: 'task_1', status: 'Completed', child_task_count: 1, child_task_ids: ['task_child_1'], child_tasks: [{ task_id: 'task_child_1', run_id: 'run_child_1', status: 'Completed', parent_task_id: 'task_1', parent_run_id: 'run_1', source_candidate_id: 'subtask_1', source_handoff_envelope_id: 'handoff_1', source_handoff_envelope_fingerprint: 'sha256:child', event_count: 8, has_agent_loop_completed: true, completion_final_state: 'Completed', completion_summary_preview: 'completed child', final_response_preview: 'done' }], event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_subtask_scheduler_readiness: true, subtask_scheduler_readiness_count: 1, has_subtask_dispatch_plan_prepared: true, subtask_dispatch_plan_count: 1, has_subtask_dispatch_contract_prepared: true, subtask_dispatch_contract_count: 1, has_subtask_dispatch_admission_evaluated: true, subtask_dispatch_admission_count: 1, has_subtask_dispatch_readiness_snapshot: true, subtask_dispatch_readiness_snapshot_count: 1, has_subtask_dispatcher_guard_verdict: true, subtask_dispatcher_guard_verdict_count: 1, has_subtask_dispatch_decision: true, subtask_dispatch_decision_count: 1, has_subtask_dispatch_candidate_manifest: true, subtask_dispatch_candidate_manifest_count: 1, has_subtask_dispatch_handoff_envelope: true, subtask_dispatch_handoff_envelope_count: 1, has_second_pass: true, final_response_preview: 'done', timeline: ['TaskStarted'] },
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
@@ -648,7 +666,7 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a run.inspect request', async () => {
-    const run = { run_id: 'run_1', task_id: 'task_1', status: 'Completed', child_task_count: 1, child_task_ids: ['task_child_1'], event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_subtask_scheduler_readiness: true, subtask_scheduler_readiness_count: 1, has_subtask_dispatch_plan_prepared: true, subtask_dispatch_plan_count: 1, has_subtask_dispatch_contract_prepared: true, subtask_dispatch_contract_count: 1, has_subtask_dispatch_admission_evaluated: true, subtask_dispatch_admission_count: 1, has_subtask_dispatch_readiness_snapshot: true, subtask_dispatch_readiness_snapshot_count: 1, has_subtask_dispatcher_guard_verdict: true, subtask_dispatcher_guard_verdict_count: 1, has_subtask_dispatch_decision: true, subtask_dispatch_decision_count: 1, has_subtask_dispatch_candidate_manifest: true, subtask_dispatch_candidate_manifest_count: 1, has_subtask_dispatch_handoff_envelope: true, subtask_dispatch_handoff_envelope_count: 1, has_second_pass: false, final_response_preview: 'done', timeline: ['TaskStarted'] };
+    const run = { run_id: 'run_1', task_id: 'task_1', status: 'Completed', child_task_count: 1, child_task_ids: ['task_child_1'], child_tasks: [{ task_id: 'task_child_1', run_id: 'run_child_1', status: 'Completed', parent_task_id: 'task_1', parent_run_id: 'run_1', source_candidate_id: 'subtask_1', source_handoff_envelope_id: 'handoff_1', source_handoff_envelope_fingerprint: 'sha256:child', event_count: 8, has_agent_loop_completed: true, completion_final_state: 'Completed', completion_summary_preview: 'completed child', final_response_preview: 'done' }], event_count: 2, has_tool_execution_completed: true, has_subtask_orchestration_queued: true, subtask_queue_count: 1, has_subtask_handoff_prepared: true, subtask_handoff_count: 1, has_subtask_scheduler_readiness: true, subtask_scheduler_readiness_count: 1, has_subtask_dispatch_plan_prepared: true, subtask_dispatch_plan_count: 1, has_subtask_dispatch_contract_prepared: true, subtask_dispatch_contract_count: 1, has_subtask_dispatch_admission_evaluated: true, subtask_dispatch_admission_count: 1, has_subtask_dispatch_readiness_snapshot: true, subtask_dispatch_readiness_snapshot_count: 1, has_subtask_dispatcher_guard_verdict: true, subtask_dispatcher_guard_verdict_count: 1, has_subtask_dispatch_decision: true, subtask_dispatch_decision_count: 1, has_subtask_dispatch_candidate_manifest: true, subtask_dispatch_candidate_manifest_count: 1, has_subtask_dispatch_handoff_envelope: true, subtask_dispatch_handoff_envelope_count: 1, has_second_pass: false, final_response_preview: 'done', timeline: ['TaskStarted'] };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { run } });
     const client = new RuntimeClient(transport);
 

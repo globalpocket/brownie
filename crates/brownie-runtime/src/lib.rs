@@ -16,9 +16,9 @@ use brownie_llm::{
 };
 use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
-    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
-    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    ChildTaskInspectSummary, DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult,
+    ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
     ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
     ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult,
@@ -306,6 +306,7 @@ const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
 const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
+const CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -9234,14 +9235,21 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .tasks()
         .get_task_by_run_id(run_id)
         .map_err(|error| format!("invalid params: {error}"))?;
-    let child_task_ids = store
+    let child_tasks = store
         .tasks()
         .list_tasks()
         .map_err(|error| format!("invalid params: {error}"))?
         .into_iter()
         .filter(|task| task.parent_run_id.as_deref() == Some(run_id))
-        .map(|task| task.task_id)
         .collect::<Vec<_>>();
+    let child_task_ids = child_tasks
+        .iter()
+        .map(|task| task.task_id.clone())
+        .collect::<Vec<_>>();
+    let child_task_summaries = child_tasks
+        .iter()
+        .map(|task| child_task_inspect_summary(store, task))
+        .collect::<Result<Vec<_>, _>>()?;
     let has_tool_execution_completed = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted);
@@ -9301,6 +9309,7 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         status: task.as_ref().map(|task| task.status.clone()),
         child_task_count: child_task_ids.len(),
         child_task_ids,
+        child_tasks: child_task_summaries,
         event_count: events.len(),
         has_tool_execution_completed,
         has_subtask_orchestration_queued: subtask_queue_count > 0,
@@ -9328,6 +9337,56 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
+    })
+}
+
+fn child_task_inspect_summary(
+    store: &BrownieStore,
+    task: &TaskRecord,
+) -> Result<ChildTaskInspectSummary, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&task.run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    let completion_event = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::AgentLoopCompleted);
+    let (completion_final_state, completion_summary_preview) = completion_event
+        .and_then(|event| event.payload.as_ref())
+        .map(|payload| {
+            (
+                payload
+                    .get("final_state")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
+                payload
+                    .get("completion_summary")
+                    .and_then(Value::as_str)
+                    .map(|summary| {
+                        preview_with_limit(summary, CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS)
+                    }),
+            )
+        })
+        .unwrap_or((None, None));
+    let final_response_preview =
+        latest_content_preview(&events, LedgerEventKind::SecondPassLlmResponseReceived)
+            .or_else(|| latest_content_preview(&events, LedgerEventKind::LlmResponseReceived));
+
+    Ok(ChildTaskInspectSummary {
+        task_id: task.task_id.clone(),
+        run_id: task.run_id.clone(),
+        status: task.status.clone(),
+        parent_task_id: task.parent_task_id.clone(),
+        parent_run_id: task.parent_run_id.clone(),
+        source_candidate_id: task.source_candidate_id.clone(),
+        source_handoff_envelope_id: task.source_handoff_envelope_id.clone(),
+        source_handoff_envelope_fingerprint: task.source_handoff_envelope_fingerprint.clone(),
+        event_count: events.len(),
+        has_agent_loop_completed: completion_event.is_some(),
+        completion_final_state,
+        completion_summary_preview,
+        final_response_preview,
     })
 }
 
@@ -12296,6 +12355,24 @@ mod tests {
                 .len(),
             1
         );
+        let child_tasks = summary["child_tasks"].as_array().expect("child tasks");
+        assert_eq!(child_tasks.len(), 1);
+        assert_eq!(child_tasks[0]["status"], "Queued");
+        assert_eq!(child_tasks[0]["event_count"], 1);
+        assert_eq!(child_tasks[0]["has_agent_loop_completed"], false);
+        assert_eq!(child_tasks[0]["completion_final_state"], Value::Null);
+        assert_eq!(child_tasks[0]["completion_summary_preview"], Value::Null);
+        assert_eq!(child_tasks[0]["final_response_preview"], Value::Null);
+        assert_eq!(child_tasks[0]["parent_task_id"], task_id);
+        assert_eq!(child_tasks[0]["parent_run_id"], run_id);
+        assert!(child_tasks[0]["source_candidate_id"]
+            .as_str()
+            .expect("source candidate id")
+            .starts_with("subtask_run_"));
+        assert!(child_tasks[0]["source_handoff_envelope_fingerprint"]
+            .as_str()
+            .expect("source handoff envelope fingerprint")
+            .starts_with("sha256:"));
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -13783,6 +13860,41 @@ mod tests {
             .expect("child ids")
             .iter()
             .any(|value| value.as_str() == Some(child.task_id.as_str())));
+        let parent_child_summaries = parent_summary["child_tasks"]
+            .as_array()
+            .expect("child summaries");
+        assert_eq!(parent_child_summaries.len(), 1);
+        let child_summary = &parent_child_summaries[0];
+        assert_eq!(child_summary["task_id"], child.task_id);
+        assert_eq!(child_summary["run_id"], child.run_id);
+        assert_eq!(child_summary["status"], "Completed");
+        assert_eq!(child_summary["parent_task_id"], parent_task_id);
+        assert_eq!(child_summary["parent_run_id"], parent_run_id);
+        assert_eq!(
+            child_summary["source_candidate_id"],
+            child
+                .source_candidate_id
+                .as_deref()
+                .expect("source candidate id")
+        );
+        assert_eq!(
+            child_summary["source_handoff_envelope_fingerprint"],
+            child
+                .source_handoff_envelope_fingerprint
+                .as_deref()
+                .expect("source handoff envelope fingerprint")
+        );
+        assert!(child_summary["event_count"].as_u64().expect("event count") > 1);
+        assert_eq!(child_summary["has_agent_loop_completed"], true);
+        assert_eq!(child_summary["completion_final_state"], "Completed");
+        assert!(child_summary["completion_summary_preview"]
+            .as_str()
+            .expect("completion summary preview")
+            .contains(&child.task_id));
+        assert!(child_summary["final_response_preview"]
+            .as_str()
+            .expect("final response preview")
+            .contains("Fake LLM"));
 
         let child_inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,

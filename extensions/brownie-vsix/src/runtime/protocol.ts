@@ -238,6 +238,7 @@ export interface RunInspectSummary {
   status?: TaskStatus | null;
   child_task_count: number;
   child_task_ids: string[];
+  child_tasks: ChildTaskInspectSummary[];
   event_count: number;
   has_tool_execution_completed: boolean;
   has_subtask_orchestration_queued: boolean;
@@ -265,6 +266,22 @@ export interface RunInspectSummary {
   has_second_pass: boolean;
   final_response_preview?: string | null;
   timeline: string[];
+}
+
+export interface ChildTaskInspectSummary {
+  task_id: string;
+  run_id: string;
+  status: TaskStatus;
+  parent_task_id?: string | null;
+  parent_run_id?: string | null;
+  source_candidate_id?: string | null;
+  source_handoff_envelope_id?: string | null;
+  source_handoff_envelope_fingerprint?: string | null;
+  event_count: number;
+  has_agent_loop_completed: boolean;
+  completion_final_state?: string | null;
+  completion_summary_preview?: string | null;
+  final_response_preview?: string | null;
 }
 
 export interface RunEventsResult {
@@ -2553,6 +2570,25 @@ export function isRunEventsResult(value: unknown): value is RunEventsResult {
   return isRecord(value) && typeof value.run_id === 'string' && Array.isArray(value.events) && value.events.every(isLedgerEventSummary);
 }
 
+export function isChildTaskInspectSummary(value: unknown): value is ChildTaskInspectSummary {
+  return (
+    isRecord(value) &&
+    typeof value.task_id === 'string' &&
+    typeof value.run_id === 'string' &&
+    isTaskStatus(value.status) &&
+    (value.parent_task_id === undefined || value.parent_task_id === null || typeof value.parent_task_id === 'string') &&
+    (value.parent_run_id === undefined || value.parent_run_id === null || typeof value.parent_run_id === 'string') &&
+    (value.source_candidate_id === undefined || value.source_candidate_id === null || typeof value.source_candidate_id === 'string') &&
+    (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
+    (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
+    isNonNegativeInteger(value.event_count) &&
+    typeof value.has_agent_loop_completed === 'boolean' &&
+    (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&
+    (value.completion_summary_preview === undefined || value.completion_summary_preview === null || typeof value.completion_summary_preview === 'string') &&
+    (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string')
+  );
+}
+
 export function isRunInspectSummary(value: unknown): value is RunInspectSummary {
   return (
     isRecord(value) &&
@@ -2562,6 +2598,8 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     isNonNegativeInteger(value.child_task_count) &&
     Array.isArray(value.child_task_ids) &&
     value.child_task_ids.every((taskId) => typeof taskId === 'string') &&
+    Array.isArray(value.child_tasks) &&
+    value.child_tasks.every(isChildTaskInspectSummary) &&
     typeof value.event_count === 'number' &&
     Number.isInteger(value.event_count) &&
     value.event_count >= 0 &&

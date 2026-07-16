@@ -295,3 +295,9 @@ M5.11 materializes one controlled child `TaskRecord` from an accepted parent-run
 M5.12 allows an explicit `task.run` call on a controlled queued child task. The admission gate accepts `TaskStatus::Created` tasks as before, and accepts `TaskStatus::Queued` only when the child has complete parent/source provenance and the parent ledger contains matching handoff envelope evidence for the candidate and fingerprint.
 
 Once admitted, the child uses the existing task-run lifecycle and terminal status rules. Completed, failed, cancelled, and already-running tasks remain non-rerunnable. This phase does not add scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, or another blocked summary event wrapper.
+
+## M5.13 parent child run result inspection
+
+M5.13 makes child run state visible from the parent inspection path. `RunInspectSummary` keeps `child_task_count` and `child_task_ids`, and adds `child_tasks` with structured summaries for each persisted child whose `parent_run_id` matches the inspected parent run.
+
+Each child summary is derived from child `TaskRecord` state and child ledger metadata. It reports child status, provenance, event count, completion final state, bounded completion summary preview, and sanitized final response preview when available. It does not run child tasks, mutate the parent ledger, expose raw prompts/provider responses/file content/command output, or add scheduler handoff.

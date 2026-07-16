@@ -794,3 +794,11 @@ M5.12 admits a materialized child `TaskRecord` with status `Queued` through the 
 After admission, the child uses the same Rust-owned `task.run` lifecycle as a normal `Created` task: it transitions to `Running`, records the existing permission/tool/prompt/LLM ledger sequence, and finishes with the existing terminal task status. `Completed`, `Failed`, `Cancelled`, and already `Running` tasks remain non-rerunnable.
 
 Parent runs still do not auto-run children. `run.inspect` exposes the parent-to-child relation with `child_task_count` and `child_task_ids`, and `task.inspect` on the child exposes the child status plus parent/source provenance. M5.12 does not add scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, or a new blocked summary event wrapper.
+
+## M5.13 parent child run result inspection
+
+M5.13 extends parent run inspection with structured `child_tasks` summaries while preserving `child_task_count` and `child_task_ids` for compatibility. Each child summary includes the child `task_id`, child `run_id`, status, parent/source provenance, child ledger event count, whether the child agent loop completed, completion final state, a bounded completion summary preview, and the existing sanitized final response preview when available.
+
+These summaries are derived from persisted child `TaskRecord` state and sanitized child ledger events. They do not persist or expose raw child prompts, raw provider responses, raw file contents, command strings, stdout, stderr, environment values, or serialized request bodies. Parent `task.run` still does not execute children; child execution remains limited to explicit `task.run` admission for the child task.
+
+M5.13 adds no scheduler auto-dispatch, external workers, process execution expansion, network bypass, service control, patch apply, direct workspace mutation paths, diagnostics wrapper RPCs, or blocked summary event wrappers.
