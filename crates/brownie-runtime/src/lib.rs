@@ -11707,6 +11707,19 @@ fn queued_subtask_source_intent_summary(
         })
 }
 
+fn handoff_envelope_candidate_ids(envelope_payload: &Value) -> Vec<String> {
+    let mut candidate_ids = Vec::new();
+    for key in ["candidate_ids", "blocked_candidate_ids"] {
+        for candidate_id in payload_string_array(envelope_payload, key) {
+            if candidate_id.trim().is_empty() || candidate_ids.contains(&candidate_id) {
+                continue;
+            }
+            candidate_ids.push(candidate_id);
+        }
+    }
+    candidate_ids
+}
+
 fn materialize_controlled_child_task_from_handoff_envelope(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -11735,13 +11748,6 @@ fn materialize_controlled_child_task_from_handoff_envelope(
     else {
         return Ok(None);
     };
-    if let Some(existing) = store.tasks().find_child_task_by_handoff_fingerprint(
-        &record.run_id,
-        &source_handoff_envelope_fingerprint,
-    )? {
-        return Ok(Some(existing));
-    }
-
     let Some(source_handoff_envelope_id) = envelope_payload
         .get("handoff_envelope_id")
         .and_then(Value::as_str)
@@ -11749,38 +11755,48 @@ fn materialize_controlled_child_task_from_handoff_envelope(
     else {
         return Ok(None);
     };
-    let source_candidate_id = payload_string_array(envelope_payload, "candidate_ids")
-        .into_iter()
-        .next()
-        .or_else(|| {
-            payload_string_array(envelope_payload, "blocked_candidate_ids")
-                .into_iter()
-                .next()
-        });
-    let Some(source_candidate_id) = source_candidate_id else {
+
+    let candidate_ids = handoff_envelope_candidate_ids(envelope_payload);
+    if candidate_ids.is_empty() {
         return Ok(None);
-    };
+    }
 
-    let source_intent_summary = queued_subtask_source_intent_summary(&events, &source_candidate_id);
-    let goal = child_goal_from_source_intent(&source_candidate_id, source_intent_summary.as_ref());
-    let mode_id = source_intent_summary
-        .as_ref()
-        .and_then(|summary| summary.requested_mode_id.clone())
-        .or_else(|| record.mode_id.clone());
+    let mut first_child = None;
+    for source_candidate_id in candidate_ids {
+        let child = if let Some(existing) = store
+            .tasks()
+            .find_child_task_by_candidate_and_handoff_fingerprint(
+                &record.run_id,
+                &source_candidate_id,
+                &source_handoff_envelope_fingerprint,
+            )? {
+            existing
+        } else {
+            let source_intent_summary =
+                queued_subtask_source_intent_summary(&events, &source_candidate_id);
+            let goal =
+                child_goal_from_source_intent(&source_candidate_id, source_intent_summary.as_ref());
+            let mode_id = source_intent_summary
+                .as_ref()
+                .and_then(|summary| summary.requested_mode_id.clone())
+                .or_else(|| record.mode_id.clone());
 
-    store
-        .tasks()
-        .start_child_task(ChildTaskStartParams {
-            goal,
-            mode_id,
-            parent_task_id: record.task_id.clone(),
-            parent_run_id: record.run_id.clone(),
-            source_candidate_id,
-            source_handoff_envelope_id,
-            source_handoff_envelope_fingerprint,
-            source_intent_summary,
-        })
-        .map(Some)
+            store.tasks().start_child_task(ChildTaskStartParams {
+                goal,
+                mode_id,
+                parent_task_id: record.task_id.clone(),
+                parent_run_id: record.run_id.clone(),
+                source_candidate_id,
+                source_handoff_envelope_id: source_handoff_envelope_id.clone(),
+                source_handoff_envelope_fingerprint: source_handoff_envelope_fingerprint.clone(),
+                source_intent_summary,
+            })?
+        };
+        if first_child.is_none() {
+            first_child = Some(child);
+        }
+    }
+    Ok(first_child)
 }
 
 fn append_workspace_patch_proposal(
@@ -14037,6 +14053,239 @@ mod tests {
         );
         assert!(child_started_payload["source_intent_summary"]
             .get("input")
+            .is_none());
+    }
+
+    #[test]
+    fn accepted_handoff_envelope_materializes_one_child_per_distinct_candidate() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let parser_decision = ToolIntentDecision {
+            tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+            required_action: RuntimeAction::SpawnSubtask,
+            allowed: true,
+            reason: "Mode orchestrator allows SpawnSubtask.".into(),
+            request_reason: "Create parser child.".into(),
+            input: json!({
+                "goal": "Review parser boundary A.",
+                "mode_id": "implementer"
+            }),
+        };
+        let verifier_decision = ToolIntentDecision {
+            tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+            required_action: RuntimeAction::SpawnSubtask,
+            allowed: true,
+            reason: "Mode orchestrator allows SpawnSubtask.".into(),
+            request_reason: "Create verifier child.".into(),
+            input: json!({
+                "goal": "Verify child result B.",
+                "mode_id": "verifier"
+            }),
+        };
+
+        append_subtask_orchestration_queued(&store, &parent, &parser_decision)
+            .expect("queue parser subtask");
+        append_subtask_orchestration_queued(&store, &parent, &verifier_decision)
+            .expect("queue verifier subtask");
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        let candidate_ids: Vec<String> = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .filter_map(|event| {
+                event
+                    .payload
+                    .as_ref()?
+                    .get("subtask_id")?
+                    .as_str()
+                    .map(str::to_string)
+            })
+            .collect();
+        assert_eq!(candidate_ids.len(), 2);
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_multi",
+                    "handoff_envelope_fingerprint": "sha256:multi-subtask",
+                    "candidate_ids": [
+                        candidate_ids[0].clone(),
+                        candidate_ids[1].clone(),
+                        candidate_ids[0].clone()
+                    ],
+                    "blocked_candidate_ids": [candidate_ids[1].clone()],
+                })),
+            )
+            .expect("append handoff envelope");
+
+        let first_child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize children")
+            .expect("first child");
+        assert_eq!(
+            first_child.source_candidate_id.as_deref(),
+            Some(candidate_ids[0].as_str())
+        );
+
+        let child_tasks: Vec<TaskRecord> = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .collect();
+        assert_eq!(child_tasks.len(), 2);
+        let children_by_candidate: std::collections::BTreeMap<String, TaskRecord> = child_tasks
+            .into_iter()
+            .map(|child| {
+                (
+                    child
+                        .source_candidate_id
+                        .clone()
+                        .expect("source candidate id"),
+                    child,
+                )
+            })
+            .collect();
+
+        for (candidate_id, expected_goal, expected_mode_id, expected_reason) in [
+            (
+                candidate_ids[0].as_str(),
+                "Review parser boundary A.",
+                "implementer",
+                "Create parser child.",
+            ),
+            (
+                candidate_ids[1].as_str(),
+                "Verify child result B.",
+                "verifier",
+                "Create verifier child.",
+            ),
+        ] {
+            let child = children_by_candidate
+                .get(candidate_id)
+                .expect("candidate child");
+            assert_eq!(child.status, TaskStatus::Queued);
+            assert_eq!(child.goal, expected_goal);
+            assert_eq!(child.mode_id.as_deref(), Some(expected_mode_id));
+            assert_eq!(
+                child.parent_task_id.as_deref(),
+                Some(parent.task_id.as_str())
+            );
+            assert_eq!(child.parent_run_id.as_deref(), Some(parent.run_id.as_str()));
+            assert_eq!(
+                child.source_handoff_envelope_id.as_deref(),
+                Some("handoff_envelope_multi")
+            );
+            assert_eq!(
+                child.source_handoff_envelope_fingerprint.as_deref(),
+                Some("sha256:multi-subtask")
+            );
+            assert!(validate_controlled_queued_child_task_provenance(child, &store).is_ok());
+
+            let source_intent_summary = child
+                .source_intent_summary
+                .as_ref()
+                .expect("source intent summary");
+            assert_eq!(source_intent_summary.tool_id, SUBTASK_SPAWN_TOOL_ID);
+            assert_eq!(
+                source_intent_summary.required_action,
+                RuntimeActionName::SpawnSubtask
+            );
+            assert_eq!(source_intent_summary.request_reason, expected_reason);
+            assert_eq!(
+                source_intent_summary.requested_goal_preview.as_deref(),
+                Some(expected_goal)
+            );
+            assert_eq!(
+                source_intent_summary.requested_mode_id.as_deref(),
+                Some(expected_mode_id)
+            );
+            assert_eq!(source_intent_summary.input_summary.field_count, 2);
+
+            let child_events = store
+                .tasks()
+                .read_ledger_events(&child.run_id)
+                .expect("child ledger");
+            assert_eq!(child_events.len(), 1);
+            assert_eq!(child_events[0].kind, LedgerEventKind::TaskStarted);
+            let child_started_payload = child_events[0].payload.as_ref().expect("child payload");
+            assert_eq!(child_started_payload["status"], "Queued");
+            assert_eq!(child_started_payload["source_candidate_id"], candidate_id);
+            assert_eq!(
+                child_started_payload["source_intent_summary"]["request_reason"],
+                expected_reason
+            );
+            assert_eq!(
+                child_started_payload["source_intent_summary"]["requested_goal_preview"],
+                expected_goal
+            );
+            assert_eq!(
+                child_started_payload["source_intent_summary"]["requested_mode_id"],
+                expected_mode_id
+            );
+            assert!(child_started_payload["source_intent_summary"]
+                .get("input")
+                .is_none());
+
+            assert_eq!(
+                store
+                    .tasks()
+                    .find_child_task_by_candidate_and_handoff_fingerprint(
+                        &parent.run_id,
+                        candidate_id,
+                        "sha256:multi-subtask"
+                    )
+                    .expect("find candidate child")
+                    .as_ref()
+                    .map(|record| record.task_id.as_str()),
+                Some(child.task_id.as_str())
+            );
+        }
+
+        let parent_state = store
+            .tasks()
+            .get_task(&parent.task_id)
+            .expect("get parent")
+            .expect("parent");
+        let duplicate =
+            materialize_controlled_child_task_from_handoff_envelope(&store, &parent_state)
+                .expect("idempotent materialization")
+                .expect("existing child");
+        assert_eq!(
+            duplicate.source_candidate_id.as_deref(),
+            Some(candidate_ids[0].as_str())
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after idempotency")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+                .count(),
+            2
+        );
+        assert!(store
+            .tasks()
+            .find_child_task_by_candidate_and_handoff_fingerprint(
+                &parent.run_id,
+                "subtask_missing",
+                "sha256:multi-subtask"
+            )
+            .expect("missing candidate child")
             .is_none());
     }
 

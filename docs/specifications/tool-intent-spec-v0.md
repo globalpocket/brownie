@@ -60,6 +60,12 @@ The runtime resolves a requested `mode_id` against the built-in plus local Mode 
 
 When a later accepted handoff envelope materializes a child, a valid `requested_goal_preview` becomes the child goal and a valid `requested_mode_id` becomes the child `mode_id`. M5.15 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
 
+## M5.16 multi-candidate child materialization
+
+When an accepted handoff envelope covers multiple distinct queued candidates, `task.run` may materialize one controlled child `TaskRecord` per candidate. The duplicate guard is candidate-aware: an existing child blocks only the same `parent_run_id`, `source_candidate_id`, and `source_handoff_envelope_fingerprint` tuple, not other candidates in the same envelope.
+
+Each child carries its own sanitized source intent summary and requested goal/mode fields when present. M5.16 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, workspace mutation, or raw input persistence.
+
 M5.1 does not execute the requested subtask. It only prepares deterministic parent-run handoff state for future runtime scheduling.
 
 ## M5.2 subtask scheduler readiness

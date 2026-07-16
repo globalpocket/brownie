@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.15';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.15.json';
+const phase = 'M5.16';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.16.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'structured_subtask_spawn_child_materialization',
-    `${phase} must declare the structured subtask spawn child materialization transition.`
+    manifest.concrete_capability_transition === 'multi_candidate_child_task_materialization',
+    `${phase} must declare the multi-candidate child task materialization transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_structured_child_task_materialization',
-    `${phase} must forbid adding another blocked summary wrapper without structured child task materialization.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_multi_child_materialization',
+    `${phase} must forbid adding another blocked summary wrapper without multi-child materialization.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,10 +75,10 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'bounded subtask.spawn input schema',
-    'requested_goal_preview',
-    'requested_mode_id',
-    'unknown mode_id',
+    'multiple controlled child TaskRecords',
+    'source_candidate_id',
+    'parent_run_id + source_candidate_id + source_handoff_envelope_fingerprint',
+    'per-candidate source_intent_summary',
     'raw input objects',
     'Parent task.run does not auto-run child tasks',
     'No scheduler handoff'

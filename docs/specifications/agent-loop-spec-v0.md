@@ -179,3 +179,9 @@ This remains handoff envelope recording only. No child task is launched, no sche
 M5.15 gives `subtask.spawn` a bounded structured input surface. Approved requests may include an optional child `goal` and optional child `mode_id`; invalid shape, unknown fields, unsafe `mode_id` syntax, and unresolved modes are rejected before queueing or child materialization.
 
 Valid structured input changes the runtime entity rather than adding another blocked parent-run wrapper: `requested_goal_preview` becomes the materialized child task goal, and `requested_mode_id` becomes the child mode. Parent runs still do not auto-run children, and no scheduler handoff, process execution, network access, service control, patch apply, or workspace write capability is added.
+
+## M5.16 multi-candidate child materialization
+
+M5.16 lets one accepted handoff envelope materialize one queued child task for each distinct covered candidate. The agent loop still performs no scheduler handoff and does not run those children automatically; it only creates controlled runtime entities with parent/source provenance and candidate-scoped replay protection.
+
+Each child keeps the per-candidate sanitized `source_intent_summary`, requested goal, and requested mode when present. Explicit child `task.run` remains the only execution path, and no process execution, network access, service control, patch apply, or workspace write capability is added.

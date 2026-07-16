@@ -190,6 +190,24 @@ impl TaskStore {
         Ok(None)
     }
 
+    pub fn find_child_task_by_candidate_and_handoff_fingerprint(
+        &self,
+        parent_run_id: &str,
+        source_candidate_id: &str,
+        source_handoff_envelope_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record.parent_run_id.as_deref() == Some(parent_run_id)
+                && record.source_candidate_id.as_deref() == Some(source_candidate_id)
+                && record.source_handoff_envelope_fingerprint.as_deref()
+                    == Some(source_handoff_envelope_fingerprint)
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn list_tasks(&self) -> Result<Vec<TaskRecord>> {
         let runs_dir = self.runs_dir();
         if !runs_dir.exists() {
@@ -586,6 +604,26 @@ mod tests {
                 .map(|record| record.task_id.as_str()),
             Some(child.task_id.as_str())
         );
+        assert_eq!(
+            store
+                .find_child_task_by_candidate_and_handoff_fingerprint(
+                    &parent.run_id,
+                    "subtask_1",
+                    "sha256:child"
+                )
+                .expect("find child by candidate")
+                .as_ref()
+                .map(|record| record.task_id.as_str()),
+            Some(child.task_id.as_str())
+        );
+        assert!(store
+            .find_child_task_by_candidate_and_handoff_fingerprint(
+                &parent.run_id,
+                "subtask_missing",
+                "sha256:child"
+            )
+            .expect("missing candidate child")
+            .is_none());
         assert!(store
             .find_child_task_by_handoff_fingerprint(&parent.run_id, "sha256:missing")
             .expect("missing child")
