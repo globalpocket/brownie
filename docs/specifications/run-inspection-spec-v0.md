@@ -85,7 +85,11 @@ Run inspection also reports dispatch candidate manifest evidence. `has_subtask_d
 
 ## M5.10 subtask dispatch handoff envelope inspection
 
-Run inspection also reports dispatch handoff envelope evidence. `has_subtask_dispatch_handoff_envelope` / `subtask_dispatch_handoff_envelope_count` count `SubtaskDispatchHandoffEnvelopeRecorded` events. These fields indicate that the runtime consumed candidate manifests into deterministic handoff envelope / replay guard blocker state; in M5.10 dispatch remains denied and no child task execution or scheduler handoff is implied.
+Run inspection also reports dispatch handoff envelope evidence. `has_subtask_dispatch_handoff_envelope` / `subtask_dispatch_handoff_envelope_count` count `SubtaskDispatchHandoffEnvelopeRecorded` events. These fields indicate that the runtime consumed candidate manifests into deterministic handoff envelope / replay guard state; scheduler handoff remains disabled and no child task execution is implied.
+
+## M5.11 child task relation inspection
+
+Run inspection reports controlled child materialization with `child_task_count` and `child_task_ids`. These fields are derived from persisted child `TaskRecord` state whose `parent_run_id` matches the inspected run. They expose parent-child relation evidence only; a child listed here is `Queued` and has not executed an LLM loop or scheduler handoff in M5.11.
 
 ## Phase 2.1 LLM metadata redaction
 

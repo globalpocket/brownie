@@ -178,7 +178,7 @@ use brownie_protocol::{
     WorkspacePatchReviewReportSummary, WorkspacePatchReviewSignalSummary,
     WorkspacePatchReviewVerdictSummary,
 };
-use brownie_store::{BrownieStore, LedgerEvent, LedgerEventKind};
+use brownie_store::{BrownieStore, ChildTaskStartParams, LedgerEvent, LedgerEventKind};
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
@@ -1921,6 +1921,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_handoff_envelope_recorded(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = materialize_controlled_child_task_from_handoff_envelope(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -2048,7 +2051,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         TaskStatus::Completed => LedgerEventKind::TaskCompleted,
         TaskStatus::Cancelled => LedgerEventKind::TaskCancelled,
         TaskStatus::Failed => LedgerEventKind::TaskFailed,
-        TaskStatus::Created | TaskStatus::Running => LedgerEventKind::TaskFailed,
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running => {
+            LedgerEventKind::TaskFailed
+        }
     };
 
     match store
@@ -9135,6 +9140,14 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .tasks()
         .get_task_by_run_id(run_id)
         .map_err(|error| format!("invalid params: {error}"))?;
+    let child_task_ids = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| format!("invalid params: {error}"))?
+        .into_iter()
+        .filter(|task| task.parent_run_id.as_deref() == Some(run_id))
+        .map(|task| task.task_id)
+        .collect::<Vec<_>>();
     let has_tool_execution_completed = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::ToolExecutionCompleted);
@@ -9192,6 +9205,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         run_id: run_id.to_string(),
         task_id: task.as_ref().map(|task| task.task_id.clone()),
         status: task.as_ref().map(|task| task.status.clone()),
+        child_task_count: child_task_ids.len(),
+        child_task_ids,
         event_count: events.len(),
         has_tool_execution_completed,
         has_subtask_orchestration_queued: subtask_queue_count > 0,
@@ -9278,8 +9293,12 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "subtask_id",
         "parent_task_id",
         "parent_run_id",
+        "source_candidate_id",
+        "source_handoff_envelope_id",
+        "source_handoff_envelope_fingerprint",
         "queue_position",
         "execution_enabled",
+        "scheduler_handoff_enabled",
         "snapshot_id",
         "guard_id",
         "decision_id",
@@ -9422,6 +9441,10 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "tool_id",
             "status",
             "subtask_id",
+            "parent_task_id",
+            "parent_run_id",
+            "source_candidate_id",
+            "source_handoff_envelope_id",
             "handoff_id",
             "readiness_id",
             "plan_id",
@@ -9450,6 +9473,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "handoff_ticket_count",
             "snapshot_fingerprint_count",
             "execution_enabled",
+            "scheduler_handoff_enabled",
             "dispatch_enabled",
             "next_action",
             "readiness_status",
@@ -9475,6 +9499,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "replay_guard_reason",
             "candidate_manifest_fingerprint",
             "handoff_envelope_fingerprint",
+            "source_handoff_envelope_fingerprint",
             "readiness_fingerprint",
             "fingerprint_input_count",
             "bytes_read",
@@ -11314,8 +11339,8 @@ fn append_subtask_dispatch_handoff_envelope_recorded(
             "decision_id": decision_ids[0],
             "queued_count": candidate_count,
             "source_event_count": manifest_count,
-            "status": "Blocked",
-            "handoff_envelope_status": "Blocked",
+            "status": "Accepted",
+            "handoff_envelope_status": "Accepted",
             "handoff_ticket_status": "Blocked",
             "replay_guard_status": "Blocked",
             "scheduler_handoff_status": "Blocked",
@@ -11342,10 +11367,104 @@ fn append_subtask_dispatch_handoff_envelope_recorded(
             "blocked_checks": blocked_checks,
             "execution_enabled": false,
             "dispatch_enabled": false,
-            "next_action": "await_dispatch_handoff_envelope_preconditions",
-            "reason": "Candidate manifest evidence mapped to a dispatch handoff envelope and replay guard blocker; no subtask was spawned in M5.10."
+            "next_action": "materialize_controlled_child_task",
+            "reason": "Candidate manifest evidence accepted for controlled child TaskRecord materialization; scheduler dispatch remains disabled."
         })),
     )
+}
+
+fn queued_subtask_request_reason(
+    events: &[LedgerEvent],
+    source_candidate_id: &str,
+) -> Option<String> {
+    events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+        .find_map(|event| {
+            let payload = event.payload.as_ref()?;
+            if payload.get("subtask_id").and_then(Value::as_str) != Some(source_candidate_id) {
+                return None;
+            }
+            payload
+                .get("request_reason")
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+}
+
+fn materialize_controlled_child_task_from_handoff_envelope(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<Option<brownie_protocol::TaskRecord>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let Some(envelope_payload) = events
+        .iter()
+        .find(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .and_then(|event| event.payload.as_ref())
+    else {
+        return Ok(None);
+    };
+
+    if envelope_payload
+        .get("handoff_envelope_status")
+        .and_then(Value::as_str)
+        != Some("Accepted")
+    {
+        return Ok(None);
+    }
+
+    let Some(source_handoff_envelope_fingerprint) = envelope_payload
+        .get("handoff_envelope_fingerprint")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+    else {
+        return Ok(None);
+    };
+    if let Some(existing) = store.tasks().find_child_task_by_handoff_fingerprint(
+        &record.run_id,
+        &source_handoff_envelope_fingerprint,
+    )? {
+        return Ok(Some(existing));
+    }
+
+    let Some(source_handoff_envelope_id) = envelope_payload
+        .get("handoff_envelope_id")
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+    else {
+        return Ok(None);
+    };
+    let source_candidate_id = payload_string_array(envelope_payload, "candidate_ids")
+        .into_iter()
+        .next()
+        .or_else(|| {
+            payload_string_array(envelope_payload, "blocked_candidate_ids")
+                .into_iter()
+                .next()
+        });
+    let Some(source_candidate_id) = source_candidate_id else {
+        return Ok(None);
+    };
+
+    let request_reason = queued_subtask_request_reason(&events, &source_candidate_id)
+        .unwrap_or_else(|| "Materialized from parent handoff envelope.".to_string());
+    let goal = format!(
+        "Controlled child task for {source_candidate_id} from parent {}: {request_reason}",
+        record.task_id
+    );
+
+    store
+        .tasks()
+        .start_child_task(ChildTaskStartParams {
+            goal,
+            mode_id: record.mode_id.clone(),
+            parent_task_id: record.task_id.clone(),
+            parent_run_id: record.run_id.clone(),
+            source_candidate_id,
+            source_handoff_envelope_id,
+            source_handoff_envelope_fingerprint,
+        })
+        .map(Some)
 }
 
 fn append_workspace_patch_proposal(
@@ -12075,6 +12194,14 @@ mod tests {
         assert_eq!(summary["subtask_dispatch_candidate_manifest_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_handoff_envelope"], true);
         assert_eq!(summary["subtask_dispatch_handoff_envelope_count"], 1);
+        assert_eq!(summary["child_task_count"], 1);
+        assert_eq!(
+            summary["child_task_ids"]
+                .as_array()
+                .expect("child task ids")
+                .len(),
+            1
+        );
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -13199,10 +13326,10 @@ mod tests {
             .payload
             .as_ref()
             .expect("subtask dispatch handoff envelope payload");
-        assert_eq!(handoff_envelope_payload["status"], "Blocked");
+        assert_eq!(handoff_envelope_payload["status"], "Accepted");
         assert_eq!(
             handoff_envelope_payload["handoff_envelope_status"],
-            "Blocked"
+            "Accepted"
         );
         assert_eq!(handoff_envelope_payload["handoff_ticket_status"], "Blocked");
         assert_eq!(handoff_envelope_payload["replay_guard_status"], "Blocked");
@@ -13251,11 +13378,11 @@ mod tests {
         assert_eq!(handoff_envelope_payload["dispatch_enabled"], false);
         assert_eq!(
             handoff_envelope_payload["next_action"],
-            "await_dispatch_handoff_envelope_preconditions"
+            "materialize_controlled_child_task"
         );
         assert_eq!(
             handoff_envelope_payload["reason"],
-            "Candidate manifest evidence mapped to a dispatch handoff envelope and replay guard blocker; no subtask was spawned in M5.10."
+            "Candidate manifest evidence accepted for controlled child TaskRecord materialization; scheduler dispatch remains disabled."
         );
         assert_eq!(
             handoff_envelope_payload["manifest_id"],
@@ -13301,6 +13428,94 @@ mod tests {
             .iter()
             .any(|check| check.as_str() == Some("candidate_replay_guard_blocked")));
         assert!(handoff_envelope_payload.get("input").is_none());
+
+        let store = BrownieStore::new(temp.path());
+        let all_tasks = store.tasks().list_tasks().expect("list tasks");
+        assert_eq!(all_tasks.len(), 2);
+        let child_tasks: Vec<&TaskRecord> = all_tasks
+            .iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(&run_id))
+            .collect();
+        assert_eq!(child_tasks.len(), 1);
+        let child = child_tasks[0];
+        assert_eq!(child.status, TaskStatus::Queued);
+        assert_eq!(child.parent_task_id.as_deref(), Some(task_id.as_str()));
+        assert_eq!(child.parent_run_id.as_deref(), Some(run_id.as_str()));
+        assert_eq!(
+            child.source_candidate_id.as_deref(),
+            queued_payload["subtask_id"].as_str()
+        );
+        assert_eq!(
+            child.source_handoff_envelope_id.as_deref(),
+            handoff_envelope_payload["handoff_envelope_id"].as_str()
+        );
+        assert_eq!(
+            child.source_handoff_envelope_fingerprint.as_deref(),
+            handoff_envelope_payload["handoff_envelope_fingerprint"].as_str()
+        );
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child ledger");
+        assert_eq!(child_events.len(), 1);
+        assert_eq!(child_events[0].kind, LedgerEventKind::TaskStarted);
+        let child_started_payload = child_events[0].payload.as_ref().expect("child payload");
+        assert_eq!(child_started_payload["status"], "Queued");
+        assert_eq!(child_started_payload["parent_task_id"], task_id);
+        assert_eq!(child_started_payload["parent_run_id"], run_id);
+        assert_eq!(
+            child_started_payload["source_candidate_id"],
+            queued_payload["subtask_id"]
+        );
+        assert_eq!(child_started_payload["execution_enabled"], false);
+        assert_eq!(child_started_payload["scheduler_handoff_enabled"], false);
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
+
+        let source_handoff_envelope_fingerprint = handoff_envelope_payload
+            .get("handoff_envelope_fingerprint")
+            .and_then(Value::as_str)
+            .expect("handoff envelope fingerprint");
+        assert_eq!(
+            store
+                .tasks()
+                .find_child_task_by_handoff_fingerprint(
+                    &run_id,
+                    source_handoff_envelope_fingerprint
+                )
+                .expect("find child")
+                .as_ref()
+                .map(|record| record.task_id.as_str()),
+            Some(child.task_id.as_str())
+        );
+        let parent_state = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("get parent")
+            .expect("parent state");
+        let duplicate =
+            materialize_controlled_child_task_from_handoff_envelope(&store, &parent_state)
+                .expect("idempotent materialization");
+        assert_eq!(
+            duplicate.as_ref().map(|record| record.task_id.as_str()),
+            Some(child.task_id.as_str())
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after idempotency check")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(&run_id))
+                .count(),
+            1
+        );
+
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())

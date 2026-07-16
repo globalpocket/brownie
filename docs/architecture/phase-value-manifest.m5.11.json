@@ -1,0 +1,73 @@
+{
+  "phase": "M5.11",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "minimal_controlled_child_task_materialization",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_child_task_materialization",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns accepted parent-run handoff envelope evidence into a durable child TaskRecord while keeping child execution disabled."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Preserves Rust-owned task/run state boundaries so later scheduler work can attach child execution to existing runtime entities."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "runtime_entity_created",
+        "prompt": "Does this phase create a runtime entity instead of another blocked summary wrapper?"
+      },
+      {
+        "id": "parent_child_provenance",
+        "prompt": "Does the child record preserve parent and source envelope provenance?"
+      },
+      {
+        "id": "idempotency",
+        "prompt": "Can the same envelope fingerprint be processed without duplicate child tasks?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid child LLM execution and external side effects?"
+      }
+    ],
+    "answers": {
+      "runtime_entity_created": "Yes. An accepted handoff envelope materializes one child TaskRecord with TaskStatus::Queued.",
+      "parent_child_provenance": "Yes. The child stores parent_task_id, parent_run_id, source_candidate_id, source_handoff_envelope_id, and source_handoff_envelope_fingerprint.",
+      "idempotency": "Yes. find_child_task_by_handoff_fingerprint prevents duplicate child TaskRecord creation for the same parent run and envelope fingerprint.",
+      "safety_boundary": "Yes. The child is queued only; process execution, network, service control, workspace mutation, patch apply, scheduler handoff, and child LLM execution remain disabled."
+    }
+  },
+  "exit_criteria": [
+    "Accepted handoff envelope creates one child TaskRecord.",
+    "Child TaskRecord stores parent_task_id and parent_run_id.",
+    "Child TaskRecord stores source candidate ID and source handoff envelope fingerprint.",
+    "Same envelope fingerprint does not create a duplicate child TaskRecord.",
+    "Child status is Queued.",
+    "run.inspect exposes child_task_count and child_task_ids.",
+    "No process exec, network, service control, patch apply, workspace mutation, scheduler handoff, or child LLM execution is added."
+  ],
+  "source_evidence": {
+    "rust_store_tokens": [
+      "pub fn start_child_task",
+      "pub fn find_child_task_by_handoff_fingerprint",
+      "source_handoff_envelope_fingerprint",
+      "TaskStatus::Queued"
+    ],
+    "rust_runtime_tokens": [
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "ChildTaskStartParams",
+      "child_task_ids",
+      "child_task_count"
+    ],
+    "vsix_protocol_tokens": [
+      "child_task_count",
+      "child_task_ids",
+      "source_handoff_envelope_fingerprint",
+      "'Queued'"
+    ]
+  }
+}

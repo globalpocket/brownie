@@ -47,6 +47,17 @@ pub struct TaskStore {
     workspace_root: PathBuf,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChildTaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub parent_task_id: String,
+    pub parent_run_id: String,
+    pub source_candidate_id: String,
+    pub source_handoff_envelope_id: String,
+    pub source_handoff_envelope_fingerprint: String,
+}
+
 impl TaskStore {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
@@ -64,6 +75,11 @@ impl TaskStore {
             goal: params.goal,
             mode_id: params.mode_id,
             status: TaskStatus::Created,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -73,6 +89,48 @@ impl TaskStore {
             .with_context(|| format!("failed to create {}", run_dir.display()))?;
         self.write_task_state(&record)?;
         self.append_task_event(&record, LedgerEventKind::TaskStarted)?;
+
+        Ok(record)
+    }
+
+    pub fn start_child_task(&self, params: ChildTaskStartParams) -> Result<TaskRecord> {
+        let now = timestamp()?;
+        let task_id = format!("task_{}", Uuid::new_v4());
+        let run_id = format!("run_{}", Uuid::new_v4());
+        let record = TaskRecord {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            goal: params.goal,
+            mode_id: params.mode_id,
+            status: TaskStatus::Queued,
+            parent_task_id: Some(params.parent_task_id),
+            parent_run_id: Some(params.parent_run_id),
+            source_candidate_id: Some(params.source_candidate_id),
+            source_handoff_envelope_id: Some(params.source_handoff_envelope_id),
+            source_handoff_envelope_fingerprint: Some(params.source_handoff_envelope_fingerprint),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let run_dir = self.run_dir(&run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        self.write_task_state(&record)?;
+        self.append_task_event_with_payload(
+            &record,
+            LedgerEventKind::TaskStarted,
+            Some(serde_json::json!({
+                "status": "Queued",
+                "parent_task_id": record.parent_task_id.clone(),
+                "parent_run_id": record.parent_run_id.clone(),
+                "source_candidate_id": record.source_candidate_id.clone(),
+                "source_handoff_envelope_id": record.source_handoff_envelope_id.clone(),
+                "source_handoff_envelope_fingerprint": record.source_handoff_envelope_fingerprint.clone(),
+                "execution_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "reason": "Controlled child task materialized from parent handoff envelope; child execution remains disabled."
+            })),
+        )?;
 
         Ok(record)
     }
@@ -106,6 +164,22 @@ impl TaskStore {
     pub fn get_task_by_run_id(&self, run_id: &str) -> Result<Option<TaskRecord>> {
         for record in self.list_tasks()? {
             if record.run_id == run_id {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_child_task_by_handoff_fingerprint(
+        &self,
+        parent_run_id: &str,
+        source_handoff_envelope_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record.parent_run_id.as_deref() == Some(parent_run_id)
+                && record.source_handoff_envelope_fingerprint.as_deref()
+                    == Some(source_handoff_envelope_fingerprint)
+            {
                 return Ok(Some(record));
             }
         }
@@ -427,5 +501,74 @@ mod tests {
             Some(record.clone())
         );
         assert_eq!(store.list_tasks().expect("list tasks"), vec![record]);
+    }
+
+    #[test]
+    fn start_child_task_records_parent_provenance_and_fingerprint_lookup() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = TaskStore::new(temp.path());
+        let parent = store
+            .start_task(TaskStartParams {
+                goal: "parent".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+
+        let child = store
+            .start_child_task(ChildTaskStartParams {
+                goal: "child".into(),
+                mode_id: parent.mode_id.clone(),
+                parent_task_id: parent.task_id.clone(),
+                parent_run_id: parent.run_id.clone(),
+                source_candidate_id: "subtask_1".into(),
+                source_handoff_envelope_id: "handoff_envelope_1".into(),
+                source_handoff_envelope_fingerprint: "sha256:child".into(),
+            })
+            .expect("start child");
+
+        assert_eq!(child.status, TaskStatus::Queued);
+        assert_eq!(
+            child.parent_task_id.as_deref(),
+            Some(parent.task_id.as_str())
+        );
+        assert_eq!(child.parent_run_id.as_deref(), Some(parent.run_id.as_str()));
+        assert_eq!(child.source_candidate_id.as_deref(), Some("subtask_1"));
+        assert_eq!(
+            child.source_handoff_envelope_id.as_deref(),
+            Some("handoff_envelope_1")
+        );
+        assert_eq!(
+            child.source_handoff_envelope_fingerprint.as_deref(),
+            Some("sha256:child")
+        );
+        assert_eq!(
+            store
+                .find_child_task_by_handoff_fingerprint(&parent.run_id, "sha256:child")
+                .expect("find child")
+                .as_ref()
+                .map(|record| record.task_id.as_str()),
+            Some(child.task_id.as_str())
+        );
+        assert!(store
+            .find_child_task_by_handoff_fingerprint(&parent.run_id, "sha256:missing")
+            .expect("missing child")
+            .is_none());
+
+        let child_events = store
+            .read_ledger_events(&child.run_id)
+            .expect("child ledger events");
+        assert_eq!(child_events.len(), 1);
+        assert_eq!(child_events[0].kind, LedgerEventKind::TaskStarted);
+        let payload = child_events[0].payload.as_ref().expect("payload");
+        assert_eq!(payload["status"], "Queued");
+        assert_eq!(payload["parent_task_id"], parent.task_id);
+        assert_eq!(payload["parent_run_id"], parent.run_id);
+        assert_eq!(payload["source_candidate_id"], "subtask_1");
+        assert_eq!(
+            payload["source_handoff_envelope_fingerprint"],
+            "sha256:child"
+        );
+        assert_eq!(payload["execution_enabled"], false);
+        assert_eq!(payload["scheduler_handoff_enabled"], false);
     }
 }
