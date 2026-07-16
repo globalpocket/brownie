@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.14';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.14.json';
+const phase = 'M5.15';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.15.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'child_task_source_intent_materialization',
-    `${phase} must declare the child task source intent materialization transition.`
+    manifest.concrete_capability_transition === 'structured_subtask_spawn_child_materialization',
+    `${phase} must declare the structured subtask spawn child materialization transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_child_source_intent_materialization',
-    `${phase} must forbid adding another blocked summary wrapper without child source intent materialization.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_structured_child_task_materialization',
+    `${phase} must forbid adding another blocked summary wrapper without structured child task materialization.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,14 +75,13 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'deterministic useful goal',
-    'source_intent_summary',
-    'tool_id',
-    'required_action',
-    'request_reason',
-    'input_summary',
+    'bounded subtask.spawn input schema',
+    'requested_goal_preview',
+    'requested_mode_id',
+    'unknown mode_id',
     'raw input objects',
-    'source handoff envelope fingerprint'
+    'Parent task.run does not auto-run child tasks',
+    'No scheduler handoff'
   ]) {
     requireManifestValue(
       exitCriteria.some((criterion) => typeof criterion === 'string' && criterion.includes(token)),
@@ -100,6 +99,9 @@ function requireToken(relativePath, token) {
 
 function validateSourceEvidence(manifest) {
   const evidence = manifest.source_evidence ?? {};
+  for (const token of evidence.rust_tools_tokens ?? []) {
+    requireToken('crates/brownie-tools/src/lib.rs', token);
+  }
   for (const token of evidence.rust_store_tokens ?? []) {
     requireToken('crates/brownie-store/src/lib.rs', token);
   }

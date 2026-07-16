@@ -173,3 +173,9 @@ This remains candidate manifest recording only. No child task is launched, no sc
 M5.10 converts candidate manifest evidence into deterministic parent-run dispatch handoff envelope and replay guard blocker state. The runtime appends `SubtaskDispatchHandoffEnvelopeRecorded` after `SubtaskDispatchCandidateManifestRecorded`, records the manifest id, candidate ids, handoff envelope fingerprint, replay guard status, and blocked handoff ticket preflight state, and exposes the envelope in later prompt materialization.
 
 This remains handoff envelope recording only. No child task is launched, no scheduler handoff is performed, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.
+
+## M5.15 structured subtask materialization input
+
+M5.15 gives `subtask.spawn` a bounded structured input surface. Approved requests may include an optional child `goal` and optional child `mode_id`; invalid shape, unknown fields, unsafe `mode_id` syntax, and unresolved modes are rejected before queueing or child materialization.
+
+Valid structured input changes the runtime entity rather than adding another blocked parent-run wrapper: `requested_goal_preview` becomes the materialized child task goal, and `requested_mode_id` becomes the child mode. Parent runs still do not auto-run children, and no scheduler handoff, process execution, network access, service control, patch apply, or workspace write capability is added.

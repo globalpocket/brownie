@@ -82,6 +82,8 @@ Prompt materialization includes a `Subtask Orchestration` section. It summarizes
 
 The section is informational context for future runtime scheduling. It does not authorize subtask execution, process execution, network access, service control, patch apply, or workspace writes, and it must not include raw request input or raw provider responses.
 
+M5.15 may also include sanitized structured `subtask.spawn` fields such as `requested_goal_preview` and `requested_mode_id` in this section. These fields are bounded summaries used for child materialization context; raw request `input` objects remain excluded.
+
 ## M5.1 subtask handoff prompt summary
 
 The `Subtask Orchestration` section also summarizes `SubtaskHandoffPrepared` ledger events using compact fields such as handoff id, status, queued count, `execution_enabled`, and `next_action`.
