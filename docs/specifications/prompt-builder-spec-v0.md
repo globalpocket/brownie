@@ -133,3 +133,9 @@ This lets later prompt passes see that dispatcher guard verdict evidence was eva
 The `Subtask Orchestration` section also summarizes `SubtaskDispatchCandidateManifestRecorded` ledger events using compact fields such as manifest id, manifest status, decision count, candidate count, blocked candidate count, eligible candidate count, `dispatch_enabled`, and `next_action`.
 
 This lets later prompt passes see that dispatch decision evidence was mapped to deterministic per-queued-subtask candidate manifest state. It remains informational and does not authorize child task execution, scheduler handoff, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.10 subtask dispatch handoff envelope prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchHandoffEnvelopeRecorded` ledger events using compact fields such as handoff envelope id, handoff envelope status, manifest count, candidate count, handoff ticket count, replay guard status, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that candidate manifest evidence was mapped to deterministic scheduler handoff envelope / replay guard blocker state. It remains informational and does not authorize child task execution, scheduler handoff, process execution, network access, service control, patch apply, or workspace writes.

@@ -83,6 +83,10 @@ Run inspection also reports dispatch decision evidence. `has_subtask_dispatch_de
 
 Run inspection also reports dispatch candidate manifest evidence. `has_subtask_dispatch_candidate_manifest` / `subtask_dispatch_candidate_manifest_count` count `SubtaskDispatchCandidateManifestRecorded` events. These fields indicate that the runtime consumed dispatch decisions into deterministic per-queued-subtask candidate manifest and blocker state; in M5.9 dispatch remains denied and no child task execution is implied.
 
+## M5.10 subtask dispatch handoff envelope inspection
+
+Run inspection also reports dispatch handoff envelope evidence. `has_subtask_dispatch_handoff_envelope` / `subtask_dispatch_handoff_envelope_count` count `SubtaskDispatchHandoffEnvelopeRecorded` events. These fields indicate that the runtime consumed candidate manifests into deterministic handoff envelope / replay guard blocker state; in M5.10 dispatch remains denied and no child task execution or scheduler handoff is implied.
+
 ## Phase 2.1 LLM metadata redaction
 
 Run inspection may show LLM provider metadata and `LlmRequestFailed` / `SecondPassLlmRequestFailed` summaries, but all secret-bearing values must be redacted. API keys, Authorization headers, Bearer tokens, and URL query strings are not inspection data. `BROWNIE_LLM_STRICT` and fallback-to-Fake status are observable through `llm.status`; request ledger metadata may include redacted `base_url` and `strict` so users can verify which configured provider path was used.

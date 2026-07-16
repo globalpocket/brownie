@@ -2314,6 +2314,8 @@ pub struct RunInspectSummary {
     pub subtask_dispatch_decision_count: usize,
     pub has_subtask_dispatch_candidate_manifest: bool,
     pub subtask_dispatch_candidate_manifest_count: usize,
+    pub has_subtask_dispatch_handoff_envelope: bool,
+    pub subtask_dispatch_handoff_envelope_count: usize,
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,
