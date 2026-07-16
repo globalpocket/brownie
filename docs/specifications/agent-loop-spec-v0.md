@@ -161,3 +161,9 @@ This remains guard verdict recording only. No child task is launched, no workspa
 M5.8 converts dispatcher guard verdict evidence into deterministic parent-run dispatch decision and dispatch candidate state. The runtime appends `SubtaskDispatchDecisionRecorded` after `SubtaskDispatcherGuardVerdictRecorded`, records `dispatch_decision = "Denied"`, per-candidate blocked counts, and a guard-verdict-derived denial reason, and exposes the decision in later prompt materialization.
 
 This remains dispatch decision recording only. No child task is launched, no scheduler handoff is performed, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.
+
+## M5.9 subtask dispatch candidate manifest
+
+M5.9 converts dispatch decision evidence into deterministic parent-run per-candidate manifest state. The runtime appends `SubtaskDispatchCandidateManifestRecorded` after `SubtaskDispatchDecisionRecorded`, records queued candidate ids, blocked candidate ids, candidate manifest fingerprint evidence, and a decision-derived candidate denial reason, and exposes the manifest in later prompt materialization.
+
+This remains candidate manifest recording only. No child task is launched, no scheduler handoff is performed, no workspace file is written, no patch is applied, and no process, network, or service-control capability is added.

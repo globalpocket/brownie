@@ -1915,6 +1915,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_decision_recorded(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_dispatch_candidate_manifest_recorded(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9168,6 +9171,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchDecisionRecorded)
         .count();
+    let subtask_dispatch_candidate_manifest_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9198,6 +9205,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_dispatcher_guard_verdict_count,
         has_subtask_dispatch_decision: subtask_dispatch_decision_count > 0,
         subtask_dispatch_decision_count,
+        has_subtask_dispatch_candidate_manifest: subtask_dispatch_candidate_manifest_count > 0,
+        subtask_dispatch_candidate_manifest_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9265,6 +9274,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "snapshot_id",
         "guard_id",
         "decision_id",
+        "manifest_id",
         "handoff_id",
         "readiness_id",
         "admission_id",
@@ -9280,6 +9290,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "dispatch_candidate_count",
         "eligible_candidate_count",
         "blocked_candidate_count",
+        "candidate_count",
+        "decision_count",
         "snapshot_fingerprint_count",
         "source_event_count",
         "next_action",
@@ -9300,8 +9312,14 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "snapshot_fingerprint",
         "decision_status",
         "candidate_status",
+        "manifest_status",
         "dispatch_decision",
         "dispatch_denial_reason",
+        "candidate_denial_reason",
+        "candidate_ids",
+        "eligible_candidate_ids",
+        "blocked_candidate_ids",
+        "candidate_manifest_fingerprint",
         "required_capability",
         "required_preconditions",
         "precondition_count",
@@ -9395,6 +9413,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "snapshot_id",
             "guard_id",
             "decision_id",
+            "manifest_id",
             "queue_position",
             "queued_count",
             "handoff_count",
@@ -9407,6 +9426,8 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "dispatch_candidate_count",
             "eligible_candidate_count",
             "blocked_candidate_count",
+            "candidate_count",
+            "decision_count",
             "snapshot_fingerprint_count",
             "execution_enabled",
             "dispatch_enabled",
@@ -9424,8 +9445,11 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "snapshot_fingerprint",
             "decision_status",
             "candidate_status",
+            "manifest_status",
             "dispatch_decision",
             "dispatch_denial_reason",
+            "candidate_denial_reason",
+            "candidate_manifest_fingerprint",
             "readiness_fingerprint",
             "fingerprint_input_count",
             "bytes_read",
@@ -10794,6 +10818,255 @@ fn append_subtask_dispatch_decision_recorded(
     )
 }
 
+struct SubtaskDispatchCandidateManifestSource {
+    decision_id: String,
+    guard_id: String,
+    snapshot_id: String,
+    dispatch_decision: String,
+    candidate_status: String,
+    snapshot_fingerprint: String,
+    dispatch_denial_reason: String,
+    blocked_preconditions: Vec<String>,
+    blocked_checks: Vec<String>,
+}
+
+fn append_subtask_dispatch_candidate_manifest_recorded(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded)
+    {
+        return Ok(());
+    }
+
+    let queued_subtask_ids = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+        .filter_map(|event| {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("subtask_id"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    if queued_subtask_ids.is_empty() {
+        return Ok(());
+    }
+
+    let dispatch_decisions = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchDecisionRecorded)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let decision_id = payload.get("decision_id")?.as_str()?.to_string();
+            let guard_id = payload.get("guard_id")?.as_str()?.to_string();
+            let snapshot_id = payload.get("snapshot_id")?.as_str()?.to_string();
+            let dispatch_decision = payload
+                .get("dispatch_decision")
+                .and_then(Value::as_str)
+                .unwrap_or("Denied")
+                .to_string();
+            let candidate_status = payload
+                .get("candidate_status")
+                .and_then(Value::as_str)
+                .unwrap_or("Blocked")
+                .to_string();
+            let snapshot_fingerprint = payload
+                .get("snapshot_fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let dispatch_denial_reason = payload
+                .get("dispatch_denial_reason")
+                .and_then(Value::as_str)
+                .unwrap_or("Dispatch decision denied all queued candidates.")
+                .to_string();
+            let blocked_preconditions = payload
+                .get("blocked_preconditions")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let blocked_checks = payload
+                .get("blocked_checks")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some(SubtaskDispatchCandidateManifestSource {
+                decision_id,
+                guard_id,
+                snapshot_id,
+                dispatch_decision,
+                candidate_status,
+                snapshot_fingerprint,
+                dispatch_denial_reason,
+                blocked_preconditions,
+                blocked_checks,
+            })
+        })
+        .collect::<Vec<_>>();
+    if dispatch_decisions.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let decision_ids = dispatch_decisions
+        .iter()
+        .map(|source| source.decision_id.clone())
+        .collect::<Vec<_>>();
+    let decision_count = dispatch_decisions.len();
+    let candidate_count = queued_subtask_ids.len();
+    let eligible_candidate_ids: Vec<String> = Vec::new();
+    let blocked_candidate_ids = queued_subtask_ids.clone();
+    let dispatch_decision = if dispatch_decisions
+        .iter()
+        .any(|source| source.dispatch_decision == "Denied")
+    {
+        "Denied"
+    } else {
+        dispatch_decisions
+            .first()
+            .map(|source| source.dispatch_decision.as_str())
+            .unwrap_or("Denied")
+    };
+    let candidate_status = if dispatch_decisions
+        .iter()
+        .any(|source| source.candidate_status == "Blocked")
+    {
+        "Blocked"
+    } else {
+        dispatch_decisions
+            .first()
+            .map(|source| source.candidate_status.as_str())
+            .unwrap_or("Blocked")
+    };
+
+    let mut blocked_preconditions = dispatch_decisions
+        .iter()
+        .flat_map(|source| source.blocked_preconditions.iter().cloned())
+        .collect::<Vec<_>>();
+    blocked_preconditions.push("runtime_subtask_dispatcher_implemented".to_string());
+    blocked_preconditions.push("child_task_execution_guard_enabled".to_string());
+    blocked_preconditions.sort();
+    blocked_preconditions.dedup();
+
+    let mut blocked_checks = vec![
+        "dispatch_candidate_manifest_blocked".to_string(),
+        "dispatch_candidate_manifest_not_eligible".to_string(),
+        "dispatch_decision_denied".to_string(),
+        "runtime_dispatcher_not_implemented".to_string(),
+        "child_task_execution_disabled".to_string(),
+    ];
+    blocked_checks.extend(
+        dispatch_decisions
+            .iter()
+            .flat_map(|source| source.blocked_checks.iter().cloned()),
+    );
+    blocked_checks.sort();
+    blocked_checks.dedup();
+
+    let snapshot_fingerprint = dispatch_decisions
+        .iter()
+        .find_map(|source| {
+            if source.snapshot_fingerprint.is_empty() {
+                None
+            } else {
+                Some(source.snapshot_fingerprint.clone())
+            }
+        })
+        .unwrap_or_else(|| "<missing>".to_string());
+    let candidate_denial_reason = dispatch_decisions
+        .first()
+        .map(|source| source.dispatch_denial_reason.as_str())
+        .unwrap_or("Dispatch decision denied all queued candidates.");
+
+    let mut fingerprint_inputs = vec![
+        "manifest_version=m5.9_dispatch_candidate_manifest_v1".to_string(),
+        format!("parent_task_id={}", record.task_id),
+        format!("parent_run_id={}", record.run_id),
+        format!("decision_count={decision_count}"),
+        format!("candidate_count={candidate_count}"),
+        format!("dispatch_decision={dispatch_decision}"),
+        format!("candidate_status={candidate_status}"),
+        format!("snapshot_fingerprint={snapshot_fingerprint}"),
+    ];
+    for decision_id in &decision_ids {
+        fingerprint_inputs.push(format!("decision_id={decision_id}"));
+    }
+    for candidate_id in &queued_subtask_ids {
+        fingerprint_inputs.push(format!("candidate_id={candidate_id}"));
+    }
+    for check in &blocked_checks {
+        fingerprint_inputs.push(format!("blocked_check={check}"));
+    }
+    let fingerprint_input_count = fingerprint_inputs.len();
+    let candidate_manifest_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(fingerprint_inputs.join("\n").as_bytes())
+    );
+
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchCandidateManifestRecorded,
+        Some(json!({
+            "manifest_id": format!("subtask_dispatch_candidate_manifest_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "decision_id": decision_ids[0],
+            "decision_count": decision_count,
+            "guard_id": dispatch_decisions[0].guard_id,
+            "snapshot_id": dispatch_decisions[0].snapshot_id,
+            "queued_count": candidate_count,
+            "source_event_count": decision_count,
+            "status": "Blocked",
+            "manifest_status": "Blocked",
+            "candidate_status": candidate_status,
+            "dispatch_decision": dispatch_decision,
+            "candidate_denial_reason": candidate_denial_reason,
+            "candidate_count": candidate_count,
+            "dispatch_candidate_count": candidate_count,
+            "eligible_candidate_count": eligible_candidate_ids.len(),
+            "blocked_candidate_count": blocked_candidate_ids.len(),
+            "candidate_ids": queued_subtask_ids,
+            "eligible_candidate_ids": eligible_candidate_ids,
+            "blocked_candidate_ids": blocked_candidate_ids,
+            "candidate_manifest_fingerprint": candidate_manifest_fingerprint,
+            "snapshot_fingerprint": snapshot_fingerprint,
+            "fingerprint_input_count": fingerprint_input_count,
+            "required_capability": "runtime_subtask_dispatcher",
+            "precondition_count": blocked_preconditions.len(),
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": blocked_preconditions,
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_dispatch_candidate_manifest_preconditions",
+            "reason": "Dispatch decision evidence mapped to a per-queued-subtask candidate manifest and denial blocker; no subtask was spawned in M5.9."
+        })),
+    )
+}
+
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -11380,6 +11653,9 @@ mod tests {
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SubtaskDispatchDecisionRecorded));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded
+        }));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
@@ -11511,6 +11787,8 @@ mod tests {
         assert_eq!(summary["subtask_dispatcher_guard_verdict_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_decision"], true);
         assert_eq!(summary["subtask_dispatch_decision_count"], 1);
+        assert_eq!(summary["has_subtask_dispatch_candidate_manifest"], true);
+        assert_eq!(summary["subtask_dispatch_candidate_manifest_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -11581,12 +11859,15 @@ mod tests {
             "snapshot_id": "subtask_dispatch_readiness_snapshot_run_1_1",
             "guard_id": "subtask_dispatcher_guard_run_1_1",
             "decision_id": "subtask_dispatch_decision_run_1_1",
+            "manifest_id": "subtask_dispatch_candidate_manifest_run_1_1",
             "admission_count": 1,
             "snapshot_count": 1,
             "guard_count": 1,
             "dispatch_candidate_count": 1,
             "eligible_candidate_count": 0,
             "blocked_candidate_count": 1,
+            "candidate_count": 1,
+            "decision_count": 1,
             "snapshot_fingerprint_count": 1,
             "scheduler_handoff_status": "Blocked",
             "guard_status": "Blocked",
@@ -11596,8 +11877,14 @@ mod tests {
             "snapshot_fingerprint": "sha256:abc123",
             "decision_status": "Blocked",
             "candidate_status": "Blocked",
+            "manifest_status": "Blocked",
             "dispatch_decision": "Denied",
             "dispatch_denial_reason": "Dispatcher guard verdict blocks dispatch until preconditions are satisfied.",
+            "candidate_denial_reason": "Dispatcher guard verdict blocks dispatch until preconditions are satisfied.",
+            "candidate_ids": ["subtask_run_1_1"],
+            "eligible_candidate_ids": [],
+            "blocked_candidate_ids": ["subtask_run_1_1"],
+            "candidate_manifest_fingerprint": "sha256:def456",
             "readiness_fingerprint": "sha256:abc123",
             "fingerprint_input_count": 12,
             "required_capability": "runtime_subtask_dispatcher",
@@ -11670,12 +11957,18 @@ mod tests {
             sanitized["decision_id"],
             "subtask_dispatch_decision_run_1_1"
         );
+        assert_eq!(
+            sanitized["manifest_id"],
+            "subtask_dispatch_candidate_manifest_run_1_1"
+        );
         assert_eq!(sanitized["admission_count"], 1);
         assert_eq!(sanitized["snapshot_count"], 1);
         assert_eq!(sanitized["guard_count"], 1);
         assert_eq!(sanitized["dispatch_candidate_count"], 1);
         assert_eq!(sanitized["eligible_candidate_count"], 0);
         assert_eq!(sanitized["blocked_candidate_count"], 1);
+        assert_eq!(sanitized["candidate_count"], 1);
+        assert_eq!(sanitized["decision_count"], 1);
         assert_eq!(sanitized["snapshot_fingerprint_count"], 1);
         assert_eq!(sanitized["scheduler_handoff_status"], "Blocked");
         assert_eq!(sanitized["guard_status"], "Blocked");
@@ -11688,11 +11981,26 @@ mod tests {
         assert_eq!(sanitized["snapshot_fingerprint"], "sha256:abc123");
         assert_eq!(sanitized["decision_status"], "Blocked");
         assert_eq!(sanitized["candidate_status"], "Blocked");
+        assert_eq!(sanitized["manifest_status"], "Blocked");
         assert_eq!(sanitized["dispatch_decision"], "Denied");
         assert_eq!(
             sanitized["dispatch_denial_reason"],
             "Dispatcher guard verdict blocks dispatch until preconditions are satisfied."
         );
+        assert_eq!(
+            sanitized["candidate_denial_reason"],
+            "Dispatcher guard verdict blocks dispatch until preconditions are satisfied."
+        );
+        assert_eq!(sanitized["candidate_ids"][0], "subtask_run_1_1");
+        assert_eq!(
+            sanitized["eligible_candidate_ids"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+        assert_eq!(sanitized["blocked_candidate_ids"][0], "subtask_run_1_1");
+        assert_eq!(sanitized["candidate_manifest_fingerprint"], "sha256:def456");
         assert_eq!(sanitized["readiness_fingerprint"], "sha256:abc123");
         assert_eq!(sanitized["fingerprint_input_count"], 12);
         assert_eq!(
@@ -12477,6 +12785,104 @@ mod tests {
             .iter()
             .any(|check| check.as_str() == Some("dispatch_candidate_not_eligible")));
         assert!(dispatch_decision_payload.get("input").is_none());
+        let candidate_manifest_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchCandidateManifestRecorded)
+            .expect("subtask dispatch candidate manifest event");
+        let candidate_manifest_payload = candidate_manifest_event
+            .payload
+            .as_ref()
+            .expect("subtask dispatch candidate manifest payload");
+        assert_eq!(candidate_manifest_payload["status"], "Blocked");
+        assert_eq!(candidate_manifest_payload["manifest_status"], "Blocked");
+        assert_eq!(candidate_manifest_payload["candidate_status"], "Blocked");
+        assert_eq!(candidate_manifest_payload["dispatch_decision"], "Denied");
+        assert_eq!(
+            candidate_manifest_payload["candidate_denial_reason"],
+            dispatch_decision_payload["dispatch_denial_reason"]
+        );
+        assert_eq!(
+            candidate_manifest_payload["required_capability"],
+            "runtime_subtask_dispatcher"
+        );
+        assert_eq!(candidate_manifest_payload["decision_count"], 1);
+        assert_eq!(candidate_manifest_payload["queued_count"], 1);
+        assert_eq!(candidate_manifest_payload["source_event_count"], 1);
+        assert_eq!(candidate_manifest_payload["candidate_count"], 1);
+        assert_eq!(candidate_manifest_payload["dispatch_candidate_count"], 1);
+        assert_eq!(candidate_manifest_payload["eligible_candidate_count"], 0);
+        assert_eq!(candidate_manifest_payload["blocked_candidate_count"], 1);
+        assert_eq!(
+            candidate_manifest_payload["candidate_ids"][0],
+            queued_payload["subtask_id"]
+        );
+        assert_eq!(
+            candidate_manifest_payload["blocked_candidate_ids"][0],
+            queued_payload["subtask_id"]
+        );
+        assert_eq!(
+            candidate_manifest_payload["eligible_candidate_ids"]
+                .as_array()
+                .expect("eligible candidate ids")
+                .len(),
+            0
+        );
+        assert_eq!(candidate_manifest_payload["execution_enabled"], false);
+        assert_eq!(candidate_manifest_payload["dispatch_enabled"], false);
+        assert_eq!(
+            candidate_manifest_payload["next_action"],
+            "await_dispatch_candidate_manifest_preconditions"
+        );
+        assert_eq!(
+            candidate_manifest_payload["reason"],
+            "Dispatch decision evidence mapped to a per-queued-subtask candidate manifest and denial blocker; no subtask was spawned in M5.9."
+        );
+        assert_eq!(
+            candidate_manifest_payload["decision_id"],
+            dispatch_decision_payload["decision_id"]
+        );
+        assert_eq!(
+            candidate_manifest_payload["guard_id"],
+            dispatch_decision_payload["guard_id"]
+        );
+        assert_eq!(
+            candidate_manifest_payload["snapshot_id"],
+            dispatch_decision_payload["snapshot_id"]
+        );
+        assert!(candidate_manifest_payload["manifest_id"]
+            .as_str()
+            .expect("manifest id")
+            .starts_with("subtask_dispatch_candidate_manifest_run_"));
+        assert!(candidate_manifest_payload["candidate_manifest_fingerprint"]
+            .as_str()
+            .expect("candidate manifest fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(
+            candidate_manifest_payload["snapshot_fingerprint"],
+            dispatch_decision_payload["snapshot_fingerprint"]
+        );
+        assert!(
+            candidate_manifest_payload["fingerprint_input_count"]
+                .as_u64()
+                .expect("fingerprint input count")
+                >= 12
+        );
+        assert_eq!(candidate_manifest_payload["precondition_count"], 3);
+        assert_eq!(
+            candidate_manifest_payload["satisfied_precondition_count"],
+            0
+        );
+        assert!(candidate_manifest_payload["blocked_checks"]
+            .as_array()
+            .expect("blocked checks")
+            .iter()
+            .any(|check| check.as_str() == Some("dispatch_candidate_manifest_blocked")));
+        assert!(candidate_manifest_payload["blocked_checks"]
+            .as_array()
+            .expect("blocked checks")
+            .iter()
+            .any(|check| check.as_str() == Some("dispatch_decision_denied")));
+        assert!(candidate_manifest_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -12522,6 +12928,7 @@ mod tests {
                 LedgerEventKind::SubtaskDispatchReadinessSnapshotRecorded,
                 LedgerEventKind::SubtaskDispatcherGuardVerdictRecorded,
                 LedgerEventKind::SubtaskDispatchDecisionRecorded,
+                LedgerEventKind::SubtaskDispatchCandidateManifestRecorded,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,

@@ -273,3 +273,9 @@ The dispatcher guard verdict is visible through the ledger, through `run.inspect
 M5.8 turns dispatcher guard verdict evidence into deterministic parent-run dispatch decision state. After `SubtaskDispatcherGuardVerdictRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchDecisionRecorded` event that records which guard was evaluated, whether dispatch is denied, how many queued subtasks are candidate-blocked, and which guard-derived checks explain the denial.
 
 The dispatch decision is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.8 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.9 subtask dispatch candidate manifest
+
+M5.9 turns dispatch decision evidence into deterministic parent-run per-candidate manifest state. After `SubtaskDispatchDecisionRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchCandidateManifestRecorded` event that records which decision was evaluated, which queued subtask ids are dispatch candidates, which candidates remain blocked, and which decision-derived checks explain the denial.
+
+The candidate manifest is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.9 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.

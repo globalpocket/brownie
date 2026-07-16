@@ -91,3 +91,9 @@ M5.7 does not execute the requested subtask. It only records dispatcher guard ve
 After dispatcher guard verdict state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchDecisionRecorded` event. This dispatch decision references the guard, records `dispatch_decision = "Denied"`, records per-candidate blocked counts, preserves the snapshot fingerprint metadata, and records deterministic denial checks explaining why no queued subtask is eligible for dispatch yet.
 
 M5.8 does not execute the requested subtask or hand it off to a scheduler. It only records dispatch decision and candidate denial evidence for future runtime dispatch.
+
+## M5.9 subtask dispatch candidate manifest
+
+After dispatch decision state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchCandidateManifestRecorded` event. This candidate manifest references the decision, records queued candidate ids, blocked candidate ids, `dispatch_enabled = false`, and deterministic denial checks explaining why no queued subtask is eligible for handoff yet.
+
+M5.9 does not execute the requested subtask or hand it off to a scheduler. It only records per-queued-subtask candidate manifest and denial evidence for future runtime dispatch.
