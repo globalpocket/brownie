@@ -48,6 +48,10 @@ Denied or rejected `subtask.spawn` intent follows the existing denied/rejected t
 
 After approved `subtask.spawn` intent is queued, `task.run` may consume the queued evidence into a summary-only `SubtaskHandoffPrepared` event. This handoff record references queued subtask ids and marks `execution_enabled = false`; it must not include raw request input or raw provider output.
 
+## M5.11 controlled child task materialization
+
+After candidate manifest and handoff envelope evidence are accepted, `task.run` may materialize one child `TaskRecord` from the accepted envelope. The child carries parent task/run provenance and source candidate/envelope fingerprint provenance, starts in `Queued`, and is idempotent for the same parent run plus envelope fingerprint. M5.11 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
+
 M5.1 does not execute the requested subtask. It only prepares deterministic parent-run handoff state for future runtime scheduling.
 
 ## M5.2 subtask scheduler readiness

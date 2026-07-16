@@ -2292,6 +2292,8 @@ pub struct RunInspectSummary {
     pub run_id: String,
     pub task_id: Option<String>,
     pub status: Option<TaskStatus>,
+    pub child_task_count: usize,
+    pub child_task_ids: Vec<String>,
     pub event_count: usize,
     pub has_tool_execution_completed: bool,
     pub has_subtask_orchestration_queued: bool,
@@ -2338,6 +2340,11 @@ pub struct TaskRecord {
     pub goal: String,
     pub mode_id: Option<String>,
     pub status: TaskStatus,
+    pub parent_task_id: Option<String>,
+    pub parent_run_id: Option<String>,
+    pub source_candidate_id: Option<String>,
+    pub source_handoff_envelope_id: Option<String>,
+    pub source_handoff_envelope_fingerprint: Option<String>,
     pub created_at: String,
     pub updated_at: String,
 }
@@ -2345,6 +2352,7 @@ pub struct TaskRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TaskStatus {
     Created,
+    Queued,
     Running,
     Completed,
     Failed,

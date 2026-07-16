@@ -840,6 +840,11 @@ mod tests {
             goal: "Ship Phase 1.2".into(),
             mode_id: Some("orchestrator".into()),
             status: brownie_protocol::TaskStatus::Running,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:01Z".into(),
         }

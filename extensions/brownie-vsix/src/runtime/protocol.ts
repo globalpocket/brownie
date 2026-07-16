@@ -100,7 +100,7 @@ export interface LlmHealthResult {
   diagnostics: RuntimeDiagnostic[];
 }
 
-export type TaskStatus = 'Created' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
+export type TaskStatus = 'Created' | 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export type RuntimeActionName =
   | 'ReadWorkspace'
@@ -214,6 +214,11 @@ export interface TaskRecord {
   goal: string;
   mode_id?: string | null;
   status: TaskStatus;
+  parent_task_id?: string | null;
+  parent_run_id?: string | null;
+  source_candidate_id?: string | null;
+  source_handoff_envelope_id?: string | null;
+  source_handoff_envelope_fingerprint?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -231,6 +236,8 @@ export interface RunInspectSummary {
   run_id: string;
   task_id?: string | null;
   status?: TaskStatus | null;
+  child_task_count: number;
+  child_task_ids: string[];
   event_count: number;
   has_tool_execution_completed: boolean;
   has_subtask_orchestration_queued: boolean;
@@ -2521,6 +2528,11 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     typeof value.goal === 'string' &&
     (value.mode_id === undefined || value.mode_id === null || typeof value.mode_id === 'string') &&
     isTaskStatus(value.status) &&
+    (value.parent_task_id === undefined || value.parent_task_id === null || typeof value.parent_task_id === 'string') &&
+    (value.parent_run_id === undefined || value.parent_run_id === null || typeof value.parent_run_id === 'string') &&
+    (value.source_candidate_id === undefined || value.source_candidate_id === null || typeof value.source_candidate_id === 'string') &&
+    (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
+    (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -2547,6 +2559,9 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     typeof value.run_id === 'string' &&
     (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
     (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
+    isNonNegativeInteger(value.child_task_count) &&
+    Array.isArray(value.child_task_ids) &&
+    value.child_task_ids.every((taskId) => typeof taskId === 'string') &&
     typeof value.event_count === 'number' &&
     Number.isInteger(value.event_count) &&
     value.event_count >= 0 &&
@@ -2636,7 +2651,7 @@ function isRuntimeActionName(value: unknown): value is RuntimeActionName {
 }
 
 function isTaskStatus(value: unknown): value is TaskStatus {
-  return value === 'Created' || value === 'Running' || value === 'Completed' || value === 'Failed' || value === 'Cancelled';
+  return value === 'Created' || value === 'Queued' || value === 'Running' || value === 'Completed' || value === 'Failed' || value === 'Cancelled';
 }
 
 function isToolExecuteStatus(value: unknown): value is ToolExecuteStatus {
