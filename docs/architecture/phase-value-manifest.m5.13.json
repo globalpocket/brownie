@@ -1,0 +1,74 @@
+{
+  "phase": "M5.13",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "parent_child_run_result_inspection",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_parent_child_result_inspection",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns parent child_task_ids into structured child task summaries with status, provenance, and sanitized result evidence."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Makes explicit child task-run lifecycle outcomes visible from parent inspection without adding a scheduler."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets a headless caller inspect parent-child progress and terminal child outcomes through runtime-owned state."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "parent_child_result_visible",
+        "prompt": "Does parent inspection expose structured child status/result summaries?"
+      },
+      {
+        "id": "sanitized_evidence_only",
+        "prompt": "Does the summary avoid raw child prompts, provider responses, file contents, command output, and serialized request bodies?"
+      },
+      {
+        "id": "no_auto_dispatch",
+        "prompt": "Does parent inspection remain observational without running child tasks?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler auto-dispatch, external workers, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "parent_child_result_visible": "Yes. RunInspectSummary includes child_tasks with child task id, run id, status, provenance, event count, completion state, and sanitized previews.",
+      "sanitized_evidence_only": "Yes. Child summaries derive only event counts, status/provenance, completion final state, completion summary preview, and existing sanitized response previews.",
+      "no_auto_dispatch": "Yes. Parent task.run still materializes child records only; child execution remains limited to explicit child task.run admission.",
+      "safety_boundary": "Yes. The phase adds no scheduler auto-dispatch, external worker, patch apply, direct workspace mutation path, service control, network bypass, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Parent run.inspect exposes structured child task summaries through child_tasks, not only child_task_ids.",
+    "A Queued child appears as queued child_tasks evidence without executing.",
+    "After explicit child task.run, parent inspection shows child Completed status and sanitized completion evidence.",
+    "Child summaries retain parent_task_id, parent_run_id, source candidate ID, and source handoff envelope fingerprint.",
+    "Parent task.run does not auto-run child tasks.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_protocol_tokens": [
+      "pub struct ChildTaskInspectSummary",
+      "pub child_tasks: Vec<ChildTaskInspectSummary>"
+    ],
+    "rust_runtime_tokens": [
+      "child_task_inspect_summary",
+      "completion_summary_preview",
+      "task_run_accepts_valid_queued_child_task_with_provenance",
+      "child_tasks"
+    ],
+    "vsix_protocol_tokens": [
+      "ChildTaskInspectSummary",
+      "child_tasks",
+      "isChildTaskInspectSummary",
+      "completion_summary_preview"
+    ]
+  }
+}

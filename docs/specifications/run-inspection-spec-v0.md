@@ -97,6 +97,14 @@ After M5.12, a child listed by parent `run.inspect` may still be `Queued`, or it
 
 M5.12 does not add scheduler auto-dispatch. Parent run inspection proves relation only; child execution evidence belongs to the child task/run ledger and appears only after explicit `task.run` admission for that child.
 
+## M5.13 parent child result summaries
+
+Parent run inspection now includes `child_tasks`, a structured summary list aligned with `child_task_ids`. Each item reports child identity, run id, status, parent/source provenance, child ledger event count, `has_agent_loop_completed`, `completion_final_state`, `completion_summary_preview`, and sanitized `final_response_preview` when available.
+
+Queued children appear with `status = "Queued"`, their child ledger event count, and no completion preview. After an explicit child `task.run`, parent inspection reflects the child terminal status and sanitized completion evidence without mutating the parent ledger or auto-running additional children.
+
+Child summaries are inspection data only. They must not include raw prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, or serialized request bodies.
+
 ## Phase 2.1 LLM metadata redaction
 
 Run inspection may show LLM provider metadata and `LlmRequestFailed` / `SecondPassLlmRequestFailed` summaries, but all secret-bearing values must be redacted. API keys, Authorization headers, Bearer tokens, and URL query strings are not inspection data. `BROWNIE_LLM_STRICT` and fallback-to-Fake status are observable through `llm.status`; request ledger metadata may include redacted `base_url` and `strict` so users can verify which configured provider path was used.

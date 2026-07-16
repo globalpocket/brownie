@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.12';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.12.json';
+const phase = 'M5.13';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.13.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'explicit_queued_child_task_run_admission',
-    `${phase} must declare the explicit queued child task run admission transition.`
+    manifest.concrete_capability_transition === 'parent_child_run_result_inspection',
+    `${phase} must declare the parent child run result inspection transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_child_task_run_admission',
-    `${phase} must forbid adding another blocked summary wrapper without child task run admission.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_child_result_inspection',
+    `${phase} must forbid adding another blocked summary wrapper without parent child result inspection.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,14 +75,14 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'explicit task.run',
+    'structured child task summaries',
     'parent_task_id',
     'parent_run_id',
     'source candidate ID',
     'source handoff envelope fingerprint',
     'Queued',
     'Completed',
-    'task.inspect'
+    'child_tasks'
   ]) {
     requireManifestValue(
       exitCriteria.some((criterion) => typeof criterion === 'string' && criterion.includes(token)),
@@ -103,6 +103,9 @@ function validateSourceEvidence(manifest) {
   for (const token of evidence.rust_store_tokens ?? []) {
     requireToken('crates/brownie-store/src/lib.rs', token);
   }
+  for (const token of evidence.rust_protocol_tokens ?? []) {
+    requireToken('crates/brownie-protocol/src/lib.rs', token);
+  }
   for (const token of evidence.rust_runtime_tokens ?? []) {
     requireToken('crates/brownie-runtime/src/lib.rs', token);
   }
@@ -117,7 +120,8 @@ function validateSourceEvidence(manifest) {
     'SubtaskAdmissionTokenRecorded',
     'SubtaskSchedulerPacketRecorded',
     'SubtaskHandoffReceiptRecorded',
-    'SubtaskChildRunAdmissionSummaryRecorded'
+    'SubtaskChildRunAdmissionSummaryRecorded',
+    'SubtaskChildRunResultSummaryRecorded'
   ];
   for (const token of forbiddenWrapperEvents) {
     if (runtimeText.includes(token) || storeText.includes(token)) {
