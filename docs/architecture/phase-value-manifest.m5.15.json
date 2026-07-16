@@ -46,7 +46,7 @@
       "bounded_input_schema": "Yes. subtask.spawn accepts only optional string goal and mode_id fields, rejects unknown fields, rejects empty/non-string/oversized values, and preserves no-input behavior.",
       "requested_goal_materialized": "Yes. A valid requested goal is normalized into requested_goal_preview and becomes the child TaskRecord goal.",
       "requested_mode_materialized": "Yes. A valid requested_mode_id is resolved against the workspace mode policy set and becomes the child TaskRecord mode_id.",
-      "invalid_mode_rejected": "Yes. Unsafe mode_id syntax is rejected by the parser, and unknown mode_id values append ToolIntentDenied without queuing or materializing a child.",
+      "invalid_mode_rejected": "Yes. Unsafe mode_id syntax is rejected by the parser, and unknown mode_id values append ToolIntentDenied before ToolIntentApproved, queueing, or child materialization.",
       "safety_boundary": "Yes. The phase adds no scheduler auto-dispatch, external worker, patch apply, direct workspace mutation path, service control, network bypass, or process execution expansion."
     }
   },
@@ -79,8 +79,10 @@
     "rust_runtime_tokens": [
       "normalized_subtask_spawn_goal_preview",
       "normalized_subtask_spawn_mode_id",
+      "subtask_spawn_input_runtime_rejection_reason",
       "append_subtask_spawn_input_denied",
       "subtask_spawn_structured_input_materializes_child_goal_and_mode",
+      "subtask_spawn_unknown_mode_id_is_denied_before_approval_event",
       "subtask_spawn_unknown_mode_id_is_denied_before_queueing"
     ],
     "vsix_protocol_tokens": [

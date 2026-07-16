@@ -9962,6 +9962,22 @@ fn normalized_subtask_spawn_mode_id(input: &Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn subtask_spawn_input_runtime_rejection_reason(
+    store: &BrownieStore,
+    input: &Value,
+) -> anyhow::Result<Option<&'static str>> {
+    let Some(mode_id) = normalized_subtask_spawn_mode_id(input) else {
+        return Ok(None);
+    };
+    if resolve_workspace_mode_policy(store, &mode_id)
+        .map_err(anyhow::Error::msg)?
+        .is_none()
+    {
+        return Ok(Some("subtask.spawn input.mode_id is unknown."));
+    }
+    Ok(None)
+}
+
 fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecuteResult {
     ToolExecuteResult {
         tool_id: result.tool_id,
@@ -9998,14 +10014,27 @@ fn append_tool_intent_events(
         )?;
     }
     for decision in evaluation.items {
-        let payload = json!({
+        let runtime_rejection_reason =
+            if decision.allowed && decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
+                subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?
+            } else {
+                None
+            };
+        let allowed = decision.allowed && runtime_rejection_reason.is_none();
+        let reason = runtime_rejection_reason.unwrap_or(decision.reason.as_str());
+        let mut payload = json!({
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
-            "allowed": decision.allowed,
-            "reason": decision.reason,
+            "allowed": allowed,
+            "reason": reason,
             "request_reason": decision.request_reason,
             "input_summary": summarize_intent_input(&decision.input),
         });
+        if runtime_rejection_reason.is_some() {
+            if let Some(mode_id) = normalized_subtask_spawn_mode_id(&decision.input) {
+                payload["requested_mode_id"] = json!(mode_id);
+            }
+        }
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolIntentPermissionChecked,
@@ -10013,7 +10042,7 @@ fn append_tool_intent_events(
         )?;
         store.tasks().append_task_event_with_payload(
             record,
-            if decision.allowed {
+            if allowed {
                 LedgerEventKind::ToolIntentApproved
             } else {
                 LedgerEventKind::ToolIntentDenied
@@ -10043,6 +10072,9 @@ fn handle_approved_workspace_intents(
             continue;
         }
         if decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
+            if subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?.is_some() {
+                continue;
+            }
             append_subtask_orchestration_queued(store, record, &decision)?;
             continue;
         }
@@ -10101,19 +10133,14 @@ fn append_subtask_orchestration_queued(
 ) -> anyhow::Result<()> {
     let requested_goal_preview = normalized_subtask_spawn_goal_preview(&decision.input);
     let requested_mode_id = normalized_subtask_spawn_mode_id(&decision.input);
-    if let Some(mode_id) = requested_mode_id.as_deref() {
-        if resolve_workspace_mode_policy(store, mode_id)
-            .map_err(anyhow::Error::msg)?
-            .is_none()
-        {
-            return append_subtask_spawn_input_denied(
-                store,
-                record,
-                decision,
-                mode_id,
-                "subtask.spawn input.mode_id is unknown.",
-            );
-        }
+    if let Some(reason) = subtask_spawn_input_runtime_rejection_reason(store, &decision.input)? {
+        return append_subtask_spawn_input_denied(
+            store,
+            record,
+            decision,
+            requested_mode_id.as_deref().unwrap_or_default(),
+            reason,
+        );
     }
 
     let queue_position = next_subtask_queue_position(store, &record.run_id)?;
@@ -14011,6 +14038,61 @@ mod tests {
         assert!(child_started_payload["source_intent_summary"]
             .get("input")
             .is_none());
+    }
+
+    #[test]
+    fn subtask_spawn_unknown_mode_id_is_denied_before_approval_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create a focused child task.\",\"input\":{\"goal\":\"Review something bounded.\",\"mode_id\":\"missing-mode\"}}]}\n```";
+
+        append_tool_intent_events(&store, &parent, &policy, assistant_content)
+            .expect("append tool intent events");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("handle approved workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentApproved)
+                .count(),
+            0
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+                .count(),
+            1
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+        let denial_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(denial_payload["allowed"], false);
+        assert_eq!(denial_payload["tool_id"], SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(denial_payload["requested_mode_id"], "missing-mode");
+        assert_eq!(
+            denial_payload["reason"],
+            "subtask.spawn input.mode_id is unknown."
+        );
+        assert!(denial_payload.get("input").is_none());
     }
 
     #[test]

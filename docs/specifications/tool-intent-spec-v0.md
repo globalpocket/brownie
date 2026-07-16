@@ -56,7 +56,7 @@ After candidate manifest and handoff envelope evidence are accepted, `task.run` 
 
 `subtask.spawn` accepts a bounded optional input object with only `goal` and `mode_id`. Omitting `input` remains valid. When present, `goal` and `mode_id` must be non-empty strings within parser limits, and unknown fields are rejected with `code = "invalid_input"` before permission evaluation.
 
-The runtime resolves a requested `mode_id` against the built-in plus local Mode Pack policy set before queueing. Unknown requested modes append the existing `ToolIntentDenied` evidence and do not create `SubtaskOrchestrationQueued` or a child `TaskRecord`. Valid requested input is summarized as `requested_goal_preview` and `requested_mode_id`; raw request input is not persisted.
+The runtime resolves a requested `mode_id` against the built-in plus local Mode Pack policy set before approval, queueing, or child materialization. Unknown requested modes append the existing `ToolIntentDenied` evidence and do not create `ToolIntentApproved`, `SubtaskOrchestrationQueued`, or a child `TaskRecord`. Valid requested input is summarized as `requested_goal_preview` and `requested_mode_id`; raw request input is not persisted.
 
 When a later accepted handoff envelope materializes a child, a valid `requested_goal_preview` becomes the child goal and a valid `requested_mode_id` becomes the child `mode_id`. M5.15 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
 
