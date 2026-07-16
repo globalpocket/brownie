@@ -2310,6 +2310,8 @@ pub struct RunInspectSummary {
     pub subtask_dispatch_readiness_snapshot_count: usize,
     pub has_subtask_dispatcher_guard_verdict: bool,
     pub subtask_dispatcher_guard_verdict_count: usize,
+    pub has_subtask_dispatch_decision: bool,
+    pub subtask_dispatch_decision_count: usize,
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,

@@ -267,3 +267,9 @@ The dispatch readiness snapshot is visible through the ledger, through `run.insp
 M5.7 turns dispatch-readiness snapshot evidence into deterministic parent-run dispatcher guard verdict state. After `SubtaskDispatchReadinessSnapshotRecorded` exists, `task.run` appends a summary-only `SubtaskDispatcherGuardVerdictRecorded` event that records which readiness snapshot was evaluated, whether the snapshot fingerprint is current for the handoff guard, which scheduler handoff preflight checks remain blocked, and why dispatch remains denied.
 
 The dispatcher guard verdict is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.7 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.8 subtask dispatch decision
+
+M5.8 turns dispatcher guard verdict evidence into deterministic parent-run dispatch decision state. After `SubtaskDispatcherGuardVerdictRecorded` exists, `task.run` appends a summary-only `SubtaskDispatchDecisionRecorded` event that records which guard was evaluated, whether dispatch is denied, how many queued subtasks are candidate-blocked, and which guard-derived checks explain the denial.
+
+The dispatch decision is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.8 does not create child tasks, hand off scheduler work, run subprocesses, access the network, control services, apply patches, or write workspace files.

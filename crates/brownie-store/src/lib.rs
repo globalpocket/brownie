@@ -278,6 +278,7 @@ pub enum LedgerEventKind {
     SubtaskDispatchAdmissionEvaluated,
     SubtaskDispatchReadinessSnapshotRecorded,
     SubtaskDispatcherGuardVerdictRecorded,
+    SubtaskDispatchDecisionRecorded,
     ToolExecutionRequested,
     ToolExecutionPermissionChecked,
     ToolExecutionCompleted,

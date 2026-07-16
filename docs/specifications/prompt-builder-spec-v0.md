@@ -121,3 +121,9 @@ The `Subtask Orchestration` section also summarizes `SubtaskDispatchReadinessSna
 The `Subtask Orchestration` section also summarizes `SubtaskDispatcherGuardVerdictRecorded` ledger events using compact fields such as guard id, guard status, snapshot count, queued count, scheduler handoff preflight status, `dispatch_enabled`, snapshot validity status, and `next_action`.
 
 This lets later prompt passes see that dispatch-readiness snapshot evidence was evaluated into a dispatcher guard verdict while remaining blocked. It remains informational and does not authorize child task execution, process execution, network access, service control, patch apply, or workspace writes.
+
+## M5.8 subtask dispatch decision prompt summary
+
+The `Subtask Orchestration` section also summarizes `SubtaskDispatchDecisionRecorded` ledger events using compact fields such as decision id, decision status, guard count, candidate status, dispatch candidate count, eligible candidate count, `dispatch_enabled`, and `next_action`.
+
+This lets later prompt passes see that dispatcher guard verdict evidence was evaluated into a deterministic dispatch decision and per-candidate denial state. It remains informational and does not authorize child task execution, scheduler handoff, process execution, network access, service control, patch apply, or workspace writes.
