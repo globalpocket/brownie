@@ -73,3 +73,9 @@ M5.4 does not execute the requested subtask. It only records dispatch-contract a
 After dispatch-contract state exists, `task.run` may evaluate it into a summary-only `SubtaskDispatchAdmissionEvaluated` event. This admission record references the dispatch contract, records `dispatch_enabled = false`, includes blocked preconditions for future dispatch, and preserves deterministic execution-gate checks explaining why no child task can be admitted yet.
 
 M5.5 does not execute the requested subtask. It only records dispatch-admission and execution-gate evidence for future runtime dispatch.
+
+## M5.6 subtask dispatch readiness snapshot
+
+After dispatch-admission state exists, `task.run` may snapshot it into a summary-only `SubtaskDispatchReadinessSnapshotRecorded` event. This readiness snapshot references the admission decision, records `dispatch_enabled = false`, includes a stable readiness fingerprint, and preserves deterministic scheduler handoff checks explaining why no child task can be handed off yet.
+
+M5.6 does not execute the requested subtask. It only records dispatcher-readiness snapshot and scheduler handoff evidence for future runtime dispatch.

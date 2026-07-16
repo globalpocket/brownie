@@ -255,3 +255,9 @@ The dispatch contract is visible through the ledger, through `run.inspect` / `ta
 M5.5 turns dispatch-contract evidence into deterministic parent-run dispatch admission and execution-gate state. After `SubtaskDispatchContractPrepared` exists, `task.run` appends a summary-only `SubtaskDispatchAdmissionEvaluated` event that records which contract was evaluated, how many queued subtasks it covers, which preconditions remain blocked, and why execution admission remains denied.
 
 The dispatch admission decision is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.5 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
+
+## M5.6 subtask dispatch readiness snapshot
+
+M5.6 turns dispatch-admission evidence into deterministic parent-run dispatcher-readiness snapshot state. After `SubtaskDispatchAdmissionEvaluated` exists, `task.run` appends a summary-only `SubtaskDispatchReadinessSnapshotRecorded` event that records which admission evidence was snapshotted, how many queued subtasks it covers, which preconditions remain blocked, and a stable readiness fingerprint for future scheduler comparison.
+
+The dispatch readiness snapshot is visible through the ledger, through `run.inspect` / `task.inspect` summary counts, and through prompt materialization. M5.6 does not create child tasks, run subprocesses, access the network, control services, apply patches, or write workspace files.
