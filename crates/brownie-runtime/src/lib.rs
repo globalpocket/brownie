@@ -1903,6 +1903,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_subtask_dispatch_contract_prepared(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Err(error) = append_subtask_dispatch_admission_evaluated(&store, &running) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -9140,6 +9143,10 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .iter()
         .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
         .count();
+    let subtask_dispatch_admission_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
+        .count();
     let has_second_pass = events
         .iter()
         .any(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived);
@@ -9162,6 +9169,8 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         subtask_dispatch_plan_count,
         has_subtask_dispatch_contract_prepared: subtask_dispatch_contract_count > 0,
         subtask_dispatch_contract_count,
+        has_subtask_dispatch_admission_evaluated: subtask_dispatch_admission_count > 0,
+        subtask_dispatch_admission_count,
         has_second_pass,
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
@@ -9228,11 +9237,13 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "execution_enabled",
         "handoff_id",
         "readiness_id",
+        "admission_id",
         "queued_count",
         "queued_subtask_ids",
         "handoff_count",
         "readiness_count",
         "plan_count",
+        "contract_count",
         "source_event_count",
         "next_action",
         "dispatch_enabled",
@@ -9241,8 +9252,14 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "dispatch_contract_status",
         "dispatch_contract_reason",
         "eligibility_status",
+        "admission_status",
+        "admission_reason",
+        "execution_gate_status",
         "required_capability",
         "required_preconditions",
+        "precondition_count",
+        "satisfied_precondition_count",
+        "blocked_preconditions",
         "tool_ids",
         "finding_count",
         "categories",
@@ -9327,11 +9344,13 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "readiness_id",
             "plan_id",
             "contract_id",
+            "admission_id",
             "queue_position",
             "queued_count",
             "handoff_count",
             "readiness_count",
             "plan_count",
+            "contract_count",
             "execution_enabled",
             "dispatch_enabled",
             "next_action",
@@ -9339,6 +9358,8 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "dispatch_plan_status",
             "dispatch_contract_status",
             "eligibility_status",
+            "admission_status",
+            "execution_gate_status",
             "bytes_read",
             "truncated",
             "reason",
@@ -10071,6 +10092,98 @@ fn append_subtask_dispatch_contract_prepared(
     )
 }
 
+fn append_subtask_dispatch_admission_evaluated(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+) -> anyhow::Result<()> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
+    {
+        return Ok(());
+    }
+
+    let dispatch_contracts = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared)
+        .filter_map(|event| {
+            let payload = event.payload.as_ref()?;
+            let contract_id = payload.get("contract_id")?.as_str()?.to_string();
+            let queued_count = payload
+                .get("queued_count")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let required_preconditions = payload
+                .get("required_preconditions")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            Some((contract_id, queued_count, required_preconditions))
+        })
+        .collect::<Vec<_>>();
+    if dispatch_contracts.is_empty() {
+        return Ok(());
+    }
+
+    let run_fragment = record
+        .run_id
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>();
+    let contract_ids = dispatch_contracts
+        .iter()
+        .map(|(contract_id, _, _)| contract_id.clone())
+        .collect::<Vec<_>>();
+    let contract_count = dispatch_contracts.len();
+    let queued_count = dispatch_contracts
+        .iter()
+        .map(|(_, queued_count, _)| *queued_count)
+        .sum::<u64>();
+    let blocked_preconditions = dispatch_contracts
+        .iter()
+        .flat_map(|(_, _, required_preconditions)| required_preconditions.iter().cloned())
+        .collect::<Vec<_>>();
+    let blocked_checks = vec![
+        "dispatch_admission_blocked",
+        "runtime_dispatcher_not_implemented",
+        "child_task_execution_disabled",
+    ];
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchAdmissionEvaluated,
+        Some(json!({
+            "admission_id": format!("subtask_dispatch_admission_{run_fragment}_1"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "contract_id": contract_ids[0],
+            "contract_count": contract_count,
+            "queued_count": queued_count,
+            "source_event_count": contract_count,
+            "status": "Blocked",
+            "admission_status": "Blocked",
+            "execution_gate_status": "Blocked",
+            "admission_reason": "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher.",
+            "required_capability": "runtime_subtask_dispatcher",
+            "precondition_count": blocked_preconditions.len(),
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": blocked_preconditions,
+            "check_count": blocked_checks.len(),
+            "blocked_checks": blocked_checks,
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "next_action": "await_dispatch_admission_preconditions",
+            "reason": "Dispatch contract evidence evaluated into an admission decision and execution gate; no subtask was spawned in M5.5."
+        })),
+    )
+}
+
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -10647,6 +10760,9 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::SubtaskDispatchContractPrepared));
         assert!(events
             .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated));
+        assert!(events
+            .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
         let second_prompt = events
             .iter()
@@ -10688,6 +10804,9 @@ mod tests {
         assert!(second_prompt_preview.contains("Blocked plan_count=1"));
         assert!(second_prompt_preview.contains("eligibility_status=Blocked"));
         assert!(second_prompt_preview.contains("await_dispatch_contract_implementation"));
+        assert!(second_prompt_preview.contains("Blocked contract_count=1"));
+        assert!(second_prompt_preview.contains("execution_gate_status=Blocked"));
+        assert!(second_prompt_preview.contains("await_dispatch_admission_preconditions"));
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SecondPassLlmRequestCreated));
@@ -10764,6 +10883,8 @@ mod tests {
         assert_eq!(summary["subtask_dispatch_plan_count"], 1);
         assert_eq!(summary["has_subtask_dispatch_contract_prepared"], true);
         assert_eq!(summary["subtask_dispatch_contract_count"], 1);
+        assert_eq!(summary["has_subtask_dispatch_admission_evaluated"], true);
+        assert_eq!(summary["subtask_dispatch_admission_count"], 1);
         assert_eq!(summary["has_second_pass"], true);
         assert!(summary["final_response_preview"]
             .as_str()
@@ -10796,7 +10917,7 @@ mod tests {
 
     #[test]
     fn sanitizer_preserves_allowlisted_metadata_only() {
-        let sanitized = sanitize_ledger_payload(Some(json!({
+        let payload = serde_json::from_str(r#"{
             "output_preview": "safe",
             "bytes_read": 42,
             "truncated": false,
@@ -10826,13 +10947,21 @@ mod tests {
             "dispatch_contract_status": "Blocked",
             "dispatch_contract_reason": "Dispatch contract is blocked until the runtime dispatcher can honor required preconditions.",
             "eligibility_status": "Blocked",
+            "admission_id": "subtask_dispatch_admission_run_1_1",
+            "contract_count": 1,
+            "admission_status": "Blocked",
+            "admission_reason": "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher.",
+            "execution_gate_status": "Blocked",
             "required_capability": "runtime_subtask_dispatcher",
             "required_preconditions": ["runtime_subtask_dispatcher_implemented", "child_task_execution_guard_enabled"],
+            "precondition_count": 2,
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": ["runtime_subtask_dispatcher_implemented", "child_task_execution_guard_enabled"],
             "check_count": 2,
             "blocked_checks": ["child_task_execution_disabled", "runtime_dispatcher_not_implemented"],
             "dispatch_enabled": false
-        })))
-        .expect("sanitized");
+        }"#).expect("payload");
+        let sanitized = sanitize_ledger_payload(Some(payload)).expect("sanitized");
         assert_eq!(sanitized["output_preview"], "safe");
         assert_eq!(sanitized["bytes_read"], 42);
         assert_eq!(sanitized["truncated"], false);
@@ -10874,11 +11003,28 @@ mod tests {
         );
         assert_eq!(sanitized["eligibility_status"], "Blocked");
         assert_eq!(
+            sanitized["admission_id"],
+            "subtask_dispatch_admission_run_1_1"
+        );
+        assert_eq!(sanitized["contract_count"], 1);
+        assert_eq!(sanitized["admission_status"], "Blocked");
+        assert_eq!(
+            sanitized["admission_reason"],
+            "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher."
+        );
+        assert_eq!(sanitized["execution_gate_status"], "Blocked");
+        assert_eq!(
             sanitized["required_capability"],
             "runtime_subtask_dispatcher"
         );
         assert_eq!(
             sanitized["required_preconditions"][0],
+            "runtime_subtask_dispatcher_implemented"
+        );
+        assert_eq!(sanitized["precondition_count"], 2);
+        assert_eq!(sanitized["satisfied_precondition_count"], 0);
+        assert_eq!(
+            sanitized["blocked_preconditions"][0],
             "runtime_subtask_dispatcher_implemented"
         );
         assert_eq!(sanitized["check_count"], 2);
@@ -11354,6 +11500,72 @@ mod tests {
             "child_task_execution_disabled"
         );
         assert!(dispatch_contract_payload.get("input").is_none());
+        let dispatch_admission_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskDispatchAdmissionEvaluated)
+            .expect("subtask dispatch admission event");
+        let dispatch_admission_payload = dispatch_admission_event
+            .payload
+            .as_ref()
+            .expect("subtask dispatch admission payload");
+        assert_eq!(dispatch_admission_payload["status"], "Blocked");
+        assert_eq!(dispatch_admission_payload["admission_status"], "Blocked");
+        assert_eq!(
+            dispatch_admission_payload["execution_gate_status"],
+            "Blocked"
+        );
+        assert_eq!(
+            dispatch_admission_payload["admission_reason"],
+            "Dispatch contract cannot be admitted until required preconditions are satisfied by a runtime dispatcher."
+        );
+        assert_eq!(
+            dispatch_admission_payload["required_capability"],
+            "runtime_subtask_dispatcher"
+        );
+        assert_eq!(dispatch_admission_payload["contract_count"], 1);
+        assert_eq!(dispatch_admission_payload["queued_count"], 1);
+        assert_eq!(dispatch_admission_payload["source_event_count"], 1);
+        assert_eq!(dispatch_admission_payload["execution_enabled"], false);
+        assert_eq!(dispatch_admission_payload["dispatch_enabled"], false);
+        assert_eq!(
+            dispatch_admission_payload["next_action"],
+            "await_dispatch_admission_preconditions"
+        );
+        assert_eq!(
+            dispatch_admission_payload["reason"],
+            "Dispatch contract evidence evaluated into an admission decision and execution gate; no subtask was spawned in M5.5."
+        );
+        assert_eq!(
+            dispatch_admission_payload["contract_id"],
+            dispatch_contract_payload["contract_id"]
+        );
+        assert!(dispatch_admission_payload["admission_id"]
+            .as_str()
+            .expect("admission id")
+            .starts_with("subtask_dispatch_admission_run_"));
+        assert_eq!(dispatch_admission_payload["precondition_count"], 3);
+        assert_eq!(
+            dispatch_admission_payload["satisfied_precondition_count"],
+            0
+        );
+        assert_eq!(
+            dispatch_admission_payload["blocked_preconditions"][0],
+            "runtime_subtask_dispatcher_implemented"
+        );
+        assert_eq!(dispatch_admission_payload["check_count"], 3);
+        assert_eq!(
+            dispatch_admission_payload["blocked_checks"][0],
+            "dispatch_admission_blocked"
+        );
+        assert_eq!(
+            dispatch_admission_payload["blocked_checks"][1],
+            "runtime_dispatcher_not_implemented"
+        );
+        assert_eq!(
+            dispatch_admission_payload["blocked_checks"][2],
+            "child_task_execution_disabled"
+        );
+        assert!(dispatch_admission_payload.get("input").is_none());
         let events: Vec<LedgerEventKind> = ledger_events
             .iter()
             .map(|event| event.kind.clone())
@@ -11395,6 +11607,7 @@ mod tests {
                 LedgerEventKind::SubtaskSchedulerReadinessRecorded,
                 LedgerEventKind::SubtaskDispatchPlanPrepared,
                 LedgerEventKind::SubtaskDispatchContractPrepared,
+                LedgerEventKind::SubtaskDispatchAdmissionEvaluated,
                 LedgerEventKind::LlmResponseReceived,
                 LedgerEventKind::AgentLoopCompleted,
                 LedgerEventKind::TaskCompleted,

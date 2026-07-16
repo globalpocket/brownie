@@ -35,6 +35,8 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - `subtask_dispatch_plan_count`
 - `has_subtask_dispatch_contract_prepared`
 - `subtask_dispatch_contract_count`
+- `has_subtask_dispatch_admission_evaluated`
+- `subtask_dispatch_admission_count`
 - `has_second_pass`
 - `final_response_preview`, preferring `SecondPassLlmResponseReceived.content_preview` over `LlmResponseReceived.content_preview`
 - a compact human-readable `timeline`
@@ -56,6 +58,10 @@ Run inspection also reports prepared dispatch plan evidence. `has_subtask_dispat
 ## M5.4 subtask dispatch contract inspection
 
 Run inspection also reports prepared dispatch contract evidence. `has_subtask_dispatch_contract_prepared` / `subtask_dispatch_contract_count` count `SubtaskDispatchContractPrepared` events. These fields indicate that the runtime converted dispatch-plan evidence into a deterministic dispatch contract and eligibility gate; in M5.4 dispatch remains blocked and no child task execution is implied.
+
+## M5.5 subtask dispatch admission inspection
+
+Run inspection also reports evaluated dispatch admission evidence. `has_subtask_dispatch_admission_evaluated` / `subtask_dispatch_admission_count` count `SubtaskDispatchAdmissionEvaluated` events. These fields indicate that the runtime converted dispatch-contract evidence into a deterministic admission decision and execution gate; in M5.5 dispatch remains blocked and no child task execution is implied.
 
 ## Phase 2.1 LLM metadata redaction
 

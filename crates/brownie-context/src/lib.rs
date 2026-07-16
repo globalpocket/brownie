@@ -439,6 +439,42 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
                         "{contract_id}: {dispatch_contract_status} plan_count={plan_count} queued_count={queued_count} eligibility_status={eligibility_status} dispatch_enabled={dispatch_enabled} next_action={next_action}"
                     ))
                 }
+                LedgerEventKind::SubtaskDispatchAdmissionEvaluated => {
+                    let admission_id = payload
+                        .get("admission_id")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let admission_status = payload
+                        .get("admission_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let contract_count = payload
+                        .get("contract_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let queued_count = payload
+                        .get("queued_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let execution_gate_status = payload
+                        .get("execution_gate_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let dispatch_enabled = payload
+                        .get("dispatch_enabled")
+                        .and_then(|value| value.as_bool())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let next_action = payload
+                        .get("next_action")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    Some(format!(
+                        "{admission_id}: {admission_status} contract_count={contract_count} queued_count={queued_count} execution_gate_status={execution_gate_status} dispatch_enabled={dispatch_enabled} next_action={next_action}"
+                    ))
+                }
                 _ => None,
             }
         })
@@ -935,6 +971,22 @@ mod tests {
                         "next_action": "await_dispatch_contract_implementation"
                     })),
                 },
+                LedgerEvent {
+                    event_id: "event_6".into(),
+                    task_id: "task_1".into(),
+                    run_id: "run_1".into(),
+                    kind: LedgerEventKind::SubtaskDispatchAdmissionEvaluated,
+                    timestamp: "2026-01-01T00:00:05Z".into(),
+                    payload: Some(serde_json::json!({
+                        "admission_id": "subtask_dispatch_admission_run_1_1",
+                        "admission_status": "Blocked",
+                        "contract_count": 1,
+                        "queued_count": 1,
+                        "execution_gate_status": "Blocked",
+                        "dispatch_enabled": false,
+                        "next_action": "await_dispatch_admission_preconditions"
+                    })),
+                },
             ],
         };
 
@@ -946,7 +998,8 @@ mod tests {
                 "subtask_handoff_run_1_1: Prepared queued_count=1 execution_enabled=false next_action=await_future_runtime_scheduler",
                 "subtask_scheduler_readiness_run_1_1: Blocked handoff_count=1 queued_count=1 dispatch_enabled=false next_action=await_runtime_scheduler_dispatch",
                 "subtask_dispatch_plan_run_1_1: Blocked readiness_count=1 queued_count=1 dispatch_enabled=false next_action=await_runtime_subtask_dispatcher",
-                "subtask_dispatch_contract_run_1_1: Blocked plan_count=1 queued_count=1 eligibility_status=Blocked dispatch_enabled=false next_action=await_dispatch_contract_implementation"
+                "subtask_dispatch_contract_run_1_1: Blocked plan_count=1 queued_count=1 eligibility_status=Blocked dispatch_enabled=false next_action=await_dispatch_contract_implementation",
+                "subtask_dispatch_admission_run_1_1: Blocked contract_count=1 queued_count=1 execution_gate_status=Blocked dispatch_enabled=false next_action=await_dispatch_admission_preconditions"
             ]
         );
         let prompt = PromptBuilder::build(materialized);
@@ -968,6 +1021,9 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_dispatch_contract_run_1_1: Blocked plan_count=1 queued_count=1 eligibility_status=Blocked dispatch_enabled=false next_action=await_dispatch_contract_implementation"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("- subtask_dispatch_admission_run_1_1: Blocked contract_count=1 queued_count=1 execution_gate_status=Blocked dispatch_enabled=false next_action=await_dispatch_admission_preconditions"));
     }
 
     #[test]
