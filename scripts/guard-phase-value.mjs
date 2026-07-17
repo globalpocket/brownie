@@ -80,7 +80,7 @@ function validateManifest(manifest) {
     'identical bounded previews',
     'run/task-scoped exclusion',
     'Concurrent task.run',
-    'Orphaned consumption',
+    'Orphaned consumption without matching terminal completion',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -127,7 +127,7 @@ function validateSourceEvidence(manifest) {
     'admit_parent_join_continuation',
     'parent_join_child_completion_fingerprint_v2',
     'task_run_parent_join_fingerprint_uses_result_fingerprint_not_preview',
-    'task_run_parent_join_recovers_orphaned_consumption_without_running',
+    'task_run_parent_join_recovers_orphaned_admission_without_terminal',
     'task_run_parent_join_concurrent_admission_consumes_once'
   ]) {
     if (!runtimeText.includes(token) && !storeText.includes(token)) {

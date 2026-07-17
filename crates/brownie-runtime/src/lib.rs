@@ -2452,7 +2452,7 @@ fn parent_join_child_completion_fingerprint_consumed(
         let Some(admission_id) = payload.get("admission_id").and_then(Value::as_str) else {
             return true;
         };
-        events.iter().any(|candidate| {
+        let Some(running_index) = events.iter().position(|candidate| {
             candidate.kind == LedgerEventKind::TaskRunning
                 && candidate
                     .payload
@@ -2460,7 +2460,23 @@ fn parent_join_child_completion_fingerprint_consumed(
                     .and_then(|payload| payload.get("admission_id"))
                     .and_then(Value::as_str)
                     == Some(admission_id)
-        })
+        }) else {
+            return false;
+        };
+        for candidate in events.iter().skip(running_index + 1) {
+            if candidate.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+                return false;
+            }
+            if matches!(
+                candidate.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            ) {
+                return true;
+            }
+        }
+        false
     }))
 }
 
@@ -15325,7 +15341,7 @@ mod tests {
     }
 
     #[test]
-    fn task_run_parent_join_recovers_orphaned_consumption_without_running() {
+    fn task_run_parent_join_recovers_orphaned_admission_without_terminal() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -15371,6 +15387,18 @@ mod tests {
                 })),
             )
             .expect("append orphaned consumption");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::TaskRunning,
+                Some(json!({
+                    "admission_id": "orphaned-admission",
+                    "admission_kind": "parent_join_continuation",
+                    "reason": "Synthetic TaskRunning without terminal completion."
+                })),
+            )
+            .expect("append orphaned TaskRunning");
 
         let parent_join = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
@@ -15397,7 +15425,7 @@ mod tests {
                     .and_then(|payload| payload.get("admission_id"))
                     .and_then(Value::as_str);
                 admission_id.is_some_and(|admission_id| {
-                    parent_events.iter().any(|candidate| {
+                    let Some(running_index) = parent_events.iter().position(|candidate| {
                         candidate.kind == LedgerEventKind::TaskRunning
                             && candidate
                                 .payload
@@ -15405,7 +15433,25 @@ mod tests {
                                 .and_then(|payload| payload.get("admission_id"))
                                 .and_then(Value::as_str)
                                 == Some(admission_id)
-                    })
+                    }) else {
+                        return false;
+                    };
+                    for candidate in parent_events.iter().skip(running_index + 1) {
+                        if candidate.kind
+                            == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                        {
+                            return false;
+                        }
+                        if matches!(
+                            candidate.kind,
+                            LedgerEventKind::TaskCompleted
+                                | LedgerEventKind::TaskFailed
+                                | LedgerEventKind::TaskCancelled
+                        ) {
+                            return true;
+                        }
+                    }
+                    false
                 })
             })
             .count();

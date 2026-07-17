@@ -194,9 +194,6 @@ impl TaskStore {
         }
 
         let admission_id = format!("parent_join_admission_{}", Uuid::new_v4().simple());
-        record.status = TaskStatus::Running;
-        record.updated_at = timestamp()?;
-        self.write_task_state(&record)?;
         self.append_task_events_with_payloads(
             &record,
             vec![
@@ -221,6 +218,9 @@ impl TaskStore {
                 ),
             ],
         )?;
+        record.status = TaskStatus::Running;
+        record.updated_at = timestamp()?;
+        self.write_task_state(&record)?;
         Ok(Some(record))
     }
 
@@ -507,7 +507,7 @@ fn parent_join_continuation_fingerprint_consumed_in_events(
         else {
             return true;
         };
-        events.iter().any(|candidate| {
+        let Some(running_index) = events.iter().position(|candidate| {
             candidate.kind == LedgerEventKind::TaskRunning
                 && candidate
                     .payload
@@ -515,7 +515,23 @@ fn parent_join_continuation_fingerprint_consumed_in_events(
                     .and_then(|payload| payload.get("admission_id"))
                     .and_then(serde_json::Value::as_str)
                     == Some(admission_id)
-        })
+        }) else {
+            return false;
+        };
+        for candidate in events.iter().skip(running_index + 1) {
+            if candidate.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+                return false;
+            }
+            if matches!(
+                candidate.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            ) {
+                return true;
+            }
+        }
+        false
     })
 }
 
