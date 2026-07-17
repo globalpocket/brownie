@@ -14058,7 +14058,9 @@ mod tests {
 
     #[test]
     fn accepted_handoff_envelope_materializes_one_child_per_distinct_candidate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         let store = BrownieStore::new(temp.path());
         let parent = store
             .tasks()
@@ -14287,6 +14289,46 @@ mod tests {
             )
             .expect("missing candidate child")
             .is_none());
+
+        for child in children_by_candidate.values() {
+            let child_run = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":100,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+                child.task_id
+            ));
+            assert!(child_run.error.is_none());
+            let child_result = child_run.result.expect("child run result");
+            assert_eq!(child_result["task_id"], child.task_id);
+            assert_eq!(child_result["run_id"], child.run_id);
+            assert_eq!(child_result["status"], "Completed");
+
+            let completed_child = store
+                .tasks()
+                .get_task(&child.task_id)
+                .expect("get completed child")
+                .expect("completed child");
+            assert_eq!(completed_child.status, TaskStatus::Completed);
+            assert_eq!(
+                completed_child.source_candidate_id.as_deref(),
+                child.source_candidate_id.as_deref()
+            );
+            assert_eq!(
+                completed_child
+                    .source_handoff_envelope_fingerprint
+                    .as_deref(),
+                Some("sha256:multi-subtask")
+            );
+        }
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after child runs")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+                .count(),
+            2
+        );
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
