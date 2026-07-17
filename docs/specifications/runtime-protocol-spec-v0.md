@@ -818,3 +818,11 @@ M5.15 adds bounded structured input for approved `subtask.spawn` intent. The opt
 Before approval, queueing, or child materialization, the runtime resolves requested `mode_id` values against the workspace mode policy set. Unknown modes use the existing `ToolIntentDenied` event path and do not create `ToolIntentApproved`, queued subtask evidence, or child records. Valid requested inputs are persisted only as sanitized summary fields: `requested_goal_preview` and `requested_mode_id`.
 
 Controlled child materialization uses `requested_goal_preview` as the child `TaskRecord.goal` and `requested_mode_id` as the child `TaskRecord.mode_id` when present. `run.inspect`, `task.inspect`, child `TaskStarted`, and `ChildTaskSourceIntentSummary` expose the same sanitized fields without raw `input` objects or serialized request bodies. M5.15 preserves duplicate prevention, explicit child `task.run` admission, and the no scheduler auto-dispatch / no process / no network / no service-control / no patch-apply / no direct workspace mutation boundary.
+
+## M5.16 multi-candidate child task materialization
+
+M5.16 extends controlled child materialization across all distinct candidates covered by one accepted `SubtaskDispatchHandoffEnvelopeRecorded` event. A handoff envelope with multiple `candidate_ids` or `blocked_candidate_ids` materializes one queued child `TaskRecord` per distinct source candidate instead of stopping after the first candidate.
+
+Duplicate prevention is scoped to `parent_run_id + source_candidate_id + source_handoff_envelope_fingerprint`, so rerunning materialization for the same envelope reuses existing children without blocking different candidates from the same envelope. Each child keeps its own parent/source provenance, per-candidate `source_intent_summary`, sanitized `requested_goal_preview`, and sanitized `requested_mode_id` when available.
+
+Parent `task.run` still does not run child tasks, and each child remains limited to the existing explicit queued child `task.run` admission path. M5.16 adds no scheduler handoff, external worker, process execution expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, raw `input` persistence, or new blocked summary wrapper.

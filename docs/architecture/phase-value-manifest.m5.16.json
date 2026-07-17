@@ -1,0 +1,73 @@
+{
+  "phase": "M5.16",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "multi_candidate_child_task_materialization",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_multi_child_materialization",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns one accepted handoff envelope covering multiple subtask candidates into multiple concrete child TaskRecords instead of stopping after the first candidate."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Preserves explicit task.run admission for each controlled child by maintaining per-candidate provenance against the parent handoff envelope."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets headless callers inspect distinct child task entities for each approved candidate without scheduler handoff or raw tool input persistence."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "multi_candidate_materialization",
+        "prompt": "Does an accepted handoff envelope with multiple distinct candidates create multiple controlled child TaskRecords?"
+      },
+      {
+        "id": "candidate_scoped_idempotency",
+        "prompt": "Is duplicate prevention scoped by parent run, source candidate, and handoff envelope fingerprint?"
+      },
+      {
+        "id": "per_candidate_intent",
+        "prompt": "Does each child preserve its own sanitized source intent summary, requested goal, and requested mode?"
+      },
+      {
+        "id": "explicit_child_run_admission",
+        "prompt": "Does each materialized child remain eligible for the existing explicit queued child task.run admission path?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler auto-dispatch, external workers, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "multi_candidate_materialization": "Yes. The runtime deduplicates accepted envelope candidate ids and materializes one queued child TaskRecord per distinct candidate.",
+      "candidate_scoped_idempotency": "Yes. Existing children are looked up by parent_run_id, source_candidate_id, and source_handoff_envelope_fingerprint before creating a new child.",
+      "per_candidate_intent": "Yes. Each child reconstructs source_intent_summary from its own SubtaskOrchestrationQueued evidence, including requested_goal_preview and requested_mode_id when present.",
+      "explicit_child_run_admission": "Yes. The existing queued child provenance validator accepts each child because parent/source candidate/envelope evidence remains complete.",
+      "safety_boundary": "Yes. The phase adds no scheduler auto-dispatch, external worker, patch apply, direct workspace mutation path, service control, network bypass, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "An accepted handoff envelope covering multiple distinct candidate ids materializes multiple controlled child TaskRecords.",
+    "Every materialized child stores source_candidate_id, parent_task_id, parent_run_id, source_handoff_envelope_id, and source_handoff_envelope_fingerprint.",
+    "Duplicate prevention uses parent_run_id + source_candidate_id + source_handoff_envelope_fingerprint.",
+    "Each child preserves a per-candidate source_intent_summary with requested_goal_preview and requested_mode_id when available.",
+    "Child source_intent_summary and child TaskStarted payloads do not persist raw input objects.",
+    "Parent task.run does not auto-run child tasks.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_store_tokens": [
+      "find_child_task_by_candidate_and_handoff_fingerprint"
+    ],
+    "rust_runtime_tokens": [
+      "handoff_envelope_candidate_ids",
+      "find_child_task_by_candidate_and_handoff_fingerprint",
+      "accepted_handoff_envelope_materializes_one_child_per_distinct_candidate",
+      "validate_controlled_queued_child_task_provenance"
+    ]
+  }
+}

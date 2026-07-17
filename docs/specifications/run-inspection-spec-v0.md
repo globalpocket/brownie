@@ -111,6 +111,12 @@ Materialized child tasks now carry a sanitized `source_intent_summary` derived f
 
 The summary includes `tool_id`, `required_action`, bounded `request_reason`, and bounded `input_summary`. It must not include raw `input`, raw prompts, provider responses, file content, command output, environment values, or serialized request bodies. Parent inspection remains observational and does not auto-run child tasks.
 
+## M5.16 multi-candidate child relation inspection
+
+Parent run inspection may now list multiple controlled child tasks materialized from one accepted handoff envelope. `child_task_count`, `child_task_ids`, and `child_tasks` are derived from persisted child records, so every distinct candidate child appears independently with its own `source_candidate_id`, handoff envelope fingerprint, status, and sanitized `source_intent_summary`.
+
+Inspection remains observational. It must not trigger child execution, scheduler handoff, workspace writes, patch apply, process execution, network access, service control, or raw input exposure.
+
 ## Phase 2.1 LLM metadata redaction
 
 Run inspection may show LLM provider metadata and `LlmRequestFailed` / `SecondPassLlmRequestFailed` summaries, but all secret-bearing values must be redacted. API keys, Authorization headers, Bearer tokens, and URL query strings are not inspection data. `BROWNIE_LLM_STRICT` and fallback-to-Fake status are observable through `llm.status`; request ledger metadata may include redacted `base_url` and `strict` so users can verify which configured provider path was used.
