@@ -1,0 +1,88 @@
+{
+  "phase": "M5.21",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "multi_cycle_parent_child_orchestration",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_multi_cycle_parent_child_runtime_progress",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Hardens parent/child orchestration across multiple explicit continuation cycles over real controlled child TaskRecords."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Keeps parent continuation progress inside the Rust-owned agent loop and task ledger instead of stopping after one child materialization."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Moves long-running work loops closer to sustained bounded parent/child iteration without scheduler auto-dispatch or child auto-run."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "multi_cycle_parent_child_orchestration",
+        "prompt": "Can a parent complete two explicit continuation cycles over controlled child TaskRecords?"
+      },
+      {
+        "id": "new_child_changes_fingerprint",
+        "prompt": "Does completing a continuation-produced child change the parent join fingerprint and admit the next continuation?"
+      },
+      {
+        "id": "same_result_replay_rejected",
+        "prompt": "Does the same completed child result set remain replay-rejected before a new child completes?"
+      },
+      {
+        "id": "admission_scoped_envelopes",
+        "prompt": "Are continuation handoff envelopes scoped by parent_join_admission_id without stale candidate capture?"
+      },
+      {
+        "id": "multi_envelope_idempotency",
+        "prompt": "Does re-running materialization avoid duplicate children across multiple accepted envelopes?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "multi_cycle_parent_child_orchestration": "Yes. Tests cover initial child completion, first parent continuation child materialization, explicit continuation child run, second parent continuation, and second continuation child materialization.",
+      "new_child_changes_fingerprint": "Yes. The second parent continuation consumes an expanded child result set with a distinct preview-independent parent join fingerprint.",
+      "same_result_replay_rejected": "Yes. Repeating parent task.run before the continuation child completes is rejected and does not append parent ledger events.",
+      "admission_scoped_envelopes": "Yes. Continuation envelope candidate collection is bounded to the event window for the matching parent_join_admission_id and stops at terminal or later admission boundaries.",
+      "multi_envelope_idempotency": "Yes. Materialization remains keyed by parent_run_id, source candidate id, and handoff envelope fingerprint, so re-running over multiple accepted envelopes does not duplicate children.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A parent can perform two explicit continuation cycles over controlled child TaskRecords.",
+    "Completing a continuation-produced child changes the parent join fingerprint and admits the next parent continuation.",
+    "The same completed child result set remains rejected before any new child completion.",
+    "The second continuation cycle can materialize a new controlled queued child TaskRecord.",
+    "Continuation handoff envelopes are scoped by parent_join_admission_id and do not capture stale candidates from previous admissions.",
+    "Re-running materialization does not duplicate children from any accepted envelope.",
+    "Every child execution remains explicit task.run; No child auto-run occurs.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, or serialized request bodies are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "parent_join_continuation_window",
+      "queued_subtask_ids_from_events",
+      "append_parent_join_continuation_handoff_envelope_recorded",
+      "parent_join_admission_id",
+      "multi-envelope idempotent materialization",
+      "task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "validate_controlled_queued_child_task_provenance"
+    ],
+    "rust_store_tokens": [
+      "ParentJoinContinuationRunAdmitted",
+      "admit_parent_join_continuation"
+    ],
+    "rust_llm_tokens": [
+      "Fake LLM parent continuation request"
+    ]
+  }
+}
