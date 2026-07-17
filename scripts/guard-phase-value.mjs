@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.19';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.19.json';
+const phase = 'M5.20';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.20.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'atomic_parent_continuation_admission_with_completion_result_fingerprint',
-    `${phase} must declare the atomic parent continuation admission transition.`
+    manifest.concrete_capability_transition === 'continuation_subtask_materialization',
+    `${phase} must declare the continuation subtask materialization transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'continuation_child_materialization_or_new_wrapper_before_atomic_admission_hardening',
-    `${phase} must forbid continuation child materialization or wrapper-only work before atomic admission hardening.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_continuation_child_materialization',
+    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without continuation child materialization.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,12 +75,11 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'completion_result_fingerprint',
-    'does not use bounded previews',
-    'identical bounded previews',
-    'run/task-scoped exclusion',
-    'Concurrent task.run',
-    'Orphaned consumption without matching terminal completion',
+    'controlled queued child TaskRecord',
+    'Existing earlier parent-run handoff/materialization events do not suppress',
+    'Repeating the same continuation/source intent does not create duplicate children',
+    'explicit child task.run',
+    'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -112,6 +111,9 @@ function validateSourceEvidence(manifest) {
   for (const token of evidence.rust_context_tokens ?? []) {
     requireToken('crates/brownie-context/src/lib.rs', token);
   }
+  for (const token of evidence.rust_llm_tokens ?? []) {
+    requireToken('crates/brownie-llm/src/lib.rs', token);
+  }
   for (const token of evidence.rust_runtime_tokens ?? []) {
     requireToken('crates/brownie-runtime/src/lib.rs', token);
   }
@@ -122,13 +124,14 @@ function validateSourceEvidence(manifest) {
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
   for (const token of [
-    'completion_result_fingerprint',
-    'ParentJoinContinuationRunAdmission',
+    'ParentJoinContinuationRunAdmitted',
     'admit_parent_join_continuation',
-    'parent_join_child_completion_fingerprint_v2',
-    'task_run_parent_join_fingerprint_uses_result_fingerprint_not_preview',
-    'task_run_parent_join_recovers_orphaned_admission_without_terminal',
-    'task_run_parent_join_concurrent_admission_consumes_once'
+    'append_parent_join_continuation_handoff_envelope_recorded',
+    'm5.20_parent_join_continuation_handoff_envelope_v1',
+    'continuation_subtask_materialization',
+    'task_run_parent_join_materializes_continuation_subtask_without_auto_run',
+    'materialize_controlled_child_task_from_handoff_envelope',
+    'validate_controlled_queued_child_task_provenance'
   ]) {
     if (!runtimeText.includes(token) && !storeText.includes(token)) {
       errors.push(`${phase} source must include ${token}.`);
