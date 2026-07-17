@@ -1,0 +1,91 @@
+{
+  "phase": "M5.19",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "atomic_parent_continuation_admission_with_completion_result_fingerprint",
+  "forbidden_pattern": "continuation_child_materialization_or_new_wrapper_before_atomic_admission_hardening",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Hardens parent join continuation so replay identity uses child completion result fingerprints instead of bounded display previews."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Makes parent continuation admission an atomic state transition before another parent agent-loop pass starts."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Removes a persistence and concurrency blocker before scheduler handoff or controlled automatic child dispatch can be designed safely."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "completion_result_fingerprint",
+        "prompt": "Does child completion record a canonical sanitized result fingerprint?"
+      },
+      {
+        "id": "preview_not_replay_identity",
+        "prompt": "Does parent join replay identity avoid bounded completion/final-response previews?"
+      },
+      {
+        "id": "atomic_parent_join_admission",
+        "prompt": "Does parent join admission atomically consume the fingerprint while transitioning to Running?"
+      },
+      {
+        "id": "concurrent_replay_guard",
+        "prompt": "Does concurrent parent continuation admit at most one run for the same fingerprint?"
+      },
+      {
+        "id": "failure_recovery",
+        "prompt": "Can orphaned consumption without terminal completion be distinguished from committed admission?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "completion_result_fingerprint": "Yes. AgentLoopCompleted records completion_result_fingerprint as a SHA-256 over canonical result hashes without persisting raw provider response content.",
+      "preview_not_replay_identity": "Yes. Parent join fingerprint inputs use child/run/source/envelope identity, completion_final_state, and completion_result_fingerprint; previews remain display/context fields.",
+      "atomic_parent_join_admission": "Yes. TaskStore::admit_parent_join_continuation acquires a run-scoped lock, rereads state/ledger, checks consumption, writes Running state, and appends consumption plus TaskRunning together.",
+      "concurrent_replay_guard": "Yes. The run admission lock and reread prevent two concurrent task.run calls from consuming the same parent join fingerprint.",
+      "failure_recovery": "Yes. New consumed events carry admission_id and count as committed only when a matching TaskRunning and later terminal event exist; orphaned admission can be retried.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, process execution expansion, or continuation child materialization."
+    }
+  },
+  "exit_criteria": [
+    "Child completion records completion_result_fingerprint.",
+    "Parent join replay identity does not use bounded previews.",
+    "Materially different child completion results with identical bounded previews produce distinct parent join fingerprints.",
+    "Repeated parent continuation for the same child completion fingerprint is rejected before another parent agent-loop pass starts.",
+    "Parent continuation admission is protected by run/task-scoped exclusion or an equivalent atomic TaskStore operation.",
+    "Concurrent task.run admits at most one parent continuation for the same fingerprint.",
+    "Orphaned consumption without matching terminal completion has defined recovery behavior.",
+    "Existing child materialization, explicit child task.run, multi-candidate materialization, child inspection, parent join continuation, and replay rejection remain compatible.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, or serialized request bodies are persisted or exposed.",
+    "No scheduler handoff, external worker, child auto-run, continuation child materialization, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_store_tokens": [
+      "ParentJoinContinuationRunAdmission",
+      "admit_parent_join_continuation",
+      "acquire_run_admission_lock",
+      "parent_join_continuation_fingerprint_consumed_in_events"
+    ],
+    "rust_protocol_tokens": [
+      "completion_result_fingerprint"
+    ],
+    "rust_runtime_tokens": [
+      "completion_result_fingerprint",
+      "parent_join_child_completion_fingerprint_v2",
+      "task_run_parent_join_fingerprint_uses_result_fingerprint_not_preview",
+      "task_run_parent_join_recovers_orphaned_admission_without_terminal",
+      "task_run_parent_join_concurrent_admission_consumes_once"
+    ],
+    "vsix_protocol_tokens": [
+      "completion_result_fingerprint"
+    ]
+  }
+}

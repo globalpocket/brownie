@@ -291,6 +291,7 @@ export interface ChildTaskInspectSummary {
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
+  completion_result_fingerprint?: string | null;
   completion_summary_preview?: string | null;
   final_response_preview?: string | null;
 }
@@ -2610,6 +2611,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&
+    (value.completion_result_fingerprint === undefined || value.completion_result_fingerprint === null || typeof value.completion_result_fingerprint === 'string') &&
     (value.completion_summary_preview === undefined || value.completion_summary_preview === null || typeof value.completion_summary_preview === 'string') &&
     (value.final_response_preview === undefined || value.final_response_preview === null || typeof value.final_response_preview === 'string')
   );

@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.18';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.18.json';
+const phase = 'M5.19';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.19.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'replay_safe_parent_join_continuation',
-    `${phase} must declare the replay-safe parent join continuation transition.`
+    manifest.concrete_capability_transition === 'atomic_parent_continuation_admission_with_completion_result_fingerprint',
+    `${phase} must declare the atomic parent continuation admission transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_join_replay_guard',
-    `${phase} must forbid adding another blocked summary wrapper without parent join replay protection.`
+    manifest.forbidden_pattern === 'continuation_child_materialization_or_new_wrapper_before_atomic_admission_hardening',
+    `${phase} must forbid continuation child materialization or wrapper-only work before atomic admission hardening.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,12 +75,12 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'deterministic summary-safe child completion fingerprint',
-    'first continuation',
-    'same child completion fingerprint',
-    'materially different controlled completed child result set',
-    'Incomplete or non-controlled child tasks',
-    'Parent continuation does not auto-run child tasks',
+    'completion_result_fingerprint',
+    'does not use bounded previews',
+    'identical bounded previews',
+    'run/task-scoped exclusion',
+    'Concurrent task.run',
+    'Orphaned consumption without matching terminal completion',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -122,11 +122,13 @@ function validateSourceEvidence(manifest) {
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
   for (const token of [
-    'parent_join_child_completion_fingerprint',
-    'parent_join_child_completion_fingerprint_consumed',
-    'ParentJoinContinuationFingerprintConsumed',
-    'task_run_rejects_repeated_parent_join_for_same_child_completion_fingerprint',
-    'task_run_admits_parent_join_when_child_completion_fingerprint_changes'
+    'completion_result_fingerprint',
+    'ParentJoinContinuationRunAdmission',
+    'admit_parent_join_continuation',
+    'parent_join_child_completion_fingerprint_v2',
+    'task_run_parent_join_fingerprint_uses_result_fingerprint_not_preview',
+    'task_run_parent_join_recovers_orphaned_admission_without_terminal',
+    'task_run_parent_join_concurrent_admission_consumes_once'
   ]) {
     if (!runtimeText.includes(token) && !storeText.includes(token)) {
       errors.push(`${phase} source must include ${token}.`);
@@ -138,7 +140,8 @@ function validateSourceEvidence(manifest) {
     'SubtaskSchedulerPacketRecorded',
     'SubtaskHandoffReceiptRecorded',
     'SubtaskChildRunAdmissionSummaryRecorded',
-    'SubtaskChildRunResultSummaryRecorded'
+    'SubtaskChildRunResultSummaryRecorded',
+    'SubtaskContinuationChildMaterialized'
   ];
   for (const token of forbiddenWrapperEvents) {
     if (runtimeText.includes(token) || storeText.includes(token)) {
