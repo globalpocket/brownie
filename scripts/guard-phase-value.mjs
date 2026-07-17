@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.16';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.16.json';
+const phase = 'M5.17';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.17.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'multi_candidate_child_task_materialization',
-    `${phase} must declare the multi-candidate child task materialization transition.`
+    manifest.concrete_capability_transition === 'completed_child_parent_join_continuation',
+    `${phase} must declare the completed child parent join continuation transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_multi_child_materialization',
-    `${phase} must forbid adding another blocked summary wrapper without multi-child materialization.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_join_continuation',
+    `${phase} must forbid adding another blocked summary wrapper without parent join continuation.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,11 +75,12 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'multiple controlled child TaskRecords',
-    'source_candidate_id',
-    'parent_run_id + source_candidate_id + source_handoff_envelope_fingerprint',
-    'per-candidate source_intent_summary',
-    'raw input objects',
+    'completed controlled child tasks',
+    'parent join continuation',
+    'child_completion_summaries',
+    'bounded completion_summary_preview and final_response_preview',
+    'Non-controlled child tasks do not satisfy parent join continuation',
+    'No raw child prompts',
     'Parent task.run does not auto-run child tasks',
     'No scheduler handoff'
   ]) {
@@ -107,6 +108,9 @@ function validateSourceEvidence(manifest) {
   }
   for (const token of evidence.rust_protocol_tokens ?? []) {
     requireToken('crates/brownie-protocol/src/lib.rs', token);
+  }
+  for (const token of evidence.rust_context_tokens ?? []) {
+    requireToken('crates/brownie-context/src/lib.rs', token);
   }
   for (const token of evidence.rust_runtime_tokens ?? []) {
     requireToken('crates/brownie-runtime/src/lib.rs', token);

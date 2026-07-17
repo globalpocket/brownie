@@ -1,0 +1,83 @@
+{
+  "phase": "M5.17",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "completed_child_parent_join_continuation",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_parent_join_continuation",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Lets a completed parent explicitly continue after controlled child tasks have completed by consuming bounded child completion summaries as runtime context."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Reuses task.run as the explicit parent continuation path without scheduler auto-dispatch or child auto-run behavior."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Provides a headless runtime transition from child materialization and explicit child completion into parent-side continuation."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "completed_child_join",
+        "prompt": "Can a completed parent task explicitly continue only after its controlled child tasks have completed?"
+      },
+      {
+        "id": "bounded_child_context",
+        "prompt": "Does the continuation context use bounded child completion summaries and final response previews instead of raw child data?"
+      },
+      {
+        "id": "incomplete_child_rejection",
+        "prompt": "Are incomplete child tasks rejected before parent continuation starts?"
+      },
+      {
+        "id": "non_controlled_child_rejection",
+        "prompt": "Are non-controlled child tasks rejected by the parent join gate?"
+      },
+      {
+        "id": "no_auto_child_run",
+        "prompt": "Does parent task.run avoid auto-running child tasks?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "completed_child_join": "Yes. Completed parent task.run enters parent join continuation only when all controlled child tasks are Completed and have completed agent-loop ledger evidence.",
+      "bounded_child_context": "Yes. The runtime passes child_completion_summaries built from bounded completion_summary_preview and final_response_preview values already used by inspection summaries.",
+      "incomplete_child_rejection": "Yes. A queued, running, failed, or cancelled child rejects parent join continuation before the parent status is updated to Running.",
+      "non_controlled_child_rejection": "Yes. The parent join gate revalidates child parent/source/handoff provenance against the parent handoff envelope before admitting continuation.",
+      "no_auto_child_run": "Yes. Parent task.run only inspects existing child completion state and does not invoke task.run for any child.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Completed parent task.run can perform parent join continuation after completed controlled child tasks are present.",
+    "Parent join continuation consumes child_completion_summaries built from bounded completion_summary_preview and final_response_preview.",
+    "Incomplete controlled child tasks reject parent join continuation before the parent status changes.",
+    "Non-controlled child tasks do not satisfy parent join continuation.",
+    "Parent task.run does not auto-run child tasks.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, or serialized request bodies are added to parent continuation context.",
+    "Existing multi-candidate child materialization and duplicate prevention remain compatible.",
+    "Explicit controlled child task.run admission remains compatible.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_context_tokens": [
+      "child_completion_summaries",
+      "context_materializer_includes_child_completion_summaries_before_parent_events"
+    ],
+    "rust_runtime_tokens": [
+      "validate_completed_parent_join_continuation_admission",
+      "parent_join_child_completion_summary",
+      "MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES",
+      "task_run_rejects_parent_join_when_controlled_child_is_incomplete",
+      "task_run_parent_join_continuation_consumes_completed_child_summary",
+      "task_run_rejects_parent_join_when_child_is_not_controlled"
+    ]
+  }
+}

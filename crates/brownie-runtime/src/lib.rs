@@ -308,6 +308,7 @@ const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
 const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
 const CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
+const MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES: usize = 12;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -1746,16 +1747,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
-    if let Err(rejection) = validate_explicit_queued_child_task_run_admission(&record, &store) {
-        return match rejection {
-            TaskRunAdmissionRejection::InvalidParams(message) => {
-                error_response(id, -32602, message)
+    let admission = match validate_task_run_admission(&record, &store) {
+        Ok(admission) => admission,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
             }
-            TaskRunAdmissionRejection::Internal(message) => {
-                error_response(id, -32603, &format!("internal error: {message}"))
-            }
-        };
-    }
+        }
+    };
+    let child_completion_summaries = admission.child_completion_summaries();
 
     let running = match store.tasks().update_task_status(
         &record.task_id,
@@ -1785,6 +1790,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
         task: running.clone(),
         ledger_events,
+        child_completion_summaries: child_completion_summaries.clone(),
     });
     let prompt_context_window = prompt_input.context_window.clone();
     let provider = match llm_provider_from_workspace_for_task_run(store.workspace_root()) {
@@ -1957,6 +1963,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         let second_pass_prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
             task: running.clone(),
             ledger_events: second_pass_events,
+            child_completion_summaries: child_completion_summaries.clone(),
         });
         let second_pass_context_window = second_pass_prompt_input.context_window.clone();
         let second_pass = match AgentLoop::run_second_pass_with_llm(
@@ -2131,20 +2138,159 @@ enum TaskRunAdmissionRejection {
     Internal(String),
 }
 
-fn validate_explicit_queued_child_task_run_admission(
+enum TaskRunAdmission {
+    Standard,
+    ParentJoinContinuation {
+        child_completion_summaries: Vec<String>,
+    },
+}
+
+impl TaskRunAdmission {
+    fn child_completion_summaries(&self) -> Vec<String> {
+        match self {
+            Self::Standard => Vec::new(),
+            Self::ParentJoinContinuation {
+                child_completion_summaries,
+            } => child_completion_summaries.clone(),
+        }
+    }
+}
+
+fn validate_task_run_admission(
     record: &TaskRecord,
     store: &BrownieStore,
-) -> Result<(), TaskRunAdmissionRejection> {
+) -> Result<TaskRunAdmission, TaskRunAdmissionRejection> {
     match record.status {
-        TaskStatus::Created => Ok(()),
-        TaskStatus::Queued => validate_controlled_queued_child_task_provenance(record, store),
-        TaskStatus::Running
-        | TaskStatus::Completed
-        | TaskStatus::Failed
-        | TaskStatus::Cancelled => Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: task must be Created or a controlled Queued child task",
-        )),
+        TaskStatus::Created => Ok(TaskRunAdmission::Standard),
+        TaskStatus::Queued => {
+            validate_controlled_queued_child_task_provenance(record, store)?;
+            Ok(TaskRunAdmission::Standard)
+        }
+        TaskStatus::Completed => Ok(TaskRunAdmission::ParentJoinContinuation {
+            child_completion_summaries: validate_completed_parent_join_continuation_admission(
+                record, store,
+            )?,
+        }),
+        TaskStatus::Running | TaskStatus::Failed | TaskStatus::Cancelled => {
+            Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: task must be Created, a controlled Queued child task, or a completed parent with completed controlled child tasks",
+            ))
+        }
     }
+}
+
+fn validate_completed_parent_join_continuation_admission(
+    record: &TaskRecord,
+    store: &BrownieStore,
+) -> Result<Vec<String>, TaskRunAdmissionRejection> {
+    if record.parent_run_id.is_some() {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: completed child task cannot be rerun",
+        ));
+    }
+
+    let mut child_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .into_iter()
+        .filter(|task| task.parent_run_id.as_deref() == Some(record.run_id.as_str()))
+        .collect::<Vec<_>>();
+    child_tasks.sort_by(|a, b| {
+        a.source_candidate_id
+            .cmp(&b.source_candidate_id)
+            .then(a.task_id.cmp(&b.task_id))
+    });
+
+    if child_tasks.is_empty() {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent join continuation requires completed controlled child tasks",
+        ));
+    }
+
+    for child in &child_tasks {
+        validate_controlled_queued_child_task_provenance(child, store)?;
+        if child.status != TaskStatus::Completed {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: parent join continuation requires completed controlled child tasks",
+            ));
+        }
+        if !child_has_completed_agent_loop(store, child)? {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: parent join continuation requires completed controlled child tasks",
+            ));
+        }
+    }
+
+    let mut summaries = child_tasks
+        .iter()
+        .take(MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES)
+        .map(|child| parent_join_child_completion_summary(store, child))
+        .collect::<Result<Vec<_>, _>>()?;
+    if child_tasks.len() > MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES {
+        summaries.push(format!(
+            "completed_child_summary_omitted count={}",
+            child_tasks.len() - MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES
+        ));
+    }
+    Ok(summaries)
+}
+
+fn child_has_completed_agent_loop(
+    store: &BrownieStore,
+    child: &TaskRecord,
+) -> Result<bool, TaskRunAdmissionRejection> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&child.run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    let has_completed_agent_loop = events.iter().rev().any(|event| {
+        event.kind == LedgerEventKind::AgentLoopCompleted
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("final_state"))
+                .and_then(Value::as_str)
+                == Some("Completed")
+    });
+    let has_task_completed = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::TaskCompleted);
+    Ok(has_completed_agent_loop && has_task_completed)
+}
+
+fn parent_join_child_completion_summary(
+    store: &BrownieStore,
+    child: &TaskRecord,
+) -> Result<String, TaskRunAdmissionRejection> {
+    let summary =
+        child_task_inspect_summary(store, child).map_err(TaskRunAdmissionRejection::Internal)?;
+    Ok(format!(
+        "completed_child task_id={} run_id={} status={:?} source_candidate_id={} source_handoff_envelope_fingerprint={} completion_final_state={} completion_summary_preview={} final_response_preview={}",
+        summary.task_id,
+        summary.run_id,
+        summary.status,
+        summary
+            .source_candidate_id
+            .as_deref()
+            .unwrap_or("<none>"),
+        summary
+            .source_handoff_envelope_fingerprint
+            .as_deref()
+            .unwrap_or("<none>"),
+        summary
+            .completion_final_state
+            .as_deref()
+            .unwrap_or("<none>"),
+        summary
+            .completion_summary_preview
+            .as_deref()
+            .unwrap_or("<none>"),
+        summary
+            .final_response_preview
+            .as_deref()
+            .unwrap_or("<none>")
+    ))
 }
 
 fn validate_controlled_queued_child_task_provenance(
@@ -14625,6 +14771,233 @@ mod tests {
         ));
         assert!(rerun.result.is_none());
         assert_eq!(rerun.error.expect("rerun error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_parent_join_when_controlled_child_is_incomplete() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, child, parent_event_count) =
+            start_parent_with_queued_child();
+
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.result.is_none());
+        let error = parent_join.error.expect("parent join error");
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("parent join continuation requires completed controlled child tasks"));
+
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent.status, TaskStatus::Completed);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent ledger")
+                .len(),
+            parent_event_count
+        );
+        let child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get child")
+            .expect("child");
+        assert_eq!(child.status, TaskStatus::Queued);
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child ledger");
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_parent_join_continuation_consumes_completed_child_summary() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, child, _parent_event_count) =
+            start_parent_with_queued_child();
+
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.error.is_none());
+        assert_eq!(
+            child_run.result.expect("child run result")["status"],
+            "Completed"
+        );
+
+        let store = BrownieStore::new(temp.path());
+        let completed_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get child")
+            .expect("child");
+        assert_eq!(completed_child.status, TaskStatus::Completed);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &completed_child,
+                LedgerEventKind::PromptBuilt,
+                Some(json!({
+                    "prompt_preview": "RAW_CHILD_PROMPT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append child prompt evidence");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &completed_child,
+                LedgerEventKind::ToolExecutionCompleted,
+                Some(json!({
+                    "tool_id": "workspace.read",
+                    "status": "Completed",
+                    "bytes_read": 42,
+                    "truncated": false,
+                    "output_preview": "RAW_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append child tool evidence");
+        let child_event_count = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events before join")
+            .len();
+
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.error.is_none());
+        let parent_join_result = parent_join.result.expect("parent join result");
+        assert_eq!(parent_join_result["task_id"], parent_task_id);
+        assert_eq!(parent_join_result["run_id"], parent_run_id);
+        assert_eq!(parent_join_result["status"], "Completed");
+
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&child.run_id)
+                .expect("child events after join")
+                .len(),
+            child_event_count
+        );
+
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events");
+        assert_eq!(
+            parent_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            2
+        );
+        assert_eq!(
+            parent_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompleted)
+                .count(),
+            2
+        );
+        let continuation_prompt_payload = parent_events
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .expect("continuation prompt payload");
+        let continuation_prompt_preview = continuation_prompt_payload["prompt_preview"]
+            .as_str()
+            .expect("continuation prompt preview");
+        assert!(continuation_prompt_preview.contains("completed_child task_id="));
+        assert!(continuation_prompt_preview.contains(&child.task_id));
+        assert!(continuation_prompt_preview.contains(
+            child
+                .source_candidate_id
+                .as_deref()
+                .expect("source candidate id")
+        ));
+        assert!(continuation_prompt_preview.contains("completion_summary_preview="));
+        assert!(continuation_prompt_preview.contains("final_response_preview=Fake LLM"));
+        assert!(!continuation_prompt_preview.contains("RAW_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!continuation_prompt_preview.contains("RAW_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_parent_join_when_child_is_not_controlled() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, _parent_run_id, child, _parent_event_count) =
+            start_parent_with_queued_child();
+        let child_state_path = temp
+            .path()
+            .join(".brownie/runs")
+            .join(&child.run_id)
+            .join("state.json");
+        let mut child_state: Value =
+            serde_json::from_str(&std::fs::read_to_string(&child_state_path).expect("child state"))
+                .expect("child state json");
+        child_state["source_handoff_envelope_fingerprint"] = Value::Null;
+        child_state["status"] = Value::String("Completed".into());
+        std::fs::write(
+            &child_state_path,
+            serde_json::to_string_pretty(&child_state).expect("child state serialize"),
+        )
+        .expect("write child state");
+
+        let store = BrownieStore::new(temp.path());
+        let corrupted_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get corrupted child")
+            .expect("corrupted child");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &corrupted_child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "corrupted child completed"
+                })),
+            )
+            .expect("append corrupted child completion");
+        store
+            .tasks()
+            .append_task_event(&corrupted_child, LedgerEventKind::TaskCompleted)
+            .expect("append corrupted child completed");
+
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.result.is_none());
+        let error = parent_join.error.expect("parent join error");
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("queued child task must include complete parent/source provenance"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
