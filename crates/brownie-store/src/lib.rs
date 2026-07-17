@@ -1,8 +1,10 @@
 //! Brownie persistence crate.
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Write};
 use std::path::PathBuf;
+use std::thread;
+use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{ChildTaskSourceIntentSummary, TaskRecord, TaskStartParams, TaskStatus};
@@ -12,6 +14,8 @@ use uuid::Uuid;
 
 pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
+const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
+const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 
 #[derive(Debug, Clone)]
 pub struct BrownieStore {
@@ -57,6 +61,13 @@ pub struct ChildTaskStartParams {
     pub source_handoff_envelope_id: String,
     pub source_handoff_envelope_fingerprint: String,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentJoinContinuationRunAdmission {
+    pub child_completion_fingerprint: String,
+    pub child_completion_child_count: usize,
+    pub child_completion_fingerprint_input_count: usize,
 }
 
 impl TaskStore {
@@ -154,6 +165,63 @@ impl TaskStore {
         self.write_task_state(&record)?;
         self.append_task_event(&record, event_kind)?;
         Ok(record)
+    }
+
+    pub fn admit_parent_join_continuation(
+        &self,
+        task_id: &str,
+        admission: ParentJoinContinuationRunAdmission,
+    ) -> Result<Option<TaskRecord>> {
+        let Some(initial_record) = self.get_task(task_id)? else {
+            bail!("task not found: {task_id}");
+        };
+        let _lock = self.acquire_run_admission_lock(&initial_record.run_id)?;
+        let Some(mut record) = self.get_task(task_id)? else {
+            bail!("task not found after admission lock: {task_id}");
+        };
+        if record.run_id != initial_record.run_id {
+            bail!("task run id changed during parent join admission: {task_id}");
+        }
+        if record.status != TaskStatus::Completed {
+            return Ok(None);
+        }
+        let events = self.read_ledger_events(&record.run_id)?;
+        if parent_join_continuation_fingerprint_consumed_in_events(
+            &events,
+            &admission.child_completion_fingerprint,
+        ) {
+            return Ok(None);
+        }
+
+        let admission_id = format!("parent_join_admission_{}", Uuid::new_v4().simple());
+        record.status = TaskStatus::Running;
+        record.updated_at = timestamp()?;
+        self.write_task_state(&record)?;
+        self.append_task_events_with_payloads(
+            &record,
+            vec![
+                (
+                    LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                    Some(serde_json::json!({
+                        "parent_join_continuation_status": "Consumed",
+                        "admission_id": admission_id.clone(),
+                        "child_completion_fingerprint": admission.child_completion_fingerprint,
+                        "child_completion_child_count": admission.child_completion_child_count,
+                        "fingerprint_input_count": admission.child_completion_fingerprint_input_count,
+                        "reason": "Parent join continuation admitted atomically for this completed controlled child result fingerprint."
+                    })),
+                ),
+                (
+                    LedgerEventKind::TaskRunning,
+                    Some(serde_json::json!({
+                        "admission_id": admission_id.clone(),
+                        "admission_kind": "parent_join_continuation",
+                        "reason": "Parent join continuation running after atomic fingerprint consumption."
+                    })),
+                ),
+            ],
+        )?;
+        Ok(Some(record))
     }
 
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>> {
@@ -255,7 +323,15 @@ impl TaskStore {
             .with_context(|| format!("failed to create {}", run_dir.display()))?;
         let state =
             serde_json::to_string_pretty(record).context("failed to serialize task state")?;
-        fs::write(run_dir.join("state.json"), state).context("failed to write task state")
+        let state_path = run_dir.join("state.json");
+        let tmp_path = run_dir.join(format!("state.json.tmp-{}", Uuid::new_v4().simple()));
+        fs::write(&tmp_path, state).context("failed to write temporary task state")?;
+        fs::rename(&tmp_path, &state_path).with_context(|| {
+            format!(
+                "failed to atomically replace task state {}",
+                state_path.display()
+            )
+        })
     }
 
     pub fn append_task_event(&self, record: &TaskRecord, kind: LedgerEventKind) -> Result<()> {
@@ -268,18 +344,64 @@ impl TaskStore {
         kind: LedgerEventKind,
         payload: Option<serde_json::Value>,
     ) -> Result<()> {
-        RunLedger::new(self.run_dir(&record.run_id)).append(&LedgerEvent {
-            event_id: format!("event_{}", Uuid::new_v4()),
-            task_id: record.task_id.clone(),
-            run_id: record.run_id.clone(),
-            kind,
-            timestamp: timestamp()?,
-            payload,
-        })
+        self.append_task_events_with_payloads(record, vec![(kind, payload)])
     }
 
     pub fn read_ledger_events(&self, run_id: &str) -> Result<Vec<LedgerEvent>> {
         RunLedger::new(self.run_dir(run_id)).read_events()
+    }
+
+    fn append_task_events_with_payloads(
+        &self,
+        record: &TaskRecord,
+        events: Vec<(LedgerEventKind, Option<serde_json::Value>)>,
+    ) -> Result<()> {
+        let ledger_events = events
+            .into_iter()
+            .map(|(kind, payload)| {
+                Ok(LedgerEvent {
+                    event_id: format!("event_{}", Uuid::new_v4()),
+                    task_id: record.task_id.clone(),
+                    run_id: record.run_id.clone(),
+                    kind,
+                    timestamp: timestamp()?,
+                    payload,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        RunLedger::new(self.run_dir(&record.run_id)).append_many(&ledger_events)
+    }
+
+    fn acquire_run_admission_lock(&self, run_id: &str) -> Result<RunAdmissionLock> {
+        let run_dir = self.run_dir(run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        let lock_path = run_dir.join("parent-join-admission.lock");
+        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", timestamp()?)
+                        .context("failed to write run admission lock heartbeat")?;
+                    return Ok(RunAdmissionLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
+                }
+            }
+        }
+        bail!(
+            "run admission lock remained busy after {} attempts: {}",
+            RUN_ADMISSION_LOCK_RETRIES,
+            lock_path.display()
+        )
     }
 
     fn runs_dir(&self) -> PathBuf {
@@ -288,6 +410,17 @@ impl TaskStore {
 
     pub fn workspace_root(&self) -> &std::path::Path {
         &self.workspace_root
+    }
+}
+
+#[derive(Debug)]
+struct RunAdmissionLock {
+    path: PathBuf,
+}
+
+impl Drop for RunAdmissionLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
     }
 }
 
@@ -304,15 +437,25 @@ impl RunLedger {
     }
 
     pub fn append(&self, event: &LedgerEvent) -> Result<()> {
+        self.append_many(std::slice::from_ref(event))
+    }
+
+    pub fn append_many(&self, events: &[LedgerEvent]) -> Result<()> {
         fs::create_dir_all(&self.run_dir)
             .with_context(|| format!("failed to create {}", self.run_dir.display()))?;
+        let mut buffer = Vec::new();
+        for event in events {
+            serde_json::to_writer(&mut buffer, event)
+                .context("failed to serialize ledger event")?;
+            writeln!(&mut buffer).context("failed to write ledger newline")?;
+        }
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(self.run_dir.join("ledger.jsonl"))
             .context("failed to open run ledger")?;
-        serde_json::to_writer(&mut file, event).context("failed to serialize ledger event")?;
-        writeln!(file).context("failed to write ledger newline")?;
+        file.write_all(&buffer)
+            .context("failed to append run ledger events")?;
         Ok(())
     }
 
@@ -338,6 +481,42 @@ impl RunLedger {
         }
         Ok(events)
     }
+}
+
+fn parent_join_continuation_fingerprint_consumed_in_events(
+    events: &[LedgerEvent],
+    child_completion_fingerprint: &str,
+) -> bool {
+    events.iter().any(|event| {
+        if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        if payload
+            .get("child_completion_fingerprint")
+            .and_then(serde_json::Value::as_str)
+            != Some(child_completion_fingerprint)
+        {
+            return false;
+        }
+        let Some(admission_id) = payload
+            .get("admission_id")
+            .and_then(serde_json::Value::as_str)
+        else {
+            return true;
+        };
+        events.iter().any(|candidate| {
+            candidate.kind == LedgerEventKind::TaskRunning
+                && candidate
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("admission_id"))
+                    .and_then(serde_json::Value::as_str)
+                    == Some(admission_id)
+        })
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

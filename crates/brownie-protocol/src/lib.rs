@@ -2338,6 +2338,7 @@ pub struct ChildTaskInspectSummary {
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
+    pub completion_result_fingerprint: Option<String>,
     pub completion_summary_preview: Option<String>,
     pub final_response_preview: Option<String>,
 }
