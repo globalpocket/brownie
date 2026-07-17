@@ -377,6 +377,7 @@ pub enum LedgerEventKind {
     SubtaskDispatchDecisionRecorded,
     SubtaskDispatchCandidateManifestRecorded,
     SubtaskDispatchHandoffEnvelopeRecorded,
+    ParentJoinContinuationFingerprintConsumed,
     ToolExecutionRequested,
     ToolExecutionPermissionChecked,
     ToolExecutionCompleted,

@@ -302,6 +302,14 @@ M5.13 makes child run state visible from the parent inspection path. `RunInspect
 
 Each child summary is derived from child `TaskRecord` state and child ledger metadata. It reports child status, provenance, event count, completion final state, bounded completion summary preview, and sanitized final response preview when available. It does not run child tasks, mutate the parent ledger, expose raw prompts/provider responses/file content/command output, or add scheduler handoff.
 
+## M5.17 parent join continuation
+
+M5.17 permits explicit `task.run` on a completed parent task only when every controlled child for the parent run is also completed and has completed agent-loop evidence. The parent receives bounded child completion summaries and remains responsible for its own agent-loop pass; child tasks are not run automatically.
+
+## M5.18 parent join continuation replay guard
+
+M5.18 records a deterministic summary-safe child completion fingerprint when parent join continuation is admitted. The same completed child result fingerprint cannot start another parent agent-loop pass, while materially different completed child evidence can produce a new fingerprint and be admitted. The guard is enforced before the parent status changes back to `Running`.
+
 ## M5.14 child task source intent materialization
 
 M5.14 stores a sanitized `source_intent_summary` on controlled child `TaskRecord` state when the child is materialized from an accepted handoff envelope. The summary is reconstructed from the parent run's approved `SubtaskOrchestrationQueued` evidence and includes only `tool_id`, `required_action`, bounded `request_reason`, and bounded `input_summary`.

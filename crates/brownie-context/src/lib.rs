@@ -694,6 +694,29 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
                         "{handoff_envelope_id}: {handoff_envelope_status} manifest_count={manifest_count} candidate_count={candidate_count} handoff_ticket_count={handoff_ticket_count} replay_guard_status={replay_guard_status} dispatch_enabled={dispatch_enabled} next_action={next_action}"
                     ))
                 }
+                LedgerEventKind::ParentJoinContinuationFingerprintConsumed => {
+                    let parent_join_continuation_status = payload
+                        .get("parent_join_continuation_status")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let child_completion_fingerprint = payload
+                        .get("child_completion_fingerprint")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("<unknown>");
+                    let child_completion_child_count = payload
+                        .get("child_completion_child_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    let fingerprint_input_count = payload
+                        .get("fingerprint_input_count")
+                        .and_then(|value| value.as_u64())
+                        .map(|value| value.to_string())
+                        .unwrap_or_else(|| "<unknown>".to_string());
+                    Some(format!(
+                        "parent_join_continuation: {parent_join_continuation_status} child_completion_fingerprint={child_completion_fingerprint} child_completion_child_count={child_completion_child_count} fingerprint_input_count={fingerprint_input_count}"
+                    ))
+                }
                 _ => None,
             }
         })
