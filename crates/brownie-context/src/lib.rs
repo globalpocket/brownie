@@ -75,6 +75,7 @@ pub struct PromptBuildInput {
 pub struct ContextMaterializerInput {
     pub task: TaskRecord,
     pub ledger_events: Vec<LedgerEvent>,
+    pub child_completion_summaries: Vec<String>,
 }
 
 pub struct ContextMaterializer;
@@ -98,8 +99,9 @@ impl ContextMaterializer {
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
         let tool_intent_summary = format_tool_intent_summary(&input.ledger_events);
         let tool_execution_summary = format_tool_execution_summary(&input.ledger_events);
-        let subtask_orchestration_summary =
-            format_subtask_orchestration_summary(&input.ledger_events);
+        let mut subtask_orchestration_summary = input.child_completion_summaries;
+        subtask_orchestration_summary
+            .extend(format_subtask_orchestration_summary(&input.ledger_events));
         let (ledger_summary, context_window) = format_ledger_context_window(&input.ledger_events);
 
         PromptBuildInput {
@@ -911,6 +913,7 @@ mod tests {
                 timestamp: "2026-01-01T00:00:00Z".into(),
                 payload: None,
             }],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -958,6 +961,7 @@ mod tests {
                     payload: None,
                 })
                 .collect(),
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1006,6 +1010,7 @@ mod tests {
                     }
                 })),
             }],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1032,6 +1037,7 @@ mod tests {
                     "reason": "Mode orchestrator does not allow workspace writes."
                 })),
             }],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1070,6 +1076,7 @@ mod tests {
                     ),
                 },
             ],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1097,6 +1104,7 @@ mod tests {
                     "output_preview": "# Brownie"
                 })),
             }],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1298,6 +1306,7 @@ mod tests {
                     })),
                 },
             ],
+            child_completion_summaries: vec![],
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1354,6 +1363,42 @@ mod tests {
         assert!(prompt.messages[1]
             .content
             .contains("- subtask_dispatch_handoff_envelope_run_1_1: Blocked manifest_count=1 candidate_count=1 handoff_ticket_count=0 replay_guard_status=Blocked dispatch_enabled=false next_action=await_dispatch_handoff_envelope_preconditions"));
+    }
+
+    #[test]
+    fn context_materializer_includes_child_completion_summaries_before_parent_events() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::SubtaskHandoffPrepared,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "handoff_id": "subtask_handoff_run_1_1",
+                    "status": "Prepared",
+                    "queued_count": 1,
+                    "execution_enabled": false,
+                    "next_action": "await_future_runtime_scheduler"
+                })),
+            }],
+            child_completion_summaries: vec![
+                "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done".into(),
+            ],
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        assert_eq!(
+            materialized.subtask_orchestration_summary[0],
+            "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done"
+        );
+        assert!(materialized.subtask_orchestration_summary[1]
+            .contains("subtask_handoff_run_1_1: Prepared"));
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1]
+            .content
+            .contains("completed_child task_id=task_child"));
     }
 
     #[test]
