@@ -1,0 +1,86 @@
+{
+  "phase": "M5.20",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "continuation_subtask_materialization",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_continuation_child_materialization",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns approved subtask.spawn intents emitted during an atomic parent join continuation into controlled queued child TaskRecords."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Connects the completed-child parent continuation pass back to the runtime-owned task entity model instead of stopping at ledger-only evidence."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Allows iterative parent/child work planning without adding scheduler auto-dispatch, external workers, or child auto-run."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "continuation_child_materialization",
+        "prompt": "Does a parent join continuation that emits approved subtask.spawn materialize a controlled queued child TaskRecord?"
+      },
+      {
+        "id": "initial_handoff_not_suppressing_continuation",
+        "prompt": "Do earlier parent-run handoff/materialization events avoid suppressing continuation-produced child work?"
+      },
+      {
+        "id": "duplicate_prevention",
+        "prompt": "Does the same continuation/source intent avoid duplicate child creation?"
+      },
+      {
+        "id": "explicit_child_run",
+        "prompt": "Can the continuation-produced child run only through explicit controlled child task.run admission?"
+      },
+      {
+        "id": "bounded_provenance",
+        "prompt": "Does child/source/continuation provenance remain bounded and summary-safe?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "continuation_child_materialization": "Yes. A parent join continuation appends a continuation-scoped accepted handoff envelope and materializes approved subtask.spawn queue entries into queued child TaskRecords.",
+      "initial_handoff_not_suppressing_continuation": "Yes. materialize_controlled_child_task_from_handoff_envelope now walks all accepted handoff envelopes, so the first parent-pass envelope does not hide later continuation envelopes.",
+      "duplicate_prevention": "Yes. Child lookup remains scoped by parent_run_id, source_candidate_id, and the continuation handoff_envelope_fingerprint; re-running materialization for the same envelope remains idempotent.",
+      "explicit_child_run": "Yes. Continuation-produced children are created with TaskStatus::Queued and are only admitted through the existing controlled queued child task.run path.",
+      "bounded_provenance": "Yes. The continuation envelope records parent_join_admission_id, child_completion_fingerprint, child count, source candidate IDs, and sanitized source-intent summaries without raw inputs.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A parent join continuation that emits approved subtask.spawn materializes at least one controlled queued child TaskRecord.",
+    "Existing earlier parent-run handoff/materialization events do not suppress continuation-produced child materialization.",
+    "Repeating the same continuation/source intent does not create duplicate children.",
+    "The continuation-produced child can be explicitly run through explicit child task.run admission.",
+    "No child auto-run occurs; the child starts as TaskStatus::Queued with execution_enabled=false and scheduler_handoff_enabled=false.",
+    "Child provenance includes parent task/run, source candidate, source handoff envelope id/fingerprint, and sanitized source intent summary.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, or serialized request bodies are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added.",
+    "Initial multi-candidate child materialization, parent join continuation, atomic admission, orphaned admission recovery, and same-fingerprint replay rejection remain covered by tests."
+  ],
+  "source_evidence": {
+    "rust_store_tokens": [
+      "ParentJoinContinuationRunAdmitted",
+      "admit_parent_join_continuation"
+    ],
+    "rust_runtime_tokens": [
+      "append_parent_join_continuation_handoff_envelope_recorded",
+      "m5.20_parent_join_continuation_handoff_envelope_v1",
+      "continuation_subtask_materialization",
+      "task_run_parent_join_materializes_continuation_subtask_without_auto_run",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "validate_controlled_queued_child_task_provenance"
+    ],
+    "rust_llm_tokens": [
+      "Fake LLM parent continuation request"
+    ]
+  }
+}

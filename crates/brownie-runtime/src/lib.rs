@@ -1764,6 +1764,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
     let child_completion_summaries = admission.child_completion_summaries();
+    let mut parent_join_continuation = admission.parent_join_continuation_materialization();
 
     let running = match admission.parent_join_continuation_consumption() {
         Some(consumption) => match store.tasks().admit_parent_join_continuation(
@@ -1775,7 +1776,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     .child_completion_fingerprint_input_count,
             },
         ) {
-            Ok(Some(record)) => record,
+            Ok(Some(admitted)) => {
+                if let Some(continuation) = parent_join_continuation.as_mut() {
+                    continuation.admission_id = admitted.admission_id.clone();
+                }
+                admitted.record
+            }
             Ok(None) => {
                 return error_response(
                     id,
@@ -1960,6 +1966,15 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
     if let Err(error) = append_subtask_dispatch_handoff_envelope_recorded(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation) = parent_join_continuation.as_ref() {
+        if let Err(error) = append_parent_join_continuation_handoff_envelope_recorded(
+            &store,
+            &running,
+            continuation,
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
     }
     if let Err(error) = materialize_controlled_child_task_from_handoff_envelope(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2201,9 +2216,34 @@ impl TaskRunAdmission {
             }),
         }
     }
+
+    fn parent_join_continuation_materialization(
+        &self,
+    ) -> Option<ParentJoinContinuationMaterialization> {
+        match self {
+            Self::Standard => None,
+            Self::ParentJoinContinuation(admission) => {
+                Some(ParentJoinContinuationMaterialization {
+                    admission_id: String::new(),
+                    child_completion_fingerprint: admission.child_completion_fingerprint.clone(),
+                    child_completion_fingerprint_input_count: admission
+                        .child_completion_fingerprint_input_count,
+                    child_completion_child_count: admission.child_completion_child_count,
+                })
+            }
+        }
+    }
 }
 
 struct ParentJoinContinuationConsumption {
+    child_completion_fingerprint: String,
+    child_completion_fingerprint_input_count: usize,
+    child_completion_child_count: usize,
+}
+
+#[derive(Clone)]
+struct ParentJoinContinuationMaterialization {
+    admission_id: String,
     child_completion_fingerprint: String,
     child_completion_fingerprint_input_count: usize,
     child_completion_child_count: usize,
@@ -12014,6 +12054,187 @@ fn append_subtask_dispatch_handoff_envelope_recorded(
     )
 }
 
+fn fragment_for_identifier(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+        .collect::<String>()
+}
+
+fn queued_subtask_id_from_event(event: &LedgerEvent) -> Option<String> {
+    if event.kind != LedgerEventKind::SubtaskOrchestrationQueued {
+        return None;
+    }
+    event
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("subtask_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|subtask_id| !subtask_id.is_empty())
+        .map(ToString::to_string)
+}
+
+fn source_intent_summary_fingerprint_inputs(
+    source_candidate_id: &str,
+    source_intent_summary: Option<&ChildTaskSourceIntentSummary>,
+) -> Vec<String> {
+    let Some(summary) = source_intent_summary else {
+        return vec![
+            format!("candidate_id={source_candidate_id}"),
+            "source_intent_summary=<missing>".to_string(),
+        ];
+    };
+    vec![
+        format!("candidate_id={source_candidate_id}"),
+        format!("tool_id={}", summary.tool_id),
+        format!("required_action={:?}", summary.required_action),
+        format!("request_reason={}", summary.request_reason),
+        format!(
+            "requested_goal_preview={}",
+            summary
+                .requested_goal_preview
+                .as_deref()
+                .unwrap_or("<none>")
+        ),
+        format!(
+            "requested_mode_id={}",
+            summary.requested_mode_id.as_deref().unwrap_or("<none>")
+        ),
+        format!("input_summary.has_path={}", summary.input_summary.has_path),
+        format!(
+            "input_summary.field_count={}",
+            summary.input_summary.field_count
+        ),
+    ]
+}
+
+fn append_parent_join_continuation_handoff_envelope_recorded(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    continuation: &ParentJoinContinuationMaterialization,
+) -> anyhow::Result<()> {
+    if continuation.admission_id.trim().is_empty() {
+        return Ok(());
+    }
+
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    if events.iter().any(|event| {
+        event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("parent_join_admission_id"))
+                .and_then(Value::as_str)
+                == Some(continuation.admission_id.as_str())
+    }) {
+        return Ok(());
+    }
+
+    let Some(consumption_index) = events.iter().position(|event| {
+        event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("admission_id"))
+                .and_then(Value::as_str)
+                == Some(continuation.admission_id.as_str())
+    }) else {
+        return Ok(());
+    };
+
+    let mut candidate_ids = events
+        .iter()
+        .skip(consumption_index + 1)
+        .filter_map(queued_subtask_id_from_event)
+        .collect::<Vec<_>>();
+    candidate_ids.sort();
+    candidate_ids.dedup();
+    if candidate_ids.is_empty() {
+        return Ok(());
+    }
+
+    let mut fingerprint_inputs = vec![
+        "envelope_version=m5.20_parent_join_continuation_handoff_envelope_v1".to_string(),
+        format!("parent_task_id={}", record.task_id),
+        format!("parent_run_id={}", record.run_id),
+        format!("parent_join_admission_id={}", continuation.admission_id),
+        format!(
+            "parent_join_child_completion_fingerprint={}",
+            continuation.child_completion_fingerprint
+        ),
+        format!(
+            "parent_join_child_completion_child_count={}",
+            continuation.child_completion_child_count
+        ),
+        format!("candidate_count={}", candidate_ids.len()),
+    ];
+    for candidate_id in &candidate_ids {
+        let source_intent_summary = queued_subtask_source_intent_summary(&events, candidate_id);
+        fingerprint_inputs.extend(source_intent_summary_fingerprint_inputs(
+            candidate_id,
+            source_intent_summary.as_ref(),
+        ));
+    }
+    let fingerprint_input_count = fingerprint_inputs.len();
+    let handoff_envelope_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(fingerprint_inputs.join("\n").as_bytes())
+    );
+    let run_fragment = fragment_for_identifier(&record.run_id);
+    let admission_fragment = fragment_for_identifier(&continuation.admission_id);
+    let candidate_count = candidate_ids.len();
+    let eligible_candidate_ids = candidate_ids.clone();
+
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+        Some(json!({
+            "handoff_envelope_id": format!("subtask_dispatch_handoff_envelope_{run_fragment}_{admission_fragment}"),
+            "parent_task_id": record.task_id,
+            "parent_run_id": record.run_id,
+            "parent_join_admission_id": continuation.admission_id,
+            "parent_join_child_completion_fingerprint": continuation.child_completion_fingerprint,
+            "parent_join_child_completion_child_count": continuation.child_completion_child_count,
+            "parent_join_fingerprint_input_count": continuation.child_completion_fingerprint_input_count,
+            "queued_count": candidate_count,
+            "source_event_count": candidate_count,
+            "status": "Accepted",
+            "handoff_envelope_status": "Accepted",
+            "handoff_ticket_status": "Blocked",
+            "replay_guard_status": "Accepted",
+            "scheduler_handoff_status": "Blocked",
+            "candidate_status": "Accepted",
+            "dispatch_decision": "MaterializeControlledChildTask",
+            "candidate_count": candidate_count,
+            "dispatch_candidate_count": candidate_count,
+            "eligible_candidate_count": candidate_count,
+            "blocked_candidate_count": 0,
+            "handoff_ticket_count": 0,
+            "candidate_ids": candidate_ids,
+            "eligible_candidate_ids": eligible_candidate_ids,
+            "blocked_candidate_ids": [],
+            "handoff_envelope_fingerprint": handoff_envelope_fingerprint,
+            "fingerprint_input_count": fingerprint_input_count,
+            "required_capability": "continuation_subtask_materialization",
+            "precondition_count": 0,
+            "satisfied_precondition_count": 0,
+            "blocked_preconditions": [],
+            "check_count": 2,
+            "blocked_checks": [
+                "scheduler_handoff_not_available",
+                "child_task_auto_run_disabled"
+            ],
+            "execution_enabled": false,
+            "dispatch_enabled": false,
+            "continuation_materialization": true,
+            "continuation_source": "parent_join_continuation",
+            "next_action": "explicit_child_task_run",
+            "reason": "Approved subtask intents emitted during an atomic parent join continuation were accepted for controlled queued child TaskRecord materialization; child execution remains explicit."
+        })),
+    )
+}
+
 fn normalize_source_intent_reason(reason: &str) -> String {
     const SOURCE_INTENT_REASON_CHARS: usize = 1000;
     let normalized = reason.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -12119,75 +12340,73 @@ fn materialize_controlled_child_task_from_handoff_envelope(
     record: &brownie_protocol::TaskRecord,
 ) -> anyhow::Result<Option<brownie_protocol::TaskRecord>> {
     let events = store.tasks().read_ledger_events(&record.run_id)?;
-    let Some(envelope_payload) = events
+    let envelope_payloads = events
         .iter()
-        .find(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
-        .and_then(|event| event.payload.as_ref())
-    else {
-        return Ok(None);
-    };
-
-    if envelope_payload
-        .get("handoff_envelope_status")
-        .and_then(Value::as_str)
-        != Some("Accepted")
-    {
-        return Ok(None);
-    }
-
-    let Some(source_handoff_envelope_fingerprint) = envelope_payload
-        .get("handoff_envelope_fingerprint")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-    else {
-        return Ok(None);
-    };
-    let Some(source_handoff_envelope_id) = envelope_payload
-        .get("handoff_envelope_id")
-        .and_then(Value::as_str)
-        .map(ToString::to_string)
-    else {
-        return Ok(None);
-    };
-
-    let candidate_ids = handoff_envelope_candidate_ids(envelope_payload);
-    if candidate_ids.is_empty() {
-        return Ok(None);
-    }
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .filter_map(|event| event.payload.as_ref())
+        .collect::<Vec<_>>();
 
     let mut first_child = None;
-    for source_candidate_id in candidate_ids {
-        let child = if let Some(existing) = store
-            .tasks()
-            .find_child_task_by_candidate_and_handoff_fingerprint(
-                &record.run_id,
-                &source_candidate_id,
-                &source_handoff_envelope_fingerprint,
-            )? {
-            existing
-        } else {
-            let source_intent_summary =
-                queued_subtask_source_intent_summary(&events, &source_candidate_id);
-            let goal =
-                child_goal_from_source_intent(&source_candidate_id, source_intent_summary.as_ref());
-            let mode_id = source_intent_summary
-                .as_ref()
-                .and_then(|summary| summary.requested_mode_id.clone())
-                .or_else(|| record.mode_id.clone());
+    for envelope_payload in envelope_payloads {
+        if envelope_payload
+            .get("handoff_envelope_status")
+            .and_then(Value::as_str)
+            != Some("Accepted")
+        {
+            continue;
+        }
 
-            store.tasks().start_child_task(ChildTaskStartParams {
-                goal,
-                mode_id,
-                parent_task_id: record.task_id.clone(),
-                parent_run_id: record.run_id.clone(),
-                source_candidate_id,
-                source_handoff_envelope_id: source_handoff_envelope_id.clone(),
-                source_handoff_envelope_fingerprint: source_handoff_envelope_fingerprint.clone(),
-                source_intent_summary,
-            })?
+        let Some(source_handoff_envelope_fingerprint) = envelope_payload
+            .get("handoff_envelope_fingerprint")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+        else {
+            continue;
         };
-        if first_child.is_none() {
-            first_child = Some(child);
+        let Some(source_handoff_envelope_id) = envelope_payload
+            .get("handoff_envelope_id")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+
+        for source_candidate_id in handoff_envelope_candidate_ids(envelope_payload) {
+            let child = if let Some(existing) = store
+                .tasks()
+                .find_child_task_by_candidate_and_handoff_fingerprint(
+                    &record.run_id,
+                    &source_candidate_id,
+                    &source_handoff_envelope_fingerprint,
+                )? {
+                existing
+            } else {
+                let source_intent_summary =
+                    queued_subtask_source_intent_summary(&events, &source_candidate_id);
+                let goal = child_goal_from_source_intent(
+                    &source_candidate_id,
+                    source_intent_summary.as_ref(),
+                );
+                let mode_id = source_intent_summary
+                    .as_ref()
+                    .and_then(|summary| summary.requested_mode_id.clone())
+                    .or_else(|| record.mode_id.clone());
+
+                store.tasks().start_child_task(ChildTaskStartParams {
+                    goal,
+                    mode_id,
+                    parent_task_id: record.task_id.clone(),
+                    parent_run_id: record.run_id.clone(),
+                    source_candidate_id,
+                    source_handoff_envelope_id: source_handoff_envelope_id.clone(),
+                    source_handoff_envelope_fingerprint: source_handoff_envelope_fingerprint
+                        .clone(),
+                    source_intent_summary,
+                })?
+            };
+            if first_child.is_none() {
+                first_child = Some(child);
+            }
         }
     }
     Ok(first_child)
@@ -15238,6 +15457,182 @@ mod tests {
     }
 
     #[test]
+    fn task_run_parent_join_materializes_continuation_subtask_without_auto_run() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, initial_child, _parent_event_count) =
+            start_parent_with_queued_child();
+
+        let initial_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(initial_child_run.error.is_none());
+
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.error.is_none());
+        assert_eq!(
+            parent_join.result.expect("parent join result")["status"],
+            "Completed"
+        );
+
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent.status, TaskStatus::Completed);
+
+        let parent_children = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(parent_children.len(), 2);
+        let continuation_child = parent_children
+            .iter()
+            .find(|record| record.task_id != initial_child.task_id)
+            .expect("continuation child");
+        assert_eq!(continuation_child.status, TaskStatus::Queued);
+        assert_eq!(
+            continuation_child.parent_task_id.as_deref(),
+            Some(parent_task_id.as_str())
+        );
+        assert_eq!(
+            continuation_child.parent_run_id.as_deref(),
+            Some(parent_run_id.as_str())
+        );
+        assert_ne!(
+            continuation_child.source_candidate_id,
+            initial_child.source_candidate_id
+        );
+        assert!(continuation_child
+            .source_handoff_envelope_fingerprint
+            .as_deref()
+            .expect("continuation handoff fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(
+            continuation_child
+                .source_intent_summary
+                .as_ref()
+                .expect("source intent summary")
+                .request_reason,
+            "Orchestrator mode may coordinate subtasks."
+        );
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&continuation_child.run_id)
+            .expect("continuation child ledger");
+        assert_eq!(child_events.len(), 1);
+        assert_eq!(child_events[0].kind, LedgerEventKind::TaskStarted);
+        let child_started_payload = child_events[0]
+            .payload
+            .as_ref()
+            .expect("child started payload");
+        assert_eq!(child_started_payload["status"], "Queued");
+        assert_eq!(child_started_payload["execution_enabled"], false);
+        assert_eq!(child_started_payload["scheduler_handoff_enabled"], false);
+        assert!(child_started_payload["source_intent_summary"]
+            .get("input")
+            .is_none());
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events");
+        let continuation_envelope_payload = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .filter_map(|event| event.payload.as_ref())
+            .find(|payload| {
+                payload
+                    .get("continuation_materialization")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("continuation handoff envelope");
+        assert_eq!(
+            continuation_envelope_payload["required_capability"],
+            "continuation_subtask_materialization"
+        );
+        assert_eq!(
+            continuation_envelope_payload["parent_join_child_completion_child_count"],
+            1
+        );
+        assert_eq!(continuation_envelope_payload["dispatch_enabled"], false);
+        assert_eq!(continuation_envelope_payload["execution_enabled"], false);
+        assert!(
+            continuation_envelope_payload["parent_join_child_completion_fingerprint"]
+                .as_str()
+                .expect("child completion fingerprint")
+                .starts_with("sha256:")
+        );
+        let candidate_ids = continuation_envelope_payload["candidate_ids"]
+            .as_array()
+            .expect("candidate ids");
+        assert!(candidate_ids.iter().any(|candidate| {
+            candidate.as_str() == continuation_child.source_candidate_id.as_deref()
+        }));
+        assert_eq!(
+            continuation_child.source_handoff_envelope_id.as_deref(),
+            continuation_envelope_payload["handoff_envelope_id"].as_str()
+        );
+        assert_eq!(
+            continuation_child
+                .source_handoff_envelope_fingerprint
+                .as_deref(),
+            continuation_envelope_payload["handoff_envelope_fingerprint"].as_str()
+        );
+        assert!(
+            validate_controlled_queued_child_task_provenance(continuation_child, &store).is_ok()
+        );
+
+        materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("idempotent materialization");
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after duplicate prevention")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            2
+        );
+
+        let continuation_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            continuation_child.task_id
+        ));
+        assert!(continuation_child_run.error.is_none());
+        assert_eq!(
+            continuation_child_run
+                .result
+                .expect("continuation child run result")["status"],
+            "Completed"
+        );
+        let completed_continuation_child = store
+            .tasks()
+            .get_task(&continuation_child.task_id)
+            .expect("get completed continuation child")
+            .expect("completed continuation child");
+        assert_eq!(completed_continuation_child.status, TaskStatus::Completed);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_parent_join_fingerprint_uses_result_fingerprint_not_preview() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -15287,6 +15682,29 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(first_parent_join.error.is_none());
+
+        let continuation_child = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children")
+            .into_iter()
+            .find(|record| {
+                record.parent_run_id.as_deref() == Some(parent_run_id.as_str())
+                    && record.task_id != child.task_id
+            })
+            .expect("continuation child");
+        assert_eq!(continuation_child.status, TaskStatus::Queued);
+        let continuation_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":41,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            continuation_child.task_id
+        ));
+        assert!(continuation_child_run.error.is_none());
+        assert_eq!(
+            continuation_child_run
+                .result
+                .expect("continuation child run result")["status"],
+            "Completed"
+        );
 
         store
             .tasks()
@@ -15575,9 +15993,14 @@ mod tests {
         assert!(repeat_join.result.is_none());
         let error = repeat_join.error.expect("repeat parent join error");
         assert_eq!(error.code, -32602);
-        assert!(error
-            .message
-            .contains("completed child result set has already been consumed"));
+        assert!(
+            error
+                .message
+                .contains("completed child result set has already been consumed")
+                || error
+                    .message
+                    .contains("requires completed controlled child tasks")
+        );
 
         let parent = store
             .tasks()
@@ -15641,6 +16064,35 @@ mod tests {
         assert!(first_parent_join.error.is_none());
 
         let store = BrownieStore::new(temp.path());
+        let continuation_child = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children")
+            .into_iter()
+            .find(|record| {
+                record.parent_run_id.as_deref() == Some(parent_run_id.as_str())
+                    && record.task_id != child.task_id
+            })
+            .expect("continuation child");
+        assert_eq!(continuation_child.status, TaskStatus::Queued);
+        let continuation_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":41,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            continuation_child.task_id
+        ));
+        assert!(continuation_child_run.error.is_none());
+        assert_eq!(
+            continuation_child_run
+                .result
+                .expect("continuation child run result")["status"],
+            "Completed"
+        );
+        let completed_continuation_child = store
+            .tasks()
+            .get_task(&continuation_child.task_id)
+            .expect("get completed continuation child")
+            .expect("completed continuation child");
+        assert_eq!(completed_continuation_child.status, TaskStatus::Completed);
+
         let completed_child = store
             .tasks()
             .get_task(&child.task_id)
@@ -15668,7 +16120,6 @@ mod tests {
                 })),
             )
             .expect("append updated child final response");
-
         let second_parent_join = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));

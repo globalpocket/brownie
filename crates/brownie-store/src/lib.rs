@@ -70,6 +70,12 @@ pub struct ParentJoinContinuationRunAdmission {
     pub child_completion_fingerprint_input_count: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParentJoinContinuationRunAdmitted {
+    pub record: TaskRecord,
+    pub admission_id: String,
+}
+
 impl TaskStore {
     pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
         Self {
@@ -171,7 +177,7 @@ impl TaskStore {
         &self,
         task_id: &str,
         admission: ParentJoinContinuationRunAdmission,
-    ) -> Result<Option<TaskRecord>> {
+    ) -> Result<Option<ParentJoinContinuationRunAdmitted>> {
         let Some(initial_record) = self.get_task(task_id)? else {
             bail!("task not found: {task_id}");
         };
@@ -221,7 +227,10 @@ impl TaskStore {
         record.status = TaskStatus::Running;
         record.updated_at = timestamp()?;
         self.write_task_state(&record)?;
-        Ok(Some(record))
+        Ok(Some(ParentJoinContinuationRunAdmitted {
+            record,
+            admission_id,
+        }))
     }
 
     pub fn get_task(&self, task_id: &str) -> Result<Option<TaskRecord>> {
