@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.17';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.17.json';
+const phase = 'M5.18';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.18.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'completed_child_parent_join_continuation',
-    `${phase} must declare the completed child parent join continuation transition.`
+    manifest.concrete_capability_transition === 'replay_safe_parent_join_continuation',
+    `${phase} must declare the replay-safe parent join continuation transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_join_continuation',
-    `${phase} must forbid adding another blocked summary wrapper without parent join continuation.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_without_parent_join_replay_guard',
+    `${phase} must forbid adding another blocked summary wrapper without parent join replay protection.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,13 +75,13 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'completed controlled child tasks',
-    'parent join continuation',
-    'child_completion_summaries',
-    'bounded completion_summary_preview and final_response_preview',
-    'Non-controlled child tasks do not satisfy parent join continuation',
+    'deterministic summary-safe child completion fingerprint',
+    'first continuation',
+    'same child completion fingerprint',
+    'materially different controlled completed child result set',
+    'Incomplete or non-controlled child tasks',
+    'Parent continuation does not auto-run child tasks',
     'No raw child prompts',
-    'Parent task.run does not auto-run child tasks',
     'No scheduler handoff'
   ]) {
     requireManifestValue(
@@ -121,6 +121,17 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
+  for (const token of [
+    'parent_join_child_completion_fingerprint',
+    'parent_join_child_completion_fingerprint_consumed',
+    'ParentJoinContinuationFingerprintConsumed',
+    'task_run_rejects_repeated_parent_join_for_same_child_completion_fingerprint',
+    'task_run_admits_parent_join_when_child_completion_fingerprint_changes'
+  ]) {
+    if (!runtimeText.includes(token) && !storeText.includes(token)) {
+      errors.push(`${phase} source must include ${token}.`);
+    }
+  }
   const forbiddenWrapperEvents = [
     'SubtaskDispatchTicketRecorded',
     'SubtaskAdmissionTokenRecorded',

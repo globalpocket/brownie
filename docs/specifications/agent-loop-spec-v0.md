@@ -185,3 +185,9 @@ Valid structured input changes the runtime entity rather than adding another blo
 M5.16 lets one accepted handoff envelope materialize one queued child task for each distinct covered candidate. The agent loop still performs no scheduler handoff and does not run those children automatically; it only creates controlled runtime entities with parent/source provenance and candidate-scoped replay protection.
 
 Each child keeps the per-candidate sanitized `source_intent_summary`, requested goal, and requested mode when present. Explicit child `task.run` remains the only execution path, and no process execution, network access, service control, patch apply, or workspace write capability is added.
+
+## M5.17-M5.18 controlled parent join continuation
+
+Once controlled children have been explicitly run to completion, a completed parent can be explicitly continued through `task.run`. The continuation receives only bounded child completion summaries as context; it does not run children, schedule work, or expose raw child prompts, raw provider responses, files, command output, environment values, raw tool input objects, or serialized request bodies.
+
+M5.18 adds replay protection for that join point. The runtime records a deterministic summary-safe child completion fingerprint when parent continuation is admitted, and it rejects another parent agent-loop pass for the same fingerprint before `TaskRunning` is appended. If the controlled child result evidence materially changes, the new fingerprint can be admitted separately.

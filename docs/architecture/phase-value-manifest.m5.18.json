@@ -1,0 +1,83 @@
+{
+  "phase": "M5.18",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "replay_safe_parent_join_continuation",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_without_parent_join_replay_guard",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes completed-parent join continuation deterministic by consuming each completed controlled child result fingerprint at most once."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Prevents repeated parent agent-loop passes over unchanged child completion evidence while preserving explicit task.run admission."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Turns parent-child result integration into replay-safe runtime state instead of relying on operator memory."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "deterministic_child_result_fingerprint",
+        "prompt": "Does the phase derive a deterministic summary-safe child completion fingerprint for parent join continuation?"
+      },
+      {
+        "id": "same_fingerprint_replay_guard",
+        "prompt": "Does the runtime reject or no-op a repeated parent continuation for the same child completion fingerprint before another parent agent-loop pass starts?"
+      },
+      {
+        "id": "changed_result_admission",
+        "prompt": "Can a materially different controlled completed child result set still admit parent continuation?"
+      },
+      {
+        "id": "bounded_child_context",
+        "prompt": "Does the fingerprint and continuation context use bounded child summaries instead of raw child data?"
+      },
+      {
+        "id": "no_auto_child_run",
+        "prompt": "Does parent continuation avoid auto-running child tasks?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "deterministic_child_result_fingerprint": "Yes. The runtime hashes stable summary-safe child task/run IDs, source provenance, final state, bounded completion summary preview, and bounded final response preview.",
+      "same_fingerprint_replay_guard": "Yes. Parent task.run checks for an already consumed child_completion_fingerprint before appending TaskRunning or starting another parent agent-loop pass.",
+      "changed_result_admission": "Yes. A different bounded child completion evidence set produces a different fingerprint and can be admitted separately.",
+      "bounded_child_context": "Yes. The fingerprint inputs are the same bounded inspection summaries used for parent join context and exclude raw prompts, provider responses, files, command output, environment values, tool inputs, and request bodies.",
+      "no_auto_child_run": "Yes. Parent task.run only inspects existing controlled child completion state and never invokes task.run for children.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Parent continuation has a deterministic summary-safe child completion fingerprint.",
+    "The first continuation for a completed controlled child result set is admitted.",
+    "Repeating parent continuation for the same child completion fingerprint does not start another parent agent-loop pass.",
+    "A materially different controlled completed child result set can be admitted.",
+    "Incomplete or non-controlled child tasks do not satisfy the join continuation gate.",
+    "Parent continuation does not auto-run child tasks.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, or serialized request bodies are added to parent continuation context or replay guard state.",
+    "Existing single-child and multi-child materialization behavior remains compatible.",
+    "Explicit controlled child task.run admission remains compatible.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_context_tokens": [
+      "ParentJoinContinuationFingerprintConsumed",
+      "parent_join_continuation:"
+    ],
+    "rust_runtime_tokens": [
+      "ParentJoinContinuationFingerprintConsumed",
+      "parent_join_child_completion_fingerprint",
+      "parent_join_child_completion_fingerprint_consumed",
+      "task_run_rejects_repeated_parent_join_for_same_child_completion_fingerprint",
+      "task_run_admits_parent_join_when_child_completion_fingerprint_changes"
+    ]
+  }
+}

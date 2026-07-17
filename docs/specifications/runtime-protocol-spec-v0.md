@@ -826,3 +826,15 @@ M5.16 extends controlled child materialization across all distinct candidates co
 Duplicate prevention is scoped to `parent_run_id + source_candidate_id + source_handoff_envelope_fingerprint`, so rerunning materialization for the same envelope reuses existing children without blocking different candidates from the same envelope. Each child keeps its own parent/source provenance, per-candidate `source_intent_summary`, sanitized `requested_goal_preview`, and sanitized `requested_mode_id` when available.
 
 Parent `task.run` still does not run child tasks, and each child remains limited to the existing explicit queued child `task.run` admission path. M5.16 adds no scheduler handoff, external worker, process execution expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, raw `input` persistence, or new blocked summary wrapper.
+
+## M5.17 parent join continuation
+
+M5.17 allows an explicit `task.run` call on a completed parent task after all controlled child tasks for that parent run have completed. The parent continuation consumes bounded `child_completion_summaries` derived from child inspection state, including child task/run IDs, source candidate IDs, source handoff envelope fingerprints, completion final state, bounded completion summary previews, and bounded final response previews.
+
+The parent does not auto-run child tasks. Incomplete or non-controlled children reject the parent continuation before the parent status is changed to `Running`. Raw child prompts, provider responses, file content, command strings, stdout, stderr, environment values, raw tool inputs, and serialized request bodies are not exposed in the parent continuation context.
+
+## M5.18 parent join continuation replay guard
+
+M5.18 makes parent join continuation replay-safe. Before a completed parent is moved back to `Running`, the runtime derives a deterministic summary-safe child completion fingerprint from the controlled completed child evidence and records `ParentJoinContinuationFingerprintConsumed` for the admitted fingerprint.
+
+Repeating `task.run` for the same parent and unchanged child completion fingerprint is rejected before another `TaskRunning` / agent-loop pass starts. A materially different controlled completed child result set produces a different fingerprint and can be admitted. This phase adds no scheduler handoff, child auto-run, external worker, process execution expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, raw child data persistence, or blocked summary wrapper.
