@@ -1,0 +1,99 @@
+{
+  "phase": "M5.28",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "recovery_cycle_budget_exhaustion_outcome",
+  "forbidden_pattern": "new_diagnostics_rpc_or_wrapper_chain_without_existing_parent_outcome_contract",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns the M5.27 recovery-cycle budget stop into a bounded parent task/run outcome that orchestration callers can consume without ledger inference."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Gives unattended callers a deterministic parent outcome for stopping recovery-cycle materialization when the runtime budget is exhausted."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "parent_task_run_outcome",
+        "prompt": "Does existing parent task.run output expose a bounded recovery-cycle budget exhaustion outcome?"
+      },
+      {
+        "id": "parent_inspection_outcome",
+        "prompt": "Does existing parent inspection output expose the same budget exhaustion outcome without a new diagnostics RPC?"
+      },
+      {
+        "id": "no_child_materialized",
+        "prompt": "Does over-budget recovery continuation still create no child TaskRecord and no child TaskRunning event?"
+      },
+      {
+        "id": "bounded_sanitized_contract",
+        "prompt": "Does the outcome include only deterministic bounded control-flow fields and omit raw child/runtime content?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "parent_task_run_outcome": "Yes. TaskRunResult can include recovery_cycle_budget_outcome when the parent run records recovery_cycle_budget_status Exceeded.",
+      "parent_inspection_outcome": "Yes. RunInspectSummary, used by run.inspect and task.inspect, exposes the same RecoveryCycleBudgetOutcome derived from existing parent ledger evidence.",
+      "no_child_materialized": "Yes. The M5.27 guard still records a blocked handoff envelope only, and the M5.28 test verifies child TaskRecord and TaskRunning counts do not increase.",
+      "bounded_sanitized_contract": "Yes. RecoveryCycleBudgetOutcome contains budget status, admission id, depth, max depth, blocked candidate count, child materialization/running disabled flags, and next action only.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Existing parent task.run output exposes a bounded recovery-cycle budget exhaustion outcome.",
+    "Existing parent inspection output exposes the same bounded recovery-cycle budget exhaustion outcome without a new diagnostics RPC.",
+    "The recovery-cycle budget exhaustion outcome includes deterministic budget status, exceeded depth, max depth, parent join admission id, blocked candidate count, no-child-materialized signal, no-child-running signal, and next action.",
+    "Over-budget continuation still creates no child TaskRecord.",
+    "Over-budget continuation still creates no child TaskRunning event.",
+    "Explicit task.run still refuses over-budget queued recovery-cycle children before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-recovery tasks and initial controlled children preserve explicit task.run behavior.",
+    "Failed-child and recovery-child outcome evidence remains bounded and sanitized.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "recovery_cycle_budget_outcome_for_run",
+      "recovery_cycle_budget_outcome_from_events",
+      "recovery_cycle_budget_status",
+      "child_materialization_enabled",
+      "child_running_enabled",
+      "stop_recovery_cycle_materialization",
+      "task_run_parent_join_budget_exhaustion_returns_bounded_outcome_without_child_materialization",
+      "parent_join_recovery_cycle_budget_blocks_next_child_materialization",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "SubtaskDispatchHandoffEnvelopeRecorded",
+      "TaskRunning"
+    ],
+    "rust_protocol_tokens": [
+      "RecoveryCycleBudgetOutcome",
+      "recovery_cycle_budget_outcome",
+      "TaskRunResult",
+      "RunInspectSummary"
+    ],
+    "vsix_protocol_tokens": [
+      "RecoveryCycleBudgetOutcome",
+      "RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS",
+      "isRecoveryCycleBudgetOutcome",
+      "recovery_cycle_budget_outcome"
+    ],
+    "vsix_test_tokens": [
+      "validates recovery-cycle budget exhaustion outcomes",
+      "child_running_enabled: true",
+      "stdout: 'raw'"
+    ],
+    "architecture_doc_tokens": [
+      "Recovery-cycle budget exhaustion is surfaced through the existing parent task.run response",
+      "recovery_cycle_budget_outcome"
+    ]
+  }
+}

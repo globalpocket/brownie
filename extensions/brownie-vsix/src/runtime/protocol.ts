@@ -220,11 +220,23 @@ export interface TaskRunResult {
   run_id: string;
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
+  recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
 }
 
 export interface AgentLoopRunSummary {
   final_state: string;
   completion_summary: string;
+}
+
+export interface RecoveryCycleBudgetOutcome {
+  recovery_cycle_budget_status: 'Exceeded';
+  parent_join_admission_id: string;
+  parent_join_recovery_cycle_depth: number;
+  max_recovery_cycle_depth: number;
+  blocked_candidate_count: number;
+  child_materialization_enabled: false;
+  child_running_enabled: false;
+  next_action: string;
 }
 
 export interface TaskRecord {
@@ -257,6 +269,7 @@ export interface RunInspectSummary {
   run_id: string;
   task_id?: string | null;
   status?: TaskStatus | null;
+  recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_task_count: number;
   child_task_ids: string[];
   child_tasks: ChildTaskInspectSummary[];
@@ -2515,6 +2528,17 @@ const RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS = new Set([
   'parent_join_recovery_cycle_depth',
 ]);
 
+const RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS = new Set([
+  'recovery_cycle_budget_status',
+  'parent_join_admission_id',
+  'parent_join_recovery_cycle_depth',
+  'max_recovery_cycle_depth',
+  'blocked_candidate_count',
+  'child_materialization_enabled',
+  'child_running_enabled',
+  'next_action',
+]);
+
 function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
@@ -2538,6 +2562,25 @@ export function isRecoveryCycleChildProvenance(value: unknown): value is Recover
     typeof value.parent_join_recovery_cycle === 'boolean' &&
     isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
     ((value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth >= 1) || (!value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth === 0))
+  );
+}
+
+export function isRecoveryCycleBudgetOutcome(value: unknown): value is RecoveryCycleBudgetOutcome {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS) &&
+    value.recovery_cycle_budget_status === 'Exceeded' &&
+    typeof value.parent_join_admission_id === 'string' &&
+    value.parent_join_admission_id.trim().length > 0 &&
+    isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
+    value.parent_join_recovery_cycle_depth > 0 &&
+    isNonNegativeInteger(value.max_recovery_cycle_depth) &&
+    isNonNegativeInteger(value.blocked_candidate_count) &&
+    value.blocked_candidate_count > 0 &&
+    value.child_materialization_enabled === false &&
+    value.child_running_enabled === false &&
+    typeof value.next_action === 'string' &&
+    value.next_action.trim().length > 0
   );
 }
 
@@ -2598,7 +2641,8 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     typeof value.task_id === 'string' &&
     typeof value.run_id === 'string' &&
     isTaskStatus(value.status) &&
-    isAgentLoopRunSummary(value.agent_loop)
+    isAgentLoopRunSummary(value.agent_loop) &&
+    (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome))
   );
 }
 
@@ -2673,6 +2717,7 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     typeof value.run_id === 'string' &&
     (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
     (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
+    (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     isNonNegativeInteger(value.child_task_count) &&
     Array.isArray(value.child_task_ids) &&
     value.child_task_ids.every((taskId) => typeof taskId === 'string') &&
