@@ -2505,16 +2505,39 @@ function isChildTaskSourceIntentSummary(value: unknown): value is ChildTaskSourc
   );
 }
 
+const RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS = new Set([
+  'parent_join_admission_id',
+  'parent_join_child_completion_fingerprint',
+  'parent_join_child_completion_child_count',
+  'parent_join_terminal_failed_child_count',
+  'parent_join_terminal_completed_child_count',
+  'parent_join_recovery_cycle',
+  'parent_join_recovery_cycle_depth',
+]);
+
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function isSha256Fingerprint(value: string): boolean {
+  return /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
 export function isRecoveryCycleChildProvenance(value: unknown): value is RecoveryCycleChildProvenance {
   return (
     isRecord(value) &&
+    hasOnlyKeys(value, RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS) &&
     typeof value.parent_join_admission_id === 'string' &&
+    value.parent_join_admission_id.trim().length > 0 &&
     typeof value.parent_join_child_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.parent_join_child_completion_fingerprint) &&
     isNonNegativeInteger(value.parent_join_child_completion_child_count) &&
     isNonNegativeInteger(value.parent_join_terminal_failed_child_count) &&
     isNonNegativeInteger(value.parent_join_terminal_completed_child_count) &&
+    value.parent_join_terminal_failed_child_count + value.parent_join_terminal_completed_child_count === value.parent_join_child_completion_child_count &&
     typeof value.parent_join_recovery_cycle === 'boolean' &&
-    isNonNegativeInteger(value.parent_join_recovery_cycle_depth)
+    isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
+    ((value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth >= 1) || (!value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth === 0))
   );
 }
 

@@ -12637,7 +12637,7 @@ fn materialize_controlled_child_task_from_handoff_envelope(
             continue;
         };
         let recovery_cycle_provenance =
-            recovery_cycle_child_provenance_from_handoff_envelope(envelope_payload);
+            recovery_cycle_child_provenance_from_handoff_envelope(envelope_payload)?;
 
         for source_candidate_id in handoff_envelope_candidate_ids(envelope_payload) {
             let child = if let Some(existing) = store
@@ -12683,40 +12683,110 @@ fn materialize_controlled_child_task_from_handoff_envelope(
 
 fn recovery_cycle_child_provenance_from_handoff_envelope(
     envelope_payload: &Value,
-) -> Option<RecoveryCycleChildProvenance> {
-    Some(RecoveryCycleChildProvenance {
-        parent_join_admission_id: envelope_payload
-            .get("parent_join_admission_id")?
-            .as_str()?
-            .to_string(),
-        parent_join_child_completion_fingerprint: envelope_payload
-            .get("parent_join_child_completion_fingerprint")?
-            .as_str()?
-            .to_string(),
-        parent_join_child_completion_child_count: usize_from_payload(
-            envelope_payload,
-            "parent_join_child_completion_child_count",
-        )?,
-        parent_join_terminal_failed_child_count: usize_from_payload(
-            envelope_payload,
-            "parent_join_terminal_failed_child_count",
-        )?,
-        parent_join_terminal_completed_child_count: usize_from_payload(
-            envelope_payload,
-            "parent_join_terminal_completed_child_count",
-        )?,
-        parent_join_recovery_cycle: envelope_payload
-            .get("parent_join_recovery_cycle")?
-            .as_bool()?,
-        parent_join_recovery_cycle_depth: usize_from_payload(
-            envelope_payload,
-            "parent_join_recovery_cycle_depth",
-        )?,
+) -> anyhow::Result<Option<RecoveryCycleChildProvenance>> {
+    let Some(parent_join_admission_id) =
+        optional_non_empty_payload_string(envelope_payload, "parent_join_admission_id")?
+    else {
+        return Ok(None);
+    };
+    let parent_join_child_completion_fingerprint = required_non_empty_payload_string(
+        envelope_payload,
+        "parent_join_child_completion_fingerprint",
+    )?;
+    if !is_sha256_fingerprint(&parent_join_child_completion_fingerprint) {
+        anyhow::bail!(
+            "invalid recovery-cycle child provenance: parent_join_child_completion_fingerprint must be sha256:<64 lowercase hex>"
+        );
+    }
+
+    let parent_join_child_completion_child_count =
+        required_usize_payload(envelope_payload, "parent_join_child_completion_child_count")?;
+    let parent_join_terminal_failed_child_count =
+        required_usize_payload(envelope_payload, "parent_join_terminal_failed_child_count")?;
+    let parent_join_terminal_completed_child_count = required_usize_payload(
+        envelope_payload,
+        "parent_join_terminal_completed_child_count",
+    )?;
+    if parent_join_terminal_failed_child_count + parent_join_terminal_completed_child_count
+        != parent_join_child_completion_child_count
+    {
+        anyhow::bail!(
+            "invalid recovery-cycle child provenance: terminal failed/completed counts must sum to child completion child count"
+        );
+    }
+
+    let parent_join_recovery_cycle =
+        required_bool_payload(envelope_payload, "parent_join_recovery_cycle")?;
+    let parent_join_recovery_cycle_depth =
+        required_usize_payload(envelope_payload, "parent_join_recovery_cycle_depth")?;
+    if parent_join_recovery_cycle {
+        if parent_join_recovery_cycle_depth == 0 {
+            anyhow::bail!(
+                "invalid recovery-cycle child provenance: recovery-cycle depth must be at least 1 when parent_join_recovery_cycle is true"
+            );
+        }
+    } else {
+        if parent_join_recovery_cycle_depth != 0 {
+            anyhow::bail!(
+                "invalid recovery-cycle child provenance: recovery-cycle depth must be 0 when parent_join_recovery_cycle is false"
+            );
+        }
+        return Ok(None);
+    }
+
+    Ok(Some(RecoveryCycleChildProvenance {
+        parent_join_admission_id,
+        parent_join_child_completion_fingerprint,
+        parent_join_child_completion_child_count,
+        parent_join_terminal_failed_child_count,
+        parent_join_terminal_completed_child_count,
+        parent_join_recovery_cycle,
+        parent_join_recovery_cycle_depth,
+    }))
+}
+
+fn optional_non_empty_payload_string(payload: &Value, key: &str) -> anyhow::Result<Option<String>> {
+    let Some(value) = payload.get(key) else {
+        return Ok(None);
+    };
+    let Some(value) = value.as_str() else {
+        anyhow::bail!("invalid recovery-cycle child provenance: {key} must be a string");
+    };
+    if value.trim().is_empty() {
+        anyhow::bail!("invalid recovery-cycle child provenance: {key} must be non-empty");
+    }
+    Ok(Some(value.to_string()))
+}
+
+fn required_non_empty_payload_string(payload: &Value, key: &str) -> anyhow::Result<String> {
+    optional_non_empty_payload_string(payload, key)?.ok_or_else(|| {
+        anyhow::anyhow!("invalid recovery-cycle child provenance: missing required {key}")
     })
 }
 
-fn usize_from_payload(payload: &Value, key: &str) -> Option<usize> {
-    usize::try_from(payload.get(key)?.as_u64()?).ok()
+fn required_bool_payload(payload: &Value, key: &str) -> anyhow::Result<bool> {
+    payload.get(key).and_then(Value::as_bool).ok_or_else(|| {
+        anyhow::anyhow!("invalid recovery-cycle child provenance: {key} must be a boolean")
+    })
+}
+
+fn required_usize_payload(payload: &Value, key: &str) -> anyhow::Result<usize> {
+    usize::try_from(payload.get(key).and_then(Value::as_u64).ok_or_else(|| {
+        anyhow::anyhow!(
+            "invalid recovery-cycle child provenance: {key} must be a non-negative integer"
+        )
+    })?)
+    .map_err(|_| anyhow::anyhow!("invalid recovery-cycle child provenance: {key} is too large"))
+}
+
+fn is_sha256_fingerprint(value: &str) -> bool {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return false;
+    };
+    hex.len() == 64
+        && hex
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn append_workspace_patch_proposal(
@@ -17156,6 +17226,155 @@ mod tests {
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn recovery_cycle_child_provenance_validation_rejects_invalid_envelopes() {
+        let valid_fingerprint = format!("sha256:{}", "a".repeat(64));
+        let valid = json!({
+            "parent_join_admission_id": "admission_1",
+            "parent_join_child_completion_fingerprint": valid_fingerprint,
+            "parent_join_child_completion_child_count": 3,
+            "parent_join_terminal_failed_child_count": 1,
+            "parent_join_terminal_completed_child_count": 2,
+            "parent_join_recovery_cycle": true,
+            "parent_join_recovery_cycle_depth": 2
+        });
+        let provenance = recovery_cycle_child_provenance_from_handoff_envelope(&valid)
+            .expect("valid provenance parses")
+            .expect("recovery-cycle provenance is present");
+        assert_eq!(provenance.parent_join_admission_id, "admission_1");
+        assert_eq!(provenance.parent_join_child_completion_child_count, 3);
+        assert_eq!(provenance.parent_join_terminal_failed_child_count, 1);
+        assert_eq!(provenance.parent_join_terminal_completed_child_count, 2);
+        assert!(provenance.parent_join_recovery_cycle);
+        assert_eq!(provenance.parent_join_recovery_cycle_depth, 2);
+
+        assert!(
+            recovery_cycle_child_provenance_from_handoff_envelope(&json!({
+                "handoff_envelope_status": "Accepted"
+            }))
+            .expect("non-parent-join envelope")
+            .is_none()
+        );
+        assert!(
+            recovery_cycle_child_provenance_from_handoff_envelope(&json!({
+                "parent_join_admission_id": "admission_2",
+                "parent_join_child_completion_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                "parent_join_child_completion_child_count": 1,
+                "parent_join_terminal_failed_child_count": 0,
+                "parent_join_terminal_completed_child_count": 1,
+                "parent_join_recovery_cycle": false,
+                "parent_join_recovery_cycle_depth": 0
+            }))
+            .expect("non-recovery parent join provenance parses")
+            .is_none()
+        );
+
+        let mut missing_depth = valid.clone();
+        missing_depth
+            .as_object_mut()
+            .expect("valid object")
+            .remove("parent_join_recovery_cycle_depth");
+        let invalid_cases = [
+            missing_depth,
+            json!({
+                "parent_join_admission_id": "",
+                "parent_join_child_completion_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                "parent_join_child_completion_child_count": 3,
+                "parent_join_terminal_failed_child_count": 1,
+                "parent_join_terminal_completed_child_count": 2,
+                "parent_join_recovery_cycle": true,
+                "parent_join_recovery_cycle_depth": 2
+            }),
+            json!({
+                "parent_join_admission_id": "admission_3",
+                "parent_join_child_completion_fingerprint": "not-a-sha256",
+                "parent_join_child_completion_child_count": 3,
+                "parent_join_terminal_failed_child_count": 1,
+                "parent_join_terminal_completed_child_count": 2,
+                "parent_join_recovery_cycle": true,
+                "parent_join_recovery_cycle_depth": 2
+            }),
+            json!({
+                "parent_join_admission_id": "admission_4",
+                "parent_join_child_completion_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                "parent_join_child_completion_child_count": 3,
+                "parent_join_terminal_failed_child_count": 4,
+                "parent_join_terminal_completed_child_count": 2,
+                "parent_join_recovery_cycle": true,
+                "parent_join_recovery_cycle_depth": 2
+            }),
+            json!({
+                "parent_join_admission_id": "admission_5",
+                "parent_join_child_completion_fingerprint": format!("sha256:{}", "e".repeat(64)),
+                "parent_join_child_completion_child_count": 3,
+                "parent_join_terminal_failed_child_count": 1,
+                "parent_join_terminal_completed_child_count": 2,
+                "parent_join_recovery_cycle": true,
+                "parent_join_recovery_cycle_depth": 0
+            }),
+            json!({
+                "parent_join_admission_id": "admission_6",
+                "parent_join_child_completion_fingerprint": format!("sha256:{}", "f".repeat(64)),
+                "parent_join_child_completion_child_count": 3,
+                "parent_join_terminal_failed_child_count": 1,
+                "parent_join_terminal_completed_child_count": 2,
+                "parent_join_recovery_cycle": false,
+                "parent_join_recovery_cycle_depth": 1
+            }),
+        ];
+        for invalid in invalid_cases {
+            assert!(recovery_cycle_child_provenance_from_handoff_envelope(&invalid).is_err());
+        }
+    }
+
+    #[test]
+    fn invalid_recovery_cycle_handoff_envelope_does_not_materialize_child() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_invalid_recovery",
+                    "handoff_envelope_fingerprint": "sha256:invalid-recovery-envelope",
+                    "candidate_ids": ["candidate_recovery_1"],
+                    "parent_join_admission_id": "admission_invalid",
+                    "parent_join_child_completion_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    "parent_join_child_completion_child_count": 3,
+                    "parent_join_terminal_failed_child_count": 1,
+                    "parent_join_terminal_completed_child_count": 2,
+                    "parent_join_recovery_cycle": true
+                })),
+            )
+            .expect("append invalid recovery handoff envelope");
+
+        let error = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect_err("invalid recovery-cycle provenance rejects materialization");
+        assert!(error
+            .to_string()
+            .contains("parent_join_recovery_cycle_depth"));
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+                .count(),
+            0
+        );
     }
 
     #[test]

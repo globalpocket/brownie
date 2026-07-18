@@ -88,6 +88,9 @@ function validateManifest(manifest) {
     'task.inspect',
     'run.inspect',
     'child_tasks',
+    'fail-closed',
+    'sha256:<64 lowercase hex>',
+    'failed plus completed counts',
     'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
@@ -129,6 +132,18 @@ function validateSourceEvidence(manifest) {
   for (const token of evidence.vsix_protocol_tokens ?? []) {
     requireToken('extensions/brownie-vsix/src/runtime/protocol.ts', token);
   }
+  for (const token of evidence.vsix_test_tokens ?? []) {
+    requireToken('extensions/brownie-vsix/src/test/runtimeClient.test.ts', token);
+  }
+  for (const token of evidence.runtime_protocol_spec_tokens ?? []) {
+    requireToken('docs/specifications/runtime-protocol-spec-v0.md', token);
+  }
+  for (const token of evidence.task_runtime_spec_tokens ?? []) {
+    requireToken('docs/specifications/task-runtime-spec-v0.md', token);
+  }
+  for (const token of evidence.run_inspection_spec_tokens ?? []) {
+    requireToken('docs/specifications/run-inspection-spec-v0.md', token);
+  }
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
@@ -144,6 +159,9 @@ function validateSourceEvidence(manifest) {
     'parent_join_recovery_cycle',
     'parent_join_recovery_cycle_depth',
     'task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run',
+    'recovery_cycle_child_provenance_validation_rejects_invalid_envelopes',
+    'invalid_recovery_cycle_handoff_envelope_does_not_materialize_child',
+    'is_sha256_fingerprint',
     'task.inspect',
     'run.inspect',
     'child_tasks'
