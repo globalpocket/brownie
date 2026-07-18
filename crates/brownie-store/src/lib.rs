@@ -68,6 +68,8 @@ pub struct ParentJoinContinuationRunAdmission {
     pub child_completion_fingerprint: String,
     pub child_completion_child_count: usize,
     pub child_completion_fingerprint_input_count: usize,
+    pub child_terminal_completed_count: usize,
+    pub child_terminal_failed_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +212,8 @@ impl TaskStore {
                         "admission_id": admission_id.clone(),
                         "child_completion_fingerprint": admission.child_completion_fingerprint,
                         "child_completion_child_count": admission.child_completion_child_count,
+                        "child_terminal_completed_count": admission.child_terminal_completed_count,
+                        "child_terminal_failed_count": admission.child_terminal_failed_count,
                         "fingerprint_input_count": admission.child_completion_fingerprint_input_count,
                         "reason": "Parent join continuation admitted atomically for this controlled terminal child result fingerprint."
                     })),

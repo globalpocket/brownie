@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.22';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.22.json';
+const phase = 'M5.23';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.23.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'terminal_child_failure_recovery_continuation',
-    `${phase} must declare the terminal child failure recovery continuation transition.`
+    manifest.concrete_capability_transition === 'recovery_child_completion_join_cycle',
+    `${phase} must declare the recovery child completion join cycle transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_failed_child_recovery_runtime_progress',
-    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without failed-child recovery runtime progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_recovery_child_completion_runtime_progress',
+    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without recovery-child completion runtime progress.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -77,12 +77,17 @@ function validateManifest(manifest) {
   for (const token of [
     'failed controlled child',
     'failed_child',
-    'same failed child result set remains rejected',
     'recovery child',
-    'failure_result_fingerprint',
-    'bounded before persistence',
-    'parent_join_admission_id',
     'explicit task.run',
+    'expanded terminal child result set',
+    'same expanded terminal result set remains rejected',
+    'second recovery-cycle child',
+    'completed_child',
+    'failure_result_fingerprint',
+    'completion_result_fingerprint',
+    'parent_join_terminal_failed_child_count',
+    'parent_join_terminal_completed_child_count',
+    'parent_join_admission_id',
     'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
@@ -127,14 +132,21 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
+  const llmText = readText('crates/brownie-llm/src/lib.rs');
   for (const token of [
     'child_has_terminal_parent_join_outcome',
     'child_failure_result_fingerprint',
     'LLM_FAILURE_REASON_PREVIEW_CHARS',
     'llm_failure_reason_is_bounded_before_persistence',
     'failed_child task_id=',
+    'completed_child task_id=',
     'failure_result_fingerprint',
+    'completion_result_fingerprint',
+    'parent_join_terminal_failed_child_count',
+    'parent_join_terminal_completed_child_count',
+    'parent_join_recovery_cycle',
     'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',
+    'task_run_parent_join_recovery_child_completion_materializes_next_cycle_without_auto_run',
     'failed_child_terminal_outcome_fingerprint_changes_with_failure_reason',
     'parent_join_admission_id',
     'append_parent_join_continuation_handoff_envelope_recorded',
@@ -143,6 +155,14 @@ function validateSourceEvidence(manifest) {
   ]) {
     if (!runtimeText.includes(token) && !storeText.includes(token)) {
       errors.push(`${phase} source must include ${token}.`);
+    }
+  }
+  for (const token of [
+    'Fake LLM recovery-child completion continuation request',
+    'Continue recovery after explicit recovery child completion.'
+  ]) {
+    if (!llmText.includes(token)) {
+      errors.push(`${phase} LLM source must include ${token}.`);
     }
   }
   const forbiddenWrapperEvents = [

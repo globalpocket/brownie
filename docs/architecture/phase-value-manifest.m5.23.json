@@ -1,0 +1,103 @@
+{
+  "phase": "M5.23",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "recovery_child_completion_join_cycle",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_recovery_child_completion_runtime_progress",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes failed-child recovery repeatable by admitting a parent join after the explicitly-run recovery child reaches a terminal outcome."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Feeds the expanded failed_child plus completed_child terminal result set back through the Rust-owned parent agent loop without auto-running children."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Removes the recovery-loop wedge where Brownie could create a recovery child but could not continue bounded parent orchestration after that child completed."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "recovery_child_explicit_run_only",
+        "prompt": "Does a recovery child produced from failed_child evidence remain queued until explicit task.run?"
+      },
+      {
+        "id": "expanded_terminal_join",
+        "prompt": "Can the parent explicitly join after the recovery child reaches a terminal outcome?"
+      },
+      {
+        "id": "expanded_terminal_fingerprint_change",
+        "prompt": "Does the failed_child plus completed_child terminal result set change the parent join fingerprint?"
+      },
+      {
+        "id": "expanded_terminal_replay_rejection",
+        "prompt": "Does the same expanded terminal child result set remain replay-rejected?"
+      },
+      {
+        "id": "second_recovery_cycle_materialization",
+        "prompt": "Does an approved recovery-cycle subtask.spawn materialize a second controlled queued child TaskRecord?"
+      },
+      {
+        "id": "bounded_recovery_provenance",
+        "prompt": "Do continuation records distinguish failed and completed terminal child counts without raw child data?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "recovery_child_explicit_run_only": "Yes. A recovery child materialized from failed_child evidence remains Queued with only TaskStarted until an explicit task.run runs it.",
+      "expanded_terminal_join": "Yes. After the recovery child reaches Completed, the parent can run another explicit continuation over the expanded terminal child result set.",
+      "expanded_terminal_fingerprint_change": "Yes. The second continuation consumes a distinct child_completion_fingerprint for the failed_child plus completed_child evidence set.",
+      "expanded_terminal_replay_rejection": "Yes. Repeating parent task.run after the second recovery-cycle child is queued is rejected because the same expanded terminal result set is either already consumed or not all children are terminal.",
+      "second_recovery_cycle_materialization": "Yes. The fake LLM emits an approved recovery-cycle subtask.spawn, and Brownie materializes it into a new controlled queued child TaskRecord.",
+      "bounded_recovery_provenance": "Yes. Parent join consumption and continuation handoff envelope records include child_terminal_failed_count, child_terminal_completed_count, parent_join_terminal_failed_child_count, and parent_join_terminal_completed_child_count while excluding raw child prompts and outputs.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A failed controlled child can create a recovery child that remains queued until explicit task.run.",
+    "After explicit task.run completes the recovery child, the parent can continue over the expanded terminal child result set.",
+    "The expanded terminal child result set includes failed_child evidence with failure_result_fingerprint and completed_child evidence with completion_result_fingerprint.",
+    "The expanded terminal child result set changes the parent join fingerprint from the first failed-child continuation.",
+    "The same expanded terminal result set remains rejected before new terminal child progress exists.",
+    "An approved recovery-cycle continuation materializes a second recovery-cycle child as a controlled queued TaskRecord.",
+    "The second recovery-cycle child has bounded parent/source/failure/recovery provenance including parent_join_admission_id, parent_join_terminal_failed_child_count, and parent_join_terminal_completed_child_count.",
+    "Every child execution remains explicit task.run; No child auto-run occurs.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "task_run_parent_join_recovery_child_completion_materializes_next_cycle_without_auto_run",
+      "task_run_parent_join_recovers_failed_controlled_child_without_auto_run",
+      "task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates",
+      "child_has_terminal_parent_join_outcome",
+      "failed_child task_id=",
+      "completed_child task_id=",
+      "failure_result_fingerprint",
+      "completion_result_fingerprint",
+      "parent_join_terminal_failed_child_count",
+      "parent_join_terminal_completed_child_count",
+      "parent_join_recovery_cycle",
+      "append_parent_join_continuation_handoff_envelope_recorded",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "validate_controlled_queued_child_task_provenance"
+    ],
+    "rust_store_tokens": [
+      "ParentJoinContinuationRunAdmitted",
+      "admit_parent_join_continuation",
+      "child_terminal_failed_count",
+      "child_terminal_completed_count"
+    ],
+    "rust_llm_tokens": [
+      "Fake LLM recovery-child completion continuation request",
+      "Continue recovery after explicit recovery child completion."
+    ]
+  }
+}
