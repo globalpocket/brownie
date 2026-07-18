@@ -2793,6 +2793,15 @@ fn validate_recovery_cycle_child_run_provenance(
     source_handoff_envelope_fingerprint: &str,
 ) -> Result<(), TaskRunAdmissionRejection> {
     let Some(provenance) = record.recovery_cycle_provenance.as_ref() else {
+        if source_handoff_envelope_requires_recovery_cycle_provenance(
+            parent_events,
+            source_handoff_envelope_id,
+            source_handoff_envelope_fingerprint,
+        ) {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: recovery-cycle child task provenance is missing",
+            ));
+        }
         return Ok(());
     };
     if !recovery_cycle_child_provenance_is_internally_valid(provenance) {
@@ -2824,6 +2833,35 @@ fn validate_recovery_cycle_child_run_provenance(
     }
 
     Ok(())
+}
+
+fn source_handoff_envelope_requires_recovery_cycle_provenance(
+    parent_events: &[LedgerEvent],
+    source_handoff_envelope_id: &str,
+    source_handoff_envelope_fingerprint: &str,
+) -> bool {
+    parent_events.iter().any(|event| {
+        if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        payload
+            .get("handoff_envelope_status")
+            .and_then(Value::as_str)
+            == Some("Accepted")
+            && payload.get("handoff_envelope_id").and_then(Value::as_str)
+                == Some(source_handoff_envelope_id)
+            && payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                == Some(source_handoff_envelope_fingerprint)
+            && payload
+                .get("parent_join_recovery_cycle")
+                .and_then(Value::as_bool)
+                == Some(true)
+    })
 }
 
 fn recovery_cycle_child_provenance_is_internally_valid(
@@ -18603,6 +18641,29 @@ mod tests {
         assert!(child_events
             .iter()
             .any(|event| event.kind == LedgerEventKind::TaskCompleted));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_missing_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"] = Value::Null;
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance is missing",
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();

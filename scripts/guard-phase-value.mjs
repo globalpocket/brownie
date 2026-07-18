@@ -81,6 +81,7 @@ function validateManifest(manifest) {
     'accepted handoff envelope',
     'ParentJoinContinuationFingerprintConsumed',
     'SubtaskDispatchHandoffEnvelopeRecorded',
+    'Missing recovery-cycle provenance',
     'parent_join_admission_id',
     'parent_join_child_completion_fingerprint',
     'source_handoff_envelope_fingerprint',
@@ -115,10 +116,12 @@ function validateSourceEvidence(manifest) {
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
     'validate_recovery_cycle_child_run_provenance',
+    'source_handoff_envelope_requires_recovery_cycle_provenance',
     'recovery_cycle_child_provenance_is_internally_valid',
     'recovery_cycle_provenance_matches_parent_join',
     'recovery_cycle_provenance_matches_handoff_envelope',
     'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
+    'task_run_rejects_recovery_cycle_child_with_missing_provenance',
     'task_run_rejects_recovery_cycle_child_with_stale_parent_join_admission_id',
     'task_run_rejects_recovery_cycle_child_with_stale_completion_fingerprint',
     'task_run_rejects_recovery_cycle_child_with_stale_terminal_counts',
