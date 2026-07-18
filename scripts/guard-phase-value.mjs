@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.23';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.23.json';
+const phase = 'M5.24';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.24.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'recovery_child_completion_join_cycle',
-    `${phase} must declare the recovery child completion join cycle transition.`
+    manifest.concrete_capability_transition === 'repeated_recovery_cycle_join',
+    `${phase} must declare the repeated recovery-cycle join transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_recovery_child_completion_runtime_progress',
-    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without recovery-child completion runtime progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_repeated_recovery_cycle_runtime_progress',
+    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without repeated recovery-cycle runtime progress.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -78,13 +78,16 @@ function validateManifest(manifest) {
     'failed controlled child',
     'failed_child',
     'recovery child',
-    'explicit task.run',
-    'expanded terminal child result set',
-    'same expanded terminal result set remains rejected',
     'second recovery-cycle child',
+    'explicit task.run',
+    'larger terminal child result set',
+    'same larger terminal result set remains rejected',
+    'repeated recovery-cycle',
     'completed_child',
     'failure_result_fingerprint',
     'completion_result_fingerprint',
+    'parent_join_recovery_cycle_depth',
+    'child_recovery_cycle_depth',
     'parent_join_terminal_failed_child_count',
     'parent_join_terminal_completed_child_count',
     'parent_join_admission_id',
@@ -144,9 +147,12 @@ function validateSourceEvidence(manifest) {
     'completion_result_fingerprint',
     'parent_join_terminal_failed_child_count',
     'parent_join_terminal_completed_child_count',
+    'parent_join_recovery_cycle_depth',
+    'child_recovery_cycle_depth',
     'parent_join_recovery_cycle',
     'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',
     'task_run_parent_join_recovery_child_completion_materializes_next_cycle_without_auto_run',
+    'task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run',
     'failed_child_terminal_outcome_fingerprint_changes_with_failure_reason',
     'parent_join_admission_id',
     'append_parent_join_continuation_handoff_envelope_recorded',
@@ -159,7 +165,9 @@ function validateSourceEvidence(manifest) {
   }
   for (const token of [
     'Fake LLM recovery-child completion continuation request',
-    'Continue recovery after explicit recovery child completion.'
+    'Continue recovery after explicit recovery child completion.',
+    'Fake LLM repeated recovery-cycle continuation request',
+    'Continue repeated recovery cycle after second explicit recovery child completion.'
   ]) {
     if (!llmText.includes(token)) {
       errors.push(`${phase} LLM source must include ${token}.`);

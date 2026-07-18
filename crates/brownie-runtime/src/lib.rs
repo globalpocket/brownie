@@ -1778,6 +1778,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     .child_completion_fingerprint_input_count,
                 child_terminal_completed_count: consumption.child_terminal_completed_count,
                 child_terminal_failed_count: consumption.child_terminal_failed_count,
+                child_recovery_cycle_depth: consumption.child_recovery_cycle_depth,
             },
         ) {
             Ok(Some(admitted)) => {
@@ -2201,6 +2202,7 @@ struct ParentJoinContinuationAdmission {
     child_completion_child_count: usize,
     child_terminal_completed_count: usize,
     child_terminal_failed_count: usize,
+    child_recovery_cycle_depth: usize,
 }
 
 impl TaskRunAdmission {
@@ -2221,6 +2223,7 @@ impl TaskRunAdmission {
                 child_completion_child_count: admission.child_completion_child_count,
                 child_terminal_completed_count: admission.child_terminal_completed_count,
                 child_terminal_failed_count: admission.child_terminal_failed_count,
+                child_recovery_cycle_depth: admission.child_recovery_cycle_depth,
             }),
         }
     }
@@ -2239,6 +2242,7 @@ impl TaskRunAdmission {
                     child_completion_child_count: admission.child_completion_child_count,
                     child_terminal_completed_count: admission.child_terminal_completed_count,
                     child_terminal_failed_count: admission.child_terminal_failed_count,
+                    child_recovery_cycle_depth: admission.child_recovery_cycle_depth,
                 })
             }
         }
@@ -2251,6 +2255,7 @@ struct ParentJoinContinuationConsumption {
     child_completion_child_count: usize,
     child_terminal_completed_count: usize,
     child_terminal_failed_count: usize,
+    child_recovery_cycle_depth: usize,
 }
 
 #[derive(Clone)]
@@ -2261,6 +2266,7 @@ struct ParentJoinContinuationMaterialization {
     child_completion_child_count: usize,
     child_terminal_completed_count: usize,
     child_terminal_failed_count: usize,
+    child_recovery_cycle_depth: usize,
 }
 
 fn validate_task_run_admission(
@@ -2339,6 +2345,11 @@ fn validate_completed_parent_join_continuation_admission(
         .iter()
         .filter(|child| child.status == TaskStatus::Failed)
         .count();
+    let child_recovery_cycle_depth = if child_terminal_failed_count > 0 {
+        child_terminal_completed_count
+    } else {
+        0
+    };
     let (child_completion_fingerprint, child_completion_fingerprint_input_count) =
         parent_join_child_completion_fingerprint(&child_evidence);
     if parent_join_child_completion_fingerprint_consumed(
@@ -2369,6 +2380,7 @@ fn validate_completed_parent_join_continuation_admission(
         child_completion_child_count: child_tasks.len(),
         child_terminal_completed_count,
         child_terminal_failed_count,
+        child_recovery_cycle_depth,
     })
 }
 
@@ -12402,6 +12414,10 @@ fn append_parent_join_continuation_handoff_envelope_recorded(
             "parent_join_terminal_failed_child_count={}",
             continuation.child_terminal_failed_count
         ),
+        format!(
+            "parent_join_recovery_cycle_depth={}",
+            continuation.child_recovery_cycle_depth
+        ),
         format!("candidate_count={}", candidate_ids.len()),
     ];
     for candidate_id in &candidate_ids {
@@ -12421,56 +12437,63 @@ fn append_parent_join_continuation_handoff_envelope_recorded(
     let admission_fragment = fragment_for_identifier(&continuation.admission_id);
     let candidate_count = candidate_ids.len();
     let eligible_candidate_ids = candidate_ids.clone();
+    let mut payload = json!({
+        "handoff_envelope_id": format!("subtask_dispatch_handoff_envelope_{run_fragment}_{admission_fragment}"),
+        "parent_task_id": record.task_id,
+        "parent_run_id": record.run_id,
+        "parent_join_admission_id": continuation.admission_id,
+        "parent_join_child_completion_fingerprint": continuation.child_completion_fingerprint,
+        "parent_join_child_completion_child_count": continuation.child_completion_child_count,
+        "parent_join_terminal_completed_child_count": continuation.child_terminal_completed_count,
+        "parent_join_terminal_failed_child_count": continuation.child_terminal_failed_count,
+        "parent_join_fingerprint_input_count": continuation.child_completion_fingerprint_input_count,
+        "parent_join_recovery_cycle": continuation.child_terminal_failed_count > 0 && continuation.child_terminal_completed_count > 0,
+        "queued_count": candidate_count,
+        "source_event_count": candidate_count,
+        "status": "Accepted",
+        "handoff_envelope_status": "Accepted",
+        "handoff_ticket_status": "Blocked",
+        "replay_guard_status": "Accepted",
+        "scheduler_handoff_status": "Blocked",
+        "candidate_status": "Accepted",
+        "dispatch_decision": "MaterializeControlledChildTask",
+        "candidate_count": candidate_count,
+        "dispatch_candidate_count": candidate_count,
+        "eligible_candidate_count": candidate_count,
+        "blocked_candidate_count": 0,
+        "handoff_ticket_count": 0,
+        "candidate_ids": candidate_ids,
+        "eligible_candidate_ids": eligible_candidate_ids,
+        "blocked_candidate_ids": [],
+        "handoff_envelope_fingerprint": handoff_envelope_fingerprint,
+        "fingerprint_input_count": fingerprint_input_count,
+        "required_capability": "continuation_subtask_materialization",
+        "precondition_count": 0,
+        "satisfied_precondition_count": 0,
+        "blocked_preconditions": [],
+        "check_count": 2,
+        "blocked_checks": [
+            "scheduler_handoff_not_available",
+            "child_task_auto_run_disabled"
+        ],
+        "execution_enabled": false,
+        "dispatch_enabled": false,
+        "continuation_materialization": true,
+        "continuation_source": "parent_join_continuation",
+        "next_action": "explicit_child_task_run",
+        "reason": "Approved subtask intents emitted during an atomic parent join continuation were accepted for controlled queued child TaskRecord materialization; child execution remains explicit."
+    });
+    if let Some(payload) = payload.as_object_mut() {
+        payload.insert(
+            "parent_join_recovery_cycle_depth".to_string(),
+            json!(continuation.child_recovery_cycle_depth),
+        );
+    }
 
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
-        Some(json!({
-            "handoff_envelope_id": format!("subtask_dispatch_handoff_envelope_{run_fragment}_{admission_fragment}"),
-            "parent_task_id": record.task_id,
-            "parent_run_id": record.run_id,
-            "parent_join_admission_id": continuation.admission_id,
-            "parent_join_child_completion_fingerprint": continuation.child_completion_fingerprint,
-            "parent_join_child_completion_child_count": continuation.child_completion_child_count,
-            "parent_join_terminal_completed_child_count": continuation.child_terminal_completed_count,
-            "parent_join_terminal_failed_child_count": continuation.child_terminal_failed_count,
-            "parent_join_fingerprint_input_count": continuation.child_completion_fingerprint_input_count,
-            "parent_join_recovery_cycle": continuation.child_terminal_failed_count > 0 && continuation.child_terminal_completed_count > 0,
-            "queued_count": candidate_count,
-            "source_event_count": candidate_count,
-            "status": "Accepted",
-            "handoff_envelope_status": "Accepted",
-            "handoff_ticket_status": "Blocked",
-            "replay_guard_status": "Accepted",
-            "scheduler_handoff_status": "Blocked",
-            "candidate_status": "Accepted",
-            "dispatch_decision": "MaterializeControlledChildTask",
-            "candidate_count": candidate_count,
-            "dispatch_candidate_count": candidate_count,
-            "eligible_candidate_count": candidate_count,
-            "blocked_candidate_count": 0,
-            "handoff_ticket_count": 0,
-            "candidate_ids": candidate_ids,
-            "eligible_candidate_ids": eligible_candidate_ids,
-            "blocked_candidate_ids": [],
-            "handoff_envelope_fingerprint": handoff_envelope_fingerprint,
-            "fingerprint_input_count": fingerprint_input_count,
-            "required_capability": "continuation_subtask_materialization",
-            "precondition_count": 0,
-            "satisfied_precondition_count": 0,
-            "blocked_preconditions": [],
-            "check_count": 2,
-            "blocked_checks": [
-                "scheduler_handoff_not_available",
-                "child_task_auto_run_disabled"
-            ],
-            "execution_enabled": false,
-            "dispatch_enabled": false,
-            "continuation_materialization": true,
-            "continuation_source": "parent_join_continuation",
-            "next_action": "explicit_child_task_run",
-            "reason": "Approved subtask intents emitted during an atomic parent join continuation were accepted for controlled queued child TaskRecord materialization; child execution remains explicit."
-        })),
+        Some(payload),
     )
 }
 
@@ -16542,6 +16565,462 @@ mod tests {
                 .expect("parent events after rejected expanded replay")
                 .len(),
             parent_event_count_after_second_join
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, initial_child, _parent_event_count) =
+            start_parent_with_queued_child();
+
+        configure_strict_missing_openai_for_test();
+        let failed_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(failed_child_run.result.is_none());
+        assert_eq!(
+            failed_child_run.error.expect("failed child run error").code,
+            -32603
+        );
+        clear_llm_env_for_test();
+
+        let store = BrownieStore::new(temp.path());
+        let failed_child = store
+            .tasks()
+            .get_task(&initial_child.task_id)
+            .expect("get failed child")
+            .expect("failed child");
+        assert_eq!(failed_child.status, TaskStatus::Failed);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &failed_child,
+                LedgerEventKind::PromptBuilt,
+                Some(json!({
+                    "prompt_preview": "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append M5.24 failed child raw prompt marker");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &failed_child,
+                LedgerEventKind::ToolExecutionCompleted,
+                Some(json!({
+                    "tool_id": "workspace.read",
+                    "status": "Completed",
+                    "output_preview": "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append M5.24 failed child raw output marker");
+        let failed_child_evidence =
+            parent_join_child_completion_evidence(&store, &failed_child).expect("failed evidence");
+        assert!(failed_child_evidence
+            .summary
+            .contains("failed_child task_id="));
+        assert!(failed_child_evidence
+            .summary
+            .contains("failure_result_fingerprint="));
+        assert!(!failed_child_evidence
+            .summary
+            .contains("RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!failed_child_evidence
+            .summary
+            .contains("RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR"));
+
+        let first_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(first_parent_join.error.is_none());
+        assert_eq!(
+            first_parent_join.result.expect("first parent join result")["status"],
+            "Completed"
+        );
+
+        let first_recovery_child = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children after first recovery join")
+            .into_iter()
+            .find(|record| {
+                record.parent_run_id.as_deref() == Some(parent_run_id.as_str())
+                    && record.task_id != failed_child.task_id
+            })
+            .expect("first recovery child");
+        assert_eq!(first_recovery_child.status, TaskStatus::Queued);
+        assert_eq!(
+            first_recovery_child
+                .source_intent_summary
+                .as_ref()
+                .expect("first recovery source intent")
+                .request_reason,
+            "Recover failed controlled child task."
+        );
+
+        let first_recovery_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            first_recovery_child.task_id
+        ));
+        assert!(first_recovery_child_run.error.is_none());
+        assert_eq!(
+            first_recovery_child_run
+                .result
+                .expect("first recovery child run result")["status"],
+            "Completed"
+        );
+        let completed_first_recovery_child = store
+            .tasks()
+            .get_task(&first_recovery_child.task_id)
+            .expect("get completed first recovery child")
+            .expect("completed first recovery child");
+        assert_eq!(completed_first_recovery_child.status, TaskStatus::Completed);
+
+        let second_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(second_parent_join.error.is_none());
+        assert_eq!(
+            second_parent_join
+                .result
+                .expect("second parent join result")["status"],
+            "Completed"
+        );
+
+        let second_recovery_cycle_child = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children after second recovery-cycle join")
+            .into_iter()
+            .find(|record| {
+                record.parent_run_id.as_deref() == Some(parent_run_id.as_str())
+                    && record.task_id != failed_child.task_id
+                    && record.task_id != completed_first_recovery_child.task_id
+            })
+            .expect("second recovery-cycle child");
+        assert_eq!(second_recovery_cycle_child.status, TaskStatus::Queued);
+        assert_eq!(
+            second_recovery_cycle_child
+                .source_intent_summary
+                .as_ref()
+                .expect("second recovery source intent")
+                .request_reason,
+            "Continue recovery after explicit recovery child completion."
+        );
+        let second_recovery_events_before_run = store
+            .tasks()
+            .read_ledger_events(&second_recovery_cycle_child.run_id)
+            .expect("second recovery-cycle child events before run");
+        assert_eq!(second_recovery_events_before_run.len(), 1);
+        assert_eq!(
+            second_recovery_events_before_run[0].kind,
+            LedgerEventKind::TaskStarted
+        );
+        assert!(!second_recovery_events_before_run
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        let parent_events_after_second_join = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after second join");
+        let continuation_consumptions_after_second_join = parent_events_after_second_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .filter_map(|event| event.payload.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(continuation_consumptions_after_second_join.len(), 2);
+        assert_eq!(
+            continuation_consumptions_after_second_join[1]["child_completion_child_count"],
+            2
+        );
+        assert_eq!(
+            continuation_consumptions_after_second_join[1]["child_terminal_failed_count"],
+            1
+        );
+        assert_eq!(
+            continuation_consumptions_after_second_join[1]["child_terminal_completed_count"],
+            1
+        );
+        assert_eq!(
+            continuation_consumptions_after_second_join[1]["child_recovery_cycle_depth"],
+            1
+        );
+        let second_terminal_set_fingerprint = continuation_consumptions_after_second_join[1]
+            ["child_completion_fingerprint"]
+            .as_str()
+            .expect("second terminal set fingerprint")
+            .to_string();
+
+        let second_recovery_cycle_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            second_recovery_cycle_child.task_id
+        ));
+        assert!(second_recovery_cycle_child_run.error.is_none());
+        assert_eq!(
+            second_recovery_cycle_child_run
+                .result
+                .expect("second recovery-cycle child run result")["status"],
+            "Completed"
+        );
+        let completed_second_recovery_cycle_child = store
+            .tasks()
+            .get_task(&second_recovery_cycle_child.task_id)
+            .expect("get completed second recovery-cycle child")
+            .expect("completed second recovery-cycle child");
+        assert_eq!(
+            completed_second_recovery_cycle_child.status,
+            TaskStatus::Completed
+        );
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &completed_second_recovery_cycle_child,
+                LedgerEventKind::PromptBuilt,
+                Some(json!({
+                    "prompt_preview": "RAW_M5_24_SECOND_RECOVERY_CHILD_PROMPT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append second recovery child raw prompt marker");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &completed_second_recovery_cycle_child,
+                LedgerEventKind::ToolExecutionCompleted,
+                Some(json!({
+                    "tool_id": "workspace.read",
+                    "status": "Completed",
+                    "output_preview": "RAW_M5_24_SECOND_RECOVERY_CHILD_OUTPUT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append second recovery child raw output marker");
+        let second_recovery_child_evidence =
+            parent_join_child_completion_evidence(&store, &completed_second_recovery_cycle_child)
+                .expect("second recovery child completion evidence");
+        assert!(second_recovery_child_evidence
+            .summary
+            .contains("completed_child task_id="));
+        assert!(second_recovery_child_evidence
+            .summary
+            .contains("completion_result_fingerprint="));
+        assert!(!second_recovery_child_evidence
+            .summary
+            .contains("RAW_M5_24_SECOND_RECOVERY_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!second_recovery_child_evidence
+            .summary
+            .contains("RAW_M5_24_SECOND_RECOVERY_CHILD_OUTPUT_SHOULD_NOT_APPEAR"));
+
+        let third_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":8,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(third_parent_join.error.is_none());
+        assert_eq!(
+            third_parent_join.result.expect("third parent join result")["status"],
+            "Completed"
+        );
+
+        let parent_children_after_third_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children after repeated recovery-cycle join")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(parent_children_after_third_join.len(), 4);
+        let third_recovery_cycle_child = parent_children_after_third_join
+            .iter()
+            .find(|record| {
+                record.task_id != failed_child.task_id
+                    && record.task_id != completed_first_recovery_child.task_id
+                    && record.task_id != completed_second_recovery_cycle_child.task_id
+            })
+            .expect("third recovery-cycle child");
+        assert_eq!(third_recovery_cycle_child.status, TaskStatus::Queued);
+        assert_eq!(
+            third_recovery_cycle_child
+                .source_intent_summary
+                .as_ref()
+                .expect("third recovery-cycle source intent")
+                .request_reason,
+            "Continue repeated recovery cycle after second explicit recovery child completion."
+        );
+        assert!(validate_controlled_queued_child_task_provenance(
+            third_recovery_cycle_child,
+            &store
+        )
+        .is_ok());
+        let third_recovery_cycle_child_events = store
+            .tasks()
+            .read_ledger_events(&third_recovery_cycle_child.run_id)
+            .expect("third recovery-cycle child events");
+        assert_eq!(third_recovery_cycle_child_events.len(), 1);
+        assert_eq!(
+            third_recovery_cycle_child_events[0].kind,
+            LedgerEventKind::TaskStarted
+        );
+        assert!(!third_recovery_cycle_child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        let parent_events_after_third_join = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after repeated recovery-cycle join");
+        let continuation_consumptions = parent_events_after_third_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .filter_map(|event| event.payload.as_ref())
+            .collect::<Vec<_>>();
+        assert_eq!(continuation_consumptions.len(), 3);
+        assert_eq!(
+            continuation_consumptions[2]["child_completion_child_count"],
+            3
+        );
+        assert_eq!(
+            continuation_consumptions[2]["child_terminal_failed_count"],
+            1
+        );
+        assert_eq!(
+            continuation_consumptions[2]["child_terminal_completed_count"],
+            2
+        );
+        assert_eq!(
+            continuation_consumptions[2]["child_recovery_cycle_depth"],
+            2
+        );
+        let third_terminal_set_fingerprint = continuation_consumptions[2]
+            ["child_completion_fingerprint"]
+            .as_str()
+            .expect("third terminal set fingerprint");
+        assert_ne!(
+            second_terminal_set_fingerprint,
+            third_terminal_set_fingerprint
+        );
+
+        let repeated_recovery_prompt_preview = parent_events_after_third_join
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("prompt_preview"))
+            .and_then(Value::as_str)
+            .expect("repeated recovery continuation prompt preview");
+        assert!(repeated_recovery_prompt_preview.contains("failed_child task_id="));
+        assert!(repeated_recovery_prompt_preview.contains(&failed_child.task_id));
+        assert!(!repeated_recovery_prompt_preview
+            .contains("RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!repeated_recovery_prompt_preview
+            .contains("RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR"));
+        assert!(!repeated_recovery_prompt_preview
+            .contains("RAW_M5_24_SECOND_RECOVERY_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!repeated_recovery_prompt_preview
+            .contains("RAW_M5_24_SECOND_RECOVERY_CHILD_OUTPUT_SHOULD_NOT_APPEAR"));
+
+        let third_admission_id = continuation_consumptions[2]["admission_id"]
+            .as_str()
+            .expect("third admission id");
+        let repeated_recovery_envelope = parent_events_after_third_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .filter_map(|event| event.payload.as_ref())
+            .find(|payload| {
+                payload
+                    .get("parent_join_admission_id")
+                    .and_then(Value::as_str)
+                    == Some(third_admission_id)
+            })
+            .expect("repeated recovery-cycle continuation envelope");
+        assert_eq!(
+            repeated_recovery_envelope["parent_join_child_completion_child_count"],
+            3
+        );
+        assert_eq!(
+            repeated_recovery_envelope["parent_join_terminal_failed_child_count"],
+            1
+        );
+        assert_eq!(
+            repeated_recovery_envelope["parent_join_terminal_completed_child_count"],
+            2
+        );
+        assert_eq!(
+            repeated_recovery_envelope["parent_join_recovery_cycle_depth"],
+            2
+        );
+        assert_eq!(
+            repeated_recovery_envelope["parent_join_recovery_cycle"],
+            true
+        );
+        let second_candidate = second_recovery_cycle_child
+            .source_candidate_id
+            .as_deref()
+            .expect("second recovery candidate");
+        let third_candidate = third_recovery_cycle_child
+            .source_candidate_id
+            .as_deref()
+            .expect("third recovery candidate");
+        let repeated_envelope_candidates =
+            payload_string_array(repeated_recovery_envelope, "candidate_ids");
+        assert_eq!(
+            repeated_envelope_candidates,
+            vec![third_candidate.to_string()]
+        );
+        assert!(!repeated_envelope_candidates.contains(&second_candidate.to_string()));
+        assert_eq!(
+            third_recovery_cycle_child
+                .source_handoff_envelope_fingerprint
+                .as_deref(),
+            repeated_recovery_envelope["handoff_envelope_fingerprint"].as_str()
+        );
+
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("repeated recovery envelope idempotent materialization");
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after repeated recovery idempotency")
+                .iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            4
+        );
+
+        let parent_event_count_after_third_join = parent_events_after_third_join.len();
+        let repeat_larger_terminal_set = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(repeat_larger_terminal_set.result.is_none());
+        assert_eq!(
+            repeat_larger_terminal_set
+                .error
+                .expect("repeat larger terminal set error")
+                .code,
+            -32602
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent events after rejected larger replay")
+                .len(),
+            parent_event_count_after_third_join
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
