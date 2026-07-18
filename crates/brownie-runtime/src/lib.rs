@@ -107,11 +107,12 @@ use brownie_protocol::{
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskStartParams,
+    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
@@ -1765,6 +1766,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
                     child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
                 }),
             );
         }
@@ -1783,6 +1785,26 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: Some(child_orchestration_outcome),
+                    parent_join_readiness_outcome: None,
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    match parent_join_readiness_outcome_for_replay(&store, &record) {
+        Ok(Some((agent_loop, parent_join_readiness_outcome))) => {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop,
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
                 }),
             );
         }
@@ -2184,20 +2206,25 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         .tasks()
         .update_task_status(&running.task_id, final_status, event_kind)
     {
-        Ok(record) => result_response(
-            id,
-            json!(TaskRunResult {
-                task_id: record.task_id,
-                run_id: record.run_id,
-                status: record.status,
-                agent_loop: TaskRunAgentLoopSummary {
-                    final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
-                    completion_summary: agent_loop_completion_summary,
-                },
-                recovery_cycle_budget_outcome,
-                child_orchestration_outcome,
-            }),
-        ),
+        Ok(record) => {
+            let parent_join_readiness_outcome =
+                parent_join_readiness_outcome_for_terminal_child(&record);
+            result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop: TaskRunAgentLoopSummary {
+                        final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
+                        completion_summary: agent_loop_completion_summary,
+                    },
+                    recovery_cycle_budget_outcome,
+                    child_orchestration_outcome,
+                    parent_join_readiness_outcome,
+                }),
+            )
+        }
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
 }
@@ -3094,11 +3121,29 @@ fn fail_llm_request(
             "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
         })),
     );
-    let _ = store.tasks().update_task_status(
+    let updated_record = store.tasks().update_task_status(
         &running.task_id,
         TaskStatus::Failed,
         LedgerEventKind::TaskFailed,
     );
+    if let Ok(record) = updated_record {
+        if let Some(parent_join_readiness_outcome) =
+            parent_join_readiness_outcome_for_terminal_child(&record)
+        {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop: controlled_child_failed_agent_loop_summary(),
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
+                }),
+            );
+        }
+    }
     error_response(
         id,
         -32603,
@@ -10276,6 +10321,27 @@ fn child_orchestration_outcome_for_replay(
     Ok(Some((agent_loop, child_orchestration_outcome)))
 }
 
+fn parent_join_readiness_outcome_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<(TaskRunAgentLoopSummary, TaskRunParentJoinReadinessOutcome)>, String> {
+    let Some(parent_join_readiness_outcome) =
+        parent_join_readiness_outcome_for_terminal_child(record)
+    else {
+        return Ok(None);
+    };
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    let Some(agent_loop) = task_run_terminal_child_agent_loop_summary_from_events(record, &events)
+    else {
+        return Ok(None);
+    };
+
+    Ok(Some((agent_loop, parent_join_readiness_outcome)))
+}
+
 fn task_run_agent_loop_summary_from_events(
     events: &[LedgerEvent],
 ) -> Option<TaskRunAgentLoopSummary> {
@@ -10293,6 +10359,67 @@ fn task_run_agent_loop_summary_from_events(
             .unwrap_or_default()
             .to_string(),
     })
+}
+
+fn task_run_terminal_child_agent_loop_summary_from_events(
+    record: &TaskRecord,
+    events: &[LedgerEvent],
+) -> Option<TaskRunAgentLoopSummary> {
+    if let Some(agent_loop) = task_run_agent_loop_summary_from_events(events) {
+        return Some(agent_loop);
+    }
+    if record.status != TaskStatus::Failed {
+        return None;
+    }
+    if events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+        )
+    }) {
+        return Some(controlled_child_failed_agent_loop_summary());
+    }
+    None
+}
+
+fn parent_join_readiness_outcome_for_terminal_child(
+    record: &TaskRecord,
+) -> Option<TaskRunParentJoinReadinessOutcome> {
+    if !matches!(record.status, TaskStatus::Completed | TaskStatus::Failed) {
+        return None;
+    }
+    let parent_task_id = non_empty_record_string(record.parent_task_id.as_deref())?;
+    let parent_run_id = non_empty_record_string(record.parent_run_id.as_deref())?;
+    non_empty_record_string(record.source_candidate_id.as_deref())?;
+    non_empty_record_string(record.source_handoff_envelope_id.as_deref())?;
+    non_empty_record_string(record.source_handoff_envelope_fingerprint.as_deref())?;
+
+    Some(TaskRunParentJoinReadinessOutcome {
+        parent_task_id,
+        parent_run_id,
+        child_task_id: record.task_id.clone(),
+        child_run_id: record.run_id.clone(),
+        child_terminal_status: record.status.clone(),
+        parent_join_ready: true,
+        parent_running_enabled: false,
+        next_action: "run_parent_task_explicitly".to_string(),
+    })
+}
+
+fn non_empty_record_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn controlled_child_failed_agent_loop_summary() -> TaskRunAgentLoopSummary {
+    TaskRunAgentLoopSummary {
+        final_state: "Failed".to_string(),
+        completion_summary:
+            "Controlled child task failed before agent loop completion; run parent task explicitly."
+                .to_string(),
+    }
 }
 
 fn recovery_cycle_budget_outcome_from_events(
@@ -15705,6 +15832,32 @@ mod tests {
             .iter()
             .any(|event| event.kind == LedgerEventKind::TaskRunning));
 
+        let parent_events_before_child_run = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events before child run");
+        let parent_task_running_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let parent_handoff_envelope_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let direct_child_count_before_child_run = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks before child run")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .count();
+
         let parent_run_inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
         ));
@@ -15738,13 +15891,115 @@ mod tests {
         assert!(child_run.error.is_none());
         let child_run_result = child_run.result.expect("child run result");
         assert_eq!(child_run_result["status"], "Completed");
+        assert_parent_join_readiness_outcome(
+            &child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            child,
+            "Completed",
+        );
+        let parent_events_after_child_run = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after child run");
+        assert_eq!(
+            parent_events_after_child_run.len(),
+            parent_events_before_child_run.len()
+        );
+        assert_eq!(
+            parent_events_after_child_run
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_before_child_run
+        );
+        assert_eq!(
+            parent_events_after_child_run
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_before_child_run
+        );
+        assert_eq!(
+            parent_events_after_child_run
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            parent_handoff_envelope_count_before_child_run
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after child run")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            direct_child_count_before_child_run
+        );
         if let Some(child_outcome) = child_run_result.get("child_orchestration_outcome") {
             assert_eq!(child_outcome["parent_run_id"], child.run_id);
             assert_eq!(child_outcome["child_running_enabled"], false);
             assert_eq!(child_outcome["next_action"], "run_child_task_explicitly");
         }
 
+        let child_events_after_first_run = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events after first run");
+        let repeated_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(repeated_child_run.error.is_none());
+        let repeated_child_run_result = repeated_child_run
+            .result
+            .expect("repeated child run result");
+        assert_eq!(repeated_child_run_result["status"], "Completed");
+        assert_eq!(
+            repeated_child_run_result["parent_join_readiness_outcome"],
+            child_run_result["parent_join_readiness_outcome"]
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&child.run_id)
+                .expect("child events after repeated run")
+                .len(),
+            child_events_after_first_run.len()
+        );
+
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_parentless_task_omits_parent_join_readiness_outcome() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run standalone implementer","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let result = run.result.expect("task run result");
+        assert_eq!(result["status"], "Completed");
+        assert!(result.get("parent_join_readiness_outcome").is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
@@ -16266,6 +16521,42 @@ mod tests {
         (parent_task_id, parent_run_id, child, parent_event_count)
     }
 
+    fn assert_parent_join_readiness_outcome(
+        outcome: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        child: &TaskRecord,
+        terminal_status: &str,
+    ) {
+        assert_eq!(outcome["parent_task_id"], parent_task_id);
+        assert_eq!(outcome["parent_run_id"], parent_run_id);
+        assert_eq!(outcome["child_task_id"], child.task_id);
+        assert_eq!(outcome["child_run_id"], child.run_id);
+        assert_eq!(outcome["child_terminal_status"], terminal_status);
+        assert_eq!(outcome["parent_join_ready"], true);
+        assert_eq!(outcome["parent_running_enabled"], false);
+        assert_eq!(outcome["next_action"], "run_parent_task_explicitly");
+
+        let serialized = outcome.to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+            "raw_failure_payload",
+        ] {
+            assert!(!serialized.contains(raw_marker));
+        }
+    }
+
     fn start_recovery_cycle_child_with_parent_evidence(
         workspace_root: &std::path::Path,
     ) -> (TaskRecord, TaskRecord, RecoveryCycleChildProvenance) {
@@ -16646,8 +16937,16 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             child.task_id
         ));
-        assert!(rerun.result.is_none());
-        assert_eq!(rerun.error.expect("rerun error").code, -32602);
+        assert!(rerun.error.is_none());
+        let rerun_result = rerun.result.expect("rerun result");
+        assert_eq!(rerun_result["status"], "Completed");
+        assert_parent_join_readiness_outcome(
+            &rerun_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &child,
+            "Completed",
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -17283,10 +17582,15 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             initial_child.task_id
         ));
-        assert!(failed_child_run.result.is_none());
-        assert_eq!(
-            failed_child_run.error.expect("failed child run error").code,
-            -32603
+        assert!(failed_child_run.error.is_none());
+        let failed_child_run_result = failed_child_run.result.expect("failed child run result");
+        assert_eq!(failed_child_run_result["status"], "Failed");
+        assert_parent_join_readiness_outcome(
+            &failed_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Failed",
         );
         clear_llm_env_for_test();
 
@@ -17310,6 +17614,28 @@ mod tests {
         assert!(failed_child_events
             .iter()
             .any(|event| event.kind == LedgerEventKind::TaskFailed));
+        let failed_child_event_count_after_first_run = failed_child_events.len();
+        let replay_failed_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":33,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            failed_child.task_id
+        ));
+        assert!(replay_failed_child_run.error.is_none());
+        let replay_failed_child_run_result = replay_failed_child_run
+            .result
+            .expect("replay failed child run result");
+        assert_eq!(replay_failed_child_run_result["status"], "Failed");
+        assert_eq!(
+            replay_failed_child_run_result["parent_join_readiness_outcome"],
+            failed_child_run_result["parent_join_readiness_outcome"]
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&failed_child.run_id)
+                .expect("failed child events after replay")
+                .len(),
+            failed_child_event_count_after_first_run
+        );
         store
             .tasks()
             .append_task_event_with_payload(
@@ -17548,7 +17874,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let (_parent_task_id, _parent_run_id, initial_child, _parent_event_count) =
+        let (parent_task_id, parent_run_id, initial_child, _parent_event_count) =
             start_parent_with_queued_child();
 
         configure_strict_missing_openai_for_test();
@@ -17556,7 +17882,16 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             initial_child.task_id
         ));
-        assert!(failed_child_run.result.is_none());
+        assert!(failed_child_run.error.is_none());
+        let failed_child_run_result = failed_child_run.result.expect("failed child run result");
+        assert_eq!(failed_child_run_result["status"], "Failed");
+        assert_parent_join_readiness_outcome(
+            &failed_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Failed",
+        );
         clear_llm_env_for_test();
 
         let store = BrownieStore::new(temp.path());
@@ -17613,10 +17948,15 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             initial_child.task_id
         ));
-        assert!(failed_child_run.result.is_none());
-        assert_eq!(
-            failed_child_run.error.expect("failed child run error").code,
-            -32603
+        assert!(failed_child_run.error.is_none());
+        let failed_child_run_result = failed_child_run.result.expect("failed child run result");
+        assert_eq!(failed_child_run_result["status"], "Failed");
+        assert_parent_join_readiness_outcome(
+            &failed_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Failed",
         );
         clear_llm_env_for_test();
 
@@ -18077,10 +18417,15 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             initial_child.task_id
         ));
-        assert!(failed_child_run.result.is_none());
-        assert_eq!(
-            failed_child_run.error.expect("failed child run error").code,
-            -32603
+        assert!(failed_child_run.error.is_none());
+        let failed_child_run_result = failed_child_run.result.expect("failed child run result");
+        assert_eq!(failed_child_run_result["status"], "Failed");
+        assert_parent_join_readiness_outcome(
+            &failed_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Failed",
         );
         clear_llm_env_for_test();
 
