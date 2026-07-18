@@ -10254,18 +10254,22 @@ fn child_orchestration_outcome_for_replay(
         .tasks()
         .read_ledger_events(&record.run_id)
         .map_err(|error| format!("invalid params: {error}"))?;
-    if events
-        .iter()
-        .any(|event| event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed)
-    {
-        return Ok(None);
-    }
     let Some(agent_loop) = task_run_agent_loop_summary_from_events(&events) else {
         return Ok(None);
     };
-    let Some(child_orchestration_outcome) =
+    let child_orchestration_outcome = if events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed)
+    {
+        child_orchestration_outcome_for_latest_parent_join_queued_children(
+            store,
+            &record.run_id,
+            &events,
+        )?
+    } else {
         child_orchestration_outcome_for_existing_queued_children(store, &record.run_id)?
-    else {
+    };
+    let Some(child_orchestration_outcome) = child_orchestration_outcome else {
         return Ok(None);
     };
 
@@ -10418,6 +10422,69 @@ fn child_orchestration_outcome_for_existing_queued_children(
     store: &BrownieStore,
     parent_run_id: &str,
 ) -> Result<Option<TaskRunChildOrchestrationOutcome>, String> {
+    child_orchestration_outcome_for_existing_queued_children_from_handoff_fingerprints(
+        store,
+        parent_run_id,
+        None,
+    )
+}
+
+fn child_orchestration_outcome_for_latest_parent_join_queued_children(
+    store: &BrownieStore,
+    parent_run_id: &str,
+    events: &[LedgerEvent],
+) -> Result<Option<TaskRunChildOrchestrationOutcome>, String> {
+    let Some(parent_join_admission_id) = events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+            return None;
+        }
+        event
+            .payload
+            .as_ref()
+            .and_then(|payload| non_empty_payload_string(payload, "admission_id"))
+    }) else {
+        return Ok(None);
+    };
+    let handoff_fingerprints = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .filter_map(|event| event.payload.as_ref())
+        .filter(|payload| {
+            payload
+                .get("parent_join_admission_id")
+                .and_then(Value::as_str)
+                == Some(parent_join_admission_id.as_str())
+        })
+        .filter(|payload| {
+            payload
+                .get("continuation_materialization")
+                .and_then(Value::as_bool)
+                == Some(true)
+        })
+        .filter(|payload| {
+            payload
+                .get("handoff_envelope_status")
+                .and_then(Value::as_str)
+                == Some("Accepted")
+        })
+        .filter_map(|payload| non_empty_payload_string(payload, "handoff_envelope_fingerprint"))
+        .collect::<Vec<_>>();
+    if handoff_fingerprints.is_empty() {
+        return Ok(None);
+    }
+
+    child_orchestration_outcome_for_existing_queued_children_from_handoff_fingerprints(
+        store,
+        parent_run_id,
+        Some(&handoff_fingerprints),
+    )
+}
+
+fn child_orchestration_outcome_for_existing_queued_children_from_handoff_fingerprints(
+    store: &BrownieStore,
+    parent_run_id: &str,
+    handoff_fingerprints: Option<&[String]>,
+) -> Result<Option<TaskRunChildOrchestrationOutcome>, String> {
     let mut queued_children = store
         .tasks()
         .list_tasks()
@@ -10429,6 +10496,15 @@ fn child_orchestration_outcome_for_existing_queued_children(
             record.source_candidate_id.is_some()
                 && record.source_handoff_envelope_id.is_some()
                 && record.source_handoff_envelope_fingerprint.is_some()
+        })
+        .filter(|record| {
+            let Some(fingerprints) = handoff_fingerprints else {
+                return true;
+            };
+            record
+                .source_handoff_envelope_fingerprint
+                .as_ref()
+                .is_some_and(|fingerprint| fingerprints.contains(fingerprint))
         })
         .collect::<Vec<_>>();
     queued_children.sort_by(|left, right| left.task_id.cmp(&right.task_id));
@@ -16911,10 +16987,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(parent_join.error.is_none());
-        assert_eq!(
-            parent_join.result.expect("parent join result")["status"],
-            "Completed"
-        );
+        let parent_join_result = parent_join.result.expect("parent join result");
+        assert_eq!(parent_join_result["status"], "Completed");
 
         let store = BrownieStore::new(temp.path());
         let parent = store
@@ -17033,6 +17107,20 @@ mod tests {
         assert!(
             validate_controlled_queued_child_task_provenance(continuation_child, &store).is_ok()
         );
+        let expected_outcome = parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(expected_outcome["parent_run_id"], parent_run_id);
+        assert_eq!(expected_outcome["materialized_child_count"], 1);
+        assert_eq!(expected_outcome["queued_child_count"], 1);
+        assert_eq!(expected_outcome["child_running_enabled"], false);
+        assert_eq!(expected_outcome["next_action"], "run_child_task_explicitly");
+        assert_eq!(
+            payload_string_array(&expected_outcome, "materialized_child_task_ids"),
+            vec![continuation_child.task_id.clone()]
+        );
+        assert_eq!(
+            payload_string_array(&expected_outcome, "queued_child_task_ids"),
+            vec![continuation_child.task_id.clone()]
+        );
 
         materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
             .expect("idempotent materialization");
@@ -17046,9 +17134,121 @@ mod tests {
                 .count(),
             2
         );
+        let parent_task_running_count_after_join = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_join = parent_events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_join = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let parent_event_count_after_join = parent_events.len();
+        let child_count_after_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks before replay")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .count();
+        let child_running_event_count_after_join = store
+            .tasks()
+            .read_ledger_events(&continuation_child.run_id)
+            .expect("continuation child ledger before replay")
+            .into_iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+
+        let replay_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(replay_parent_join.error.is_none());
+        let replay_parent_join_result = replay_parent_join
+            .result
+            .expect("parent join replay result");
+        assert_eq!(replay_parent_join_result["status"], "Completed");
+        assert!(replay_parent_join_result
+            .get("recovery_cycle_budget_outcome")
+            .is_none());
+        assert_eq!(
+            replay_parent_join_result["child_orchestration_outcome"],
+            expected_outcome
+        );
+        let replay_serialized =
+            replay_parent_join_result["child_orchestration_outcome"].to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "requested_goal_preview",
+            "request_reason",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+        ] {
+            assert!(!replay_serialized.contains(raw_marker));
+        }
+        let parent_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after replay");
+        assert_eq!(
+            parent_events_after_replay.len(),
+            parent_event_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_join
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after replay")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            child_count_after_join
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&continuation_child.run_id)
+                .expect("continuation child ledger after replay")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            child_running_event_count_after_join
+        );
 
         let continuation_child_run = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
             continuation_child.task_id
         ));
         assert!(continuation_child_run.error.is_none());
@@ -17137,10 +17337,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(parent_join.error.is_none());
-        assert_eq!(
-            parent_join.result.expect("parent join result")["status"],
-            "Completed"
-        );
+        let parent_join_result = parent_join.result.expect("parent join result");
+        assert_eq!(parent_join_result["status"], "Completed");
 
         let parent = store
             .tasks()
@@ -17226,20 +17424,117 @@ mod tests {
                 .as_deref(),
             continuation_envelope_payload["handoff_envelope_fingerprint"].as_str()
         );
+        let expected_outcome = parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(expected_outcome["parent_run_id"], parent_run_id);
+        assert_eq!(expected_outcome["materialized_child_count"], 1);
+        assert_eq!(expected_outcome["queued_child_count"], 1);
+        assert_eq!(expected_outcome["child_running_enabled"], false);
+        assert_eq!(expected_outcome["next_action"], "run_child_task_explicitly");
+        assert_eq!(
+            payload_string_array(&expected_outcome, "materialized_child_task_ids"),
+            vec![recovery_child.task_id.clone()]
+        );
+        assert_eq!(
+            payload_string_array(&expected_outcome, "queued_child_task_ids"),
+            vec![recovery_child.task_id.clone()]
+        );
 
         let parent_event_count_after_join = parent_events.len();
+        let parent_task_running_count_after_join = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_join = parent_events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_join = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let child_count_after_join = parent_children.len();
+        let recovery_child_running_count_after_join = recovery_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
         let repeated_join = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeated_join.result.is_none());
-        assert_eq!(repeated_join.error.expect("repeat join error").code, -32602);
+        assert!(repeated_join.error.is_none());
+        let repeated_join_result = repeated_join.result.expect("repeat join result");
+        assert_eq!(repeated_join_result["status"], "Completed");
+        assert!(repeated_join_result
+            .get("recovery_cycle_budget_outcome")
+            .is_none());
+        assert_eq!(
+            repeated_join_result["child_orchestration_outcome"],
+            expected_outcome
+        );
+        let replay_serialized = repeated_join_result["child_orchestration_outcome"].to_string();
+        for raw_marker in [
+            "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+        ] {
+            assert!(!replay_serialized.contains(raw_marker));
+        }
+        let parent_events_after_repeat = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after repeat");
+        assert_eq!(
+            parent_events_after_repeat.len(),
+            parent_event_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_after_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_join
+        );
         assert_eq!(
             store
                 .tasks()
-                .read_ledger_events(&parent_run_id)
-                .expect("parent events after repeat")
-                .len(),
-            parent_event_count_after_join
+                .list_tasks()
+                .expect("list parent children after repeat")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            child_count_after_join
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&recovery_child.run_id)
+                .expect("recovery child events after repeat")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            recovery_child_running_count_after_join
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -17359,10 +17654,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(first_parent_join.error.is_none());
-        assert_eq!(
-            first_parent_join.result.expect("first parent join result")["status"],
-            "Completed"
-        );
+        let first_parent_join_result = first_parent_join.result.expect("first parent join result");
+        assert_eq!(first_parent_join_result["status"], "Completed");
 
         let parent_children_after_first_join = store
             .tasks()
@@ -17404,6 +17697,14 @@ mod tests {
             .read_ledger_events(&parent_run_id)
             .expect("parent events after first failed-child join");
         let first_event_count = parent_events_after_first_join.len();
+        let first_task_running_count = parent_events_after_first_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let first_handoff_envelope_count = parent_events_after_first_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
         let first_consumption = parent_events_after_first_join
             .iter()
             .filter(|event| {
@@ -17419,25 +17720,69 @@ mod tests {
         assert_eq!(first_consumption["child_completion_child_count"], 1);
         assert_eq!(first_consumption["child_terminal_failed_count"], 1);
         assert_eq!(first_consumption["child_terminal_completed_count"], 0);
+        let first_child_orchestration_outcome =
+            first_parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(
+            payload_string_array(&first_child_orchestration_outcome, "queued_child_task_ids"),
+            vec![recovery_child.task_id.clone()]
+        );
+        assert_eq!(
+            first_child_orchestration_outcome["next_action"],
+            "run_child_task_explicitly"
+        );
 
         let repeat_before_recovery_terminal = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeat_before_recovery_terminal.result.is_none());
+        assert!(repeat_before_recovery_terminal.error.is_none());
+        let repeat_before_recovery_terminal_result = repeat_before_recovery_terminal
+            .result
+            .expect("repeat before recovery terminal result");
         assert_eq!(
-            repeat_before_recovery_terminal
-                .error
-                .expect("repeat before recovery terminal error")
-                .code,
-            -32602
+            repeat_before_recovery_terminal_result["status"],
+            "Completed"
+        );
+        assert_eq!(
+            repeat_before_recovery_terminal_result["child_orchestration_outcome"],
+            first_child_orchestration_outcome
         );
         assert_eq!(
             store
                 .tasks()
                 .read_ledger_events(&parent_run_id)
-                .expect("parent events after rejected recovery replay")
+                .expect("parent events after recovery replay")
                 .len(),
             first_event_count
+        );
+        let parent_events_after_recovery_replay = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent event counts after recovery replay");
+        assert_eq!(
+            parent_events_after_recovery_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            first_task_running_count
+        );
+        assert_eq!(
+            parent_events_after_recovery_replay
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            first_handoff_envelope_count
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&recovery_child.run_id)
+                .expect("recovery child events after parent replay")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            0
         );
 
         let recovery_child_run = parse_line(&format!(
@@ -17493,12 +17838,10 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":7,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(second_parent_join.error.is_none());
-        assert_eq!(
-            second_parent_join
-                .result
-                .expect("second parent join result")["status"],
-            "Completed"
-        );
+        let second_parent_join_result = second_parent_join
+            .result
+            .expect("second parent join result");
+        assert_eq!(second_parent_join_result["status"], "Completed");
 
         let parent_children_after_second_join = store
             .tasks()
@@ -17636,24 +17979,83 @@ mod tests {
         );
 
         let parent_event_count_after_second_join = parent_events_after_second_join.len();
+        let parent_task_running_count_after_second_join = parent_events_after_second_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_second_join = parent_events_after_second_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_second_join = parent_events_after_second_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let second_child_running_count_after_second_join = second_recovery_cycle_child_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let second_child_orchestration_outcome =
+            second_parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(
+            payload_string_array(&second_child_orchestration_outcome, "queued_child_task_ids"),
+            vec![second_recovery_cycle_child.task_id.clone()]
+        );
         let repeat_expanded_terminal_set = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":8,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeat_expanded_terminal_set.result.is_none());
+        assert!(repeat_expanded_terminal_set.error.is_none());
+        let repeat_expanded_terminal_set_result = repeat_expanded_terminal_set
+            .result
+            .expect("repeat expanded terminal set result");
         assert_eq!(
-            repeat_expanded_terminal_set
-                .error
-                .expect("repeat expanded terminal set error")
-                .code,
-            -32602
+            repeat_expanded_terminal_set_result["child_orchestration_outcome"],
+            second_child_orchestration_outcome
+        );
+        let parent_events_after_expanded_replay = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after expanded replay");
+        assert_eq!(
+            parent_events_after_expanded_replay.len(),
+            parent_event_count_after_second_join
+        );
+        assert_eq!(
+            parent_events_after_expanded_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_second_join
+        );
+        assert_eq!(
+            parent_events_after_expanded_replay
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_after_second_join
+        );
+        assert_eq!(
+            parent_events_after_expanded_replay
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_second_join
         );
         assert_eq!(
             store
                 .tasks()
-                .read_ledger_events(&parent_run_id)
-                .expect("parent events after rejected expanded replay")
-                .len(),
-            parent_event_count_after_second_join
+                .read_ledger_events(&second_recovery_cycle_child.run_id)
+                .expect("second recovery-cycle child events after replay")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            second_child_running_count_after_second_join
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -17730,10 +18132,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(first_parent_join.error.is_none());
-        assert_eq!(
-            first_parent_join.result.expect("first parent join result")["status"],
-            "Completed"
-        );
+        let first_parent_join_result = first_parent_join.result.expect("first parent join result");
+        assert_eq!(first_parent_join_result["status"], "Completed");
 
         let first_recovery_child = store
             .tasks()
@@ -17913,10 +18313,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":8,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(third_parent_join.error.is_none());
-        assert_eq!(
-            third_parent_join.result.expect("third parent join result")["status"],
-            "Completed"
-        );
+        let third_parent_join_result = third_parent_join.result.expect("third parent join result");
+        assert_eq!(third_parent_join_result["status"], "Completed");
 
         let parent_children_after_third_join = store
             .tasks()
@@ -18178,24 +18576,83 @@ mod tests {
         );
 
         let parent_event_count_after_third_join = parent_events_after_third_join.len();
+        let parent_task_running_count_after_third_join = parent_events_after_third_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_third_join = parent_events_after_third_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_third_join = parent_events_after_third_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let third_child_running_count_after_third_join = third_recovery_cycle_child_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let third_child_orchestration_outcome =
+            third_parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(
+            payload_string_array(&third_child_orchestration_outcome, "queued_child_task_ids"),
+            vec![third_recovery_cycle_child.task_id.clone()]
+        );
         let repeat_larger_terminal_set = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":12,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeat_larger_terminal_set.result.is_none());
+        assert!(repeat_larger_terminal_set.error.is_none());
+        let repeat_larger_terminal_set_result = repeat_larger_terminal_set
+            .result
+            .expect("repeat larger terminal set result");
         assert_eq!(
-            repeat_larger_terminal_set
-                .error
-                .expect("repeat larger terminal set error")
-                .code,
-            -32602
+            repeat_larger_terminal_set_result["child_orchestration_outcome"],
+            third_child_orchestration_outcome
+        );
+        let parent_events_after_larger_replay = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after larger replay");
+        assert_eq!(
+            parent_events_after_larger_replay.len(),
+            parent_event_count_after_third_join
+        );
+        assert_eq!(
+            parent_events_after_larger_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_third_join
+        );
+        assert_eq!(
+            parent_events_after_larger_replay
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_after_third_join
+        );
+        assert_eq!(
+            parent_events_after_larger_replay
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_third_join
         );
         assert_eq!(
             store
                 .tasks()
-                .read_ledger_events(&parent_run_id)
-                .expect("parent events after rejected larger replay")
-                .len(),
-            parent_event_count_after_third_join
+                .read_ledger_events(&third_recovery_cycle_child.run_id)
+                .expect("third recovery-cycle child events after replay")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            third_child_running_count_after_third_join
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -19021,10 +19478,8 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(first_parent_join.error.is_none());
-        assert_eq!(
-            first_parent_join.result.expect("first parent join result")["status"],
-            "Completed"
-        );
+        let first_parent_join_result = first_parent_join.result.expect("first parent join result");
+        assert_eq!(first_parent_join_result["status"], "Completed");
 
         let store = BrownieStore::new(temp.path());
         let first_continuation_child = store
@@ -19044,24 +19499,86 @@ mod tests {
             .read_ledger_events(&parent_run_id)
             .expect("parent events after first join");
         let parent_event_count_after_first_join = parent_events_after_first_join.len();
+        let parent_task_running_count_after_first_join = parent_events_after_first_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_first_join = parent_events_after_first_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_first_join = parent_events_after_first_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let first_child_running_count_after_first_join = store
+            .tasks()
+            .read_ledger_events(&first_continuation_child.run_id)
+            .expect("first continuation child events before replay")
+            .into_iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let first_child_orchestration_outcome =
+            first_parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(
+            payload_string_array(&first_child_orchestration_outcome, "queued_child_task_ids"),
+            vec![first_continuation_child.task_id.clone()]
+        );
         let repeat_before_new_child_completion = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeat_before_new_child_completion.result.is_none());
+        assert!(repeat_before_new_child_completion.error.is_none());
+        let repeat_before_new_child_completion_result = repeat_before_new_child_completion
+            .result
+            .expect("repeat before child completion result");
         assert_eq!(
-            repeat_before_new_child_completion
-                .error
-                .expect("repeat before child completion error")
-                .code,
-            -32602
+            repeat_before_new_child_completion_result["child_orchestration_outcome"],
+            first_child_orchestration_outcome
+        );
+        let parent_events_after_repeat = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after replayed repeat");
+        assert_eq!(
+            parent_events_after_repeat.len(),
+            parent_event_count_after_first_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_first_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_after_first_join
+        );
+        assert_eq!(
+            parent_events_after_repeat
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_first_join
         );
         assert_eq!(
             store
                 .tasks()
-                .read_ledger_events(&parent_run_id)
-                .expect("parent events after rejected repeat")
-                .len(),
-            parent_event_count_after_first_join
+                .read_ledger_events(&first_continuation_child.run_id)
+                .expect("first continuation child events after replay")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            first_child_running_count_after_first_join
         );
 
         let first_continuation_child_run = parse_line(&format!(
@@ -19525,32 +20042,41 @@ mod tests {
             handle_a.join().expect("join parent run a"),
             handle_b.join().expect("join parent run b"),
         ];
-        assert_eq!(
-            responses
-                .iter()
-                .filter(|response| response.result.is_some())
-                .count(),
-            1
-        );
-        assert_eq!(
-            responses
-                .iter()
-                .filter(|response| response.error.is_some())
-                .count(),
-            1
-        );
+        let result_count = responses
+            .iter()
+            .filter(|response| response.result.is_some())
+            .count();
+        let error_count = responses
+            .iter()
+            .filter(|response| response.error.is_some())
+            .count();
+        assert!(result_count >= 1);
+        assert!(error_count <= 1);
+        assert_eq!(result_count + error_count, responses.len());
+        for result in responses
+            .iter()
+            .filter_map(|response| response.result.as_ref())
+        {
+            assert_eq!(result["status"], "Completed");
+        }
+        for error in responses
+            .iter()
+            .filter_map(|response| response.error.as_ref())
+        {
+            assert_eq!(error.code, -32602);
+        }
 
         let store = BrownieStore::new(temp.path());
         let parent_events = store
             .tasks()
             .read_ledger_events(&parent_run_id)
             .expect("parent events");
-        assert_eq!(
+        assert!(
             parent_events
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::TaskRunning)
-                .count(),
-            2
+                .count()
+                >= 2
         );
         assert_eq!(
             parent_events
@@ -19561,12 +20087,39 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            parent_events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .filter_map(|event| event.payload.as_ref())
+                .filter(|payload| {
+                    payload
+                        .get("continuation_materialization")
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list parent children after concurrent parent join")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            2
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
-    fn task_run_rejects_repeated_parent_join_for_same_child_completion_fingerprint() {
+    fn task_run_replays_parent_join_outcome_for_same_child_completion_fingerprint_without_mutation()
+    {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -19584,8 +20137,26 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(parent_join.error.is_none());
+        let parent_join_result = parent_join.result.expect("parent join result");
+        assert_eq!(parent_join_result["status"], "Completed");
 
         let store = BrownieStore::new(temp.path());
+        let continuation_child = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children before repeat")
+            .into_iter()
+            .find(|record| {
+                record.parent_run_id.as_deref() == Some(parent_run_id.as_str())
+                    && record.task_id != child.task_id
+            })
+            .expect("continuation child before repeat");
+        assert_eq!(continuation_child.status, TaskStatus::Queued);
+        let expected_outcome = parent_join_result["child_orchestration_outcome"].clone();
+        assert_eq!(
+            payload_string_array(&expected_outcome, "queued_child_task_ids"),
+            vec![continuation_child.task_id.clone()]
+        );
         let parent_events_before_repeat = store
             .tasks()
             .read_ledger_events(&parent_run_id)
@@ -19610,16 +20181,12 @@ mod tests {
         let repeat_join = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
-        assert!(repeat_join.result.is_none());
-        let error = repeat_join.error.expect("repeat parent join error");
-        assert_eq!(error.code, -32602);
-        assert!(
-            error
-                .message
-                .contains("completed child result set has already been consumed")
-                || error
-                    .message
-                    .contains("requires completed controlled child tasks")
+        assert!(repeat_join.error.is_none());
+        let repeat_join_result = repeat_join.result.expect("repeat parent join result");
+        assert_eq!(repeat_join_result["status"], "Completed");
+        assert_eq!(
+            repeat_join_result["child_orchestration_outcome"],
+            expected_outcome
         );
 
         let parent = store
@@ -19658,6 +20225,26 @@ mod tests {
                 })
                 .count(),
             1
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list parent children after repeat")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            2
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&continuation_child.run_id)
+                .expect("continuation child events after repeat")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            0
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
