@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.25';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.25.json';
+const phase = 'M5.26';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.26.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'recovery_cycle_child_provenance_inspection',
-    `${phase} must declare the recovery-cycle child provenance inspection transition.`
+    manifest.concrete_capability_transition === 'recovery_child_run_provenance_admission_guard',
+    `${phase} must declare the recovery child run provenance admission guard transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_diagnostics_only_report_without_recovery_cycle_child_provenance_runtime_progress',
-    `${phase} must forbid wrapper-only or diagnostics-only work without recovery-cycle child provenance runtime progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_inspection_only_endpoint_without_child_run_provenance_admission_guard',
+    `${phase} must forbid wrapper-only or inspection-only work without child run provenance admission guard progress.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,22 +75,16 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'repeated recovery-cycle child',
-    'RecoveryCycleChildProvenance',
-    'recovery_cycle_provenance',
+    'explicit task.run',
+    'queued recovery-cycle child',
+    'parent ledger admission',
+    'accepted handoff envelope',
+    'ParentJoinContinuationFingerprintConsumed',
+    'SubtaskDispatchHandoffEnvelopeRecorded',
     'parent_join_admission_id',
     'parent_join_child_completion_fingerprint',
-    'parent_join_child_completion_child_count',
-    'parent_join_terminal_failed_child_count',
-    'parent_join_terminal_completed_child_count',
-    'parent_join_recovery_cycle',
-    'parent_join_recovery_cycle_depth',
-    'task.inspect',
-    'run.inspect',
-    'child_tasks',
-    'fail-closed',
-    'sha256:<64 lowercase hex>',
-    'failed plus completed counts',
+    'source_handoff_envelope_fingerprint',
+    'TaskRunning',
     'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
@@ -111,63 +105,32 @@ function requireToken(relativePath, token) {
 
 function validateSourceEvidence(manifest) {
   const evidence = manifest.source_evidence ?? {};
-  for (const token of evidence.rust_tools_tokens ?? []) {
-    requireToken('crates/brownie-tools/src/lib.rs', token);
+  for (const token of evidence.rust_runtime_tokens ?? []) {
+    requireToken('crates/brownie-runtime/src/lib.rs', token);
   }
   for (const token of evidence.rust_store_tokens ?? []) {
     requireToken('crates/brownie-store/src/lib.rs', token);
   }
-  for (const token of evidence.rust_protocol_tokens ?? []) {
-    requireToken('crates/brownie-protocol/src/lib.rs', token);
-  }
-  for (const token of evidence.rust_context_tokens ?? []) {
-    requireToken('crates/brownie-context/src/lib.rs', token);
-  }
-  for (const token of evidence.rust_llm_tokens ?? []) {
-    requireToken('crates/brownie-llm/src/lib.rs', token);
-  }
-  for (const token of evidence.rust_runtime_tokens ?? []) {
-    requireToken('crates/brownie-runtime/src/lib.rs', token);
-  }
-  for (const token of evidence.vsix_protocol_tokens ?? []) {
-    requireToken('extensions/brownie-vsix/src/runtime/protocol.ts', token);
-  }
-  for (const token of evidence.vsix_test_tokens ?? []) {
-    requireToken('extensions/brownie-vsix/src/test/runtimeClient.test.ts', token);
-  }
-  for (const token of evidence.runtime_protocol_spec_tokens ?? []) {
-    requireToken('docs/specifications/runtime-protocol-spec-v0.md', token);
-  }
-  for (const token of evidence.task_runtime_spec_tokens ?? []) {
-    requireToken('docs/specifications/task-runtime-spec-v0.md', token);
-  }
-  for (const token of evidence.run_inspection_spec_tokens ?? []) {
-    requireToken('docs/specifications/run-inspection-spec-v0.md', token);
-  }
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
-  const storeText = readText('crates/brownie-store/src/lib.rs');
   for (const token of [
-    'RecoveryCycleChildProvenance',
-    'recovery_cycle_provenance',
-    'recovery_cycle_child_provenance_from_handoff_envelope',
-    'parent_join_admission_id',
-    'parent_join_child_completion_fingerprint',
-    'parent_join_child_completion_child_count',
-    'parent_join_terminal_failed_child_count',
-    'parent_join_terminal_completed_child_count',
-    'parent_join_recovery_cycle',
-    'parent_join_recovery_cycle_depth',
-    'task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run',
-    'recovery_cycle_child_provenance_validation_rejects_invalid_envelopes',
-    'invalid_recovery_cycle_handoff_envelope_does_not_materialize_child',
-    'is_sha256_fingerprint',
-    'task.inspect',
-    'run.inspect',
-    'child_tasks'
+    'validate_recovery_cycle_child_run_provenance',
+    'recovery_cycle_child_provenance_is_internally_valid',
+    'recovery_cycle_provenance_matches_parent_join',
+    'recovery_cycle_provenance_matches_handoff_envelope',
+    'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
+    'task_run_rejects_recovery_cycle_child_with_stale_parent_join_admission_id',
+    'task_run_rejects_recovery_cycle_child_with_stale_completion_fingerprint',
+    'task_run_rejects_recovery_cycle_child_with_stale_terminal_counts',
+    'task_run_rejects_recovery_cycle_child_with_stale_recovery_depth',
+    'task_run_rejects_recovery_cycle_child_with_stale_handoff_fingerprint',
+    'ParentJoinContinuationFingerprintConsumed',
+    'SubtaskDispatchHandoffEnvelopeRecorded',
+    'source_handoff_envelope_fingerprint',
+    'TaskRunning'
   ]) {
-    if (!runtimeText.includes(token) && !storeText.includes(token)) {
-      errors.push(`${phase} source must include ${token}.`);
+    if (!runtimeText.includes(token)) {
+      errors.push(`${phase} runtime source must include ${token}.`);
     }
   }
   const forbiddenWrapperEvents = [
@@ -180,7 +143,7 @@ function validateSourceEvidence(manifest) {
     'SubtaskContinuationChildMaterialized'
   ];
   for (const token of forbiddenWrapperEvents) {
-    if (runtimeText.includes(token) || storeText.includes(token)) {
+    if (runtimeText.includes(token)) {
       errors.push(`${phase} must not add wrapper-only event ${token}.`);
     }
   }

@@ -1,0 +1,87 @@
+{
+  "phase": "M5.26",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "recovery_child_run_provenance_admission_guard",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_inspection_only_endpoint_without_child_run_provenance_admission_guard",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns M5.25 recovery-cycle child provenance from inspectable metadata into an explicit child run admission guard tied to parent ledger evidence."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Prevents stale or corrupted recovery-cycle child lineage from being admitted in unattended workflows before the child enters Running."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "explicit_child_run_guard",
+        "prompt": "Does explicit task.run for a queued recovery-cycle child validate provenance before Running?"
+      },
+      {
+        "id": "parent_join_evidence",
+        "prompt": "Does the guard require matching ParentJoinContinuationFingerprintConsumed evidence?"
+      },
+      {
+        "id": "handoff_evidence",
+        "prompt": "Does the guard require matching accepted SubtaskDispatchHandoffEnvelopeRecorded evidence?"
+      },
+      {
+        "id": "stale_rejection",
+        "prompt": "Do stale admission ids, completion fingerprints, and source handoff fingerprints reject before TaskRunning?"
+      },
+      {
+        "id": "non_recovery_compatibility",
+        "prompt": "Do normal and initial controlled child task.run paths remain compatible?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "explicit_child_run_guard": "Yes. Queued child task.run calls with recovery_cycle_provenance now pass through validate_recovery_cycle_child_run_provenance before status can change to Running.",
+      "parent_join_evidence": "Yes. The guard requires parent ledger ParentJoinContinuationFingerprintConsumed evidence matching parent_join_admission_id, parent_join_child_completion_fingerprint, terminal counts, and recovery-cycle depth.",
+      "handoff_evidence": "Yes. The guard requires accepted SubtaskDispatchHandoffEnvelopeRecorded evidence matching source_handoff_envelope_fingerprint, parent_join_admission_id, completion fingerprint, terminal counts, recovery flag, and depth.",
+      "stale_rejection": "Yes. Deterministic tests corrupt parent_join_admission_id, parent_join_child_completion_fingerprint, terminal child counts, recovery-cycle depth, and source_handoff_envelope_fingerprint and verify rejection before TaskRunning.",
+      "non_recovery_compatibility": "Yes. The guard is conditional on recovery_cycle_provenance, preserving existing explicit task.run behavior for non-recovery tasks and initial controlled children.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "explicit task.run for a queued recovery-cycle child validates parent ledger admission before TaskRunning.",
+    "explicit task.run for a queued recovery-cycle child validates accepted handoff envelope evidence before TaskRunning.",
+    "The parent ledger admission evidence is a matching ParentJoinContinuationFingerprintConsumed event.",
+    "The accepted handoff envelope evidence is a matching SubtaskDispatchHandoffEnvelopeRecorded event.",
+    "The guard validates parent_join_admission_id.",
+    "The guard validates parent_join_child_completion_fingerprint.",
+    "The guard validates source_handoff_envelope_fingerprint.",
+    "Stale terminal counts reject before TaskRunning.",
+    "Stale recovery-cycle flag or depth reject before TaskRunning.",
+    "Valid recovery-cycle children continue to run only through explicit task.run.",
+    "No child auto-run occurs.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "validate_recovery_cycle_child_run_provenance",
+      "recovery_cycle_child_provenance_is_internally_valid",
+      "recovery_cycle_provenance_matches_parent_join",
+      "recovery_cycle_provenance_matches_handoff_envelope",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "task_run_rejects_recovery_cycle_child_with_stale_parent_join_admission_id",
+      "task_run_rejects_recovery_cycle_child_with_stale_completion_fingerprint",
+      "task_run_rejects_recovery_cycle_child_with_stale_terminal_counts",
+      "task_run_rejects_recovery_cycle_child_with_stale_recovery_depth",
+      "task_run_rejects_recovery_cycle_child_with_stale_handoff_fingerprint",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded",
+      "source_handoff_envelope_fingerprint",
+      "TaskRunning"
+    ]
+  }
+}
