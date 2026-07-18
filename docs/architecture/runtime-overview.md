@@ -65,3 +65,7 @@ See `docs/architecture/diagnostics-api-consolidation.md`, `docs/architecture/pha
 Patch application remains a read-only design and inspection boundary. Brownie may report proposal readiness, review evidence, dry-run metadata, and diagnostics state, but it must not apply patches, write workspace files, execute shell or git commands, use network access, or return raw file content, raw diffs, raw input JSON, canonical paths, or absolute paths.
 
 The Phase 3.5-3.51 wrapper-chain history is archived in `docs/architecture/diagnostics-wrapper-history.md`, with the endpoint inventory and deprecation plan in `docs/architecture/diagnostics-api-consolidation.md`. After R1.1, the next milestone is M1 Agent Loop Integration (`agent_loop_integration`).
+
+## Subtask Recovery Outcomes
+
+Recovery-cycle budget exhaustion is surfaced through the existing parent task.run response and parent inspection path as `recovery_cycle_budget_outcome`. The outcome is derived from bounded runtime ledger evidence and reports only budget status, exceeded depth, max depth, parent join admission id, blocked candidate count, disabled child materialization/running signals, and next action.

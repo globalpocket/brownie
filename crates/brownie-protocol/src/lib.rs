@@ -640,12 +640,26 @@ pub struct TaskRunResult {
     pub run_id: String,
     pub status: TaskStatus,
     pub agent_loop: TaskRunAgentLoopSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunAgentLoopSummary {
     pub final_state: String,
     pub completion_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryCycleBudgetOutcome {
+    pub recovery_cycle_budget_status: String,
+    pub parent_join_admission_id: String,
+    pub parent_join_recovery_cycle_depth: usize,
+    pub max_recovery_cycle_depth: usize,
+    pub blocked_candidate_count: usize,
+    pub child_materialization_enabled: bool,
+    pub child_running_enabled: bool,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2292,6 +2306,8 @@ pub struct RunInspectSummary {
     pub run_id: String,
     pub task_id: Option<String>,
     pub status: Option<TaskStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
     pub child_task_count: usize,
     pub child_task_ids: Vec<String>,
     pub child_tasks: Vec<ChildTaskInspectSummary>,

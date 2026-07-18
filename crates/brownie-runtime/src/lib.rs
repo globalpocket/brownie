@@ -102,20 +102,20 @@ use brownie_protocol::{
     ProposalReviewQueueDiagnosticsReportParams, ProposalReviewQueueDiagnosticsReportResult,
     ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
     ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
-    ProposalReviewVerdictResult, RecoveryCycleChildProvenance, RunEventsParams, RunEventsResult,
-    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
-    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
-    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult, TaskRecord,
-    TaskRunAgentLoopSummary, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult,
-    TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
-    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
-    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
-    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
-    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
-    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
-    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
-    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    ProposalReviewVerdictResult, RecoveryCycleBudgetOutcome, RecoveryCycleChildProvenance,
+    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunParams, TaskRunResult,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
+    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
+    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
     WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
@@ -2125,6 +2125,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
 
+    let recovery_cycle_budget_outcome =
+        match recovery_cycle_budget_outcome_for_run(&store, &running.run_id) {
+            Ok(outcome) => outcome,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+
     match store
         .tasks()
         .update_task_status(&running.task_id, final_status, event_kind)
@@ -2139,6 +2145,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                     completion_summary: agent_loop_completion_summary,
                 },
+                recovery_cycle_budget_outcome,
             }),
         ),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
@@ -10114,6 +10121,7 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         run_id: run_id.to_string(),
         task_id: task.as_ref().map(|task| task.task_id.clone()),
         status: task.as_ref().map(|task| task.status.clone()),
+        recovery_cycle_budget_outcome: recovery_cycle_budget_outcome_from_events(&events),
         child_task_count: child_task_ids.len(),
         child_task_ids,
         child_tasks: child_task_summaries,
@@ -10145,6 +10153,77 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
     })
+}
+
+fn recovery_cycle_budget_outcome_for_run(
+    store: &BrownieStore,
+    run_id: &str,
+) -> Result<Option<RecoveryCycleBudgetOutcome>, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    Ok(recovery_cycle_budget_outcome_from_events(&events))
+}
+
+fn recovery_cycle_budget_outcome_from_events(
+    events: &[LedgerEvent],
+) -> Option<RecoveryCycleBudgetOutcome> {
+    events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload
+            .get("recovery_cycle_budget_status")
+            .and_then(Value::as_str)
+            != Some("Exceeded")
+        {
+            return None;
+        }
+
+        let parent_join_admission_id =
+            non_empty_payload_string(payload, "parent_join_admission_id")?;
+        let parent_join_recovery_cycle_depth =
+            payload_usize(payload, "parent_join_recovery_cycle_depth")?;
+        let max_recovery_cycle_depth = payload_usize(payload, "max_recovery_cycle_depth")?;
+        let blocked_candidate_count = payload_usize(payload, "blocked_candidate_count")
+            .unwrap_or_else(|| payload_string_array(payload, "blocked_candidate_ids").len());
+        if parent_join_recovery_cycle_depth <= max_recovery_cycle_depth
+            || blocked_candidate_count == 0
+        {
+            return None;
+        }
+        let next_action = non_empty_payload_string(payload, "next_action")
+            .unwrap_or_else(|| "stop_recovery_cycle_materialization".to_string());
+
+        Some(RecoveryCycleBudgetOutcome {
+            recovery_cycle_budget_status: "Exceeded".to_string(),
+            parent_join_admission_id,
+            parent_join_recovery_cycle_depth,
+            max_recovery_cycle_depth,
+            blocked_candidate_count,
+            child_materialization_enabled: false,
+            child_running_enabled: false,
+            next_action,
+        })
+    })
+}
+
+fn non_empty_payload_string(payload: &Value, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn payload_usize(payload: &Value, key: &str) -> Option<usize> {
+    payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
 }
 
 fn child_task_inspect_summary(
@@ -17924,6 +18003,442 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn task_run_parent_join_budget_exhaustion_returns_bounded_outcome_without_child_materialization(
+    ) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent over-budget recovery-cycle outcome".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let running_parent = store
+            .tasks()
+            .update_task_status(
+                &parent.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("run parent");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &running_parent,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "Synthetic parent completed before budget exhaustion join.",
+                    "completion_result_fingerprint": format!("sha256:{}", "1".repeat(64))
+                })),
+            )
+            .expect("append parent completion");
+        store
+            .tasks()
+            .update_task_status(
+                &parent.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete parent");
+
+        fn append_parent_handoff(
+            store: &BrownieStore,
+            parent: &TaskRecord,
+            candidate_id: &str,
+            handoff_id: &str,
+            handoff_fingerprint: &str,
+            provenance: Option<&RecoveryCycleChildProvenance>,
+        ) {
+            let mut payload = json!({
+                "handoff_envelope_status": "Accepted",
+                "handoff_envelope_id": handoff_id,
+                "handoff_envelope_fingerprint": handoff_fingerprint,
+                "candidate_ids": [candidate_id],
+                "scheduler_handoff_status": "Blocked",
+                "execution_enabled": false,
+                "reason": "Accepted synthetic handoff for M5.28 parent budget outcome test."
+            });
+            if let Some(provenance) = provenance {
+                payload["parent_join_admission_id"] = json!(provenance.parent_join_admission_id);
+                payload["parent_join_child_completion_fingerprint"] =
+                    json!(provenance.parent_join_child_completion_fingerprint);
+                payload["parent_join_child_completion_child_count"] =
+                    json!(provenance.parent_join_child_completion_child_count);
+                payload["parent_join_terminal_failed_child_count"] =
+                    json!(provenance.parent_join_terminal_failed_child_count);
+                payload["parent_join_terminal_completed_child_count"] =
+                    json!(provenance.parent_join_terminal_completed_child_count);
+                payload["parent_join_recovery_cycle"] =
+                    json!(provenance.parent_join_recovery_cycle);
+                payload["parent_join_recovery_cycle_depth"] =
+                    json!(provenance.parent_join_recovery_cycle_depth);
+            } else {
+                payload["parent_join_recovery_cycle"] = json!(false);
+                payload["parent_join_recovery_cycle_depth"] = json!(0);
+            }
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    parent,
+                    LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                    Some(payload),
+                )
+                .expect("append parent handoff");
+        }
+
+        fn append_parent_join_consumption(
+            store: &BrownieStore,
+            parent: &TaskRecord,
+            provenance: &RecoveryCycleChildProvenance,
+        ) {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    parent,
+                    LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                    Some(json!({
+                        "parent_join_continuation_status": "Consumed",
+                        "admission_id": provenance.parent_join_admission_id,
+                        "child_completion_fingerprint": provenance.parent_join_child_completion_fingerprint,
+                        "child_completion_child_count": provenance.parent_join_child_completion_child_count,
+                        "child_terminal_failed_count": provenance.parent_join_terminal_failed_child_count,
+                        "child_terminal_completed_count": provenance.parent_join_terminal_completed_child_count,
+                        "child_recovery_cycle_depth": provenance.parent_join_recovery_cycle_depth,
+                        "fingerprint_input_count": 6
+                    })),
+                )
+                .expect("append parent join consumption");
+        }
+
+        fn start_terminal_child(
+            store: &BrownieStore,
+            parent: &TaskRecord,
+            source_candidate_id: &str,
+            source_handoff_envelope_id: &str,
+            source_handoff_envelope_fingerprint: &str,
+            recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
+            status: TaskStatus,
+            raw_marker: &str,
+        ) -> TaskRecord {
+            let child = store
+                .tasks()
+                .start_child_task(ChildTaskStartParams {
+                    goal: "Synthetic M5.28 child".into(),
+                    mode_id: Some("orchestrator".into()),
+                    parent_task_id: parent.task_id.clone(),
+                    parent_run_id: parent.run_id.clone(),
+                    source_candidate_id: source_candidate_id.into(),
+                    source_handoff_envelope_id: source_handoff_envelope_id.into(),
+                    source_handoff_envelope_fingerprint: source_handoff_envelope_fingerprint.into(),
+                    source_intent_summary: Some(ChildTaskSourceIntentSummary {
+                        tool_id: SUBTASK_SPAWN_TOOL_ID.into(),
+                        required_action: RuntimeActionName::SpawnSubtask,
+                        request_reason: raw_marker.into(),
+                        requested_goal_preview: Some(raw_marker.into()),
+                        requested_mode_id: Some("orchestrator".into()),
+                        input_summary: ToolIntentInputSummary {
+                            has_path: false,
+                            field_count: 0,
+                        },
+                    }),
+                    recovery_cycle_provenance,
+                })
+                .expect("start child");
+            let running_child = store
+                .tasks()
+                .update_task_status(
+                    &child.task_id,
+                    TaskStatus::Running,
+                    LedgerEventKind::TaskRunning,
+                )
+                .expect("run child");
+            let final_state = match &status {
+                TaskStatus::Completed => "Completed",
+                TaskStatus::Failed => "Failed",
+                _ => panic!("synthetic terminal child must complete or fail"),
+            };
+            let terminal_event_kind = match &status {
+                TaskStatus::Completed => LedgerEventKind::TaskCompleted,
+                TaskStatus::Failed => LedgerEventKind::TaskFailed,
+                _ => LedgerEventKind::TaskFailed,
+            };
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &running_child,
+                    LedgerEventKind::AgentLoopCompleted,
+                    Some(json!({
+                        "final_state": final_state,
+                        "completion_summary": raw_marker,
+                        "completion_result_fingerprint": format!("sha256:{}", source_candidate_id.chars().filter(|ch| ch.is_ascii_hexdigit()).chain(std::iter::repeat('a')).take(64).collect::<String>())
+                    })),
+                )
+                .expect("append child completion");
+            store
+                .tasks()
+                .update_task_status(&child.task_id, status, terminal_event_kind)
+                .expect("terminal child")
+        }
+
+        let initial_handoff_fingerprint = format!("sha256:{}", "2".repeat(64));
+        append_parent_handoff(
+            &store,
+            &parent,
+            "candidate_initial_failed",
+            "handoff_initial_failed",
+            &initial_handoff_fingerprint,
+            None,
+        );
+        start_terminal_child(
+            &store,
+            &parent,
+            "candidate_initial_failed",
+            "handoff_initial_failed",
+            &initial_handoff_fingerprint,
+            None,
+            TaskStatus::Failed,
+            "RAW_M5_28_FAILED_CHILD_MARKER_SHOULD_NOT_APPEAR",
+        );
+
+        let first_handoff_fingerprint = format!("sha256:{}", "3".repeat(64));
+        append_parent_handoff(
+            &store,
+            &parent,
+            "candidate_first_recovery",
+            "handoff_first_recovery",
+            &first_handoff_fingerprint,
+            None,
+        );
+        start_terminal_child(
+            &store,
+            &parent,
+            "candidate_first_recovery",
+            "handoff_first_recovery",
+            &first_handoff_fingerprint,
+            None,
+            TaskStatus::Completed,
+            "RAW_M5_28_FIRST_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+        );
+
+        let second_provenance = RecoveryCycleChildProvenance {
+            parent_join_admission_id: "admission_second_recovery".into(),
+            parent_join_child_completion_fingerprint: format!("sha256:{}", "4".repeat(64)),
+            parent_join_child_completion_child_count: 2,
+            parent_join_terminal_failed_child_count: 1,
+            parent_join_terminal_completed_child_count: 1,
+            parent_join_recovery_cycle: true,
+            parent_join_recovery_cycle_depth: 1,
+        };
+        append_parent_join_consumption(&store, &parent, &second_provenance);
+        let second_handoff_fingerprint = format!("sha256:{}", "5".repeat(64));
+        append_parent_handoff(
+            &store,
+            &parent,
+            "candidate_second_recovery",
+            "handoff_second_recovery",
+            &second_handoff_fingerprint,
+            Some(&second_provenance),
+        );
+        start_terminal_child(
+            &store,
+            &parent,
+            "candidate_second_recovery",
+            "handoff_second_recovery",
+            &second_handoff_fingerprint,
+            Some(second_provenance),
+            TaskStatus::Completed,
+            "RAW_M5_28_SECOND_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+        );
+
+        let third_provenance = RecoveryCycleChildProvenance {
+            parent_join_admission_id: "admission_third_recovery".into(),
+            parent_join_child_completion_fingerprint: format!("sha256:{}", "6".repeat(64)),
+            parent_join_child_completion_child_count: 3,
+            parent_join_terminal_failed_child_count: 1,
+            parent_join_terminal_completed_child_count: 2,
+            parent_join_recovery_cycle: true,
+            parent_join_recovery_cycle_depth: MAX_RECOVERY_CYCLE_DEPTH,
+        };
+        append_parent_join_consumption(&store, &parent, &third_provenance);
+        let third_handoff_fingerprint = format!("sha256:{}", "7".repeat(64));
+        append_parent_handoff(
+            &store,
+            &parent,
+            "candidate_third_recovery",
+            "handoff_third_recovery",
+            &third_handoff_fingerprint,
+            Some(&third_provenance),
+        );
+        start_terminal_child(
+            &store,
+            &parent,
+            "candidate_third_recovery",
+            "handoff_third_recovery",
+            &third_handoff_fingerprint,
+            Some(third_provenance),
+            TaskStatus::Completed,
+            "RAW_M5_28_THIRD_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+        );
+
+        let child_count_before_budget_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks before budget join")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .count();
+        assert_eq!(child_count_before_budget_join, 4);
+        let child_running_event_count_before_budget_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks before budget join running events")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .map(|record| {
+                store
+                    .tasks()
+                    .read_ledger_events(&record.run_id)
+                    .expect("read child events before budget join")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+
+        let budget_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":31,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            parent.task_id
+        ));
+        assert!(budget_parent_join.error.is_none());
+        let budget_parent_join_result = budget_parent_join
+            .result
+            .expect("budget parent join result");
+        let outcome = budget_parent_join_result["recovery_cycle_budget_outcome"].clone();
+        assert_eq!(outcome["recovery_cycle_budget_status"], "Exceeded");
+        assert_eq!(
+            outcome["parent_join_recovery_cycle_depth"],
+            json!(MAX_RECOVERY_CYCLE_DEPTH + 1)
+        );
+        assert_eq!(
+            outcome["max_recovery_cycle_depth"],
+            json!(MAX_RECOVERY_CYCLE_DEPTH)
+        );
+        assert_eq!(outcome["blocked_candidate_count"], 1);
+        assert_eq!(outcome["child_materialization_enabled"], false);
+        assert_eq!(outcome["child_running_enabled"], false);
+        assert_eq!(
+            outcome["next_action"],
+            "stop_recovery_cycle_materialization"
+        );
+        let admission_id = outcome["parent_join_admission_id"]
+            .as_str()
+            .expect("budget outcome admission id")
+            .to_string();
+
+        let parent_events_after_budget_join = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events after budget join");
+        let budget_block = parent_events_after_budget_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .filter_map(|event| event.payload.as_ref())
+            .find(|payload| {
+                payload
+                    .get("parent_join_admission_id")
+                    .and_then(Value::as_str)
+                    == Some(admission_id.as_str())
+                    && payload
+                        .get("recovery_cycle_budget_status")
+                        .and_then(Value::as_str)
+                        == Some("Exceeded")
+            })
+            .expect("budget-blocked handoff for parent task.run");
+        assert_eq!(budget_block["handoff_envelope_status"], "Blocked");
+        assert_eq!(budget_block["blocked_candidate_count"], 1);
+        assert_eq!(budget_block["eligible_candidate_count"], 0);
+        assert_eq!(payload_string_array(budget_block, "candidate_ids").len(), 1);
+        assert_eq!(
+            payload_string_array(budget_block, "blocked_candidate_ids"),
+            payload_string_array(budget_block, "candidate_ids")
+        );
+
+        let child_count_after_budget_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks after budget join")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .count();
+        assert_eq!(
+            child_count_after_budget_join,
+            child_count_before_budget_join
+        );
+        let child_running_event_count_after_budget_join = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks after budget join running events")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .map(|record| {
+                store
+                    .tasks()
+                    .read_ledger_events(&record.run_id)
+                    .expect("read child events after budget join")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(
+            child_running_event_count_after_budget_join,
+            child_running_event_count_before_budget_join
+        );
+
+        let parent_run_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":32,"method":"run.inspect","params":{{"run_id":"{}"}}}}"#,
+            parent.run_id
+        ));
+        assert!(parent_run_inspect.error.is_none());
+        assert_eq!(
+            parent_run_inspect
+                .result
+                .expect("parent run inspect result")["run"]["recovery_cycle_budget_outcome"],
+            outcome
+        );
+
+        let parent_task_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":33,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            parent.task_id
+        ));
+        assert!(parent_task_inspect.error.is_none());
+        assert_eq!(
+            parent_task_inspect
+                .result
+                .expect("parent task inspect result")["run"]["recovery_cycle_budget_outcome"],
+            outcome
+        );
+
+        let serialized_outcome = outcome.to_string();
+        for raw_marker in [
+            "RAW_M5_28_FAILED_CHILD_MARKER_SHOULD_NOT_APPEAR",
+            "RAW_M5_28_FIRST_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+            "RAW_M5_28_SECOND_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+            "RAW_M5_28_THIRD_RECOVERY_MARKER_SHOULD_NOT_APPEAR",
+        ] {
+            assert!(!serialized_outcome.contains(raw_marker));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]

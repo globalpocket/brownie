@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isRecoveryCycleChildProvenance, isTaskRecord } from '../runtime/protocol';
+import { isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isTaskRecord, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
@@ -73,6 +73,17 @@ const recoveryCycleChildProvenance = {
   parent_join_terminal_completed_child_count: 2,
   parent_join_recovery_cycle: true,
   parent_join_recovery_cycle_depth: 2,
+};
+
+const recoveryCycleBudgetOutcome = {
+  recovery_cycle_budget_status: 'Exceeded',
+  parent_join_admission_id: 'admission_budget_1',
+  parent_join_recovery_cycle_depth: 3,
+  max_recovery_cycle_depth: 2,
+  blocked_candidate_count: 1,
+  child_materialization_enabled: false,
+  child_running_enabled: false,
+  next_action: 'stop_recovery_cycle_materialization',
 };
 
 describe('protocol validation', () => {
@@ -246,6 +257,9 @@ describe('protocol validation', () => {
     expect(isRunInspectSummary({ ...summary, subtask_dispatch_decision_count: -1 })).toBe(false);
     expect(isRunInspectSummary({ ...summary, subtask_dispatch_candidate_manifest_count: -1 })).toBe(false);
     expect(isRunInspectSummary({ ...summary, subtask_dispatch_handoff_envelope_count: -1 })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, recovery_cycle_budget_outcome: recoveryCycleBudgetOutcome })).toBe(true);
+    expect(isRunInspectSummary({ ...summary, recovery_cycle_budget_outcome: { ...recoveryCycleBudgetOutcome, child_running_enabled: true } })).toBe(false);
+    expect(isRunInspectSummary({ ...summary, recovery_cycle_budget_outcome: { ...recoveryCycleBudgetOutcome, command: 'raw' } })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -273,6 +287,18 @@ describe('protocol validation', () => {
     expect(isRecoveryCycleChildProvenance({ ...recoveryCycleChildProvenance, parent_join_recovery_cycle: false, parent_join_recovery_cycle_depth: 1 })).toBe(false);
     expect(isRecoveryCycleChildProvenance({ ...recoveryCycleChildProvenance, content: 'raw child prompt' })).toBe(false);
     expect(isTaskRecord({ ...taskRecord, recovery_cycle_provenance: { ...recoveryCycleChildProvenance, parent_join_terminal_completed_child_count: 5 } })).toBe(false);
+  });
+
+  it('validates recovery-cycle budget exhaustion outcomes', () => {
+    expect(isRecoveryCycleBudgetOutcome(recoveryCycleBudgetOutcome)).toBe(true);
+    expect(isTaskRunResult({ task_id: 'task_1', run_id: 'run_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'done' }, recovery_cycle_budget_outcome: recoveryCycleBudgetOutcome })).toBe(true);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, recovery_cycle_budget_status: 'Accepted' })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, parent_join_admission_id: '' })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, parent_join_recovery_cycle_depth: 0 })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, blocked_candidate_count: 0 })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, child_materialization_enabled: true })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, child_running_enabled: true })).toBe(false);
+    expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, stdout: 'raw' })).toBe(false);
   });
 
 
