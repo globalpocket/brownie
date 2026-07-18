@@ -1,0 +1,104 @@
+{
+  "phase": "M5.29",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "stable_recovery_cycle_budget_outcome_replay",
+  "forbidden_pattern": "new_diagnostics_rpc_or_replayed_parent_join_without_stable_budget_outcome",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes recovery-cycle budget exhaustion replay-safe through the existing parent task.run contract, so orchestration callers can retry without mutating parent or child ledger state."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Gives unattended callers a deterministic repeated response for already-budget-exhausted parent runs without requiring diagnostics RPCs or ledger inference."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "stable_parent_task_run_replay",
+        "prompt": "Does repeated parent task.run for an already-budget-exhausted parent return the same bounded recovery-cycle budget outcome?"
+      },
+      {
+        "id": "no_parent_ledger_mutation",
+        "prompt": "Does replay avoid adding parent TaskRunning, ParentJoinContinuationFingerprintConsumed, and SubtaskDispatchHandoffEnvelopeRecorded events?"
+      },
+      {
+        "id": "no_child_ledger_mutation",
+        "prompt": "Does replay avoid adding child TaskRecord and child TaskRunning evidence?"
+      },
+      {
+        "id": "existing_contract_only",
+        "prompt": "Does this phase use existing TaskRunResult and existing parent task.run instead of a new diagnostics RPC or wrapper?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "stable_parent_task_run_replay": "Yes. A terminal task with an existing Exceeded recovery_cycle_budget_outcome returns that outcome from existing ledger evidence before task admission or TaskRunning updates.",
+      "no_parent_ledger_mutation": "Yes. The replay path exits before parent join continuation consumption, TaskRunning status updates, and handoff envelope recording.",
+      "no_child_ledger_mutation": "Yes. The replay test verifies child TaskRecord and child TaskRunning counts do not increase after repeated parent task.run.",
+      "existing_contract_only": "Yes. The replay path returns TaskRunResult from the existing task.run method and does not add a diagnostics RPC, wrapper summary, or new protocol surface.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Existing parent task.run output for an already-budget-exhausted parent returns the stable recovery-cycle budget outcome.",
+    "Repeated parent task.run for an already-budget-exhausted parent does not add a parent TaskRunning event.",
+    "Repeated parent task.run for an already-budget-exhausted parent does not add a ParentJoinContinuationFingerprintConsumed event.",
+    "Repeated parent task.run for an already-budget-exhausted parent does not add a SubtaskDispatchHandoffEnvelopeRecorded event.",
+    "Repeated parent task.run for an already-budget-exhausted parent does not create a child TaskRecord.",
+    "Repeated parent task.run for an already-budget-exhausted parent does not create a child TaskRunning event.",
+    "Existing parent inspection output still exposes the stable recovery-cycle budget outcome without a new diagnostics RPC.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-recovery tasks and initial controlled children preserve explicit task.run behavior.",
+    "Failed-child and recovery-child outcome evidence remains bounded and sanitized.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "recovery_cycle_budget_outcome_for_replay",
+      "recovery_cycle_budget_outcome_for_run",
+      "recovery_cycle_budget_outcome_from_events",
+      "task_run_agent_loop_summary_from_events",
+      "recovery_cycle_budget_status",
+      "child_materialization_enabled",
+      "child_running_enabled",
+      "stop_recovery_cycle_materialization",
+      "task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization",
+      "parent_join_recovery_cycle_budget_blocks_next_child_materialization",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded",
+      "TaskRunning"
+    ],
+    "rust_protocol_tokens": [
+      "RecoveryCycleBudgetOutcome",
+      "recovery_cycle_budget_outcome",
+      "TaskRunResult",
+      "RunInspectSummary"
+    ],
+    "vsix_protocol_tokens": [
+      "RecoveryCycleBudgetOutcome",
+      "RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS",
+      "isRecoveryCycleBudgetOutcome",
+      "recovery_cycle_budget_outcome"
+    ],
+    "vsix_test_tokens": [
+      "validates recovery-cycle budget exhaustion outcomes",
+      "child_running_enabled: true",
+      "stdout: 'raw'"
+    ],
+    "architecture_doc_tokens": [
+      "Recovery-cycle budget exhaustion is surfaced through the existing parent task.run response",
+      "already-budget-exhausted parent",
+      "recovery_cycle_budget_outcome"
+    ]
+  }
+}

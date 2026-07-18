@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.28';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.28.json';
+const phase = 'M5.29';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.29.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'recovery_cycle_budget_exhaustion_outcome',
-    `${phase} must declare the recovery-cycle budget exhaustion outcome transition.`
+    manifest.concrete_capability_transition === 'stable_recovery_cycle_budget_outcome_replay',
+    `${phase} must declare the stable recovery-cycle budget outcome replay transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_wrapper_chain_without_existing_parent_outcome_contract',
-    `${phase} must forbid diagnostics-only or wrapper-chain work without an existing parent outcome contract.`
+    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_replayed_parent_join_without_stable_budget_outcome',
+    `${phase} must forbid diagnostics-only work or replayed parent joins without stable budget outcomes.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -76,11 +76,13 @@ function validateManifest(manifest) {
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
     'Existing parent task.run output',
+    'already-budget-exhausted parent',
     'Existing parent inspection output',
-    'recovery-cycle budget exhaustion outcome',
+    'stable recovery-cycle budget outcome',
     'child TaskRecord',
     'TaskRunning',
-    'Explicit task.run',
+    'ParentJoinContinuationFingerprintConsumed',
+    'SubtaskDispatchHandoffEnvelopeRecorded',
     'In-budget recovery-cycle child',
     'Non-recovery tasks',
     'bounded and sanitized',
@@ -124,17 +126,20 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
+    'recovery_cycle_budget_outcome_for_replay',
     'recovery_cycle_budget_outcome_for_run',
     'recovery_cycle_budget_outcome_from_events',
+    'task_run_agent_loop_summary_from_events',
     'recovery_cycle_budget_status',
     'child_materialization_enabled',
     'child_running_enabled',
     'stop_recovery_cycle_materialization',
     'append_recovery_cycle_budget_blocked_handoff_envelope',
     'parent_join_recovery_cycle_budget_blocks_next_child_materialization',
-    'task_run_parent_join_budget_exhaustion_returns_bounded_outcome_without_child_materialization',
+    'task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization',
     'task_run_rejects_over_budget_recovery_cycle_child_before_running',
     'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
+    'ParentJoinContinuationFingerprintConsumed',
     'SubtaskDispatchHandoffEnvelopeRecorded',
     'TaskRunning'
   ]) {
