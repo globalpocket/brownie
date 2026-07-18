@@ -642,12 +642,25 @@ pub struct TaskRunResult {
     pub agent_loop: TaskRunAgentLoopSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunAgentLoopSummary {
     pub final_state: String,
     pub completion_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunChildOrchestrationOutcome {
+    pub parent_run_id: String,
+    pub materialized_child_task_ids: Vec<String>,
+    pub materialized_child_count: usize,
+    pub queued_child_task_ids: Vec<String>,
+    pub queued_child_count: usize,
+    pub child_running_enabled: bool,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

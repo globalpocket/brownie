@@ -1,0 +1,102 @@
+{
+  "phase": "M5.30",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "parent_task_run_child_orchestration_outcome",
+  "forbidden_pattern": "new_diagnostics_rpc_or_child_auto_run_without_parent_task_run_child_handles",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Turns newly materialized controlled queued children into bounded child handles on the existing parent task.run result, so callers can continue orchestration without ledger scraping."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Gives unattended callers deterministic next child task ids and an explicit next action while preserving Brownie's no auto-run safety boundary."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "parent_task_run_child_handles",
+        "prompt": "Does existing parent task.run output expose bounded child-orchestration handles for newly materialized controlled queued children?"
+      },
+      {
+        "id": "parent_inspection_compatibility",
+        "prompt": "Does existing parent inspection output still expose child TaskRecord and TaskRunning evidence for callers that inspect runs?"
+      },
+      {
+        "id": "explicit_child_run_only",
+        "prompt": "Does the outcome keep child running disabled and require run_child_task_explicitly?"
+      },
+      {
+        "id": "recovery_compatibility",
+        "prompt": "Does M5.29 replay-safe recovery budget behavior and in-budget recovery-cycle child behavior remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw child prompts, scheduler handoff, child auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "parent_task_run_child_handles": "Yes. TaskRunResult can include child_orchestration_outcome with parent_run_id, materialized child task ids/count, queued child task ids/count, child_running_enabled=false, and next_action=run_child_task_explicitly.",
+      "parent_inspection_compatibility": "Yes. Parent run.inspect and task.inspect continue to expose bounded child TaskRecord summaries and TaskRunning evidence without a new diagnostics RPC.",
+      "explicit_child_run_only": "Yes. Parent task.run only reports handles for queued children; child execution still requires explicit child task.run and the outcome states run_child_task_explicitly.",
+      "recovery_compatibility": "Yes. M5.29 replay-safe recovery_cycle_budget_outcome behavior remains None-compatible with child_orchestration_outcome, and in-budget recovery-cycle child paths continue to use explicit task.run.",
+      "safety_boundary": "Yes. The phase adds no raw child prompt exposure, scheduler handoff, child auto-run, external worker, process exec expansion, network bypass, service control, patch apply, workspace mutation path, diagnostics RPC, or wrapper-only blocked summary."
+    }
+  },
+  "exit_criteria": [
+    "Existing parent task.run output exposes bounded child-orchestration handles for newly materialized controlled queued children.",
+    "Existing parent inspection output continues to expose child TaskRecord summaries and TaskRunning evidence without a new diagnostics RPC.",
+    "The child-orchestration outcome reports materialized child ids/count and queued child ids/count.",
+    "The child-orchestration outcome reports child_running_enabled=false and run_child_task_explicitly.",
+    "M5.29 replay-safe recovery-cycle budget outcome replay still returns without child-orchestration handles.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-recovery tasks and initial controlled children preserve explicit task.run behavior.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "child_orchestration_outcome_for_materialized_children",
+      "child_task_ids_for_parent_run",
+      "TaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "run_child_task_explicitly",
+      "task_run_returns_child_orchestration_outcome_for_materialized_queued_child",
+      "recovery_cycle_budget_outcome_for_replay",
+      "task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "TaskRunning"
+    ],
+    "rust_protocol_tokens": [
+      "TaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "materialized_child_task_ids",
+      "queued_child_task_ids",
+      "child_running_enabled",
+      "next_action"
+    ],
+    "vsix_protocol_tokens": [
+      "TaskRunChildOrchestrationOutcome",
+      "TASK_RUN_CHILD_ORCHESTRATION_OUTCOME_KEYS",
+      "isTaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "run_child_task_explicitly"
+    ],
+    "vsix_test_tokens": [
+      "validates parent task.run child-orchestration outcomes",
+      "child_running_enabled: true",
+      "scheduler_handoff",
+      "stdout: 'raw'"
+    ],
+    "architecture_doc_tokens": [
+      "child_orchestration_outcome",
+      "newly materialized controlled queued children",
+      "run_child_task_explicitly"
+    ]
+  }
+}

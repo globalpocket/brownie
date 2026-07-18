@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isTaskRecord, isTaskRunResult } from '../runtime/protocol';
+import { isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
@@ -84,6 +84,16 @@ const recoveryCycleBudgetOutcome = {
   child_materialization_enabled: false,
   child_running_enabled: false,
   next_action: 'stop_recovery_cycle_materialization',
+};
+
+const childOrchestrationOutcome = {
+  parent_run_id: 'run_parent_1',
+  materialized_child_task_ids: ['task_child_1'],
+  materialized_child_count: 1,
+  queued_child_task_ids: ['task_child_1'],
+  queued_child_count: 1,
+  child_running_enabled: false,
+  next_action: 'run_child_task_explicitly',
 };
 
 describe('protocol validation', () => {
@@ -299,6 +309,18 @@ describe('protocol validation', () => {
     expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, child_materialization_enabled: true })).toBe(false);
     expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, child_running_enabled: true })).toBe(false);
     expect(isRecoveryCycleBudgetOutcome({ ...recoveryCycleBudgetOutcome, stdout: 'raw' })).toBe(false);
+  });
+
+  it('validates parent task.run child-orchestration outcomes', () => {
+    expect(isTaskRunChildOrchestrationOutcome(childOrchestrationOutcome)).toBe(true);
+    expect(isTaskRunResult({ task_id: 'task_1', run_id: 'run_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'done' }, child_orchestration_outcome: childOrchestrationOutcome })).toBe(true);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, materialized_child_count: 2 })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, queued_child_task_ids: ['task_missing'] })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, queued_child_count: 0 })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, child_running_enabled: true })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, next_action: 'scheduler_handoff' })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, request_reason: 'raw' })).toBe(false);
+    expect(isTaskRunChildOrchestrationOutcome({ ...childOrchestrationOutcome, stdout: 'raw' })).toBe(false);
   });
 
 

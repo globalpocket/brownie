@@ -221,11 +221,22 @@ export interface TaskRunResult {
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
+  child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
 }
 
 export interface AgentLoopRunSummary {
   final_state: string;
   completion_summary: string;
+}
+
+export interface TaskRunChildOrchestrationOutcome {
+  parent_run_id: string;
+  materialized_child_task_ids: string[];
+  materialized_child_count: number;
+  queued_child_task_ids: string[];
+  queued_child_count: number;
+  child_running_enabled: false;
+  next_action: 'run_child_task_explicitly';
 }
 
 export interface RecoveryCycleBudgetOutcome {
@@ -2539,6 +2550,16 @@ const RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS = new Set([
   'next_action',
 ]);
 
+const TASK_RUN_CHILD_ORCHESTRATION_OUTCOME_KEYS = new Set([
+  'parent_run_id',
+  'materialized_child_task_ids',
+  'materialized_child_count',
+  'queued_child_task_ids',
+  'queued_child_count',
+  'child_running_enabled',
+  'next_action',
+]);
+
 function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
@@ -2581,6 +2602,34 @@ export function isRecoveryCycleBudgetOutcome(value: unknown): value is RecoveryC
     value.child_running_enabled === false &&
     typeof value.next_action === 'string' &&
     value.next_action.trim().length > 0
+  );
+}
+
+export function isTaskRunChildOrchestrationOutcome(value: unknown): value is TaskRunChildOrchestrationOutcome {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, TASK_RUN_CHILD_ORCHESTRATION_OUTCOME_KEYS) ||
+    typeof value.parent_run_id !== 'string' ||
+    value.parent_run_id.trim().length === 0
+  ) {
+    return false;
+  }
+  const materializedChildTaskIds = value.materialized_child_task_ids;
+  const queuedChildTaskIds = value.queued_child_task_ids;
+
+  return (
+    Array.isArray(materializedChildTaskIds) &&
+    materializedChildTaskIds.length > 0 &&
+    materializedChildTaskIds.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0) &&
+    isNonNegativeInteger(value.materialized_child_count) &&
+    value.materialized_child_count === materializedChildTaskIds.length &&
+    Array.isArray(queuedChildTaskIds) &&
+    queuedChildTaskIds.length > 0 &&
+    queuedChildTaskIds.every((taskId) => typeof taskId === 'string' && materializedChildTaskIds.includes(taskId)) &&
+    isNonNegativeInteger(value.queued_child_count) &&
+    value.queued_child_count === queuedChildTaskIds.length &&
+    value.child_running_enabled === false &&
+    value.next_action === 'run_child_task_explicitly'
   );
 }
 
@@ -2642,7 +2691,8 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     typeof value.run_id === 'string' &&
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
-    (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome))
+    (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
+    (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome))
   );
 }
 
