@@ -2776,8 +2776,207 @@ fn validate_controlled_queued_child_task_provenance(
             "invalid params: queued child task source provenance is invalid",
         ));
     }
+    validate_recovery_cycle_child_run_provenance(
+        record,
+        &parent_events,
+        source_handoff_envelope_id,
+        source_handoff_envelope_fingerprint,
+    )?;
 
     Ok(())
+}
+
+fn validate_recovery_cycle_child_run_provenance(
+    record: &TaskRecord,
+    parent_events: &[LedgerEvent],
+    source_handoff_envelope_id: &str,
+    source_handoff_envelope_fingerprint: &str,
+) -> Result<(), TaskRunAdmissionRejection> {
+    let Some(provenance) = record.recovery_cycle_provenance.as_ref() else {
+        if source_handoff_envelope_requires_recovery_cycle_provenance(
+            parent_events,
+            source_handoff_envelope_id,
+            source_handoff_envelope_fingerprint,
+        ) {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: recovery-cycle child task provenance is missing",
+            ));
+        }
+        return Ok(());
+    };
+    if !recovery_cycle_child_provenance_is_internally_valid(provenance) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: recovery-cycle child task provenance is invalid",
+        ));
+    }
+
+    if !parent_events
+        .iter()
+        .any(|event| recovery_cycle_provenance_matches_parent_join(event, provenance))
+    {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: recovery-cycle child task provenance does not match parent join admission",
+        ));
+    }
+
+    if !parent_events.iter().any(|event| {
+        recovery_cycle_provenance_matches_handoff_envelope(
+            event,
+            provenance,
+            source_handoff_envelope_id,
+            source_handoff_envelope_fingerprint,
+        )
+    }) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: recovery-cycle child task provenance does not match parent handoff envelope",
+        ));
+    }
+
+    Ok(())
+}
+
+fn source_handoff_envelope_requires_recovery_cycle_provenance(
+    parent_events: &[LedgerEvent],
+    source_handoff_envelope_id: &str,
+    source_handoff_envelope_fingerprint: &str,
+) -> bool {
+    parent_events.iter().any(|event| {
+        if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        payload
+            .get("handoff_envelope_status")
+            .and_then(Value::as_str)
+            == Some("Accepted")
+            && payload.get("handoff_envelope_id").and_then(Value::as_str)
+                == Some(source_handoff_envelope_id)
+            && payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                == Some(source_handoff_envelope_fingerprint)
+            && payload
+                .get("parent_join_recovery_cycle")
+                .and_then(Value::as_bool)
+                == Some(true)
+    })
+}
+
+fn recovery_cycle_child_provenance_is_internally_valid(
+    provenance: &RecoveryCycleChildProvenance,
+) -> bool {
+    !provenance.parent_join_admission_id.trim().is_empty()
+        && is_sha256_fingerprint(&provenance.parent_join_child_completion_fingerprint)
+        && provenance
+            .parent_join_terminal_failed_child_count
+            .checked_add(provenance.parent_join_terminal_completed_child_count)
+            == Some(provenance.parent_join_child_completion_child_count)
+        && provenance.parent_join_recovery_cycle
+        && provenance.parent_join_recovery_cycle_depth >= 1
+}
+
+fn recovery_cycle_provenance_matches_parent_join(
+    event: &LedgerEvent,
+    provenance: &RecoveryCycleChildProvenance,
+) -> bool {
+    if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+        return false;
+    }
+    let Some(payload) = event.payload.as_ref() else {
+        return false;
+    };
+    payload.get("admission_id").and_then(Value::as_str)
+        == Some(provenance.parent_join_admission_id.as_str())
+        && payload
+            .get("child_completion_fingerprint")
+            .and_then(Value::as_str)
+            == Some(provenance.parent_join_child_completion_fingerprint.as_str())
+        && payload_usize_eq(
+            payload,
+            "child_completion_child_count",
+            provenance.parent_join_child_completion_child_count,
+        )
+        && payload_usize_eq(
+            payload,
+            "child_terminal_failed_count",
+            provenance.parent_join_terminal_failed_child_count,
+        )
+        && payload_usize_eq(
+            payload,
+            "child_terminal_completed_count",
+            provenance.parent_join_terminal_completed_child_count,
+        )
+        && payload_usize_eq(
+            payload,
+            "child_recovery_cycle_depth",
+            provenance.parent_join_recovery_cycle_depth,
+        )
+}
+
+fn recovery_cycle_provenance_matches_handoff_envelope(
+    event: &LedgerEvent,
+    provenance: &RecoveryCycleChildProvenance,
+    source_handoff_envelope_id: &str,
+    source_handoff_envelope_fingerprint: &str,
+) -> bool {
+    if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+        return false;
+    }
+    let Some(payload) = event.payload.as_ref() else {
+        return false;
+    };
+    payload
+        .get("handoff_envelope_status")
+        .and_then(Value::as_str)
+        == Some("Accepted")
+        && payload.get("handoff_envelope_id").and_then(Value::as_str)
+            == Some(source_handoff_envelope_id)
+        && payload
+            .get("handoff_envelope_fingerprint")
+            .and_then(Value::as_str)
+            == Some(source_handoff_envelope_fingerprint)
+        && payload
+            .get("parent_join_admission_id")
+            .and_then(Value::as_str)
+            == Some(provenance.parent_join_admission_id.as_str())
+        && payload
+            .get("parent_join_child_completion_fingerprint")
+            .and_then(Value::as_str)
+            == Some(provenance.parent_join_child_completion_fingerprint.as_str())
+        && payload_usize_eq(
+            payload,
+            "parent_join_child_completion_child_count",
+            provenance.parent_join_child_completion_child_count,
+        )
+        && payload_usize_eq(
+            payload,
+            "parent_join_terminal_failed_child_count",
+            provenance.parent_join_terminal_failed_child_count,
+        )
+        && payload_usize_eq(
+            payload,
+            "parent_join_terminal_completed_child_count",
+            provenance.parent_join_terminal_completed_child_count,
+        )
+        && payload
+            .get("parent_join_recovery_cycle")
+            .and_then(Value::as_bool)
+            == Some(provenance.parent_join_recovery_cycle)
+        && payload_usize_eq(
+            payload,
+            "parent_join_recovery_cycle_depth",
+            provenance.parent_join_recovery_cycle_depth,
+        )
+}
+
+fn payload_usize_eq(payload: &Value, key: &str, expected: usize) -> bool {
+    payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        == Some(expected)
 }
 
 fn required_task_run_provenance(value: Option<&str>) -> Result<&str, TaskRunAdmissionRejection> {
@@ -15461,6 +15660,138 @@ mod tests {
         (parent_task_id, parent_run_id, child, parent_event_count)
     }
 
+    fn start_recovery_cycle_child_with_parent_evidence(
+        workspace_root: &std::path::Path,
+    ) -> (TaskRecord, TaskRecord, RecoveryCycleChildProvenance) {
+        let store = BrownieStore::new(workspace_root);
+        let parent = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Parent recovery-cycle admission".into(),
+                mode_id: Some("orchestrator".into()),
+            })
+            .expect("start parent");
+        let provenance = RecoveryCycleChildProvenance {
+            parent_join_admission_id: "parent_join_admission_m5_26".into(),
+            parent_join_child_completion_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            parent_join_child_completion_child_count: 3,
+            parent_join_terminal_failed_child_count: 1,
+            parent_join_terminal_completed_child_count: 2,
+            parent_join_recovery_cycle: true,
+            parent_join_recovery_cycle_depth: 2,
+        };
+        let source_handoff_envelope_id = "handoff_envelope_m5_26";
+        let source_handoff_envelope_fingerprint = format!("sha256:{}", "b".repeat(64));
+        let source_candidate_id = "candidate_m5_26_recovery_child";
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                Some(json!({
+                    "parent_join_continuation_status": "Consumed",
+                    "admission_id": provenance.parent_join_admission_id,
+                    "child_completion_fingerprint": provenance.parent_join_child_completion_fingerprint,
+                    "child_completion_child_count": provenance.parent_join_child_completion_child_count,
+                    "child_terminal_failed_count": provenance.parent_join_terminal_failed_child_count,
+                    "child_terminal_completed_count": provenance.parent_join_terminal_completed_child_count,
+                    "child_recovery_cycle_depth": provenance.parent_join_recovery_cycle_depth,
+                    "fingerprint_input_count": 5,
+                    "reason": "Parent join continuation admitted for M5.26 recovery-cycle child run provenance guard."
+                })),
+            )
+            .expect("append parent join admission evidence");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": source_handoff_envelope_id,
+                    "handoff_envelope_fingerprint": source_handoff_envelope_fingerprint,
+                    "candidate_ids": [source_candidate_id],
+                    "parent_join_admission_id": provenance.parent_join_admission_id,
+                    "parent_join_child_completion_fingerprint": provenance.parent_join_child_completion_fingerprint,
+                    "parent_join_child_completion_child_count": provenance.parent_join_child_completion_child_count,
+                    "parent_join_terminal_failed_child_count": provenance.parent_join_terminal_failed_child_count,
+                    "parent_join_terminal_completed_child_count": provenance.parent_join_terminal_completed_child_count,
+                    "parent_join_recovery_cycle": provenance.parent_join_recovery_cycle,
+                    "parent_join_recovery_cycle_depth": provenance.parent_join_recovery_cycle_depth,
+                    "scheduler_handoff_status": "Blocked",
+                    "execution_enabled": false,
+                    "reason": "Accepted parent join recovery-cycle handoff envelope for controlled child materialization."
+                })),
+            )
+            .expect("append accepted handoff envelope evidence");
+        let child = store
+            .tasks()
+            .start_child_task(ChildTaskStartParams {
+                goal: "Run recovery-cycle child after provenance admission guard".into(),
+                mode_id: Some("orchestrator".into()),
+                parent_task_id: parent.task_id.clone(),
+                parent_run_id: parent.run_id.clone(),
+                source_candidate_id: source_candidate_id.into(),
+                source_handoff_envelope_id: source_handoff_envelope_id.into(),
+                source_handoff_envelope_fingerprint,
+                source_intent_summary: None,
+                recovery_cycle_provenance: Some(provenance.clone()),
+            })
+            .expect("start recovery-cycle child");
+
+        (parent, child, provenance)
+    }
+
+    fn mutate_task_state(
+        workspace_root: &std::path::Path,
+        run_id: &str,
+        mutate: impl FnOnce(&mut Value),
+    ) {
+        let state_path = workspace_root
+            .join(".brownie/runs")
+            .join(run_id)
+            .join("state.json");
+        let mut state: Value =
+            serde_json::from_str(&std::fs::read_to_string(&state_path).expect("task state"))
+                .expect("task state json");
+        mutate(&mut state);
+        std::fs::write(
+            &state_path,
+            serde_json::to_string_pretty(&state).expect("task state serialize"),
+        )
+        .expect("write task state");
+    }
+
+    fn assert_recovery_child_run_rejected_before_running(
+        workspace_root: &std::path::Path,
+        child: &TaskRecord,
+        expected_message: &str,
+    ) {
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":41,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.result.is_none());
+        let error = child_run.error.expect("child run error");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains(expected_message));
+
+        let store = BrownieStore::new(workspace_root);
+        let rejected_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get rejected child")
+            .expect("rejected child");
+        assert_eq!(rejected_child.status, TaskStatus::Queued);
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+    }
+
     fn clear_llm_env_for_test() {
         for key in [
             "BROWNIE_LLM_PROVIDER",
@@ -18270,6 +18601,191 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::TaskRunning));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":41,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.error.is_none());
+        let child_run_result = child_run.result.expect("child run result");
+        assert_eq!(child_run_result["task_id"], child.task_id);
+        assert_eq!(child_run_result["run_id"], child.run_id);
+        assert_eq!(child_run_result["status"], "Completed");
+
+        let store = BrownieStore::new(temp.path());
+        let completed_child = store
+            .tasks()
+            .get_task(&child.task_id)
+            .expect("get completed recovery-cycle child")
+            .expect("completed recovery-cycle child");
+        assert_eq!(completed_child.status, TaskStatus::Completed);
+        assert_eq!(completed_child.recovery_cycle_provenance, Some(provenance));
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskCompleted));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_missing_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"] = Value::Null;
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance is missing",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_stale_parent_join_admission_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"]["parent_join_admission_id"] =
+                json!("parent_join_admission_stale");
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance does not match parent join admission",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_stale_completion_fingerprint() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"]["parent_join_child_completion_fingerprint"] =
+                json!(format!("sha256:{}", "c".repeat(64)));
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance does not match parent join admission",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_stale_terminal_counts() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"]["parent_join_child_completion_child_count"] =
+                json!(4);
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance is invalid",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_stale_recovery_depth() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["recovery_cycle_provenance"]["parent_join_recovery_cycle_depth"] = json!(0);
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "recovery-cycle child task provenance is invalid",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn task_run_rejects_recovery_cycle_child_with_stale_handoff_fingerprint() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent, child, _provenance) =
+            start_recovery_cycle_child_with_parent_evidence(temp.path());
+        mutate_task_state(temp.path(), &child.run_id, |state| {
+            state["source_handoff_envelope_fingerprint"] =
+                json!(format!("sha256:{}", "d".repeat(64)));
+        });
+
+        assert_recovery_child_run_rejected_before_running(
+            temp.path(),
+            &child,
+            "queued child task source provenance is invalid",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
