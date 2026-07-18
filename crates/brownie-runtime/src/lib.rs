@@ -102,19 +102,20 @@ use brownie_protocol::{
     ProposalReviewQueueDiagnosticsReportParams, ProposalReviewQueueDiagnosticsReportResult,
     ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
     ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
-    ProposalReviewVerdictResult, RunEventsParams, RunEventsResult, RunInspectParams,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRecord, TaskRunAgentLoopSummary,
-    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
-    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
-    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    ProposalReviewVerdictResult, RecoveryCycleChildProvenance, RunEventsParams, RunEventsResult,
+    RunInspectParams, RunInspectResult, RunInspectSummary, RuntimeActionName,
+    RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState,
+    RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult, TaskListResult, TaskRecord,
+    TaskRunAgentLoopSummary, TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult,
+    TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
+    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
+    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
     WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
     WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
     WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
@@ -9982,6 +9983,7 @@ fn child_task_inspect_summary(
         source_handoff_envelope_id: task.source_handoff_envelope_id.clone(),
         source_handoff_envelope_fingerprint: task.source_handoff_envelope_fingerprint.clone(),
         source_intent_summary: task.source_intent_summary.clone(),
+        recovery_cycle_provenance: task.recovery_cycle_provenance.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
         completion_final_state,
@@ -10087,6 +10089,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "source_handoff_envelope_id",
         "source_handoff_envelope_fingerprint",
         "source_intent_summary",
+        "recovery_cycle_provenance",
         "queue_position",
         "execution_enabled",
         "scheduler_handoff_enabled",
@@ -10297,6 +10300,7 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "candidate_manifest_fingerprint",
             "handoff_envelope_fingerprint",
             "source_handoff_envelope_fingerprint",
+            "recovery_cycle_provenance",
             "readiness_fingerprint",
             "fingerprint_input_count",
             "bytes_read",
@@ -12632,6 +12636,8 @@ fn materialize_controlled_child_task_from_handoff_envelope(
         else {
             continue;
         };
+        let recovery_cycle_provenance =
+            recovery_cycle_child_provenance_from_handoff_envelope(envelope_payload);
 
         for source_candidate_id in handoff_envelope_candidate_ids(envelope_payload) {
             let child = if let Some(existing) = store
@@ -12664,6 +12670,7 @@ fn materialize_controlled_child_task_from_handoff_envelope(
                     source_handoff_envelope_fingerprint: source_handoff_envelope_fingerprint
                         .clone(),
                     source_intent_summary,
+                    recovery_cycle_provenance: recovery_cycle_provenance.clone(),
                 })?
             };
             if first_child.is_none() {
@@ -12672,6 +12679,44 @@ fn materialize_controlled_child_task_from_handoff_envelope(
         }
     }
     Ok(first_child)
+}
+
+fn recovery_cycle_child_provenance_from_handoff_envelope(
+    envelope_payload: &Value,
+) -> Option<RecoveryCycleChildProvenance> {
+    Some(RecoveryCycleChildProvenance {
+        parent_join_admission_id: envelope_payload
+            .get("parent_join_admission_id")?
+            .as_str()?
+            .to_string(),
+        parent_join_child_completion_fingerprint: envelope_payload
+            .get("parent_join_child_completion_fingerprint")?
+            .as_str()?
+            .to_string(),
+        parent_join_child_completion_child_count: usize_from_payload(
+            envelope_payload,
+            "parent_join_child_completion_child_count",
+        )?,
+        parent_join_terminal_failed_child_count: usize_from_payload(
+            envelope_payload,
+            "parent_join_terminal_failed_child_count",
+        )?,
+        parent_join_terminal_completed_child_count: usize_from_payload(
+            envelope_payload,
+            "parent_join_terminal_completed_child_count",
+        )?,
+        parent_join_recovery_cycle: envelope_payload
+            .get("parent_join_recovery_cycle")?
+            .as_bool()?,
+        parent_join_recovery_cycle_depth: usize_from_payload(
+            envelope_payload,
+            "parent_join_recovery_cycle_depth",
+        )?,
+    })
+}
+
+fn usize_from_payload(payload: &Value, key: &str) -> Option<usize> {
+    usize::try_from(payload.get(key)?.as_u64()?).ok()
 }
 
 fn append_workspace_patch_proposal(
@@ -16962,6 +17007,92 @@ mod tests {
             repeated_recovery_envelope["parent_join_recovery_cycle"],
             true
         );
+        let expected_recovery_cycle_provenance = json!({
+            "parent_join_admission_id": third_admission_id,
+            "parent_join_child_completion_fingerprint": third_terminal_set_fingerprint,
+            "parent_join_child_completion_child_count": 3,
+            "parent_join_terminal_failed_child_count": 1,
+            "parent_join_terminal_completed_child_count": 2,
+            "parent_join_recovery_cycle": true,
+            "parent_join_recovery_cycle_depth": 2
+        });
+        let child_recovery_cycle_provenance = serde_json::to_value(
+            third_recovery_cycle_child
+                .recovery_cycle_provenance
+                .as_ref()
+                .expect("third recovery-cycle provenance"),
+        )
+        .expect("recovery-cycle provenance serializes");
+        assert_eq!(
+            child_recovery_cycle_provenance,
+            expected_recovery_cycle_provenance
+        );
+        assert_eq!(
+            third_recovery_cycle_child_events[0]
+                .payload
+                .as_ref()
+                .expect("third child started payload")["recovery_cycle_provenance"],
+            expected_recovery_cycle_provenance
+        );
+        let serialized_provenance = child_recovery_cycle_provenance.to_string();
+        for raw_marker in [
+            "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_SECOND_RECOVERY_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_SECOND_RECOVERY_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+        ] {
+            assert!(!serialized_provenance.contains(raw_marker));
+        }
+        let third_child_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            third_recovery_cycle_child.task_id
+        ));
+        assert!(third_child_inspect.error.is_none());
+        let third_child_inspect_result = third_child_inspect
+            .result
+            .expect("third child inspect result");
+        assert_eq!(
+            third_child_inspect_result["task"]["recovery_cycle_provenance"],
+            expected_recovery_cycle_provenance
+        );
+        let parent_run_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":10,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect.error.is_none());
+        let parent_run_inspect_result = parent_run_inspect
+            .result
+            .expect("parent run inspect result");
+        let inspected_third_child = parent_run_inspect_result["run"]["child_tasks"]
+            .as_array()
+            .expect("parent run child tasks")
+            .iter()
+            .find(|child| {
+                child["task_id"].as_str() == Some(third_recovery_cycle_child.task_id.as_str())
+            })
+            .expect("inspected third recovery-cycle child");
+        assert_eq!(
+            inspected_third_child["recovery_cycle_provenance"],
+            expected_recovery_cycle_provenance
+        );
+        let parent_task_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":11,"method":"task.inspect","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_task_inspect.error.is_none());
+        let parent_task_inspect_result = parent_task_inspect
+            .result
+            .expect("parent task inspect result");
+        let inspected_parent_task_child = parent_task_inspect_result["run"]["child_tasks"]
+            .as_array()
+            .expect("parent task inspect child tasks")
+            .iter()
+            .find(|child| {
+                child["task_id"].as_str() == Some(third_recovery_cycle_child.task_id.as_str())
+            })
+            .expect("parent task inspected third recovery-cycle child");
+        assert_eq!(
+            inspected_parent_task_child["recovery_cycle_provenance"],
+            expected_recovery_cycle_provenance
+        );
         let second_candidate = second_recovery_cycle_child
             .source_candidate_id
             .as_deref()
@@ -17004,7 +17135,7 @@ mod tests {
 
         let parent_event_count_after_third_join = parent_events_after_third_join.len();
         let repeat_larger_terminal_set = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":9,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":12,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
         ));
         assert!(repeat_larger_terminal_set.result.is_none());
         assert_eq!(

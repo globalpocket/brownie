@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.24';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.24.json';
+const phase = 'M5.25';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.25.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'repeated_recovery_cycle_join',
-    `${phase} must declare the repeated recovery-cycle join transition.`
+    manifest.concrete_capability_transition === 'recovery_cycle_child_provenance_inspection',
+    `${phase} must declare the recovery-cycle child provenance inspection transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_repeated_recovery_cycle_runtime_progress',
-    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without repeated recovery-cycle runtime progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_diagnostics_only_report_without_recovery_cycle_child_provenance_runtime_progress',
+    `${phase} must forbid wrapper-only or diagnostics-only work without recovery-cycle child provenance runtime progress.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,22 +75,19 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'failed controlled child',
-    'failed_child',
-    'recovery child',
-    'second recovery-cycle child',
-    'explicit task.run',
-    'larger terminal child result set',
-    'same larger terminal result set remains rejected',
-    'repeated recovery-cycle',
-    'completed_child',
-    'failure_result_fingerprint',
-    'completion_result_fingerprint',
-    'parent_join_recovery_cycle_depth',
-    'child_recovery_cycle_depth',
+    'repeated recovery-cycle child',
+    'RecoveryCycleChildProvenance',
+    'recovery_cycle_provenance',
+    'parent_join_admission_id',
+    'parent_join_child_completion_fingerprint',
+    'parent_join_child_completion_child_count',
     'parent_join_terminal_failed_child_count',
     'parent_join_terminal_completed_child_count',
-    'parent_join_admission_id',
+    'parent_join_recovery_cycle',
+    'parent_join_recovery_cycle_depth',
+    'task.inspect',
+    'run.inspect',
+    'child_tasks',
     'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
@@ -135,42 +132,24 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
-  const llmText = readText('crates/brownie-llm/src/lib.rs');
   for (const token of [
-    'child_has_terminal_parent_join_outcome',
-    'child_failure_result_fingerprint',
-    'LLM_FAILURE_REASON_PREVIEW_CHARS',
-    'llm_failure_reason_is_bounded_before_persistence',
-    'failed_child task_id=',
-    'completed_child task_id=',
-    'failure_result_fingerprint',
-    'completion_result_fingerprint',
+    'RecoveryCycleChildProvenance',
+    'recovery_cycle_provenance',
+    'recovery_cycle_child_provenance_from_handoff_envelope',
+    'parent_join_admission_id',
+    'parent_join_child_completion_fingerprint',
+    'parent_join_child_completion_child_count',
     'parent_join_terminal_failed_child_count',
     'parent_join_terminal_completed_child_count',
-    'parent_join_recovery_cycle_depth',
-    'child_recovery_cycle_depth',
     'parent_join_recovery_cycle',
-    'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',
-    'task_run_parent_join_recovery_child_completion_materializes_next_cycle_without_auto_run',
+    'parent_join_recovery_cycle_depth',
     'task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run',
-    'failed_child_terminal_outcome_fingerprint_changes_with_failure_reason',
-    'parent_join_admission_id',
-    'append_parent_join_continuation_handoff_envelope_recorded',
-    'materialize_controlled_child_task_from_handoff_envelope',
-    'validate_controlled_queued_child_task_provenance'
+    'task.inspect',
+    'run.inspect',
+    'child_tasks'
   ]) {
     if (!runtimeText.includes(token) && !storeText.includes(token)) {
       errors.push(`${phase} source must include ${token}.`);
-    }
-  }
-  for (const token of [
-    'Fake LLM recovery-child completion continuation request',
-    'Continue recovery after explicit recovery child completion.',
-    'Fake LLM repeated recovery-cycle continuation request',
-    'Continue repeated recovery cycle after second explicit recovery child completion.'
-  ]) {
-    if (!llmText.includes(token)) {
-      errors.push(`${phase} LLM source must include ${token}.`);
     }
   }
   const forbiddenWrapperEvents = [
