@@ -1,0 +1,73 @@
+{
+  "phase": "M5.27",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "recovery_cycle_budget_admission_guard",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_unbounded_recovery_cycle_without_budget_guard",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Adds a runtime recovery-cycle budget guard so parent join recovery continuations cannot materialize unbounded child tasks."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Provides a deterministic stop condition for unattended recovery-cycle orchestration before child TaskRecords or child TaskRunning events are produced over budget."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "budget_policy",
+        "prompt": "Does Brownie define a deterministic runtime recovery-cycle budget policy?"
+      },
+      {
+        "id": "parent_materialization_guard",
+        "prompt": "Does parent join recovery continuation refuse over-budget child materialization before creating a child TaskRecord?"
+      },
+      {
+        "id": "child_run_guard",
+        "prompt": "Does explicit task.run reject over-budget queued recovery-cycle children before TaskRunning?"
+      },
+      {
+        "id": "in_budget_compatibility",
+        "prompt": "Do in-budget recovery-cycle children continue to materialize and run only through explicit task.run?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "budget_policy": "Yes. MAX_RECOVERY_CYCLE_DEPTH defines a deterministic runtime budget and recovery_cycle_depth_exceeds_budget centralizes the check.",
+      "parent_materialization_guard": "Yes. append_parent_join_continuation_handoff_envelope_recorded records a bounded budget-blocked handoff envelope and does not create an accepted envelope when recovery-cycle depth exceeds the budget.",
+      "child_run_guard": "Yes. validate_recovery_cycle_child_run_provenance rejects queued recovery-cycle child task.run before TaskRunning when provenance depth exceeds the runtime budget.",
+      "in_budget_compatibility": "Yes. Existing in-budget recovery-cycle materialization and explicit run tests remain, and the M5.27 tests keep the currently covered depth within budget.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "Brownie has a deterministic runtime recovery-cycle budget policy.",
+    "Parent join recovery continuation refuses over-budget recovery-cycle child materialization before creating a child TaskRecord.",
+    "Explicit task.run refuses over-budget queued recovery-cycle children before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Over-budget evidence is bounded and sanitized.",
+    "No child auto-run occurs.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "MAX_RECOVERY_CYCLE_DEPTH",
+      "recovery_cycle_depth_exceeds_budget",
+      "append_recovery_cycle_budget_blocked_handoff_envelope",
+      "recovery_cycle_budget_status",
+      "RecoveryCycleBudgetExceeded",
+      "parent_join_recovery_cycle_budget_blocks_next_child_materialization",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "TaskRunning",
+      "SubtaskDispatchHandoffEnvelopeRecorded"
+    ]
+  }
+}

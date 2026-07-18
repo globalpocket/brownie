@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.26';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.26.json';
+const phase = 'M5.27';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.27.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'recovery_child_run_provenance_admission_guard',
-    `${phase} must declare the recovery child run provenance admission guard transition.`
+    manifest.concrete_capability_transition === 'recovery_cycle_budget_admission_guard',
+    `${phase} must declare the recovery-cycle budget admission guard transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_inspection_only_endpoint_without_child_run_provenance_admission_guard',
-    `${phase} must forbid wrapper-only or inspection-only work without child run provenance admission guard progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_unbounded_recovery_cycle_without_budget_guard',
+    `${phase} must forbid wrapper-only or unbounded recovery-cycle work without a budget guard.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,17 +75,14 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'explicit task.run',
-    'queued recovery-cycle child',
-    'parent ledger admission',
-    'accepted handoff envelope',
-    'ParentJoinContinuationFingerprintConsumed',
-    'SubtaskDispatchHandoffEnvelopeRecorded',
-    'Missing recovery-cycle provenance',
-    'parent_join_admission_id',
-    'parent_join_child_completion_fingerprint',
-    'source_handoff_envelope_fingerprint',
+    'deterministic runtime recovery-cycle budget policy',
+    'Parent join recovery continuation',
+    'child TaskRecord',
+    'Explicit task.run',
+    'over-budget queued recovery-cycle children',
     'TaskRunning',
+    'In-budget recovery-cycle child',
+    'bounded and sanitized',
     'No child auto-run',
     'No raw child prompts',
     'No scheduler handoff'
@@ -115,21 +112,15 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
-    'validate_recovery_cycle_child_run_provenance',
-    'source_handoff_envelope_requires_recovery_cycle_provenance',
-    'recovery_cycle_child_provenance_is_internally_valid',
-    'recovery_cycle_provenance_matches_parent_join',
-    'recovery_cycle_provenance_matches_handoff_envelope',
+    'MAX_RECOVERY_CYCLE_DEPTH',
+    'recovery_cycle_depth_exceeds_budget',
+    'append_recovery_cycle_budget_blocked_handoff_envelope',
+    'recovery_cycle_budget_status',
+    'RecoveryCycleBudgetExceeded',
+    'parent_join_recovery_cycle_budget_blocks_next_child_materialization',
+    'task_run_rejects_over_budget_recovery_cycle_child_before_running',
     'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
-    'task_run_rejects_recovery_cycle_child_with_missing_provenance',
-    'task_run_rejects_recovery_cycle_child_with_stale_parent_join_admission_id',
-    'task_run_rejects_recovery_cycle_child_with_stale_completion_fingerprint',
-    'task_run_rejects_recovery_cycle_child_with_stale_terminal_counts',
-    'task_run_rejects_recovery_cycle_child_with_stale_recovery_depth',
-    'task_run_rejects_recovery_cycle_child_with_stale_handoff_fingerprint',
-    'ParentJoinContinuationFingerprintConsumed',
     'SubtaskDispatchHandoffEnvelopeRecorded',
-    'source_handoff_envelope_fingerprint',
     'TaskRunning'
   ]) {
     if (!runtimeText.includes(token)) {
