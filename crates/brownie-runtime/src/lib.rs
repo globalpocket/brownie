@@ -1754,6 +1754,23 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
 
+    match recovery_cycle_budget_outcome_for_replay(&store, &record) {
+        Ok(Some((agent_loop, recovery_cycle_budget_outcome))) => {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop,
+                    recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
     let admission = match validate_task_run_admission(&record, &store) {
         Ok(admission) => admission,
         Err(rejection) => {
@@ -10166,6 +10183,51 @@ fn recovery_cycle_budget_outcome_for_run(
     Ok(recovery_cycle_budget_outcome_from_events(&events))
 }
 
+fn recovery_cycle_budget_outcome_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<(TaskRunAgentLoopSummary, RecoveryCycleBudgetOutcome)>, String> {
+    if !matches!(
+        record.status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    ) {
+        return Ok(None);
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    let Some(recovery_cycle_budget_outcome) = recovery_cycle_budget_outcome_from_events(&events)
+    else {
+        return Ok(None);
+    };
+    let Some(agent_loop) = task_run_agent_loop_summary_from_events(&events) else {
+        return Ok(None);
+    };
+
+    Ok(Some((agent_loop, recovery_cycle_budget_outcome)))
+}
+
+fn task_run_agent_loop_summary_from_events(
+    events: &[LedgerEvent],
+) -> Option<TaskRunAgentLoopSummary> {
+    let payload = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::AgentLoopCompleted)?
+        .payload
+        .as_ref()?;
+    Some(TaskRunAgentLoopSummary {
+        final_state: non_empty_payload_string(payload, "final_state")?,
+        completion_summary: payload
+            .get("completion_summary")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+    })
+}
+
 fn recovery_cycle_budget_outcome_from_events(
     events: &[LedgerEvent],
 ) -> Option<RecoveryCycleBudgetOutcome> {
@@ -18006,7 +18068,7 @@ mod tests {
     }
 
     #[test]
-    fn task_run_parent_join_budget_exhaustion_returns_bounded_outcome_without_child_materialization(
+    fn task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization(
     ) {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
@@ -18401,6 +18463,102 @@ mod tests {
         assert_eq!(
             child_running_event_count_after_budget_join,
             child_running_event_count_before_budget_join
+        );
+
+        let parent_event_count_after_budget_join = parent_events_after_budget_join.len();
+        let parent_task_running_count_after_budget_join = parent_events_after_budget_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_after_budget_join = parent_events_after_budget_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let handoff_envelope_count_after_budget_join = parent_events_after_budget_join
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+
+        let budget_parent_join_replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":34,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            parent.task_id
+        ));
+        assert!(budget_parent_join_replay.error.is_none());
+        let budget_parent_join_replay_result = budget_parent_join_replay
+            .result
+            .expect("budget parent join replay result");
+        assert_eq!(
+            budget_parent_join_replay_result["recovery_cycle_budget_outcome"],
+            outcome
+        );
+        assert_eq!(
+            budget_parent_join_replay_result["agent_loop"],
+            budget_parent_join_result["agent_loop"]
+        );
+        assert_eq!(budget_parent_join_replay_result["status"], "Completed");
+
+        let parent_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events after budget replay");
+        assert_eq!(
+            parent_events_after_replay.len(),
+            parent_event_count_after_budget_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_after_budget_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(|event| event.kind
+                    == LedgerEventKind::ParentJoinContinuationFingerprintConsumed)
+                .count(),
+            parent_join_consumption_count_after_budget_join
+        );
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            handoff_envelope_count_after_budget_join
+        );
+
+        let child_count_after_replay = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks after budget replay")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .count();
+        assert_eq!(child_count_after_replay, child_count_after_budget_join);
+        let child_running_event_count_after_replay = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks after budget replay running events")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+            .map(|record| {
+                store
+                    .tasks()
+                    .read_ledger_events(&record.run_id)
+                    .expect("read child events after budget replay")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(
+            child_running_event_count_after_replay,
+            child_running_event_count_after_budget_join
         );
 
         let parent_run_inspect = parse_line(&format!(
