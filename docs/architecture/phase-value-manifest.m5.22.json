@@ -1,0 +1,94 @@
+{
+  "phase": "M5.22",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "terminal_child_failure_recovery_continuation",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_failed_child_recovery_runtime_progress",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Allows explicit parent continuation to recover from a controlled child task that reached a terminal Failed state."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Feeds bounded failed-child evidence back through the Rust-owned parent agent loop without adding scheduler dispatch or child auto-run."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Removes a parent-loop wedge by materializing a bounded recovery child task after failed controlled child evidence is consumed."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "failed_child_recovery_continuation",
+        "prompt": "Can a completed parent explicitly continue after a failed controlled child outcome?"
+      },
+      {
+        "id": "bounded_failed_child_evidence",
+        "prompt": "Does parent context distinguish failed_child evidence without exposing raw failure payloads?"
+      },
+      {
+        "id": "terminal_outcome_replay_guard",
+        "prompt": "Does replay identity include terminal failed-child outcome data and reject the same failed result set?"
+      },
+      {
+        "id": "recovery_child_materialization",
+        "prompt": "Does an approved recovery subtask.spawn materialize a controlled queued child TaskRecord?"
+      },
+      {
+        "id": "explicit_child_run_only",
+        "prompt": "Does recovery preserve explicit task.run for every child and avoid child auto-run?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "failed_child_recovery_continuation": "Yes. Parent join admission now accepts controlled child tasks in Completed or Failed status when the child ledger has the matching terminal outcome evidence.",
+      "bounded_failed_child_evidence": "Yes. Failed children are summarized as failed_child with task/run/source provenance, failure_final_state, failure_result_fingerprint, and bounded failure_summary_preview.",
+      "terminal_outcome_replay_guard": "Yes. Parent join fingerprint inputs include terminal_outcome_kind, terminal_final_state, and terminal_result_fingerprint, so the same failed child result set remains replay-rejected.",
+      "recovery_child_materialization": "Yes. A failed-child parent continuation can emit an approved subtask.spawn intent that flows through the existing continuation handoff envelope and materializes a controlled queued child TaskRecord.",
+      "explicit_child_run_only": "Yes. Recovery child records start in Queued status with execution disabled and no TaskRunning event until an explicit child task.run occurs.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A parent can explicitly continue after a failed controlled child reaches terminal Failed status.",
+    "Parent continuation context includes distinct failed_child evidence with failure_result_fingerprint and bounded failure_summary_preview.",
+    "The same failed child result set remains rejected before recovery child progress creates a new terminal result set.",
+    "A materially different failed child terminal outcome changes the parent join fingerprint.",
+    "An approved recovery child subtask.spawn materializes a controlled queued child TaskRecord.",
+    "The recovery child is queued and requires explicit task.run; No child auto-run occurs.",
+    "Continuation records include parent_join_admission_id for the failed-child recovery admission.",
+    "LLM failure reasons are bounded before persistence and retain reason_sha256 plus reason_chars for replay identity.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "child_has_terminal_parent_join_outcome",
+      "child_failure_result_fingerprint",
+      "LLM_FAILURE_REASON_PREVIEW_CHARS",
+      "llm_failure_reason_is_bounded_before_persistence",
+      "failed_child task_id=",
+      "failure_result_fingerprint",
+      "task_run_parent_join_recovers_failed_controlled_child_without_auto_run",
+      "failed_child_terminal_outcome_fingerprint_changes_with_failure_reason",
+      "append_parent_join_continuation_handoff_envelope_recorded",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "validate_controlled_queued_child_task_provenance"
+    ],
+    "rust_store_tokens": [
+      "ParentJoinContinuationRunAdmitted",
+      "admit_parent_join_continuation",
+      "controlled terminal child result fingerprint"
+    ],
+    "rust_llm_tokens": [
+      "Fake LLM failed-child recovery request",
+      "Recover failed controlled child task."
+    ]
+  }
+}

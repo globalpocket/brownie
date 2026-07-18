@@ -277,6 +277,21 @@ impl FakeLlm {
             .collect::<Vec<_>>()
             .join("\n")
             .to_lowercase();
+        if prompt.contains("failed_child") && prompt.contains("orchestrator") {
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "subtask.spawn",
+                    "reason": "Recover failed controlled child task."
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM failed-child recovery request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
         if prompt.contains("completed_child") && prompt.contains("orchestrator") {
             let intent = serde_json::json!({
                 "tool_requests": [{

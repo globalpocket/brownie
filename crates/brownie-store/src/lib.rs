@@ -211,7 +211,7 @@ impl TaskStore {
                         "child_completion_fingerprint": admission.child_completion_fingerprint,
                         "child_completion_child_count": admission.child_completion_child_count,
                         "fingerprint_input_count": admission.child_completion_fingerprint_input_count,
-                        "reason": "Parent join continuation admitted atomically for this completed controlled child result fingerprint."
+                        "reason": "Parent join continuation admitted atomically for this controlled terminal child result fingerprint."
                     })),
                 ),
                 (

@@ -311,6 +311,8 @@ const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
 const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
 const CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
+const CHILD_FAILURE_SUMMARY_PREVIEW_CHARS: usize = 512;
+const LLM_FAILURE_REASON_PREVIEW_CHARS: usize = 1024;
 const MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES: usize = 12;
 
 pub fn runtime_status() -> RuntimeStatus {
@@ -2264,7 +2266,7 @@ fn validate_task_run_admission(
         )),
         TaskStatus::Running | TaskStatus::Failed | TaskStatus::Cancelled => {
             Err(TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: task must be Created, a controlled Queued child task, or a completed parent with completed controlled child tasks",
+                "invalid params: task must be Created, a controlled Queued child task, or a completed parent with completed controlled child tasks or failed controlled child tasks",
             ))
         }
     }
@@ -2295,20 +2297,20 @@ fn validate_completed_parent_join_continuation_admission(
 
     if child_tasks.is_empty() {
         return Err(TaskRunAdmissionRejection::InvalidParams(
-            "invalid params: parent join continuation requires completed controlled child tasks",
+            "invalid params: parent join continuation requires completed controlled child tasks or failed controlled child tasks",
         ));
     }
 
     for child in &child_tasks {
         validate_controlled_queued_child_task_provenance(child, store)?;
-        if child.status != TaskStatus::Completed {
+        if !matches!(child.status, TaskStatus::Completed | TaskStatus::Failed) {
             return Err(TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: parent join continuation requires completed controlled child tasks",
+                "invalid params: parent join continuation requires completed controlled child tasks or failed controlled child tasks",
             ));
         }
-        if !child_has_completed_agent_loop(store, child)? {
+        if !child_has_terminal_parent_join_outcome(store, child)? {
             return Err(TaskRunAdmissionRejection::InvalidParams(
-                "invalid params: parent join continuation requires completed controlled child tasks",
+                "invalid params: parent join continuation requires completed controlled child tasks or failed controlled child tasks",
             ));
         }
     }
@@ -2336,7 +2338,7 @@ fn validate_completed_parent_join_continuation_admission(
         .collect::<Vec<_>>();
     if child_tasks.len() > MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES {
         summaries.push(format!(
-            "completed_child_summary_omitted count={}",
+            "terminal_child_summary_omitted count={}",
             child_tasks.len() - MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES
         ));
     }
@@ -2348,7 +2350,7 @@ fn validate_completed_parent_join_continuation_admission(
     })
 }
 
-fn child_has_completed_agent_loop(
+fn child_has_terminal_parent_join_outcome(
     store: &BrownieStore,
     child: &TaskRecord,
 ) -> Result<bool, TaskRunAdmissionRejection> {
@@ -2356,19 +2358,47 @@ fn child_has_completed_agent_loop(
         .tasks()
         .read_ledger_events(&child.run_id)
         .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
-    let has_completed_agent_loop = events.iter().rev().any(|event| {
-        event.kind == LedgerEventKind::AgentLoopCompleted
-            && event
-                .payload
-                .as_ref()
-                .and_then(|payload| payload.get("final_state"))
-                .and_then(Value::as_str)
-                == Some("Completed")
-    });
-    let has_task_completed = events
-        .iter()
-        .any(|event| event.kind == LedgerEventKind::TaskCompleted);
-    Ok(has_completed_agent_loop && has_task_completed)
+    match child.status {
+        TaskStatus::Completed => {
+            let has_completed_agent_loop = events.iter().rev().any(|event| {
+                event.kind == LedgerEventKind::AgentLoopCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("final_state"))
+                        .and_then(Value::as_str)
+                        == Some("Completed")
+            });
+            let has_task_completed = events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::TaskCompleted);
+            Ok(has_completed_agent_loop && has_task_completed)
+        }
+        TaskStatus::Failed => {
+            let has_task_failed = events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::TaskFailed);
+            let has_failed_agent_loop = events.iter().rev().any(|event| {
+                event.kind == LedgerEventKind::AgentLoopCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("final_state"))
+                        .and_then(Value::as_str)
+                        == Some("Failed")
+            });
+            let has_redacted_failure_event = events.iter().any(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+                )
+            });
+            Ok(has_task_failed && (has_failed_agent_loop || has_redacted_failure_event))
+        }
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => {
+            Ok(false)
+        }
+    }
 }
 
 struct ParentJoinChildCompletionEvidence {
@@ -2380,6 +2410,10 @@ fn parent_join_child_completion_evidence(
     store: &BrownieStore,
     child: &TaskRecord,
 ) -> Result<ParentJoinChildCompletionEvidence, TaskRunAdmissionRejection> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&child.run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
     let summary =
         child_task_inspect_summary(store, child).map_err(TaskRunAdmissionRejection::Internal)?;
     let source_candidate_id = summary.source_candidate_id.as_deref().unwrap_or("<none>");
@@ -2393,67 +2427,200 @@ fn parent_join_child_completion_evidence(
         .unwrap_or("<none>");
     let parent_task_id = summary.parent_task_id.as_deref().unwrap_or("<none>");
     let parent_run_id = summary.parent_run_id.as_deref().unwrap_or("<none>");
-    let completion_final_state = summary
-        .completion_final_state
-        .as_deref()
-        .unwrap_or("<none>");
-    let completion_result_fingerprint = summary
-        .completion_result_fingerprint
-        .as_deref()
-        .unwrap_or("<none>");
     let status = format!("{:?}", summary.status);
-    let summary_text = format!(
-        "completed_child task_id={} run_id={} status={:?} source_candidate_id={} source_handoff_envelope_fingerprint={} completion_final_state={} completion_result_fingerprint={} completion_summary_preview={} final_response_preview={}",
-        summary.task_id,
-        summary.run_id,
-        summary.status,
-        summary
-            .source_candidate_id
-            .as_deref()
-            .unwrap_or("<none>"),
-        summary
-            .source_handoff_envelope_fingerprint
-            .as_deref()
-            .unwrap_or("<none>"),
-        summary
-            .completion_final_state
-            .as_deref()
-            .unwrap_or("<none>"),
-        summary
-            .completion_result_fingerprint
-            .as_deref()
-            .unwrap_or("<none>"),
-        summary
-            .completion_summary_preview
-            .as_deref()
-            .unwrap_or("<none>"),
-        summary
-            .final_response_preview
-            .as_deref()
-            .unwrap_or("<none>")
-    );
+    let terminal_outcome_kind = match summary.status {
+        TaskStatus::Completed => "completed_child",
+        TaskStatus::Failed => "failed_child",
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => {
+            "nonterminal_child"
+        }
+    };
+    let (terminal_final_state, terminal_result_fingerprint, summary_text) = match summary.status {
+        TaskStatus::Completed => {
+            let completion_final_state = summary
+                .completion_final_state
+                .as_deref()
+                .unwrap_or("<none>")
+                .to_string();
+            let completion_result_fingerprint = summary
+                .completion_result_fingerprint
+                .as_deref()
+                .unwrap_or("<none>")
+                .to_string();
+            let summary_text = format!(
+                "completed_child task_id={} run_id={} status={:?} source_candidate_id={} source_handoff_envelope_fingerprint={} completion_final_state={} completion_result_fingerprint={} completion_summary_preview={} final_response_preview={}",
+                summary.task_id,
+                summary.run_id,
+                summary.status,
+                summary
+                    .source_candidate_id
+                    .as_deref()
+                    .unwrap_or("<none>"),
+                summary
+                    .source_handoff_envelope_fingerprint
+                    .as_deref()
+                    .unwrap_or("<none>"),
+                completion_final_state,
+                completion_result_fingerprint,
+                summary
+                    .completion_summary_preview
+                    .as_deref()
+                    .unwrap_or("<none>"),
+                summary
+                    .final_response_preview
+                    .as_deref()
+                    .unwrap_or("<none>")
+            );
+            (
+                completion_final_state,
+                completion_result_fingerprint,
+                summary_text,
+            )
+        }
+        TaskStatus::Failed => {
+            let failure_final_state = summary
+                .completion_final_state
+                .as_deref()
+                .filter(|state| *state == "Failed")
+                .unwrap_or("Failed")
+                .to_string();
+            let failure_result_fingerprint = child_failure_result_fingerprint(
+                &events,
+                summary.completion_result_fingerprint.as_deref(),
+            );
+            let failure_summary_preview = child_failure_summary_preview(&events)
+                .unwrap_or_else(|| "failed_child_summary_unavailable".to_string());
+            let summary_text = format!(
+                "failed_child task_id={} run_id={} status={:?} source_candidate_id={} source_handoff_envelope_fingerprint={} failure_final_state={} failure_result_fingerprint={} failure_summary_preview={} final_response_preview={}",
+                summary.task_id,
+                summary.run_id,
+                summary.status,
+                summary
+                    .source_candidate_id
+                    .as_deref()
+                    .unwrap_or("<none>"),
+                summary
+                    .source_handoff_envelope_fingerprint
+                    .as_deref()
+                    .unwrap_or("<none>"),
+                failure_final_state,
+                failure_result_fingerprint,
+                failure_summary_preview,
+                summary
+                    .final_response_preview
+                    .as_deref()
+                    .unwrap_or("<none>")
+            );
+            (
+                failure_final_state,
+                failure_result_fingerprint,
+                summary_text,
+            )
+        }
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => (
+            "<none>".to_string(),
+            "<none>".to_string(),
+            format!(
+                "nonterminal_child task_id={} run_id={} status={:?}",
+                summary.task_id, summary.run_id, summary.status
+            ),
+        ),
+    };
     Ok(ParentJoinChildCompletionEvidence {
         summary: summary_text,
         fingerprint_inputs: vec![
             format!("task_id={}", summary.task_id),
             format!("run_id={}", summary.run_id),
             format!("status={status}"),
+            format!("terminal_outcome_kind={terminal_outcome_kind}"),
             format!("parent_task_id={parent_task_id}"),
             format!("parent_run_id={parent_run_id}"),
             format!("source_candidate_id={source_candidate_id}"),
             format!("source_handoff_envelope_id={source_handoff_envelope_id}"),
             format!("source_handoff_envelope_fingerprint={source_handoff_envelope_fingerprint}"),
-            format!("completion_final_state={completion_final_state}"),
-            format!("completion_result_fingerprint={completion_result_fingerprint}"),
+            format!("terminal_final_state={terminal_final_state}"),
+            format!("terminal_result_fingerprint={terminal_result_fingerprint}"),
         ],
     })
+}
+
+fn child_failure_summary_preview(events: &[LedgerEvent]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+            )
+        })
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("reason"))
+        .and_then(Value::as_str)
+        .map(redact_secret)
+        .map(|reason| preview_with_limit(&reason, CHILD_FAILURE_SUMMARY_PREVIEW_CHARS))
+}
+
+fn child_failure_result_fingerprint(
+    events: &[LedgerEvent],
+    completion_result_fingerprint: Option<&str>,
+) -> String {
+    if let Some(fingerprint) =
+        completion_result_fingerprint.filter(|fingerprint| fingerprint.starts_with("sha256:"))
+    {
+        return fingerprint.to_string();
+    }
+
+    let failure_event = events.iter().rev().find(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+        )
+    });
+    let payload = failure_event.and_then(|event| event.payload.as_ref());
+    let reason = payload
+        .and_then(|payload| payload.get("reason"))
+        .and_then(Value::as_str)
+        .map(redact_secret)
+        .unwrap_or_else(|| "failed_child_reason_unavailable".to_string());
+    let reason_sha256 = payload
+        .and_then(|payload| payload.get("reason_sha256"))
+        .and_then(Value::as_str)
+        .filter(|fingerprint| fingerprint.starts_with("sha256:"))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("sha256:{}", hex_sha256(reason.as_bytes())));
+    let reason_chars = payload
+        .and_then(|payload| payload.get("reason_chars"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| reason.chars().count() as u64);
+    let provider = payload
+        .and_then(|payload| payload.get("provider"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let model = payload
+        .and_then(|payload| payload.get("model"))
+        .and_then(Value::as_str)
+        .unwrap_or("<none>");
+    let failure_event_kind = failure_event
+        .map(|event| format!("{:?}", event.kind))
+        .unwrap_or_else(|| "TaskFailed".to_string());
+    let canonical = json!({
+        "version": "child_failure_result_fingerprint_v1",
+        "terminal_status": "Failed",
+        "failure_event_kind": failure_event_kind,
+        "provider": provider,
+        "model": model,
+        "reason_chars": reason_chars,
+        "reason_sha256": reason_sha256,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn parent_join_child_completion_fingerprint(
     child_evidence: &[ParentJoinChildCompletionEvidence],
 ) -> (String, usize) {
     let mut inputs = vec![
-        "parent_join_child_completion_fingerprint_v2".to_string(),
+        "parent_join_child_completion_fingerprint_v3_terminal_outcome".to_string(),
         format!("child_count={}", child_evidence.len()),
     ];
     for evidence in child_evidence {
@@ -2594,8 +2761,11 @@ fn fail_llm_request(
     reason: &str,
     kind: LedgerEventKind,
 ) -> JsonRpcResponse<Value> {
-    let reason = redact_secret(reason);
-    if reason.contains("Prompt sensitive-content guard failed") {
+    let redacted_reason = redact_secret(reason);
+    let reason_preview = preview_with_limit(&redacted_reason, LLM_FAILURE_REASON_PREVIEW_CHARS);
+    let reason_chars = redacted_reason.chars().count();
+    let reason_sha256 = format!("sha256:{}", hex_sha256(redacted_reason.as_bytes()));
+    if redacted_reason.contains("Prompt sensitive-content guard failed") {
         let _ = store.tasks().append_task_event_with_payload(
             running,
             LedgerEventKind::PromptSensitiveScanFailed,
@@ -2614,7 +2784,10 @@ fn fail_llm_request(
         Some(json!({
             "provider": provider_kind_name(&selection.status.provider),
             "model": selection.status.model,
-            "reason": reason,
+            "reason": reason_preview.clone(),
+            "reason_chars": reason_chars,
+            "reason_sha256": reason_sha256,
+            "reason_truncated": reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
             "base_url": selection.status.base_url.as_deref().map(redact_secret),
             "strict": selection.strict,
             "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
@@ -2628,7 +2801,7 @@ fn fail_llm_request(
     error_response(
         id,
         -32603,
-        &format!("internal error: LLM request failed: {}", reason),
+        &format!("internal error: LLM request failed: {}", reason_preview),
     )
 }
 
@@ -15117,6 +15290,91 @@ mod tests {
         (parent_task_id, parent_run_id, child, parent_event_count)
     }
 
+    fn clear_llm_env_for_test() {
+        for key in [
+            "BROWNIE_LLM_PROVIDER",
+            "BROWNIE_LLM_BASE_URL",
+            "BROWNIE_LLM_MODEL",
+            "BROWNIE_LLM_API_KEY_ENV",
+            "BROWNIE_LLM_API_KEY",
+            "BROWNIE_LLM_STRICT",
+            "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
+        ] {
+            std::env::remove_var(key);
+        }
+    }
+
+    fn configure_strict_missing_openai_for_test() {
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        std::env::set_var("BROWNIE_LLM_STRICT", "true");
+        std::env::remove_var("BROWNIE_LLM_BASE_URL");
+        std::env::remove_var("BROWNIE_LLM_MODEL");
+        std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
+        std::env::remove_var("BROWNIE_LLM_API_KEY");
+    }
+
+    #[test]
+    fn llm_failure_reason_is_bounded_before_persistence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Bound failure reason","mode_id":"orchestrator"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let running = store
+            .tasks()
+            .update_task_status(&task_id, TaskStatus::Running, LedgerEventKind::TaskRunning)
+            .expect("mark running");
+        let long_reason = format!(
+            "{}LONG_FAILURE_REASON_TAIL_SHOULD_NOT_APPEAR",
+            "bounded failure reason ".repeat(80)
+        );
+        let _ = fail_llm_request(
+            &store,
+            &running,
+            json!(2),
+            default_fake_status(),
+            &long_reason,
+            LedgerEventKind::LlmRequestFailed,
+        );
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&running.run_id)
+            .expect("events");
+        let failure_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::LlmRequestFailed)
+            .and_then(|event| event.payload.as_ref())
+            .expect("failure payload");
+        let reason = failure_payload["reason"]
+            .as_str()
+            .expect("bounded failure reason");
+        assert!(reason.chars().count() <= LLM_FAILURE_REASON_PREVIEW_CHARS);
+        assert!(!reason.contains("LONG_FAILURE_REASON_TAIL_SHOULD_NOT_APPEAR"));
+        assert_eq!(failure_payload["reason_truncated"], true);
+        assert!(
+            failure_payload["reason_chars"]
+                .as_u64()
+                .expect("reason chars")
+                > LLM_FAILURE_REASON_PREVIEW_CHARS as u64
+        );
+        assert!(failure_payload["reason_sha256"]
+            .as_str()
+            .expect("reason sha")
+            .starts_with("sha256:"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
     #[test]
     fn task_run_accepts_valid_queued_child_task_with_provenance() {
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -15663,6 +15921,241 @@ mod tests {
         assert_eq!(completed_continuation_child.status, TaskStatus::Completed);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_parent_join_recovers_failed_controlled_child_without_auto_run() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, initial_child, _parent_event_count) =
+            start_parent_with_queued_child();
+
+        configure_strict_missing_openai_for_test();
+        let failed_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(failed_child_run.result.is_none());
+        assert_eq!(
+            failed_child_run.error.expect("failed child run error").code,
+            -32603
+        );
+        clear_llm_env_for_test();
+
+        let store = BrownieStore::new(temp.path());
+        let failed_child = store
+            .tasks()
+            .get_task(&initial_child.task_id)
+            .expect("get failed child")
+            .expect("failed child");
+        assert_eq!(failed_child.status, TaskStatus::Failed);
+        let failed_child_events = store
+            .tasks()
+            .read_ledger_events(&failed_child.run_id)
+            .expect("failed child events");
+        assert!(failed_child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(failed_child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::LlmRequestFailed));
+        assert!(failed_child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskFailed));
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &failed_child,
+                LedgerEventKind::PromptBuilt,
+                Some(json!({
+                    "prompt_preview": "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append failed child prompt marker");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &failed_child,
+                LedgerEventKind::ToolExecutionCompleted,
+                Some(json!({
+                    "tool_id": "workspace.read",
+                    "status": "Completed",
+                    "output_preview": "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR"
+                })),
+            )
+            .expect("append failed child raw marker");
+
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.error.is_none());
+        assert_eq!(
+            parent_join.result.expect("parent join result")["status"],
+            "Completed"
+        );
+
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent.status, TaskStatus::Completed);
+        let parent_children = store
+            .tasks()
+            .list_tasks()
+            .expect("list parent children")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(parent_children.len(), 2);
+        let recovery_child = parent_children
+            .iter()
+            .find(|record| record.task_id != failed_child.task_id)
+            .expect("recovery child");
+        assert_eq!(recovery_child.status, TaskStatus::Queued);
+        assert_eq!(
+            recovery_child
+                .source_intent_summary
+                .as_ref()
+                .expect("recovery source intent")
+                .request_reason,
+            "Recover failed controlled child task."
+        );
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_child.run_id)
+            .expect("recovery child events");
+        assert_eq!(recovery_events.len(), 1);
+        assert_eq!(recovery_events[0].kind, LedgerEventKind::TaskStarted);
+        assert!(!recovery_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events");
+        let continuation_prompt_preview = parent_events
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("prompt_preview"))
+            .and_then(Value::as_str)
+            .expect("continuation prompt preview");
+        assert!(continuation_prompt_preview.contains("failed_child task_id="));
+        assert!(continuation_prompt_preview.contains(&failed_child.task_id));
+        assert!(continuation_prompt_preview.contains("failure_result_fingerprint=sha256:"));
+        assert!(continuation_prompt_preview.contains("failure_summary_preview="));
+        assert!(!continuation_prompt_preview.contains("RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR"));
+        assert!(!continuation_prompt_preview
+            .contains("RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR"));
+        let continuation_consumptions = parent_events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(continuation_consumptions.len(), 1);
+        let continuation_envelope_payload = parent_events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .filter_map(|event| event.payload.as_ref())
+            .find(|payload| {
+                payload
+                    .get("continuation_materialization")
+                    .and_then(Value::as_bool)
+                    == Some(true)
+            })
+            .expect("failed child continuation envelope");
+        assert_eq!(
+            continuation_envelope_payload["required_capability"],
+            "continuation_subtask_materialization"
+        );
+        assert_eq!(
+            recovery_child
+                .source_handoff_envelope_fingerprint
+                .as_deref(),
+            continuation_envelope_payload["handoff_envelope_fingerprint"].as_str()
+        );
+
+        let parent_event_count_after_join = parent_events.len();
+        let repeated_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(repeated_join.result.is_none());
+        assert_eq!(repeated_join.error.expect("repeat join error").code, -32602);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&parent_run_id)
+                .expect("parent events after repeat")
+                .len(),
+            parent_event_count_after_join
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn failed_child_terminal_outcome_fingerprint_changes_with_failure_reason() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (_parent_task_id, _parent_run_id, initial_child, _parent_event_count) =
+            start_parent_with_queued_child();
+
+        configure_strict_missing_openai_for_test();
+        let failed_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(failed_child_run.result.is_none());
+        clear_llm_env_for_test();
+
+        let store = BrownieStore::new(temp.path());
+        let failed_child = store
+            .tasks()
+            .get_task(&initial_child.task_id)
+            .expect("get failed child")
+            .expect("failed child");
+        assert_eq!(failed_child.status, TaskStatus::Failed);
+
+        let first_evidence =
+            parent_join_child_completion_evidence(&store, &failed_child).expect("first evidence");
+        assert!(first_evidence.summary.contains("failed_child task_id="));
+        assert!(first_evidence
+            .summary
+            .contains("failure_result_fingerprint=sha256:"));
+        let (first_fingerprint, _) = parent_join_child_completion_fingerprint(&[first_evidence]);
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &failed_child,
+                LedgerEventKind::LlmRequestFailed,
+                Some(json!({
+                    "provider": "OpenAiCompatible",
+                    "model": "<none>",
+                    "reason": "different sanitized failed child outcome",
+                    "strict": true,
+                    "sensitive_guard": "off"
+                })),
+            )
+            .expect("append different failed outcome");
+        let second_evidence =
+            parent_join_child_completion_evidence(&store, &failed_child).expect("second evidence");
+        let (second_fingerprint, _) = parent_join_child_completion_fingerprint(&[second_evidence]);
+        assert_ne!(first_fingerprint, second_fingerprint);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
