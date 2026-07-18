@@ -1,0 +1,111 @@
+{
+  "phase": "M5.31",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "queued_child_orchestration_outcome_replay",
+  "forbidden_pattern": "new_diagnostics_rpc_or_replayed_parent_task_run_without_stable_queued_child_handles",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes initial parent task.run child handles stable across retry and polling when controlled queued child tasks already exist before parent-join continuation."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets unattended callers recover queued child task ids from the existing task.run contract without ledger scraping or diagnostics-only RPCs."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "queued_child_handle_replay",
+        "prompt": "Does existing parent task.run output replay bounded child-orchestration handles for existing queued controlled children?"
+      },
+      {
+        "id": "no_replay_mutation",
+        "prompt": "Does repeated parent task.run avoid parent TaskRunning, parent join consumption, handoff envelope, child TaskRecord, and child TaskRunning mutation?"
+      },
+      {
+        "id": "parent_inspection_compatibility",
+        "prompt": "Does existing parent inspection output remain consistent with the replayed child handles?"
+      },
+      {
+        "id": "prior_phase_compatibility",
+        "prompt": "Do M5.30 first materialization and M5.29 replay-safe recovery budget behavior remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw child prompts, scheduler handoff, child auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "queued_child_handle_replay": "Yes. TaskRunResult can replay child_orchestration_outcome for completed initial parent runs whose controlled child TaskRecords remain Queued before any parent-join continuation is consumed.",
+      "no_replay_mutation": "Yes. The replay path returns before task admission, so it appends no parent TaskRunning, parent join consumption, handoff envelope, child TaskRecord, or child TaskRunning event.",
+      "parent_inspection_compatibility": "Yes. Parent run.inspect and task.inspect continue to expose the same bounded child TaskRecord summaries.",
+      "prior_phase_compatibility": "Yes. M5.30 first materialization still returns the immediate outcome, and M5.29 recovery_cycle_budget_outcome replay still wins without child handles.",
+      "safety_boundary": "Yes. The phase adds no raw child prompt exposure, scheduler handoff, child auto-run, external worker, process exec expansion, network bypass, service control, patch apply, workspace mutation path, diagnostics RPC, or wrapper-only blocked summary."
+    }
+  },
+  "exit_criteria": [
+    "Existing parent task.run output replays bounded child-orchestration handles for existing queued controlled children before parent-join continuation.",
+    "Repeated initial parent task.run after child materialization appends no parent TaskRunning event.",
+    "Repeated initial parent task.run after child materialization appends no parent join consumption or handoff envelope event.",
+    "Repeated initial parent task.run after child materialization creates no child TaskRecord and no child TaskRunning event.",
+    "Existing parent inspection output remains consistent with the replayed child TaskRecord handles.",
+    "The replayed child-orchestration outcome reports materialized child ids/count and queued child ids/count.",
+    "The replayed child-orchestration outcome reports child_running_enabled=false and run_child_task_explicitly.",
+    "M5.30 first materialization child-orchestration outcome behavior remains intact.",
+    "M5.29 replay-safe recovery-cycle budget outcome replay still returns without child-orchestration handles.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-recovery tasks and initial controlled children preserve explicit task.run behavior.",
+    "No raw child prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "child_orchestration_outcome_for_replay",
+      "child_orchestration_outcome_for_existing_queued_children",
+      "child_orchestration_outcome_for_materialized_children",
+      "child_task_ids_for_parent_run",
+      "TaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "run_child_task_explicitly",
+      "task_run_replays_child_orchestration_outcome_for_existing_queued_child_without_mutation",
+      "task_run_returns_child_orchestration_outcome_for_materialized_queued_child",
+      "recovery_cycle_budget_outcome_for_replay",
+      "task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded",
+      "materialize_controlled_child_task_from_handoff_envelope",
+      "TaskRunning"
+    ],
+    "rust_protocol_tokens": [
+      "TaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "materialized_child_task_ids",
+      "queued_child_task_ids",
+      "child_running_enabled",
+      "next_action"
+    ],
+    "vsix_protocol_tokens": [
+      "TaskRunChildOrchestrationOutcome",
+      "TASK_RUN_CHILD_ORCHESTRATION_OUTCOME_KEYS",
+      "isTaskRunChildOrchestrationOutcome",
+      "child_orchestration_outcome",
+      "run_child_task_explicitly"
+    ],
+    "vsix_test_tokens": [
+      "validates parent task.run child-orchestration outcomes",
+      "child_running_enabled: true",
+      "scheduler_handoff",
+      "stdout: 'raw'"
+    ],
+    "architecture_doc_tokens": [
+      "child_orchestration_outcome",
+      "replayed from existing queued controlled child",
+      "run_child_task_explicitly"
+    ]
+  }
+}

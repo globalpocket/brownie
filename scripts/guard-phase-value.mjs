@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.30';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.30.json';
+const phase = 'M5.31';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.31.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'parent_task_run_child_orchestration_outcome',
-    `${phase} must declare the parent task.run child-orchestration outcome transition.`
+    manifest.concrete_capability_transition === 'queued_child_orchestration_outcome_replay',
+    `${phase} must declare the queued child-orchestration outcome replay transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_child_auto_run_without_parent_task_run_child_handles',
-    `${phase} must forbid diagnostics-only work or child auto-run without parent task.run child handles.`
+    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_replayed_parent_task_run_without_stable_queued_child_handles',
+    `${phase} must forbid diagnostics-only work or replayed parent task.run without stable queued child handles.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -76,12 +76,13 @@ function validateManifest(manifest) {
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
     'Existing parent task.run output',
-    'child-orchestration handles',
-    'newly materialized controlled queued children',
+    'replays bounded child-orchestration handles',
+    'existing queued controlled children',
     'Existing parent inspection output',
     'child TaskRecord',
     'TaskRunning',
     'run_child_task_explicitly',
+    'M5.30 first materialization',
     'M5.29 replay-safe',
     'In-budget recovery-cycle child',
     'Non-recovery tasks',
@@ -125,16 +126,21 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
+    'child_orchestration_outcome_for_replay',
+    'child_orchestration_outcome_for_existing_queued_children',
     'child_orchestration_outcome_for_materialized_children',
     'child_task_ids_for_parent_run',
     'TaskRunChildOrchestrationOutcome',
     'child_orchestration_outcome',
     'run_child_task_explicitly',
+    'task_run_replays_child_orchestration_outcome_for_existing_queued_child_without_mutation',
     'task_run_returns_child_orchestration_outcome_for_materialized_queued_child',
     'recovery_cycle_budget_outcome_for_replay',
     'task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization',
     'task_run_rejects_over_budget_recovery_cycle_child_before_running',
     'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
+    'ParentJoinContinuationFingerprintConsumed',
+    'SubtaskDispatchHandoffEnvelopeRecorded',
     'materialize_controlled_child_task_from_handoff_envelope',
     'TaskRunning'
   ]) {
