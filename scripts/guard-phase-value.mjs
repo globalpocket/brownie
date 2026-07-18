@@ -80,6 +80,7 @@ function validateManifest(manifest) {
     'same failed child result set remains rejected',
     'recovery child',
     'failure_result_fingerprint',
+    'bounded before persistence',
     'parent_join_admission_id',
     'explicit task.run',
     'No child auto-run',
@@ -129,6 +130,8 @@ function validateSourceEvidence(manifest) {
   for (const token of [
     'child_has_terminal_parent_join_outcome',
     'child_failure_result_fingerprint',
+    'LLM_FAILURE_REASON_PREVIEW_CHARS',
+    'llm_failure_reason_is_bounded_before_persistence',
     'failed_child task_id=',
     'failure_result_fingerprint',
     'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',

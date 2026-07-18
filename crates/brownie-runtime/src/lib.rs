@@ -312,6 +312,7 @@ const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
 const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
 const CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
 const CHILD_FAILURE_SUMMARY_PREVIEW_CHARS: usize = 512;
+const LLM_FAILURE_REASON_PREVIEW_CHARS: usize = 1024;
 const MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES: usize = 12;
 
 pub fn runtime_status() -> RuntimeStatus {
@@ -2582,6 +2583,16 @@ fn child_failure_result_fingerprint(
         .and_then(Value::as_str)
         .map(redact_secret)
         .unwrap_or_else(|| "failed_child_reason_unavailable".to_string());
+    let reason_sha256 = payload
+        .and_then(|payload| payload.get("reason_sha256"))
+        .and_then(Value::as_str)
+        .filter(|fingerprint| fingerprint.starts_with("sha256:"))
+        .map(ToString::to_string)
+        .unwrap_or_else(|| format!("sha256:{}", hex_sha256(reason.as_bytes())));
+    let reason_chars = payload
+        .and_then(|payload| payload.get("reason_chars"))
+        .and_then(Value::as_u64)
+        .unwrap_or_else(|| reason.chars().count() as u64);
     let provider = payload
         .and_then(|payload| payload.get("provider"))
         .and_then(Value::as_str)
@@ -2599,8 +2610,8 @@ fn child_failure_result_fingerprint(
         "failure_event_kind": failure_event_kind,
         "provider": provider,
         "model": model,
-        "reason_chars": reason.chars().count(),
-        "reason_sha256": format!("sha256:{}", hex_sha256(reason.as_bytes())),
+        "reason_chars": reason_chars,
+        "reason_sha256": reason_sha256,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
@@ -2750,8 +2761,11 @@ fn fail_llm_request(
     reason: &str,
     kind: LedgerEventKind,
 ) -> JsonRpcResponse<Value> {
-    let reason = redact_secret(reason);
-    if reason.contains("Prompt sensitive-content guard failed") {
+    let redacted_reason = redact_secret(reason);
+    let reason_preview = preview_with_limit(&redacted_reason, LLM_FAILURE_REASON_PREVIEW_CHARS);
+    let reason_chars = redacted_reason.chars().count();
+    let reason_sha256 = format!("sha256:{}", hex_sha256(redacted_reason.as_bytes()));
+    if redacted_reason.contains("Prompt sensitive-content guard failed") {
         let _ = store.tasks().append_task_event_with_payload(
             running,
             LedgerEventKind::PromptSensitiveScanFailed,
@@ -2770,7 +2784,10 @@ fn fail_llm_request(
         Some(json!({
             "provider": provider_kind_name(&selection.status.provider),
             "model": selection.status.model,
-            "reason": reason,
+            "reason": reason_preview.clone(),
+            "reason_chars": reason_chars,
+            "reason_sha256": reason_sha256,
+            "reason_truncated": reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
             "base_url": selection.status.base_url.as_deref().map(redact_secret),
             "strict": selection.strict,
             "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
@@ -2784,7 +2801,7 @@ fn fail_llm_request(
     error_response(
         id,
         -32603,
-        &format!("internal error: LLM request failed: {}", reason),
+        &format!("internal error: LLM request failed: {}", reason_preview),
     )
 }
 
@@ -15294,6 +15311,68 @@ mod tests {
         std::env::remove_var("BROWNIE_LLM_MODEL");
         std::env::remove_var("BROWNIE_LLM_API_KEY_ENV");
         std::env::remove_var("BROWNIE_LLM_API_KEY");
+    }
+
+    #[test]
+    fn llm_failure_reason_is_bounded_before_persistence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Bound failure reason","mode_id":"orchestrator"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let running = store
+            .tasks()
+            .update_task_status(&task_id, TaskStatus::Running, LedgerEventKind::TaskRunning)
+            .expect("mark running");
+        let long_reason = format!(
+            "{}LONG_FAILURE_REASON_TAIL_SHOULD_NOT_APPEAR",
+            "bounded failure reason ".repeat(80)
+        );
+        let _ = fail_llm_request(
+            &store,
+            &running,
+            json!(2),
+            default_fake_status(),
+            &long_reason,
+            LedgerEventKind::LlmRequestFailed,
+        );
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&running.run_id)
+            .expect("events");
+        let failure_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::LlmRequestFailed)
+            .and_then(|event| event.payload.as_ref())
+            .expect("failure payload");
+        let reason = failure_payload["reason"]
+            .as_str()
+            .expect("bounded failure reason");
+        assert!(reason.chars().count() <= LLM_FAILURE_REASON_PREVIEW_CHARS);
+        assert!(!reason.contains("LONG_FAILURE_REASON_TAIL_SHOULD_NOT_APPEAR"));
+        assert_eq!(failure_payload["reason_truncated"], true);
+        assert!(
+            failure_payload["reason_chars"]
+                .as_u64()
+                .expect("reason chars")
+                > LLM_FAILURE_REASON_PREVIEW_CHARS as u64
+        );
+        assert!(failure_payload["reason_sha256"]
+            .as_str()
+            .expect("reason sha")
+            .starts_with("sha256:"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]

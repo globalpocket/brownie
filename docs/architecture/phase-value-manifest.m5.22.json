@@ -63,6 +63,7 @@
     "An approved recovery child subtask.spawn materializes a controlled queued child TaskRecord.",
     "The recovery child is queued and requires explicit task.run; No child auto-run occurs.",
     "Continuation records include parent_join_admission_id for the failed-child recovery admission.",
+    "LLM failure reasons are bounded before persistence and retain reason_sha256 plus reason_chars for replay identity.",
     "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
     "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
   ],
@@ -70,6 +71,8 @@
     "rust_runtime_tokens": [
       "child_has_terminal_parent_join_outcome",
       "child_failure_result_fingerprint",
+      "LLM_FAILURE_REASON_PREVIEW_CHARS",
+      "llm_failure_reason_is_bounded_before_persistence",
       "failed_child task_id=",
       "failure_result_fingerprint",
       "task_run_parent_join_recovers_failed_controlled_child_without_auto_run",
