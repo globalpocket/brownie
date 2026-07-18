@@ -7,7 +7,10 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
-use brownie_protocol::{ChildTaskSourceIntentSummary, TaskRecord, TaskStartParams, TaskStatus};
+use brownie_protocol::{
+    ChildTaskSourceIntentSummary, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus,
+};
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
@@ -61,6 +64,7 @@ pub struct ChildTaskStartParams {
     pub source_handoff_envelope_id: String,
     pub source_handoff_envelope_fingerprint: String,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
+    pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +106,7 @@ impl TaskStore {
             source_handoff_envelope_id: None,
             source_handoff_envelope_fingerprint: None,
             source_intent_summary: None,
+            recovery_cycle_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -131,6 +136,7 @@ impl TaskStore {
             source_handoff_envelope_id: Some(params.source_handoff_envelope_id),
             source_handoff_envelope_fingerprint: Some(params.source_handoff_envelope_fingerprint),
             source_intent_summary: params.source_intent_summary,
+            recovery_cycle_provenance: params.recovery_cycle_provenance,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -150,6 +156,7 @@ impl TaskStore {
                 "source_handoff_envelope_id": record.source_handoff_envelope_id.clone(),
                 "source_handoff_envelope_fingerprint": record.source_handoff_envelope_fingerprint.clone(),
                 "source_intent_summary": record.source_intent_summary.clone(),
+                "recovery_cycle_provenance": record.recovery_cycle_provenance.clone(),
                 "execution_enabled": false,
                 "scheduler_handoff_enabled": false,
                 "reason": "Controlled child task materialized from parent handoff envelope; child execution remains disabled."
@@ -767,6 +774,7 @@ mod tests {
                         field_count: 2,
                     },
                 }),
+                recovery_cycle_provenance: None,
             })
             .expect("start child");
 

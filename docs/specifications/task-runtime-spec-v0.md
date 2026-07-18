@@ -315,3 +315,13 @@ M5.18 records a deterministic summary-safe child completion fingerprint when par
 M5.14 stores a sanitized `source_intent_summary` on controlled child `TaskRecord` state when the child is materialized from an accepted handoff envelope. The summary is reconstructed from the parent run's approved `SubtaskOrchestrationQueued` evidence and includes only `tool_id`, `required_action`, bounded `request_reason`, and bounded `input_summary`.
 
 The child goal is derived from the approved source intent request reason and stable source candidate id. This keeps child task state useful for explicit child `task.run` without adding scheduler auto-dispatch, external workers, raw input persistence, patch apply, process execution expansion, network bypass, service control, direct workspace mutation, or another blocked summary event wrapper.
+
+## M5.25 recovery-cycle child provenance
+
+M5.25 extends controlled child `TaskRecord` state with optional `recovery_cycle_provenance`. The field is set only when a child is materialized from an accepted parent-join handoff envelope with `parent_join_recovery_cycle = true`; it is `null` for normal tasks, initial child materialization, and non-recovery parent-join continuations.
+
+The persisted object is `RecoveryCycleChildProvenance`. It includes `parent_join_admission_id`, `parent_join_child_completion_fingerprint`, `parent_join_child_completion_child_count`, `parent_join_terminal_failed_child_count`, `parent_join_terminal_completed_child_count`, `parent_join_recovery_cycle`, and `parent_join_recovery_cycle_depth`. Counts describe the bounded terminal controlled-child set admitted by the parent join; failed plus completed counts must equal the child completion child count. Recovery-cycle depth is the parent-join cycle depth and must be at least 1 for recovery-cycle children.
+
+Materialization is fail-closed for parent-join provenance. If a parent-join envelope has `parent_join_admission_id`, all provenance fields are validated before creating a child; missing fields, empty admission IDs, malformed `sha256:<64 lowercase hex>` completion fingerprints, inconsistent counts, or invalid recovery/depth combinations reject materialization and leave child state unchanged. Existing state files without `recovery_cycle_provenance` remain readable as `null`.
+
+The child `TaskStarted` payload, direct `task.inspect`, and parent `run.inspect` / `task.inspect` child summaries expose the same bounded object. The field never contains raw prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text.

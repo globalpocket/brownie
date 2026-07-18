@@ -2335,6 +2335,7 @@ pub struct ChildTaskInspectSummary {
     pub source_handoff_envelope_id: Option<String>,
     pub source_handoff_envelope_fingerprint: Option<String>,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
+    pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
@@ -2351,6 +2352,17 @@ pub struct ChildTaskSourceIntentSummary {
     pub requested_goal_preview: Option<String>,
     pub requested_mode_id: Option<String>,
     pub input_summary: ToolIntentInputSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryCycleChildProvenance {
+    pub parent_join_admission_id: String,
+    pub parent_join_child_completion_fingerprint: String,
+    pub parent_join_child_completion_child_count: usize,
+    pub parent_join_terminal_failed_child_count: usize,
+    pub parent_join_terminal_completed_child_count: usize,
+    pub parent_join_recovery_cycle: bool,
+    pub parent_join_recovery_cycle_depth: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2376,6 +2388,8 @@ pub struct TaskRecord {
     pub source_handoff_envelope_id: Option<String>,
     pub source_handoff_envelope_fingerprint: Option<String>,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
+    #[serde(default)]
+    pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
     pub created_at: String,
     pub updated_at: String,
 }

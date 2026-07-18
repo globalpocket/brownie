@@ -179,6 +179,16 @@ export interface ChildTaskSourceIntentSummary {
   input_summary: ToolIntentInputSummary;
 }
 
+export interface RecoveryCycleChildProvenance {
+  parent_join_admission_id: string;
+  parent_join_child_completion_fingerprint: string;
+  parent_join_child_completion_child_count: number;
+  parent_join_terminal_failed_child_count: number;
+  parent_join_terminal_completed_child_count: number;
+  parent_join_recovery_cycle: boolean;
+  parent_join_recovery_cycle_depth: number;
+}
+
 export interface ToolIntentParseResult {
   mode_id: string;
   parser: ToolIntentParserSummary;
@@ -229,6 +239,7 @@ export interface TaskRecord {
   source_handoff_envelope_id?: string | null;
   source_handoff_envelope_fingerprint?: string | null;
   source_intent_summary?: ChildTaskSourceIntentSummary | null;
+  recovery_cycle_provenance?: RecoveryCycleChildProvenance | null;
   created_at: string;
   updated_at: string;
 }
@@ -288,6 +299,7 @@ export interface ChildTaskInspectSummary {
   source_handoff_envelope_id?: string | null;
   source_handoff_envelope_fingerprint?: string | null;
   source_intent_summary?: ChildTaskSourceIntentSummary | null;
+  recovery_cycle_provenance?: RecoveryCycleChildProvenance | null;
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
@@ -2493,6 +2505,42 @@ function isChildTaskSourceIntentSummary(value: unknown): value is ChildTaskSourc
   );
 }
 
+const RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS = new Set([
+  'parent_join_admission_id',
+  'parent_join_child_completion_fingerprint',
+  'parent_join_child_completion_child_count',
+  'parent_join_terminal_failed_child_count',
+  'parent_join_terminal_completed_child_count',
+  'parent_join_recovery_cycle',
+  'parent_join_recovery_cycle_depth',
+]);
+
+function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
+  return Object.keys(value).every((key) => allowedKeys.has(key));
+}
+
+function isSha256Fingerprint(value: string): boolean {
+  return /^sha256:[0-9a-f]{64}$/.test(value);
+}
+
+export function isRecoveryCycleChildProvenance(value: unknown): value is RecoveryCycleChildProvenance {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS) &&
+    typeof value.parent_join_admission_id === 'string' &&
+    value.parent_join_admission_id.trim().length > 0 &&
+    typeof value.parent_join_child_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.parent_join_child_completion_fingerprint) &&
+    isNonNegativeInteger(value.parent_join_child_completion_child_count) &&
+    isNonNegativeInteger(value.parent_join_terminal_failed_child_count) &&
+    isNonNegativeInteger(value.parent_join_terminal_completed_child_count) &&
+    value.parent_join_terminal_failed_child_count + value.parent_join_terminal_completed_child_count === value.parent_join_child_completion_child_count &&
+    typeof value.parent_join_recovery_cycle === 'boolean' &&
+    isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
+    ((value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth >= 1) || (!value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth === 0))
+  );
+}
+
 function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejectedSummary {
   return (
     isRecord(value) &&
@@ -2576,6 +2624,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
     (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
+    (value.recovery_cycle_provenance === undefined || value.recovery_cycle_provenance === null || isRecoveryCycleChildProvenance(value.recovery_cycle_provenance)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -2608,6 +2657,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     (value.source_handoff_envelope_id === undefined || value.source_handoff_envelope_id === null || typeof value.source_handoff_envelope_id === 'string') &&
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
     (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
+    (value.recovery_cycle_provenance === undefined || value.recovery_cycle_provenance === null || isRecoveryCycleChildProvenance(value.recovery_cycle_provenance)) &&
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&

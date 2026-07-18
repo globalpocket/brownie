@@ -117,6 +117,16 @@ Parent run inspection may now list multiple controlled child tasks materialized 
 
 Inspection remains observational. It must not trigger child execution, scheduler handoff, workspace writes, patch apply, process execution, network access, service control, or raw input exposure.
 
+## M5.25 recovery-cycle child provenance inspection
+
+Direct child `task.inspect` may return `task.recovery_cycle_provenance` when the inspected child was materialized from an accepted parent-join recovery-cycle handoff envelope. Parent `run.inspect` and parent `task.inspect` expose the same object on the matching `child_tasks[].recovery_cycle_provenance` item.
+
+The field is `null` for tasks that are not recovery-cycle children, including normal parent tasks, initial controlled children, and non-recovery parent-join continuation children. Missing persisted fields from older `TaskRecord` state also read as `null`.
+
+`RecoveryCycleChildProvenance` is bounded inspection data only. It contains `parent_join_admission_id`, `parent_join_child_completion_fingerprint`, `parent_join_child_completion_child_count`, `parent_join_terminal_failed_child_count`, `parent_join_terminal_completed_child_count`, `parent_join_recovery_cycle`, and `parent_join_recovery_cycle_depth`. Inspection clients must treat the count fields as the terminal controlled-child evidence set that admitted the parent join, and the depth as the recovery-cycle depth used by the parent-join replay guard.
+
+Inspection must not expose raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text. It remains read-only and must not run child tasks or materialize scheduler handoff.
+
 ## Phase 2.1 LLM metadata redaction
 
 Run inspection may show LLM provider metadata and `LlmRequestFailed` / `SecondPassLlmRequestFailed` summaries, but all secret-bearing values must be redacted. API keys, Authorization headers, Bearer tokens, and URL query strings are not inspection data. `BROWNIE_LLM_STRICT` and fallback-to-Fake status are observable through `llm.status`; request ledger metadata may include redacted `base_url` and `strict` so users can verify which configured provider path was used.

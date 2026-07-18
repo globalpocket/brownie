@@ -1,0 +1,135 @@
+{
+  "phase": "M5.25",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "recovery_cycle_child_provenance_inspection",
+  "forbidden_pattern": "additional_blocked_summary_event_wrapper_or_diagnostics_only_report_without_recovery_cycle_child_provenance_runtime_progress",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes repeated recovery-cycle child tasks self-describing through bounded parent-join provenance that can be inspected after materialization."
+    },
+    {
+      "capability": "agent_loop_integration",
+      "relationship": "Lets parent and child inspection APIs expose the same bounded continuation context that the Rust-owned parent agent loop used to admit the recovery-cycle child."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Removes an operator/debugging blocker by making recovery-cycle child lineage inspectable without raw prompts, raw outputs, scheduler handoff, or child auto-run."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "task_record_provenance",
+        "prompt": "Does the repeated recovery-cycle child TaskRecord persist bounded recovery-cycle provenance?"
+      },
+      {
+        "id": "direct_child_inspection",
+        "prompt": "Does direct child task.inspect expose the same bounded recovery-cycle provenance?"
+      },
+      {
+        "id": "parent_run_inspection",
+        "prompt": "Does parent run.inspect expose the repeated recovery-cycle child provenance through child_tasks?"
+      },
+      {
+        "id": "parent_task_inspection",
+        "prompt": "Does parent task.inspect expose the repeated recovery-cycle child provenance through child_tasks?"
+      },
+      {
+        "id": "bounded_fields_only",
+        "prompt": "Are the exposed provenance fields limited to bounded IDs, fingerprints, counts, and booleans?"
+      },
+      {
+        "id": "fail_closed_validation",
+        "prompt": "Does malformed parent-join provenance reject materialization instead of creating a child with missing lineage?"
+      },
+      {
+        "id": "protocol_spec_alignment",
+        "prompt": "Are the public protocol and inspection specifications updated for recovery_cycle_provenance?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid scheduler handoff, auto child run, external workers, process exec expansion, network bypass, service control, patch apply, diagnostics RPCs, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "task_record_provenance": "Yes. The repeated recovery-cycle child TaskRecord stores RecoveryCycleChildProvenance with parent_join_admission_id, parent_join_child_completion_fingerprint, terminal child counts, recovery-cycle flag, and recovery-cycle depth.",
+      "direct_child_inspection": "Yes. Direct child task.inspect returns task.recovery_cycle_provenance with the same bounded RecoveryCycleChildProvenance values.",
+      "parent_run_inspection": "Yes. Parent run.inspect returns the repeated recovery-cycle child under child_tasks with recovery_cycle_provenance populated.",
+      "parent_task_inspection": "Yes. Parent task.inspect returns the parent run child_tasks summary with the repeated recovery-cycle child's recovery_cycle_provenance populated.",
+      "bounded_fields_only": "Yes. The provenance object contains only parent_join_admission_id, parent_join_child_completion_fingerprint, parent_join_child_completion_child_count, parent_join_terminal_failed_child_count, parent_join_terminal_completed_child_count, parent_join_recovery_cycle, and parent_join_recovery_cycle_depth.",
+      "fail_closed_validation": "Yes. Parent-join envelopes with parent_join_admission_id validate all provenance fields, reject malformed sha256:<64 lowercase hex> fingerprints, enforce failed plus completed counts against the total, and fail materialization before creating a child when malformed.",
+      "protocol_spec_alignment": "Yes. runtime-protocol-spec-v0.md, task-runtime-spec-v0.md, and run-inspection-spec-v0.md document null conditions, count meanings, cycle depth, backward compatibility, and inspection surfaces.",
+      "safety_boundary": "Yes. The phase adds no scheduler handoff, child auto-run, external worker, patch apply, direct workspace mutation path, service control, network bypass, diagnostics RPC, or process execution expansion."
+    }
+  },
+  "exit_criteria": [
+    "A repeated recovery-cycle child TaskRecord stores a bounded RecoveryCycleChildProvenance object.",
+    "The repeated recovery-cycle child exposes recovery_cycle_provenance through direct child task.inspect.",
+    "The parent run.inspect child_tasks summary exposes the repeated recovery-cycle child's recovery_cycle_provenance.",
+    "The parent task.inspect child_tasks summary exposes the repeated recovery-cycle child's recovery_cycle_provenance.",
+    "The provenance includes parent_join_admission_id and parent_join_child_completion_fingerprint.",
+    "The provenance includes parent_join_child_completion_child_count, parent_join_terminal_failed_child_count, and parent_join_terminal_completed_child_count.",
+    "The provenance includes parent_join_recovery_cycle and parent_join_recovery_cycle_depth.",
+    "Parent-join provenance validation is fail-closed and rejects malformed envelopes before child materialization.",
+    "The parent_join_child_completion_fingerprint must use sha256:<64 lowercase hex> form.",
+    "The failed plus completed counts must equal parent_join_child_completion_child_count.",
+    "The public protocol specs document recovery_cycle_provenance null conditions, count meanings, cycle depth, backward compatibility, and inspection surfaces.",
+    "Every child execution remains explicit task.run; No child auto-run occurs.",
+    "No raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_protocol_tokens": [
+      "RecoveryCycleChildProvenance",
+      "recovery_cycle_provenance"
+    ],
+    "rust_store_tokens": [
+      "ChildTaskStartParams",
+      "RecoveryCycleChildProvenance",
+      "recovery_cycle_provenance"
+    ],
+    "rust_runtime_tokens": [
+      "recovery_cycle_child_provenance_from_handoff_envelope",
+      "task_run_parent_join_repeated_recovery_cycle_materializes_next_child_without_auto_run",
+      "recovery_cycle_child_provenance_validation_rejects_invalid_envelopes",
+      "invalid_recovery_cycle_handoff_envelope_does_not_materialize_child",
+      "is_sha256_fingerprint",
+      "parent_join_admission_id",
+      "parent_join_child_completion_fingerprint",
+      "parent_join_recovery_cycle_depth",
+      "task.inspect",
+      "run.inspect",
+      "child_tasks"
+    ],
+    "vsix_protocol_tokens": [
+      "RecoveryCycleChildProvenance",
+      "isRecoveryCycleChildProvenance",
+      "isSha256Fingerprint",
+      "hasOnlyKeys",
+      "recovery_cycle_provenance"
+    ],
+    "vsix_test_tokens": [
+      "validates recovery-cycle child provenance invariants",
+      "parent_join_child_completion_fingerprint: 'sha256:not-hex'",
+      "content: 'raw child prompt'"
+    ],
+    "runtime_protocol_spec_tokens": [
+      "M5.25 recovery-cycle child provenance inspection",
+      "sha256:<64 lowercase hex>",
+      "Existing persisted `TaskRecord` state remains backward compatible"
+    ],
+    "task_runtime_spec_tokens": [
+      "M5.25 recovery-cycle child provenance",
+      "Materialization is fail-closed",
+      "Existing state files without `recovery_cycle_provenance` remain readable as `null`"
+    ],
+    "run_inspection_spec_tokens": [
+      "M5.25 recovery-cycle child provenance inspection",
+      "child_tasks[].recovery_cycle_provenance",
+      "read as `null`"
+    ]
+  }
+}
