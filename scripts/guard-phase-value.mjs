@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.21';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.21.json';
+const phase = 'M5.22';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.22.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'multi_cycle_parent_child_orchestration',
-    `${phase} must declare the multi-cycle parent/child orchestration transition.`
+    manifest.concrete_capability_transition === 'terminal_child_failure_recovery_continuation',
+    `${phase} must declare the terminal child failure recovery continuation transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_multi_cycle_parent_child_runtime_progress',
-    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without multi-cycle runtime progress.`
+    manifest.forbidden_pattern === 'additional_blocked_summary_event_wrapper_or_scheduler_auto_dispatch_without_failed_child_recovery_runtime_progress',
+    `${phase} must forbid wrapper-only work or scheduler auto-dispatch without failed-child recovery runtime progress.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,12 +75,12 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'two explicit continuation cycles',
-    'Completing a continuation-produced child changes the parent join fingerprint',
-    'same completed child result set remains rejected',
-    'second continuation cycle can materialize',
+    'failed controlled child',
+    'failed_child',
+    'same failed child result set remains rejected',
+    'recovery child',
+    'failure_result_fingerprint',
     'parent_join_admission_id',
-    'Re-running materialization does not duplicate',
     'explicit task.run',
     'No child auto-run',
     'No raw child prompts',
@@ -127,12 +127,14 @@ function validateSourceEvidence(manifest) {
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   const storeText = readText('crates/brownie-store/src/lib.rs');
   for (const token of [
-    'parent_join_continuation_window',
-    'queued_subtask_ids_from_events',
-    'append_parent_join_continuation_handoff_envelope_recorded',
+    'child_has_terminal_parent_join_outcome',
+    'child_failure_result_fingerprint',
+    'failed_child task_id=',
+    'failure_result_fingerprint',
+    'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',
+    'failed_child_terminal_outcome_fingerprint_changes_with_failure_reason',
     'parent_join_admission_id',
-    'multi-envelope idempotent materialization',
-    'task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates',
+    'append_parent_join_continuation_handoff_envelope_recorded',
     'materialize_controlled_child_task_from_handoff_envelope',
     'validate_controlled_queued_child_task_provenance'
   ]) {
