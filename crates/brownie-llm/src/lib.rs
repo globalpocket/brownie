@@ -278,6 +278,24 @@ impl FakeLlm {
             .join("\n")
             .to_lowercase();
         if prompt.contains("failed_child")
+            && prompt.matches("completed_child").count() >= 2
+            && prompt.contains("orchestrator")
+        {
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "subtask.spawn",
+                    "reason": "Continue repeated recovery cycle after second explicit recovery child completion."
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM repeated recovery-cycle continuation request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
+            };
+        }
+        if prompt.contains("failed_child")
             && prompt.contains("completed_child")
             && prompt.contains("orchestrator")
         {
