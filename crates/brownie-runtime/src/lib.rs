@@ -106,12 +106,12 @@ use brownie_protocol::{
     RunEventsParams, RunEventsResult, RunInspectParams, RunInspectResult, RunInspectSummary,
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunParams, TaskRunResult,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
+    TaskRunParams, TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
@@ -1764,6 +1764,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
+                    child_orchestration_outcome: None,
                 }),
             );
         }
@@ -2000,9 +2001,22 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
     }
+    let child_task_ids_before_materialization =
+        match child_task_ids_for_parent_run(&store, &running.run_id) {
+            Ok(child_task_ids) => child_task_ids,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
     if let Err(error) = materialize_controlled_child_task_from_handoff_envelope(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    let child_orchestration_outcome = match child_orchestration_outcome_for_materialized_children(
+        &store,
+        &running.run_id,
+        &child_task_ids_before_materialization,
+    ) {
+        Ok(outcome) => outcome,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -2163,6 +2177,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_summary: agent_loop_completion_summary,
                 },
                 recovery_cycle_budget_outcome,
+                child_orchestration_outcome,
             }),
         ),
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
@@ -10288,6 +10303,69 @@ fn payload_usize(payload: &Value, key: &str) -> Option<usize> {
         .and_then(|value| usize::try_from(value).ok())
 }
 
+fn child_task_ids_for_parent_run(
+    store: &BrownieStore,
+    parent_run_id: &str,
+) -> Result<Vec<String>, String> {
+    let mut child_task_ids = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id))
+        .map(|record| record.task_id)
+        .collect::<Vec<_>>();
+    child_task_ids.sort();
+    Ok(child_task_ids)
+}
+
+fn child_orchestration_outcome_for_materialized_children(
+    store: &BrownieStore,
+    parent_run_id: &str,
+    child_task_ids_before_materialization: &[String],
+) -> Result<Option<TaskRunChildOrchestrationOutcome>, String> {
+    let mut materialized_children = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id))
+        .filter(|record| !child_task_ids_before_materialization.contains(&record.task_id))
+        .filter(|record| {
+            record.source_candidate_id.is_some()
+                && record.source_handoff_envelope_id.is_some()
+                && record.source_handoff_envelope_fingerprint.is_some()
+        })
+        .collect::<Vec<_>>();
+    materialized_children.sort_by(|left, right| left.task_id.cmp(&right.task_id));
+    if materialized_children.is_empty() {
+        return Ok(None);
+    }
+
+    let materialized_child_task_ids = materialized_children
+        .iter()
+        .map(|record| record.task_id.clone())
+        .collect::<Vec<_>>();
+    let queued_child_task_ids = materialized_children
+        .iter()
+        .filter(|record| record.status == TaskStatus::Queued)
+        .map(|record| record.task_id.clone())
+        .collect::<Vec<_>>();
+    if queued_child_task_ids.is_empty() {
+        return Ok(None);
+    }
+
+    Ok(Some(TaskRunChildOrchestrationOutcome {
+        parent_run_id: parent_run_id.to_string(),
+        materialized_child_count: materialized_child_task_ids.len(),
+        queued_child_count: queued_child_task_ids.len(),
+        materialized_child_task_ids,
+        queued_child_task_ids,
+        child_running_enabled: false,
+        next_action: "run_child_task_explicitly".to_string(),
+    }))
+}
+
 fn child_task_inspect_summary(
     store: &BrownieStore,
     task: &TaskRecord,
@@ -15377,6 +15455,132 @@ mod tests {
                 LedgerEventKind::TaskCompleted,
             ]
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_returns_child_orchestration_outcome_for_materialized_queued_child() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run parent orchestrator","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let parent_task_id = start_result["task_id"]
+            .as_str()
+            .expect("parent task id")
+            .to_string();
+        let parent_run_id = start_result["run_id"]
+            .as_str()
+            .expect("parent run id")
+            .to_string();
+
+        let parent_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_run.error.is_none());
+        let parent_run_result = parent_run.result.expect("parent run result");
+        assert_eq!(parent_run_result["status"], "Completed");
+        assert!(parent_run_result
+            .get("recovery_cycle_budget_outcome")
+            .is_none());
+        let outcome = parent_run_result["child_orchestration_outcome"].clone();
+        assert_eq!(outcome["parent_run_id"], parent_run_id);
+        assert_eq!(outcome["materialized_child_count"], 1);
+        assert_eq!(outcome["queued_child_count"], 1);
+        assert_eq!(outcome["child_running_enabled"], false);
+        assert_eq!(outcome["next_action"], "run_child_task_explicitly");
+
+        let materialized_child_task_ids =
+            payload_string_array(&outcome, "materialized_child_task_ids");
+        let queued_child_task_ids = payload_string_array(&outcome, "queued_child_task_ids");
+        assert_eq!(materialized_child_task_ids.len(), 1);
+        assert_eq!(queued_child_task_ids, materialized_child_task_ids);
+
+        let serialized_outcome = outcome.to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "requested_goal_preview",
+            "request_reason",
+            "raw child prompt",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+        ] {
+            assert!(!serialized_outcome.contains(raw_marker));
+        }
+
+        let store = BrownieStore::new(temp.path());
+        let child_tasks = store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(child_tasks.len(), 1);
+        let child = &child_tasks[0];
+        assert_eq!(child.status, TaskStatus::Queued);
+        assert_eq!(materialized_child_task_ids, vec![child.task_id.clone()]);
+        assert_eq!(
+            child.parent_task_id.as_deref(),
+            Some(parent_task_id.as_str())
+        );
+        assert_eq!(child.parent_run_id.as_deref(), Some(parent_run_id.as_str()));
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        assert_eq!(child_events.len(), 1);
+        assert_eq!(child_events[0].kind, LedgerEventKind::TaskStarted);
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        let parent_run_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect.error.is_none());
+        let parent_run_inspect_result = parent_run_inspect
+            .result
+            .expect("parent run inspect result");
+        assert_eq!(
+            payload_string_array(&parent_run_inspect_result["run"], "child_task_ids"),
+            materialized_child_task_ids
+        );
+        assert_eq!(parent_run_inspect_result["run"]["child_task_count"], 1);
+
+        let parent_task_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.inspect","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_task_inspect.error.is_none());
+        let parent_task_inspect_result = parent_task_inspect
+            .result
+            .expect("parent task inspect result");
+        assert_eq!(
+            payload_string_array(&parent_task_inspect_result["run"], "child_task_ids"),
+            materialized_child_task_ids
+        );
+        assert_eq!(parent_task_inspect_result["run"]["child_task_count"], 1);
+
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.error.is_none());
+        let child_run_result = child_run.result.expect("child run result");
+        assert_eq!(child_run_result["status"], "Completed");
+        if let Some(child_outcome) = child_run_result.get("child_orchestration_outcome") {
+            assert_eq!(child_outcome["parent_run_id"], child.run_id);
+            assert_eq!(child_outcome["child_running_enabled"], false);
+            assert_eq!(child_outcome["next_action"], "run_child_task_explicitly");
+        }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
