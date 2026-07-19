@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.34';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.34.json';
+const phase = 'M5.35';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.35.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'controlled_child_set_parent_join_readiness',
-    `${phase} must declare the controlled child set parent-join readiness transition.`
+    manifest.concrete_capability_transition === 'parent_inspection_controlled_child_set_join_readiness',
+    `${phase} must declare the parent inspection controlled child-set join readiness transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'single_child_readiness_overclaim_or_diagnostics_only_report',
-    `${phase} must forbid diagnostics-only work or single-child readiness overclaim.`
+    manifest.forbidden_pattern === 'diagnostics_only_or_observability_only_readiness_report',
+    `${phase} must forbid diagnostics-only or observability-only readiness reports.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,13 +75,11 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'Terminal controlled child task.run output',
-    'parent child-set readiness',
+    'Existing parent run.inspect output',
+    'Existing parent task.inspect output',
+    'parent_join_readiness_summary',
     'parent task id',
     'parent run id',
-    'child task id',
-    'child run id',
-    'child terminal status',
     'terminal controlled child count',
     'pending controlled child count',
     'pending controlled child task ids',
@@ -90,18 +88,19 @@ function validateManifest(manifest) {
     'parent_join_ready=true',
     'parent_running_enabled=false',
     'run_parent_task_explicitly',
+    'after parent join consumption',
     'parent TaskRunning',
     'parent join consumption',
     'handoff envelope',
     'child TaskRecord',
-    'Parent task.run before all siblings are terminal',
+    'M5.34 terminal child readiness',
+    'M5.32 parent-join child-orchestration replay',
     'M5.31 initial parent replay',
     'M5.30 first materialization',
     'M5.29 replay-safe',
-    'M5.32 parent-join child-orchestration replay',
     'M5.27 over-budget recovery-cycle child',
     'In-budget recovery-cycle child',
-    'Non-controlled and parentless tasks',
+    'Non-controlled, parentless, and standalone tasks',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -142,46 +141,34 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
-    'parent_join_readiness_outcome_for_terminal_child',
-    'parent_join_readiness_outcome_for_replay',
+    'parent_join_readiness_summary_for_parent_inspection',
+    'RunInspectParentJoinReadinessSummary',
+    'parent_join_readiness_summary',
     'controlled_child_records_for_parent_run',
-    'controlled_child_set_has_terminal_and_pending',
-    'controlled_child_failed_agent_loop_summary',
-    'TaskRunParentJoinReadinessOutcome',
-    'parent_join_readiness_outcome',
+    'child_has_terminal_parent_join_outcome',
+    'parent_join_child_completion_evidence',
+    'parent_join_child_completion_fingerprint_consumed',
     'terminal_controlled_child_count',
     'pending_controlled_child_count',
     'pending_controlled_child_task_ids',
     'run_remaining_child_tasks_explicitly',
     'run_parent_task_explicitly',
+    'parent_inspect_reports_child_set_join_readiness_without_mutation',
+    'assert_parent_inspect_join_readiness_summary',
+    'assert_parent_inspection_did_not_mutate',
+    'parent_join_readiness_outcome_for_terminal_child',
+    'parent_join_readiness_outcome_for_replay',
     'task_run_reports_pending_siblings_before_parent_join_readiness',
     'task_run_parentless_task_omits_parent_join_readiness_outcome',
-    'assert_parent_join_readiness_outcome',
     'child_orchestration_outcome_for_replay',
     'child_orchestration_outcome_for_latest_parent_join_queued_children',
     'child_orchestration_outcome_for_existing_queued_children',
-    'child_orchestration_outcome_for_existing_queued_children_from_handoff_fingerprints',
-    'child_orchestration_outcome_for_materialized_children',
-    'child_task_ids_for_parent_run',
-    'TaskRunChildOrchestrationOutcome',
-    'child_orchestration_outcome',
-    'run_child_task_explicitly',
-    'task_run_replays_child_orchestration_outcome_for_existing_queued_child_without_mutation',
-    'task_run_returns_child_orchestration_outcome_for_materialized_queued_child',
     'recovery_cycle_budget_outcome_for_replay',
-    'task_run_parent_join_budget_exhaustion_replays_bounded_outcome_without_child_materialization',
     'task_run_rejects_over_budget_recovery_cycle_child_before_running',
     'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
+    'TaskRunning',
     'ParentJoinContinuationFingerprintConsumed',
-    'parent_join_admission_id',
-    'continuation_materialization',
-    'SubtaskDispatchHandoffEnvelopeRecorded',
-    'materialize_controlled_child_task_from_handoff_envelope',
-    'task_run_parent_join_materializes_continuation_subtask_without_auto_run',
-    'task_run_parent_join_recovers_failed_controlled_child_without_auto_run',
-    'task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates',
-    'task_run_replays_parent_join_outcome_for_same_child_completion_fingerprint_without_mutation',
-    'TaskRunning'
+    'SubtaskDispatchHandoffEnvelopeRecorded'
   ]) {
     if (!runtimeText.includes(token)) {
       errors.push(`${phase} runtime source must include ${token}.`);

@@ -249,9 +249,24 @@ export interface TaskRunParentJoinReadinessOutcome {
   terminal_controlled_child_count: number;
   pending_controlled_child_count: number;
   pending_controlled_child_task_ids: string[];
+  non_runnable_controlled_child_count: number;
+  non_runnable_controlled_child_task_ids: string[];
   parent_join_ready: boolean;
   parent_running_enabled: false;
-  next_action: 'run_parent_task_explicitly' | 'run_remaining_child_tasks_explicitly';
+  next_action: 'run_parent_task_explicitly' | 'run_remaining_child_tasks_explicitly' | 'inspect_non_runnable_child_tasks';
+}
+
+export interface RunInspectParentJoinReadinessSummary {
+  parent_task_id: string;
+  parent_run_id: string;
+  terminal_controlled_child_count: number;
+  pending_controlled_child_count: number;
+  pending_controlled_child_task_ids: string[];
+  non_runnable_controlled_child_count: number;
+  non_runnable_controlled_child_task_ids: string[];
+  parent_join_ready: boolean;
+  parent_running_enabled: false;
+  next_action: 'run_parent_task_explicitly' | 'run_remaining_child_tasks_explicitly' | 'inspect_non_runnable_child_tasks';
 }
 
 export interface RecoveryCycleBudgetOutcome {
@@ -296,6 +311,7 @@ export interface RunInspectSummary {
   task_id?: string | null;
   status?: TaskStatus | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
+  parent_join_readiness_summary?: RunInspectParentJoinReadinessSummary | null;
   child_task_count: number;
   child_task_ids: string[];
   child_tasks: ChildTaskInspectSummary[];
@@ -2584,6 +2600,21 @@ const TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS = new Set([
   'terminal_controlled_child_count',
   'pending_controlled_child_count',
   'pending_controlled_child_task_ids',
+  'non_runnable_controlled_child_count',
+  'non_runnable_controlled_child_task_ids',
+  'parent_join_ready',
+  'parent_running_enabled',
+  'next_action',
+]);
+
+const RUN_INSPECT_PARENT_JOIN_READINESS_SUMMARY_KEYS = new Set([
+  'parent_task_id',
+  'parent_run_id',
+  'terminal_controlled_child_count',
+  'pending_controlled_child_count',
+  'pending_controlled_child_task_ids',
+  'non_runnable_controlled_child_count',
+  'non_runnable_controlled_child_task_ids',
   'parent_join_ready',
   'parent_running_enabled',
   'next_action',
@@ -2680,14 +2711,66 @@ export function isTaskRunParentJoinReadinessOutcome(value: unknown): value is Ta
     !isNonNegativeInteger(value.pending_controlled_child_count) ||
     !Array.isArray(value.pending_controlled_child_task_ids) ||
     !value.pending_controlled_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0 && taskId !== value.child_task_id) ||
+    new Set(value.pending_controlled_child_task_ids).size !== value.pending_controlled_child_task_ids.length ||
     value.pending_controlled_child_count !== value.pending_controlled_child_task_ids.length ||
+    !isNonNegativeInteger(value.non_runnable_controlled_child_count) ||
+    !Array.isArray(value.non_runnable_controlled_child_task_ids) ||
+    !value.non_runnable_controlled_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0 && taskId !== value.child_task_id) ||
+    new Set(value.non_runnable_controlled_child_task_ids).size !== value.non_runnable_controlled_child_task_ids.length ||
+    value.non_runnable_controlled_child_count !== value.non_runnable_controlled_child_task_ids.length ||
     typeof value.parent_join_ready !== 'boolean' ||
     value.parent_running_enabled !== false
   ) {
     return false;
   }
+  const pendingControlledChildTaskIds = value.pending_controlled_child_task_ids as string[];
+  const nonRunnableControlledChildTaskIds = value.non_runnable_controlled_child_task_ids as string[];
+  if (nonRunnableControlledChildTaskIds.some((taskId) => pendingControlledChildTaskIds.includes(taskId))) {
+    return false;
+  }
+  if (value.non_runnable_controlled_child_count > 0) {
+    return value.parent_join_ready === false && value.next_action === 'inspect_non_runnable_child_tasks';
+  }
   if (value.pending_controlled_child_count === 0) {
     return value.parent_join_ready === true && value.next_action === 'run_parent_task_explicitly';
+  }
+  return value.parent_join_ready === false && value.next_action === 'run_remaining_child_tasks_explicitly';
+}
+
+export function isRunInspectParentJoinReadinessSummary(value: unknown): value is RunInspectParentJoinReadinessSummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, RUN_INSPECT_PARENT_JOIN_READINESS_SUMMARY_KEYS) ||
+    typeof value.parent_task_id !== 'string' ||
+    value.parent_task_id.trim().length === 0 ||
+    typeof value.parent_run_id !== 'string' ||
+    value.parent_run_id.trim().length === 0 ||
+    !isNonNegativeInteger(value.terminal_controlled_child_count) ||
+    !isNonNegativeInteger(value.pending_controlled_child_count) ||
+    !Array.isArray(value.pending_controlled_child_task_ids) ||
+    !value.pending_controlled_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0) ||
+    new Set(value.pending_controlled_child_task_ids).size !== value.pending_controlled_child_task_ids.length ||
+    value.pending_controlled_child_count !== value.pending_controlled_child_task_ids.length ||
+    !isNonNegativeInteger(value.non_runnable_controlled_child_count) ||
+    !Array.isArray(value.non_runnable_controlled_child_task_ids) ||
+    !value.non_runnable_controlled_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0) ||
+    new Set(value.non_runnable_controlled_child_task_ids).size !== value.non_runnable_controlled_child_task_ids.length ||
+    value.non_runnable_controlled_child_count !== value.non_runnable_controlled_child_task_ids.length ||
+    typeof value.parent_join_ready !== 'boolean' ||
+    value.parent_running_enabled !== false
+  ) {
+    return false;
+  }
+  const pendingControlledChildTaskIds = value.pending_controlled_child_task_ids as string[];
+  const nonRunnableControlledChildTaskIds = value.non_runnable_controlled_child_task_ids as string[];
+  if (nonRunnableControlledChildTaskIds.some((taskId) => pendingControlledChildTaskIds.includes(taskId))) {
+    return false;
+  }
+  if (value.non_runnable_controlled_child_count > 0) {
+    return value.parent_join_ready === false && value.next_action === 'inspect_non_runnable_child_tasks';
+  }
+  if (value.pending_controlled_child_count === 0) {
+    return value.terminal_controlled_child_count > 0 && value.parent_join_ready === true && value.next_action === 'run_parent_task_explicitly';
   }
   return value.parent_join_ready === false && value.next_action === 'run_remaining_child_tasks_explicitly';
 }
@@ -2828,6 +2911,7 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
     (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
+    (value.parent_join_readiness_summary === undefined || value.parent_join_readiness_summary === null || isRunInspectParentJoinReadinessSummary(value.parent_join_readiness_summary)) &&
     isNonNegativeInteger(value.child_task_count) &&
     Array.isArray(value.child_task_ids) &&
     value.child_task_ids.every((taskId) => typeof taskId === 'string') &&
