@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.35';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.35.json';
+const phase = 'M5.36';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.36.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'parent_inspection_controlled_child_set_join_readiness',
-    `${phase} must declare the parent inspection controlled child-set join readiness transition.`
+    manifest.concrete_capability_transition === 'direct_child_inspection_parent_join_readiness_recovery',
+    `${phase} must declare the direct child inspection parent-join readiness recovery transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'diagnostics_only_or_observability_only_readiness_report',
-    `${phase} must forbid diagnostics-only or observability-only readiness reports.`
+    manifest.forbidden_pattern === 'diagnostics_only_or_child_inspection_without_actionable_parent_join_handles',
+    `${phase} must forbid diagnostics-only child inspection without actionable parent join handles.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,24 +75,30 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'Existing parent run.inspect output',
-    'Existing parent task.inspect output',
+    'Existing controlled child task.inspect output',
     'parent_join_readiness_summary',
     'parent task id',
     'parent run id',
+    'inspected child task id',
+    'inspected child run id',
+    'inspected child status',
     'terminal controlled child count',
     'pending controlled child count',
     'pending controlled child task ids',
+    'non-runnable controlled child count',
+    'non-runnable controlled child task ids',
     'parent_join_ready=false',
     'run_remaining_child_tasks_explicitly',
+    'inspect_non_runnable_child_tasks',
     'parent_join_ready=true',
     'parent_running_enabled=false',
     'run_parent_task_explicitly',
     'after parent join consumption',
-    'parent TaskRunning',
+    'TaskRunning',
     'parent join consumption',
     'handoff envelope',
     'child TaskRecord',
+    'M5.35 parent inspection readiness',
     'M5.34 terminal child readiness',
     'M5.32 parent-join child-orchestration replay',
     'M5.31 initial parent replay',
@@ -141,9 +147,12 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
-    'parent_join_readiness_summary_for_parent_inspection',
-    'RunInspectParentJoinReadinessSummary',
+    'parent_join_readiness_summary_for_child_inspection',
+    'ChildInspectParentJoinReadinessSummary',
     'parent_join_readiness_summary',
+    'inspected_child_task_id',
+    'inspected_child_run_id',
+    'inspected_child_status',
     'controlled_child_records_for_parent_run',
     'child_has_terminal_parent_join_outcome',
     'parent_join_child_completion_evidence',
@@ -151,9 +160,15 @@ function validateSourceEvidence(manifest) {
     'terminal_controlled_child_count',
     'pending_controlled_child_count',
     'pending_controlled_child_task_ids',
+    'non_runnable_controlled_child_count',
+    'non_runnable_controlled_child_task_ids',
     'run_remaining_child_tasks_explicitly',
+    'inspect_non_runnable_child_tasks',
     'run_parent_task_explicitly',
+    'parent_join_readiness_summary_for_parent_inspection',
     'parent_inspect_reports_child_set_join_readiness_without_mutation',
+    'parent_inspect_reports_non_runnable_children_without_rerun_action',
+    'assert_child_inspect_parent_join_readiness_summary',
     'assert_parent_inspect_join_readiness_summary',
     'assert_parent_inspection_did_not_mutate',
     'parent_join_readiness_outcome_for_terminal_child',

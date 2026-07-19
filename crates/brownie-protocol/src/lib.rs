@@ -697,6 +697,23 @@ pub struct RunInspectParentJoinReadinessSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ChildInspectParentJoinReadinessSummary {
+    pub parent_task_id: String,
+    pub parent_run_id: String,
+    pub inspected_child_task_id: String,
+    pub inspected_child_run_id: String,
+    pub inspected_child_status: TaskStatus,
+    pub terminal_controlled_child_count: usize,
+    pub pending_controlled_child_count: usize,
+    pub pending_controlled_child_task_ids: Vec<String>,
+    pub non_runnable_controlled_child_count: usize,
+    pub non_runnable_controlled_child_task_ids: Vec<String>,
+    pub parent_join_ready: bool,
+    pub parent_running_enabled: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecoveryCycleBudgetOutcome {
     pub recovery_cycle_budget_status: String,
     pub parent_join_admission_id: String,
@@ -2345,6 +2362,8 @@ pub struct ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 pub struct TaskInspectResult {
     pub task: TaskRecord,
     pub run: RunInspectSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_join_readiness_summary: Option<ChildInspectParentJoinReadinessSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

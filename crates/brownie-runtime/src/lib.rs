@@ -16,18 +16,18 @@ use brownie_llm::{
 };
 use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
-    ChildTaskInspectSummary, ChildTaskSourceIntentSummary, DiagnosticSeverity, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApproveParams, ProposalApproveResult, ProposalAuditTrailParams,
-    ProposalAuditTrailResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
-    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    ProposalReviewBundleParams, ProposalReviewBundleResult,
-    ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
+    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
+    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -4841,8 +4841,22 @@ fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
         Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let parent_join_readiness_summary =
+        match parent_join_readiness_summary_for_child_inspection(&store, &task) {
+            Ok(summary) => summary,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
     match inspect_run(&store, &task.run_id) {
-        Ok(run) => result_response(id, json!(TaskInspectResult { task, run })),
+        Ok(run) => result_response(
+            id,
+            json!(TaskInspectResult {
+                task,
+                run,
+                parent_join_readiness_summary
+            }),
+        ),
         Err(message) => error_response(id, -32602, &message),
     }
 }
@@ -10572,6 +10586,127 @@ fn parent_join_readiness_summary_for_parent_inspection(
     Ok(Some(RunInspectParentJoinReadinessSummary {
         parent_task_id,
         parent_run_id,
+        terminal_controlled_child_count,
+        pending_controlled_child_count,
+        pending_controlled_child_task_ids,
+        non_runnable_controlled_child_count,
+        non_runnable_controlled_child_task_ids,
+        parent_join_ready,
+        parent_running_enabled: false,
+        next_action: next_action.to_string(),
+    }))
+}
+
+fn parent_join_readiness_summary_for_child_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<ChildInspectParentJoinReadinessSummary>, String> {
+    if !task_has_complete_controlled_child_provenance(record) {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(record.parent_task_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(record.parent_run_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_record) = store
+        .tasks()
+        .get_task(&parent_task_id)
+        .map_err(|error| format!("invalid params: {error}"))?
+    else {
+        return Ok(None);
+    };
+    if parent_record.run_id != parent_run_id
+        || parent_record.parent_run_id.is_some()
+        || parent_record.status != TaskStatus::Completed
+    {
+        return Ok(None);
+    }
+
+    let mut controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if !controlled_children
+        .iter()
+        .any(|child| child.task_id == record.task_id)
+    {
+        controlled_children.push(record.clone());
+        sort_controlled_child_records(&mut controlled_children);
+    }
+    if controlled_children.is_empty() {
+        return Ok(None);
+    }
+
+    let terminal_controlled_child_count = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let pending_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let pending_controlled_child_count = pending_controlled_child_task_ids.len();
+    let non_runnable_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let parent_join_ready =
+        if pending_controlled_child_count == 0 && non_runnable_controlled_child_count == 0 {
+            if terminal_controlled_child_count == 0 {
+                return Ok(None);
+            }
+            for child in &controlled_children {
+                if !child_has_terminal_parent_join_outcome(store, child)
+                    .map_err(task_run_admission_rejection_message)?
+                {
+                    return Ok(None);
+                }
+            }
+            let child_evidence = controlled_children
+                .iter()
+                .map(|child| {
+                    parent_join_child_completion_evidence(store, child)
+                        .map_err(task_run_admission_rejection_message)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (child_completion_fingerprint, _) =
+                parent_join_child_completion_fingerprint(&child_evidence);
+            !parent_join_child_completion_fingerprint_consumed(
+                store,
+                &parent_record,
+                &child_completion_fingerprint,
+            )
+            .map_err(task_run_admission_rejection_message)?
+        } else {
+            false
+        };
+    if pending_controlled_child_count == 0
+        && non_runnable_controlled_child_count == 0
+        && !parent_join_ready
+    {
+        return Ok(None);
+    }
+    let next_action = if non_runnable_controlled_child_count > 0 {
+        "inspect_non_runnable_child_tasks"
+    } else if parent_join_ready {
+        "run_parent_task_explicitly"
+    } else {
+        "run_remaining_child_tasks_explicitly"
+    };
+
+    Ok(Some(ChildInspectParentJoinReadinessSummary {
+        parent_task_id,
+        parent_run_id,
+        inspected_child_task_id: record.task_id.clone(),
+        inspected_child_run_id: record.run_id.clone(),
+        inspected_child_status: record.status.clone(),
         terminal_controlled_child_count,
         pending_controlled_child_count,
         pending_controlled_child_task_ids,
@@ -16570,6 +16705,32 @@ mod tests {
         let parent_event_count_before_inspect = parent_events_before_inspect.len();
         let child_count_before_inspect = child_count_for_parent_run(&store, &parent_run_id);
 
+        let first_child_inspect_before_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":12,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_inspect_before_run.error.is_none());
+        assert_child_inspect_parent_join_readiness_summary(
+            &first_child_inspect_before_run
+                .result
+                .expect("first child inspect before run")["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Queued",
+            false,
+            0,
+            &expected_pending_before,
+            &[],
+            "run_remaining_child_tasks_explicitly",
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_before_inspect,
+            child_count_before_inspect,
+        );
+
         let parent_run_inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
         ));
@@ -16632,6 +16793,31 @@ mod tests {
             .expect("parent events after first child")
             .len();
         let child_count_after_first_child = child_count_for_parent_run(&store, &parent_run_id);
+        let first_child_inspect_after_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":13,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_inspect_after_run.error.is_none());
+        assert_child_inspect_parent_join_readiness_summary(
+            &first_child_inspect_after_run
+                .result
+                .expect("first child inspect after run")["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            false,
+            1,
+            std::slice::from_ref(&pending_sibling.task_id),
+            &[],
+            "run_remaining_child_tasks_explicitly",
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_after_first_child,
+            child_count_after_first_child,
+        );
         let parent_run_inspect_after_first_child = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
         ));
@@ -16693,6 +16879,31 @@ mod tests {
             .expect("parent events after second child")
             .len();
         let child_count_after_second_child = child_count_for_parent_run(&store, &parent_run_id);
+        let first_child_inspect_after_all_terminal = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":14,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_inspect_after_all_terminal.error.is_none());
+        assert_child_inspect_parent_join_readiness_summary(
+            &first_child_inspect_after_all_terminal
+                .result
+                .expect("first child inspect after all terminal")["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            true,
+            2,
+            &[],
+            &[],
+            "run_parent_task_explicitly",
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_after_second_child,
+            child_count_after_second_child,
+        );
         let parent_run_inspect_after_all_terminal = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":9,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
         ));
@@ -16740,6 +16951,25 @@ mod tests {
             .expect("parent inspect after parent join")["run"]
             .clone();
         if let Some(summary) = parent_summary_after_parent_join.get("parent_join_readiness_summary")
+        {
+            assert_ne!(summary["next_action"], "run_parent_task_explicitly");
+            assert_eq!(summary["parent_join_ready"], false);
+        }
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_after_parent_join,
+            child_count_after_parent_join,
+        );
+        let first_child_inspect_after_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":15,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_inspect_after_parent_join.error.is_none());
+        let child_inspect_after_parent_join = first_child_inspect_after_parent_join
+            .result
+            .expect("first child inspect after parent join");
+        if let Some(summary) = child_inspect_after_parent_join.get("parent_join_readiness_summary")
         {
             assert_ne!(summary["next_action"], "run_parent_task_explicitly");
             assert_eq!(summary["parent_join_ready"], false);
@@ -16899,6 +17129,50 @@ mod tests {
                 .expect("parent task inspect running sibling")["run"]
                 ["parent_join_readiness_summary"],
             parent_run_summary_running["parent_join_readiness_summary"]
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_before_running_inspect,
+            child_count_before_running_inspect,
+        );
+        let first_child_inspect_running = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":17,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_inspect_running.error.is_none());
+        assert_child_inspect_parent_join_readiness_summary(
+            &first_child_inspect_running
+                .result
+                .expect("first child inspect running sibling")["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            false,
+            1,
+            &[],
+            std::slice::from_ref(&pending_sibling.task_id),
+            "inspect_non_runnable_child_tasks",
+        );
+        let running_sibling_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":18,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            pending_sibling.task_id
+        ));
+        assert!(running_sibling_inspect.error.is_none());
+        assert_child_inspect_parent_join_readiness_summary(
+            &running_sibling_inspect
+                .result
+                .expect("running sibling inspect")["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &running_sibling,
+            "Running",
+            false,
+            1,
+            &[],
+            std::slice::from_ref(&pending_sibling.task_id),
+            "inspect_non_runnable_child_tasks",
         );
         assert_parent_inspection_did_not_mutate(
             &store,
@@ -17624,6 +17898,74 @@ mod tests {
     ) {
         assert_eq!(summary["parent_task_id"], parent_task_id);
         assert_eq!(summary["parent_run_id"], parent_run_id);
+        assert!(summary.get("child_task_id").is_none());
+        assert!(summary.get("child_run_id").is_none());
+        assert!(summary.get("child_terminal_status").is_none());
+        assert_eq!(
+            summary["terminal_controlled_child_count"],
+            terminal_controlled_child_count
+        );
+        assert_eq!(
+            summary["pending_controlled_child_count"],
+            pending_controlled_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "pending_controlled_child_task_ids"),
+            pending_controlled_child_task_ids.to_vec()
+        );
+        assert_eq!(
+            summary["non_runnable_controlled_child_count"],
+            non_runnable_controlled_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "non_runnable_controlled_child_task_ids"),
+            non_runnable_controlled_child_task_ids.to_vec()
+        );
+        assert_eq!(summary["parent_join_ready"], parent_join_ready);
+        assert_eq!(summary["parent_running_enabled"], false);
+        assert_eq!(summary["next_action"], next_action);
+
+        let serialized = summary.to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "Run M5.35 pending sibling raw goal",
+            "Create M5.35 pending sibling.",
+            "Run M5.35 non-runnable sibling raw goal",
+            "Create M5.35 non-runnable sibling.",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+            "raw_failure_payload",
+        ] {
+            assert!(!serialized.contains(raw_marker));
+        }
+    }
+
+    fn assert_child_inspect_parent_join_readiness_summary(
+        summary: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        child: &TaskRecord,
+        child_status: &str,
+        parent_join_ready: bool,
+        terminal_controlled_child_count: usize,
+        pending_controlled_child_task_ids: &[String],
+        non_runnable_controlled_child_task_ids: &[String],
+        next_action: &str,
+    ) {
+        assert_eq!(summary["parent_task_id"], parent_task_id);
+        assert_eq!(summary["parent_run_id"], parent_run_id);
+        assert_eq!(summary["inspected_child_task_id"], child.task_id);
+        assert_eq!(summary["inspected_child_run_id"], child.run_id);
+        assert_eq!(summary["inspected_child_status"], child_status);
         assert!(summary.get("child_task_id").is_none());
         assert!(summary.get("child_run_id").is_none());
         assert!(summary.get("child_terminal_status").is_none());

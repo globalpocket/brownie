@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RuntimeJsonRpcError } from '../runtime/errors';
-import { isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectParentJoinReadinessSummary, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
+import { isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
@@ -163,6 +163,68 @@ const nonRunnableSiblingParentInspectJoinReadinessSummary = {
   non_runnable_controlled_child_task_ids: ['task_child_2'],
   parent_join_ready: false,
   next_action: 'inspect_non_runnable_child_tasks',
+};
+
+const childInspectParentJoinReadinessSummary = {
+  ...parentInspectJoinReadinessSummary,
+  inspected_child_task_id: 'task_child_1',
+  inspected_child_run_id: 'run_child_1',
+  inspected_child_status: 'Completed',
+};
+
+const pendingSiblingChildInspectParentJoinReadinessSummary = {
+  ...childInspectParentJoinReadinessSummary,
+  terminal_controlled_child_count: 1,
+  pending_controlled_child_count: 1,
+  pending_controlled_child_task_ids: ['task_child_2'],
+  parent_join_ready: false,
+  next_action: 'run_remaining_child_tasks_explicitly',
+};
+
+const nonRunnableSiblingChildInspectParentJoinReadinessSummary = {
+  ...childInspectParentJoinReadinessSummary,
+  terminal_controlled_child_count: 1,
+  pending_controlled_child_count: 0,
+  pending_controlled_child_task_ids: [],
+  non_runnable_controlled_child_count: 1,
+  non_runnable_controlled_child_task_ids: ['task_child_2'],
+  parent_join_ready: false,
+  next_action: 'inspect_non_runnable_child_tasks',
+};
+
+const baseRunInspectSummary = {
+  run_id: 'run_1',
+  task_id: 'task_1',
+  status: 'Completed',
+  child_task_count: 0,
+  child_task_ids: [],
+  child_tasks: [],
+  event_count: 0,
+  has_tool_execution_completed: false,
+  has_subtask_orchestration_queued: false,
+  subtask_queue_count: 0,
+  has_subtask_handoff_prepared: false,
+  subtask_handoff_count: 0,
+  has_subtask_scheduler_readiness: false,
+  subtask_scheduler_readiness_count: 0,
+  has_subtask_dispatch_plan_prepared: false,
+  subtask_dispatch_plan_count: 0,
+  has_subtask_dispatch_contract_prepared: false,
+  subtask_dispatch_contract_count: 0,
+  has_subtask_dispatch_admission_evaluated: false,
+  subtask_dispatch_admission_count: 0,
+  has_subtask_dispatch_readiness_snapshot: false,
+  subtask_dispatch_readiness_snapshot_count: 0,
+  has_subtask_dispatcher_guard_verdict: false,
+  subtask_dispatcher_guard_verdict_count: 0,
+  has_subtask_dispatch_decision: false,
+  subtask_dispatch_decision_count: 0,
+  has_subtask_dispatch_candidate_manifest: false,
+  subtask_dispatch_candidate_manifest_count: 0,
+  has_subtask_dispatch_handoff_envelope: false,
+  subtask_dispatch_handoff_envelope_count: 0,
+  has_second_pass: false,
+  timeline: [],
 };
 
 describe('protocol validation', () => {
@@ -402,6 +464,11 @@ describe('protocol validation', () => {
     expect(isRunInspectParentJoinReadinessSummary(parentInspectJoinReadinessSummary)).toBe(true);
     expect(isRunInspectParentJoinReadinessSummary(pendingSiblingParentInspectJoinReadinessSummary)).toBe(true);
     expect(isRunInspectParentJoinReadinessSummary(nonRunnableSiblingParentInspectJoinReadinessSummary)).toBe(true);
+    expect(isChildInspectParentJoinReadinessSummary(childInspectParentJoinReadinessSummary)).toBe(true);
+    expect(isChildInspectParentJoinReadinessSummary(pendingSiblingChildInspectParentJoinReadinessSummary)).toBe(true);
+    expect(isChildInspectParentJoinReadinessSummary(nonRunnableSiblingChildInspectParentJoinReadinessSummary)).toBe(true);
+    expect(isChildInspectParentJoinReadinessSummary({ ...pendingSiblingChildInspectParentJoinReadinessSummary, inspected_child_status: 'Queued' })).toBe(true);
+    expect(isTaskInspectResult({ task: taskRecord, run: baseRunInspectSummary, parent_join_readiness_summary: pendingSiblingChildInspectParentJoinReadinessSummary })).toBe(true);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, child_terminal_status: 'Failed' })).toBe(true);
     expect(isTaskRunResult({ task_id: 'task_child_1', run_id: 'run_child_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'done' }, parent_join_readiness_outcome: parentJoinReadinessOutcome })).toBe(true);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, parent_task_id: '' })).toBe(false);
@@ -423,6 +490,13 @@ describe('protocol validation', () => {
     expect(isRunInspectParentJoinReadinessSummary({ ...nonRunnableSiblingParentInspectJoinReadinessSummary, non_runnable_controlled_child_count: 2 })).toBe(false);
     expect(isRunInspectParentJoinReadinessSummary({ ...nonRunnableSiblingParentInspectJoinReadinessSummary, non_runnable_controlled_child_task_ids: ['task_child_2', 'task_child_2'] })).toBe(false);
     expect(isRunInspectParentJoinReadinessSummary({ ...nonRunnableSiblingParentInspectJoinReadinessSummary, next_action: 'run_remaining_child_tasks_explicitly' })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...childInspectParentJoinReadinessSummary, inspected_child_task_id: '' })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...childInspectParentJoinReadinessSummary, inspected_child_status: 'Nope' })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...childInspectParentJoinReadinessSummary, parent_join_ready: false })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...pendingSiblingChildInspectParentJoinReadinessSummary, next_action: 'run_parent_task_explicitly' })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...nonRunnableSiblingChildInspectParentJoinReadinessSummary, next_action: 'run_remaining_child_tasks_explicitly' })).toBe(false);
+    expect(isChildInspectParentJoinReadinessSummary({ ...nonRunnableSiblingChildInspectParentJoinReadinessSummary, non_runnable_controlled_child_task_ids: ['task_child_2', 'task_child_2'] })).toBe(false);
+    expect(isTaskInspectResult({ task: taskRecord, run: baseRunInspectSummary, parent_join_readiness_summary: { ...pendingSiblingChildInspectParentJoinReadinessSummary, raw_failure_payload: 'raw' } })).toBe(false);
     expect(isRunInspectParentJoinReadinessSummary({ ...parentInspectJoinReadinessSummary, parent_running_enabled: true })).toBe(false);
     expect(isRunInspectParentJoinReadinessSummary({ ...parentInspectJoinReadinessSummary, raw_failure_payload: 'raw' })).toBe(false);
     expect(isTaskRunResult({ task_id: 'task_child_1', run_id: 'run_child_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'done' }, parent_join_readiness_outcome: { ...parentJoinReadinessOutcome, raw_failure_payload: 'raw' } })).toBe(false);
