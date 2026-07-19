@@ -8,7 +8,7 @@
   "strategic_capability_mapping": [
     {
       "capability": "subtask_orchestration",
-      "relationship": "Makes existing parent run.inspect and task.inspect output actionable for controlled child-set parent join readiness."
+      "relationship": "Makes existing parent run.inspect and task.inspect output actionable for controlled child-set parent join readiness, including non-runnable child states that must not be rerun."
     },
     {
       "capability": "headless_autonomous_development",
@@ -23,7 +23,11 @@
       },
       {
         "id": "pending_child_next_action",
-        "prompt": "Does parent inspection report pending child task ids/count and run_remaining_child_tasks_explicitly while controlled children remain non-terminal?"
+        "prompt": "Does parent inspection report runnable pending child task ids/count and run_remaining_child_tasks_explicitly only while controlled children are rerunnable?"
+      },
+      {
+        "id": "non_runnable_child_next_action",
+        "prompt": "Does parent inspection avoid rerun guidance for Running or Cancelled controlled children by exposing bounded non-runnable child ids and a distinct next action?"
       },
       {
         "id": "ready_only_when_unconsumed",
@@ -44,7 +48,8 @@
     ],
     "answers": {
       "parent_inspection_join_readiness": "Yes. Existing parent run.inspect and task.inspect can include parent_join_readiness_summary derived from runtime-owned controlled child TaskRecords.",
-      "pending_child_next_action": "Yes. When pending controlled children exist, parent inspection reports parent_join_ready=false, bounded pending controlled child task ids/count, and next_action=run_remaining_child_tasks_explicitly.",
+      "pending_child_next_action": "Yes. When runnable pending controlled children exist, parent inspection reports parent_join_ready=false, bounded pending controlled child task ids/count, empty non-runnable child ids, and next_action=run_remaining_child_tasks_explicitly.",
+      "non_runnable_child_next_action": "Yes. When a controlled child is Running or Cancelled, parent inspection reports bounded non_runnable_controlled_child_task_ids/count and next_action=inspect_non_runnable_child_tasks instead of recommending an invalid rerun.",
       "ready_only_when_unconsumed": "Yes. The parent inspection summary reports parent_join_ready=true and next_action=run_parent_task_explicitly only when every controlled child is Completed or Failed and the child result-set fingerprint has not already been consumed.",
       "read_only_inspection": "Yes. The inspection path computes the summary without appending parent TaskRunning, consuming parent join state, recording handoff envelopes, creating child TaskRecords, or running child tasks.",
       "prior_phase_compatibility": "Yes. M5.34 terminal child readiness, child-orchestration replay, first materialization, replay-safe recovery budget, over-budget recovery rejection, in-budget recovery child run, and non-controlled task behavior remain covered.",
@@ -58,8 +63,11 @@
     "The parent_join_readiness_summary includes terminal controlled child count.",
     "The parent_join_readiness_summary includes pending controlled child count.",
     "The parent_join_readiness_summary includes pending controlled child task ids.",
+    "The parent_join_readiness_summary includes non-runnable controlled child count.",
+    "The parent_join_readiness_summary includes non-runnable controlled child task ids.",
     "The parent_join_readiness_summary reports parent_join_ready=false when controlled children remain pending.",
-    "The parent_join_readiness_summary reports next_action=run_remaining_child_tasks_explicitly while controlled children remain pending.",
+    "The parent_join_readiness_summary reports next_action=run_remaining_child_tasks_explicitly only while runnable controlled children remain pending.",
+    "The parent_join_readiness_summary reports next_action=inspect_non_runnable_child_tasks when Running or Cancelled controlled children would make rerun guidance invalid.",
     "The parent_join_readiness_summary reports parent_join_ready=true only when every controlled child is terminal and the result set is unconsumed.",
     "The parent_join_readiness_summary reports parent_running_enabled=false.",
     "The parent_join_readiness_summary reports next_action=run_parent_task_explicitly only when every controlled child is terminal and the result set is unconsumed.",
@@ -90,7 +98,10 @@
       "terminal_controlled_child_count",
       "pending_controlled_child_count",
       "pending_controlled_child_task_ids",
+      "non_runnable_controlled_child_count",
+      "non_runnable_controlled_child_task_ids",
       "run_remaining_child_tasks_explicitly",
+      "inspect_non_runnable_child_tasks",
       "run_parent_task_explicitly",
       "parent_inspect_reports_child_set_join_readiness_without_mutation",
       "assert_parent_inspect_join_readiness_summary",
@@ -117,6 +128,8 @@
       "terminal_controlled_child_count",
       "pending_controlled_child_count",
       "pending_controlled_child_task_ids",
+      "non_runnable_controlled_child_count",
+      "non_runnable_controlled_child_task_ids",
       "parent_join_ready",
       "parent_running_enabled",
       "next_action"
@@ -127,15 +140,19 @@
       "isRunInspectParentJoinReadinessSummary",
       "parent_join_readiness_summary",
       "pending_controlled_child_task_ids",
+      "non_runnable_controlled_child_task_ids",
       "run_remaining_child_tasks_explicitly",
+      "inspect_non_runnable_child_tasks",
       "run_parent_task_explicitly"
     ],
     "vsix_test_tokens": [
       "isRunInspectParentJoinReadinessSummary",
       "parentInspectJoinReadinessSummary",
       "pendingSiblingParentInspectJoinReadinessSummary",
+      "nonRunnableSiblingParentInspectJoinReadinessSummary",
       "parent_join_readiness_summary",
       "run_remaining_child_tasks_explicitly",
+      "inspect_non_runnable_child_tasks",
       "raw_failure_payload"
     ],
     "architecture_doc_tokens": [
@@ -143,7 +160,9 @@
       "Existing parent run.inspect",
       "runtime-owned controlled child TaskRecords",
       "pending controlled child task ids",
+      "non-runnable controlled child task ids",
       "run_remaining_child_tasks_explicitly",
+      "inspect_non_runnable_child_tasks",
       "run_parent_task_explicitly",
       "parent_running_enabled=false",
       "child result-set fingerprint"

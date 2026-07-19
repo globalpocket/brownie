@@ -10447,13 +10447,22 @@ fn parent_join_readiness_outcome_for_terminal_child(
         .count();
     let pending_controlled_child_task_ids = controlled_children
         .iter()
-        .filter(|child| !is_parent_join_terminal_child_status(&child.status))
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
         .map(|child| child.task_id.clone())
         .collect::<Vec<_>>();
     let pending_controlled_child_count = pending_controlled_child_task_ids.len();
-    let parent_join_ready =
-        pending_controlled_child_count == 0 && terminal_controlled_child_count > 0;
-    let next_action = if parent_join_ready {
+    let non_runnable_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let parent_join_ready = pending_controlled_child_count == 0
+        && non_runnable_controlled_child_count == 0
+        && terminal_controlled_child_count > 0;
+    let next_action = if non_runnable_controlled_child_count > 0 {
+        "inspect_non_runnable_child_tasks"
+    } else if parent_join_ready {
         "run_parent_task_explicitly"
     } else {
         "run_remaining_child_tasks_explicitly"
@@ -10468,6 +10477,8 @@ fn parent_join_readiness_outcome_for_terminal_child(
         terminal_controlled_child_count,
         pending_controlled_child_count,
         pending_controlled_child_task_ids,
+        non_runnable_controlled_child_count,
+        non_runnable_controlled_child_task_ids,
         parent_join_ready,
         parent_running_enabled: false,
         next_action: next_action.to_string(),
@@ -10504,43 +10515,55 @@ fn parent_join_readiness_summary_for_parent_inspection(
         .count();
     let pending_controlled_child_task_ids = controlled_children
         .iter()
-        .filter(|child| !is_parent_join_terminal_child_status(&child.status))
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
         .map(|child| child.task_id.clone())
         .collect::<Vec<_>>();
     let pending_controlled_child_count = pending_controlled_child_task_ids.len();
-    let parent_join_ready = if pending_controlled_child_count == 0 {
-        if terminal_controlled_child_count == 0 {
-            return Ok(None);
-        }
-        for child in &controlled_children {
-            if !child_has_terminal_parent_join_outcome(store, child)
-                .map_err(task_run_admission_rejection_message)?
-            {
+    let non_runnable_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let parent_join_ready =
+        if pending_controlled_child_count == 0 && non_runnable_controlled_child_count == 0 {
+            if terminal_controlled_child_count == 0 {
                 return Ok(None);
             }
-        }
-        let child_evidence = controlled_children
-            .iter()
-            .map(|child| {
-                parent_join_child_completion_evidence(store, child)
-                    .map_err(task_run_admission_rejection_message)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        let (child_completion_fingerprint, _) =
-            parent_join_child_completion_fingerprint(&child_evidence);
-        !parent_join_child_completion_fingerprint_consumed(
-            store,
-            record,
-            &child_completion_fingerprint,
-        )
-        .map_err(task_run_admission_rejection_message)?
-    } else {
-        false
-    };
-    if pending_controlled_child_count == 0 && !parent_join_ready {
+            for child in &controlled_children {
+                if !child_has_terminal_parent_join_outcome(store, child)
+                    .map_err(task_run_admission_rejection_message)?
+                {
+                    return Ok(None);
+                }
+            }
+            let child_evidence = controlled_children
+                .iter()
+                .map(|child| {
+                    parent_join_child_completion_evidence(store, child)
+                        .map_err(task_run_admission_rejection_message)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (child_completion_fingerprint, _) =
+                parent_join_child_completion_fingerprint(&child_evidence);
+            !parent_join_child_completion_fingerprint_consumed(
+                store,
+                record,
+                &child_completion_fingerprint,
+            )
+            .map_err(task_run_admission_rejection_message)?
+        } else {
+            false
+        };
+    if pending_controlled_child_count == 0
+        && non_runnable_controlled_child_count == 0
+        && !parent_join_ready
+    {
         return Ok(None);
     }
-    let next_action = if parent_join_ready {
+    let next_action = if non_runnable_controlled_child_count > 0 {
+        "inspect_non_runnable_child_tasks"
+    } else if parent_join_ready {
         "run_parent_task_explicitly"
     } else {
         "run_remaining_child_tasks_explicitly"
@@ -10552,6 +10575,8 @@ fn parent_join_readiness_summary_for_parent_inspection(
         terminal_controlled_child_count,
         pending_controlled_child_count,
         pending_controlled_child_task_ids,
+        non_runnable_controlled_child_count,
+        non_runnable_controlled_child_task_ids,
         parent_join_ready,
         parent_running_enabled: false,
         next_action: next_action.to_string(),
@@ -10568,6 +10593,15 @@ fn task_has_complete_controlled_child_provenance(record: &TaskRecord) -> bool {
 
 fn is_parent_join_terminal_child_status(status: &TaskStatus) -> bool {
     matches!(status, TaskStatus::Completed | TaskStatus::Failed)
+}
+
+fn is_parent_join_runnable_pending_child_status(status: &TaskStatus) -> bool {
+    matches!(status, TaskStatus::Created | TaskStatus::Queued)
+}
+
+fn is_parent_join_non_runnable_child_status(status: &TaskStatus) -> bool {
+    !is_parent_join_terminal_child_status(status)
+        && !is_parent_join_runnable_pending_child_status(status)
 }
 
 fn sort_controlled_child_records(records: &mut [TaskRecord]) {
@@ -16721,6 +16755,188 @@ mod tests {
     }
 
     #[test]
+    fn parent_inspect_reports_non_runnable_children_without_rerun_action() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, first_child, _parent_event_count) =
+            start_parent_with_queued_child();
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent.status, TaskStatus::Completed);
+
+        let pending_candidate_id = "candidate_m5_35_non_runnable";
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskOrchestrationQueued,
+                Some(json!({
+                    "subtask_id": pending_candidate_id,
+                    "tool_id": SUBTASK_SPAWN_TOOL_ID,
+                    "required_action": "SpawnSubtask",
+                    "request_reason": "Create M5.35 non-runnable sibling.",
+                    "requested_goal_preview": "Run M5.35 non-runnable sibling raw goal",
+                    "requested_mode_id": "implementer",
+                    "input_summary": {
+                        "has_path": false,
+                        "field_count": 2
+                    }
+                })),
+            )
+            .expect("append non-runnable sibling queue");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_m5_35_non_runnable",
+                    "handoff_envelope_fingerprint": "sha256:m5-35-non-runnable-child-set",
+                    "candidate_ids": [pending_candidate_id],
+                    "dispatch_enabled": false,
+                    "execution_enabled": false
+                })),
+            )
+            .expect("append non-runnable sibling handoff");
+        let _ = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize non-runnable sibling");
+
+        let pending_sibling = store
+            .tasks()
+            .list_tasks()
+            .expect("list children")
+            .into_iter()
+            .find(|record| record.source_candidate_id.as_deref() == Some(pending_candidate_id))
+            .expect("pending sibling");
+        assert_eq!(pending_sibling.status, TaskStatus::Queued);
+
+        let first_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":12,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_run.error.is_none());
+        assert_parent_join_readiness_outcome_with_child_set(
+            &first_child_run.result.expect("first child run result")
+                ["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            false,
+            1,
+            std::slice::from_ref(&pending_sibling.task_id),
+            "run_remaining_child_tasks_explicitly",
+        );
+
+        let running_sibling = store
+            .tasks()
+            .update_task_status(
+                &pending_sibling.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark sibling running");
+        assert_eq!(running_sibling.status, TaskStatus::Running);
+
+        let parent_event_count_before_running_inspect = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events before running inspect")
+            .len();
+        let child_count_before_running_inspect = child_count_for_parent_run(&store, &parent_run_id);
+        let first_child_replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":13,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_replay.error.is_none());
+        assert_parent_join_readiness_outcome_with_child_set_and_non_runnable(
+            &first_child_replay
+                .result
+                .expect("first child replay result")["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            false,
+            1,
+            &[],
+            std::slice::from_ref(&pending_sibling.task_id),
+            "inspect_non_runnable_child_tasks",
+        );
+
+        let parent_run_inspect_running = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":14,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect_running.error.is_none());
+        let parent_run_summary_running = parent_run_inspect_running
+            .result
+            .expect("parent inspect running sibling")["run"]
+            .clone();
+        assert_parent_inspect_join_readiness_summary_with_non_runnable(
+            &parent_run_summary_running["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            false,
+            1,
+            &[],
+            std::slice::from_ref(&pending_sibling.task_id),
+            "inspect_non_runnable_child_tasks",
+        );
+        let parent_task_inspect_running = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":15,"method":"task.inspect","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_task_inspect_running.error.is_none());
+        assert_eq!(
+            parent_task_inspect_running
+                .result
+                .expect("parent task inspect running sibling")["run"]
+                ["parent_join_readiness_summary"],
+            parent_run_summary_running["parent_join_readiness_summary"]
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_before_running_inspect,
+            child_count_before_running_inspect,
+        );
+
+        let cancelled_sibling = store
+            .tasks()
+            .update_task_status(
+                &pending_sibling.task_id,
+                TaskStatus::Cancelled,
+                LedgerEventKind::TaskCancelled,
+            )
+            .expect("mark sibling cancelled");
+        assert_eq!(cancelled_sibling.status, TaskStatus::Cancelled);
+        let parent_run_inspect_cancelled = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":16,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect_cancelled.error.is_none());
+        assert_parent_inspect_join_readiness_summary_with_non_runnable(
+            &parent_run_inspect_cancelled
+                .result
+                .expect("parent inspect cancelled sibling")["run"]["parent_join_readiness_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            false,
+            1,
+            &[],
+            std::slice::from_ref(&pending_sibling.task_id),
+            "inspect_non_runnable_child_tasks",
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_parentless_task_omits_parent_join_readiness_outcome() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
@@ -17296,6 +17512,32 @@ mod tests {
         pending_controlled_child_task_ids: &[String],
         next_action: &str,
     ) {
+        assert_parent_join_readiness_outcome_with_child_set_and_non_runnable(
+            outcome,
+            parent_task_id,
+            parent_run_id,
+            child,
+            terminal_status,
+            parent_join_ready,
+            terminal_controlled_child_count,
+            pending_controlled_child_task_ids,
+            &[],
+            next_action,
+        );
+    }
+
+    fn assert_parent_join_readiness_outcome_with_child_set_and_non_runnable(
+        outcome: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        child: &TaskRecord,
+        terminal_status: &str,
+        parent_join_ready: bool,
+        terminal_controlled_child_count: usize,
+        pending_controlled_child_task_ids: &[String],
+        non_runnable_controlled_child_task_ids: &[String],
+        next_action: &str,
+    ) {
         assert_eq!(outcome["parent_task_id"], parent_task_id);
         assert_eq!(outcome["parent_run_id"], parent_run_id);
         assert_eq!(outcome["child_task_id"], child.task_id);
@@ -17313,6 +17555,14 @@ mod tests {
             payload_string_array(outcome, "pending_controlled_child_task_ids"),
             pending_controlled_child_task_ids.to_vec()
         );
+        assert_eq!(
+            outcome["non_runnable_controlled_child_count"],
+            non_runnable_controlled_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(outcome, "non_runnable_controlled_child_task_ids"),
+            non_runnable_controlled_child_task_ids.to_vec()
+        );
         assert_eq!(outcome["parent_join_ready"], parent_join_ready);
         assert_eq!(outcome["parent_running_enabled"], false);
         assert_eq!(outcome["next_action"], next_action);
@@ -17329,6 +17579,8 @@ mod tests {
             "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
             "Run M5.34 pending sibling raw goal",
             "Create M5.34 pending sibling.",
+            "Run M5.35 non-runnable sibling raw goal",
+            "Create M5.35 non-runnable sibling.",
             "provider",
             "stdout",
             "stderr",
@@ -17348,6 +17600,28 @@ mod tests {
         pending_controlled_child_task_ids: &[String],
         next_action: &str,
     ) {
+        assert_parent_inspect_join_readiness_summary_with_non_runnable(
+            summary,
+            parent_task_id,
+            parent_run_id,
+            parent_join_ready,
+            terminal_controlled_child_count,
+            pending_controlled_child_task_ids,
+            &[],
+            next_action,
+        );
+    }
+
+    fn assert_parent_inspect_join_readiness_summary_with_non_runnable(
+        summary: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        parent_join_ready: bool,
+        terminal_controlled_child_count: usize,
+        pending_controlled_child_task_ids: &[String],
+        non_runnable_controlled_child_task_ids: &[String],
+        next_action: &str,
+    ) {
         assert_eq!(summary["parent_task_id"], parent_task_id);
         assert_eq!(summary["parent_run_id"], parent_run_id);
         assert!(summary.get("child_task_id").is_none());
@@ -17365,6 +17639,14 @@ mod tests {
             payload_string_array(summary, "pending_controlled_child_task_ids"),
             pending_controlled_child_task_ids.to_vec()
         );
+        assert_eq!(
+            summary["non_runnable_controlled_child_count"],
+            non_runnable_controlled_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "non_runnable_controlled_child_task_ids"),
+            non_runnable_controlled_child_task_ids.to_vec()
+        );
         assert_eq!(summary["parent_join_ready"], parent_join_ready);
         assert_eq!(summary["parent_running_enabled"], false);
         assert_eq!(summary["next_action"], next_action);
@@ -17381,6 +17663,8 @@ mod tests {
             "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
             "Run M5.35 pending sibling raw goal",
             "Create M5.35 pending sibling.",
+            "Run M5.35 non-runnable sibling raw goal",
+            "Create M5.35 non-runnable sibling.",
             "provider",
             "stdout",
             "stderr",
