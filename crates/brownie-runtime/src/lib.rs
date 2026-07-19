@@ -2208,7 +2208,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     {
         Ok(record) => {
             let parent_join_readiness_outcome =
-                parent_join_readiness_outcome_for_terminal_child(&record);
+                match parent_join_readiness_outcome_for_terminal_child(&store, &record) {
+                    Ok(outcome) => outcome,
+                    Err(error) => {
+                        return error_response(id, -32603, &format!("internal error: {error}"))
+                    }
+                };
             result_response(
                 id,
                 json!(TaskRunResult {
@@ -3127,21 +3132,23 @@ fn fail_llm_request(
         LedgerEventKind::TaskFailed,
     );
     if let Ok(record) = updated_record {
-        if let Some(parent_join_readiness_outcome) =
-            parent_join_readiness_outcome_for_terminal_child(&record)
-        {
-            return result_response(
-                id,
-                json!(TaskRunResult {
-                    task_id: record.task_id,
-                    run_id: record.run_id,
-                    status: record.status,
-                    agent_loop: controlled_child_failed_agent_loop_summary(),
-                    recovery_cycle_budget_outcome: None,
-                    child_orchestration_outcome: None,
-                    parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
-                }),
-            );
+        match parent_join_readiness_outcome_for_terminal_child(store, &record) {
+            Ok(Some(parent_join_readiness_outcome)) => {
+                return result_response(
+                    id,
+                    json!(TaskRunResult {
+                        task_id: record.task_id,
+                        run_id: record.run_id,
+                        status: record.status,
+                        agent_loop: controlled_child_failed_agent_loop_summary(),
+                        recovery_cycle_budget_outcome: None,
+                        child_orchestration_outcome: None,
+                        parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
+                    }),
+                );
+            }
+            Ok(None) => {}
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         }
     }
     error_response(
@@ -10308,10 +10315,19 @@ fn child_orchestration_outcome_for_replay(
     {
         child_orchestration_outcome_for_latest_parent_join_queued_children(
             store,
+            &record.task_id,
             &record.run_id,
             &events,
         )?
     } else {
+        if controlled_child_set_has_terminal_and_pending(
+            store,
+            Some(&record.task_id),
+            &record.run_id,
+            None,
+        )? {
+            return Ok(None);
+        }
         child_orchestration_outcome_for_existing_queued_children(store, &record.run_id)?
     };
     let Some(child_orchestration_outcome) = child_orchestration_outcome else {
@@ -10326,7 +10342,7 @@ fn parent_join_readiness_outcome_for_replay(
     record: &TaskRecord,
 ) -> Result<Option<(TaskRunAgentLoopSummary, TaskRunParentJoinReadinessOutcome)>, String> {
     let Some(parent_join_readiness_outcome) =
-        parent_join_readiness_outcome_for_terminal_child(record)
+        parent_join_readiness_outcome_for_terminal_child(store, record)?
     else {
         return Ok(None);
     };
@@ -10383,27 +10399,138 @@ fn task_run_terminal_child_agent_loop_summary_from_events(
 }
 
 fn parent_join_readiness_outcome_for_terminal_child(
+    store: &BrownieStore,
     record: &TaskRecord,
-) -> Option<TaskRunParentJoinReadinessOutcome> {
+) -> Result<Option<TaskRunParentJoinReadinessOutcome>, String> {
     if !matches!(record.status, TaskStatus::Completed | TaskStatus::Failed) {
-        return None;
+        return Ok(None);
     }
-    let parent_task_id = non_empty_record_string(record.parent_task_id.as_deref())?;
-    let parent_run_id = non_empty_record_string(record.parent_run_id.as_deref())?;
-    non_empty_record_string(record.source_candidate_id.as_deref())?;
-    non_empty_record_string(record.source_handoff_envelope_id.as_deref())?;
-    non_empty_record_string(record.source_handoff_envelope_fingerprint.as_deref())?;
+    let Some(parent_task_id) = non_empty_record_string(record.parent_task_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(record.parent_run_id.as_deref()) else {
+        return Ok(None);
+    };
+    if !task_has_complete_controlled_child_provenance(record) {
+        return Ok(None);
+    }
 
-    Some(TaskRunParentJoinReadinessOutcome {
+    let mut controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if !controlled_children
+        .iter()
+        .any(|child| child.task_id == record.task_id)
+    {
+        controlled_children.push(record.clone());
+        sort_controlled_child_records(&mut controlled_children);
+    }
+    let terminal_controlled_child_count = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let pending_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| !is_parent_join_terminal_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let pending_controlled_child_count = pending_controlled_child_task_ids.len();
+    let parent_join_ready =
+        pending_controlled_child_count == 0 && terminal_controlled_child_count > 0;
+    let next_action = if parent_join_ready {
+        "run_parent_task_explicitly"
+    } else {
+        "run_remaining_child_tasks_explicitly"
+    };
+
+    Ok(Some(TaskRunParentJoinReadinessOutcome {
         parent_task_id,
         parent_run_id,
         child_task_id: record.task_id.clone(),
         child_run_id: record.run_id.clone(),
         child_terminal_status: record.status.clone(),
-        parent_join_ready: true,
+        terminal_controlled_child_count,
+        pending_controlled_child_count,
+        pending_controlled_child_task_ids,
+        parent_join_ready,
         parent_running_enabled: false,
-        next_action: "run_parent_task_explicitly".to_string(),
-    })
+        next_action: next_action.to_string(),
+    }))
+}
+
+fn task_has_complete_controlled_child_provenance(record: &TaskRecord) -> bool {
+    non_empty_record_string(record.parent_task_id.as_deref()).is_some()
+        && non_empty_record_string(record.parent_run_id.as_deref()).is_some()
+        && non_empty_record_string(record.source_candidate_id.as_deref()).is_some()
+        && non_empty_record_string(record.source_handoff_envelope_id.as_deref()).is_some()
+        && non_empty_record_string(record.source_handoff_envelope_fingerprint.as_deref()).is_some()
+}
+
+fn is_parent_join_terminal_child_status(status: &TaskStatus) -> bool {
+    matches!(status, TaskStatus::Completed | TaskStatus::Failed)
+}
+
+fn sort_controlled_child_records(records: &mut [TaskRecord]) {
+    records.sort_by(|left, right| {
+        left.source_candidate_id
+            .cmp(&right.source_candidate_id)
+            .then(left.task_id.cmp(&right.task_id))
+    });
+}
+
+fn controlled_child_records_for_parent_run(
+    store: &BrownieStore,
+    parent_task_id: Option<&str>,
+    parent_run_id: &str,
+    handoff_fingerprints: Option<&[String]>,
+) -> Result<Vec<TaskRecord>, String> {
+    let mut records = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id))
+        .filter(|record| match parent_task_id {
+            Some(parent_task_id) => record.parent_task_id.as_deref() == Some(parent_task_id),
+            None => true,
+        })
+        .filter(task_has_complete_controlled_child_provenance)
+        .filter(|record| {
+            let Some(fingerprints) = handoff_fingerprints else {
+                return true;
+            };
+            record
+                .source_handoff_envelope_fingerprint
+                .as_ref()
+                .is_some_and(|fingerprint| fingerprints.contains(fingerprint))
+        })
+        .collect::<Vec<_>>();
+    sort_controlled_child_records(&mut records);
+    Ok(records)
+}
+
+fn controlled_child_set_has_terminal_and_pending(
+    store: &BrownieStore,
+    parent_task_id: Option<&str>,
+    parent_run_id: &str,
+    handoff_fingerprints: Option<&[String]>,
+) -> Result<bool, String> {
+    let controlled_children = controlled_child_records_for_parent_run(
+        store,
+        parent_task_id,
+        parent_run_id,
+        handoff_fingerprints,
+    )?;
+    let has_terminal = controlled_children
+        .iter()
+        .any(|child| is_parent_join_terminal_child_status(&child.status));
+    let has_pending = controlled_children
+        .iter()
+        .any(|child| !is_parent_join_terminal_child_status(&child.status));
+    Ok(has_terminal && has_pending)
 }
 
 fn non_empty_record_string(value: Option<&str>) -> Option<String> {
@@ -10558,6 +10685,7 @@ fn child_orchestration_outcome_for_existing_queued_children(
 
 fn child_orchestration_outcome_for_latest_parent_join_queued_children(
     store: &BrownieStore,
+    parent_task_id: &str,
     parent_run_id: &str,
     events: &[LedgerEvent],
 ) -> Result<Option<TaskRunChildOrchestrationOutcome>, String> {
@@ -10597,6 +10725,14 @@ fn child_orchestration_outcome_for_latest_parent_join_queued_children(
         .filter_map(|payload| non_empty_payload_string(payload, "handoff_envelope_fingerprint"))
         .collect::<Vec<_>>();
     if handoff_fingerprints.is_empty() {
+        return Ok(None);
+    }
+    if controlled_child_set_has_terminal_and_pending(
+        store,
+        Some(parent_task_id),
+        parent_run_id,
+        Some(&handoff_fingerprints),
+    )? {
         return Ok(None);
     }
 
@@ -15977,6 +16113,247 @@ mod tests {
     }
 
     #[test]
+    fn task_run_reports_pending_siblings_before_parent_join_readiness() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, first_child, _parent_event_count) =
+            start_parent_with_queued_child();
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        assert_eq!(parent.status, TaskStatus::Completed);
+
+        let pending_candidate_id = "candidate_m5_34_pending";
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskOrchestrationQueued,
+                Some(json!({
+                    "subtask_id": pending_candidate_id,
+                    "tool_id": SUBTASK_SPAWN_TOOL_ID,
+                    "required_action": "SpawnSubtask",
+                    "request_reason": "Create M5.34 pending sibling.",
+                    "requested_goal_preview": "Run M5.34 pending sibling raw goal",
+                    "requested_mode_id": "implementer",
+                    "input_summary": {
+                        "has_path": false,
+                        "field_count": 2
+                    }
+                })),
+            )
+            .expect("append pending sibling queue");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_m5_34_pending",
+                    "handoff_envelope_fingerprint": "sha256:m5-34-controlled-child-set",
+                    "candidate_ids": [pending_candidate_id],
+                    "dispatch_enabled": false,
+                    "execution_enabled": false
+                })),
+            )
+            .expect("append pending sibling handoff");
+        let _ = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize pending sibling");
+
+        let child_tasks = store
+            .tasks()
+            .list_tasks()
+            .expect("list children")
+            .into_iter()
+            .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+            .collect::<Vec<_>>();
+        assert_eq!(child_tasks.len(), 2);
+        let pending_sibling = child_tasks
+            .iter()
+            .find(|record| record.source_candidate_id.as_deref() == Some(pending_candidate_id))
+            .expect("pending sibling")
+            .clone();
+        assert_eq!(pending_sibling.status, TaskStatus::Queued);
+
+        let parent_events_before_child_run = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events before child run");
+        let parent_task_running_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+            .count();
+        let parent_join_consumption_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let parent_handoff_envelope_count_before_child_run = parent_events_before_child_run
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+            .count();
+        let direct_child_count_before_child_run = child_tasks.len();
+
+        let first_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_run.error.is_none());
+        let first_child_run_result = first_child_run.result.expect("first child run result");
+        assert_eq!(first_child_run_result["status"], "Completed");
+        assert_parent_join_readiness_outcome_with_child_set(
+            &first_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            false,
+            1,
+            std::slice::from_ref(&pending_sibling.task_id),
+            "run_remaining_child_tasks_explicitly",
+        );
+
+        let parent_events_after_first_child_run = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after first child run");
+        assert_eq!(
+            parent_events_after_first_child_run.len(),
+            parent_events_before_child_run.len()
+        );
+        assert_eq!(
+            parent_events_after_first_child_run
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            parent_task_running_count_before_child_run
+        );
+        assert_eq!(
+            parent_events_after_first_child_run
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_before_child_run
+        );
+        assert_eq!(
+            parent_events_after_first_child_run
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded
+                )
+                .count(),
+            parent_handoff_envelope_count_before_child_run
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks after first child run")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent_run_id.as_str()))
+                .count(),
+            direct_child_count_before_child_run
+        );
+
+        let premature_parent_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(premature_parent_run.result.is_none());
+        let error = premature_parent_run.error.expect("premature parent error");
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("parent join continuation requires completed controlled child tasks"));
+
+        let second_child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            pending_sibling.task_id
+        ));
+        assert!(second_child_run.error.is_none());
+        let second_child_run_result = second_child_run.result.expect("second child run result");
+        assert_eq!(second_child_run_result["status"], "Completed");
+        assert_parent_join_readiness_outcome_with_child_set(
+            &second_child_run_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &pending_sibling,
+            "Completed",
+            true,
+            2,
+            &[],
+            "run_parent_task_explicitly",
+        );
+
+        let first_child_replay_after_sibling_completion = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            first_child.task_id
+        ));
+        assert!(first_child_replay_after_sibling_completion.error.is_none());
+        let first_child_replay_after_sibling_completion_result =
+            first_child_replay_after_sibling_completion
+                .result
+                .expect("first child replay after sibling completion result");
+        assert_eq!(
+            first_child_replay_after_sibling_completion_result["status"],
+            "Completed"
+        );
+        assert_parent_join_readiness_outcome_with_child_set(
+            &first_child_replay_after_sibling_completion_result["parent_join_readiness_outcome"],
+            &parent_task_id,
+            &parent_run_id,
+            &first_child,
+            "Completed",
+            true,
+            2,
+            &[],
+            "run_parent_task_explicitly",
+        );
+
+        let parent_events_before_parent_join = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events before parent join");
+        let parent_join_consumption_count_before_parent_join = parent_events_before_parent_join
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+            })
+            .count();
+        let parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_join.error.is_none());
+        assert_eq!(
+            parent_join.result.expect("parent join result")["status"],
+            "Completed"
+        );
+        let parent_events_after_parent_join = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after parent join");
+        assert_eq!(
+            parent_events_after_parent_join
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_join_consumption_count_before_parent_join + 1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_parentless_task_omits_parent_join_readiness_outcome() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
@@ -16528,14 +16905,50 @@ mod tests {
         child: &TaskRecord,
         terminal_status: &str,
     ) {
+        assert_parent_join_readiness_outcome_with_child_set(
+            outcome,
+            parent_task_id,
+            parent_run_id,
+            child,
+            terminal_status,
+            true,
+            1,
+            &[],
+            "run_parent_task_explicitly",
+        );
+    }
+
+    fn assert_parent_join_readiness_outcome_with_child_set(
+        outcome: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        child: &TaskRecord,
+        terminal_status: &str,
+        parent_join_ready: bool,
+        terminal_controlled_child_count: usize,
+        pending_controlled_child_task_ids: &[String],
+        next_action: &str,
+    ) {
         assert_eq!(outcome["parent_task_id"], parent_task_id);
         assert_eq!(outcome["parent_run_id"], parent_run_id);
         assert_eq!(outcome["child_task_id"], child.task_id);
         assert_eq!(outcome["child_run_id"], child.run_id);
         assert_eq!(outcome["child_terminal_status"], terminal_status);
-        assert_eq!(outcome["parent_join_ready"], true);
+        assert_eq!(
+            outcome["terminal_controlled_child_count"],
+            terminal_controlled_child_count
+        );
+        assert_eq!(
+            outcome["pending_controlled_child_count"],
+            pending_controlled_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(outcome, "pending_controlled_child_task_ids"),
+            pending_controlled_child_task_ids.to_vec()
+        );
+        assert_eq!(outcome["parent_join_ready"], parent_join_ready);
         assert_eq!(outcome["parent_running_enabled"], false);
-        assert_eq!(outcome["next_action"], "run_parent_task_explicitly");
+        assert_eq!(outcome["next_action"], next_action);
 
         let serialized = outcome.to_string();
         for raw_marker in [
@@ -16547,6 +16960,8 @@ mod tests {
             "RAW_M5_23_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
             "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
             "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "Run M5.34 pending sibling raw goal",
+            "Create M5.34 pending sibling.",
             "provider",
             "stdout",
             "stderr",
