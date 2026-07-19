@@ -10790,7 +10790,12 @@ fn consumed_parent_join_recovery_summary_for_child_inspection(
             continue;
         }
         let inspected_is_continuation_child =
-            child_recovery_provenance_matches_consumed_parent_join(record, &consumption);
+            child_recovery_provenance_matches_consumed_parent_join(record, &consumption)
+                || child_handoff_fingerprint_matches_consumed_parent_join(
+                    &parent_events,
+                    record,
+                    &consumption,
+                );
         let inspected_is_consumed_terminal_child =
             consumed_terminal_controlled_child_set_contains_inspected_child(
                 store,
@@ -10926,6 +10931,18 @@ fn child_recovery_provenance_matches_consumed_parent_join(
         && provenance.parent_join_terminal_failed_child_count
             == consumption.child_terminal_failed_count
         && provenance.parent_join_recovery_cycle_depth == consumption.child_recovery_cycle_depth
+}
+
+fn child_handoff_fingerprint_matches_consumed_parent_join(
+    parent_events: &[LedgerEvent],
+    child: &TaskRecord,
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(fingerprint) = child.source_handoff_envelope_fingerprint.as_ref() else {
+        return false;
+    };
+    consumed_parent_join_continuation_handoff_fingerprints(parent_events, consumption)
+        .contains(fingerprint)
 }
 
 fn consumed_terminal_controlled_child_set_contains_inspected_child(
@@ -19402,6 +19419,30 @@ mod tests {
             &parent_run_id,
             &initial_child,
             "Completed",
+            1,
+            std::slice::from_ref(&continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        let continuation_child_inspect_after_consumed_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":52,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            continuation_child.task_id
+        ));
+        assert!(continuation_child_inspect_after_consumed_join
+            .error
+            .is_none());
+        let continuation_child_inspect_after_consumed_join_result =
+            continuation_child_inspect_after_consumed_join
+                .result
+                .expect("continuation child inspect after consumed join");
+        assert_child_inspect_consumed_parent_join_recovery_summary(
+            &continuation_child_inspect_after_consumed_join_result
+                ["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            continuation_child,
+            "Queued",
             1,
             std::slice::from_ref(&continuation_child.task_id),
             &[],
