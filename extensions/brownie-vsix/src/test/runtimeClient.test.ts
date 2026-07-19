@@ -102,9 +102,21 @@ const parentJoinReadinessOutcome = {
   child_task_id: 'task_child_1',
   child_run_id: 'run_child_1',
   child_terminal_status: 'Completed',
+  terminal_controlled_child_count: 1,
+  pending_controlled_child_count: 0,
+  pending_controlled_child_task_ids: [],
   parent_join_ready: true,
   parent_running_enabled: false,
   next_action: 'run_parent_task_explicitly',
+};
+
+const pendingSiblingParentJoinReadinessOutcome = {
+  ...parentJoinReadinessOutcome,
+  terminal_controlled_child_count: 1,
+  pending_controlled_child_count: 1,
+  pending_controlled_child_task_ids: ['task_child_2'],
+  parent_join_ready: false,
+  next_action: 'run_remaining_child_tasks_explicitly',
 };
 
 describe('protocol validation', () => {
@@ -336,11 +348,16 @@ describe('protocol validation', () => {
 
   it('validates controlled child parent-join readiness outcomes', () => {
     expect(isTaskRunParentJoinReadinessOutcome(parentJoinReadinessOutcome)).toBe(true);
+    expect(isTaskRunParentJoinReadinessOutcome(pendingSiblingParentJoinReadinessOutcome)).toBe(true);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, child_terminal_status: 'Failed' })).toBe(true);
     expect(isTaskRunResult({ task_id: 'task_child_1', run_id: 'run_child_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'done' }, parent_join_readiness_outcome: parentJoinReadinessOutcome })).toBe(true);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, parent_task_id: '' })).toBe(false);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, child_terminal_status: 'Queued' })).toBe(false);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, parent_join_ready: false })).toBe(false);
+    expect(isTaskRunParentJoinReadinessOutcome({ ...pendingSiblingParentJoinReadinessOutcome, parent_join_ready: true })).toBe(false);
+    expect(isTaskRunParentJoinReadinessOutcome({ ...pendingSiblingParentJoinReadinessOutcome, pending_controlled_child_count: 2 })).toBe(false);
+    expect(isTaskRunParentJoinReadinessOutcome({ ...pendingSiblingParentJoinReadinessOutcome, pending_controlled_child_task_ids: ['task_child_1'] })).toBe(false);
+    expect(isTaskRunParentJoinReadinessOutcome({ ...pendingSiblingParentJoinReadinessOutcome, next_action: 'run_parent_task_explicitly' })).toBe(false);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, parent_running_enabled: true })).toBe(false);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, next_action: 'auto_run_parent' })).toBe(false);
     expect(isTaskRunParentJoinReadinessOutcome({ ...parentJoinReadinessOutcome, stdout: 'raw' })).toBe(false);

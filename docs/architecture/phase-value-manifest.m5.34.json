@@ -1,0 +1,145 @@
+{
+  "phase": "M5.34",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "controlled_child_set_parent_join_readiness",
+  "forbidden_pattern": "single_child_readiness_overclaim_or_diagnostics_only_report",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes terminal controlled child task.run responses evaluate the parent child-set before directing the caller toward the parent join."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets unattended callers follow bounded pending child task ids until all controlled siblings are terminal, then explicitly resume the parent."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "controlled_child_set_parent_join_readiness",
+        "prompt": "Does terminal controlled child task.run return bounded child-set readiness for the parent run?"
+      },
+      {
+        "id": "pending_sibling_next_action",
+        "prompt": "Does a terminal child with pending controlled siblings report parent_join_ready=false and run_remaining_child_tasks_explicitly?"
+      },
+      {
+        "id": "ready_only_after_all_terminal",
+        "prompt": "Does the outcome report run_parent_task_explicitly only when every controlled child for the parent run is Completed or Failed?"
+      },
+      {
+        "id": "no_child_response_parent_mutation",
+        "prompt": "Does child task.run avoid parent TaskRunning, parent join consumption, handoff envelope, and new parent-child TaskRecord mutation?"
+      },
+      {
+        "id": "prior_phase_compatibility",
+        "prompt": "Do M5.33, M5.32, M5.31, M5.30, M5.29, M5.27, in-budget recovery, and non-recovery behaviors remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw prompts, provider output, file content, commands, stdout/stderr, env, raw tool input, raw payloads, scheduler handoff, auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "controlled_child_set_parent_join_readiness": "Yes. Terminal controlled child task.run derives parent child-set readiness from runtime-owned TaskRecords sharing the same parent run and complete controlled child provenance.",
+      "pending_sibling_next_action": "Yes. If any controlled sibling is non-terminal, the bounded outcome reports parent_join_ready=false, pending controlled child count and task ids, and next_action=run_remaining_child_tasks_explicitly.",
+      "ready_only_after_all_terminal": "Yes. next_action=run_parent_task_explicitly is emitted only when every controlled child in the parent run is Completed or Failed.",
+      "no_child_response_parent_mutation": "Yes. Child task.run computes readiness without appending parent TaskRunning, consuming parent join state, recording parent handoff envelopes, or creating more child TaskRecords.",
+      "prior_phase_compatibility": "Yes. Single-child M5.33 behavior, failed child replay, child-orchestration replay, first materialization, replay-safe recovery budget, over-budget recovery rejection, in-budget recovery child run, and non-controlled task behavior remain covered.",
+      "safety_boundary": "Yes. The outcome exposes bounded ids and counts only, with no raw goals, prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, scheduler handoff, auto-run, diagnostics wrapper RPC, process exec expansion, network bypass, service control, patch apply, or workspace mutation path."
+    }
+  },
+  "exit_criteria": [
+    "Terminal controlled child task.run output reports bounded parent child-set readiness.",
+    "The parent child-set readiness outcome includes parent task id and parent run id.",
+    "The parent child-set readiness outcome includes child task id, child run id, and child terminal status.",
+    "The parent child-set readiness outcome includes terminal controlled child count.",
+    "The parent child-set readiness outcome includes pending controlled child count.",
+    "The parent child-set readiness outcome includes pending controlled child task ids.",
+    "The parent child-set readiness outcome reports parent_join_ready=false when a controlled sibling remains non-terminal.",
+    "The parent child-set readiness outcome reports next_action=run_remaining_child_tasks_explicitly while siblings remain pending.",
+    "The parent child-set readiness outcome reports parent_join_ready=true only after all controlled children are terminal.",
+    "The parent child-set readiness outcome reports parent_running_enabled=false.",
+    "The parent child-set readiness outcome reports next_action=run_parent_task_explicitly only after all controlled children are terminal.",
+    "Child task.run response appends no parent TaskRunning event.",
+    "Child task.run response appends no parent join consumption or handoff envelope event.",
+    "Child task.run response creates no additional direct child TaskRecord for the parent.",
+    "Parent task.run before all siblings are terminal still rejects through the existing admission guard.",
+    "Parent task.run remains the only path that consumes terminal child result sets.",
+    "M5.32 parent-join child-orchestration replay behavior remains intact.",
+    "M5.31 initial parent replay behavior remains intact.",
+    "M5.30 first materialization child-orchestration outcome behavior remains intact.",
+    "M5.29 replay-safe recovery-cycle budget outcome behavior remains intact.",
+    "M5.27 over-budget recovery-cycle child task.run still rejects before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-controlled and parentless tasks do not expose parent readiness outcomes.",
+    "No raw child prompts, parent prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, parent auto-run, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "parent_join_readiness_outcome_for_terminal_child",
+      "parent_join_readiness_outcome_for_replay",
+      "controlled_child_records_for_parent_run",
+      "controlled_child_set_has_terminal_and_pending",
+      "terminal_controlled_child_count",
+      "pending_controlled_child_count",
+      "pending_controlled_child_task_ids",
+      "run_remaining_child_tasks_explicitly",
+      "run_parent_task_explicitly",
+      "task_run_reports_pending_siblings_before_parent_join_readiness",
+      "task_run_parentless_task_omits_parent_join_readiness_outcome",
+      "child_orchestration_outcome_for_replay",
+      "child_orchestration_outcome_for_latest_parent_join_queued_children",
+      "child_orchestration_outcome_for_existing_queued_children",
+      "recovery_cycle_budget_outcome_for_replay",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "task_run_parent_join_recovers_failed_controlled_child_without_auto_run",
+      "task_run_replays_parent_join_outcome_for_same_child_completion_fingerprint_without_mutation",
+      "TaskRunning",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded"
+    ],
+    "rust_protocol_tokens": [
+      "TaskRunParentJoinReadinessOutcome",
+      "parent_join_readiness_outcome",
+      "parent_task_id",
+      "parent_run_id",
+      "child_task_id",
+      "child_run_id",
+      "child_terminal_status",
+      "terminal_controlled_child_count",
+      "pending_controlled_child_count",
+      "pending_controlled_child_task_ids",
+      "parent_join_ready",
+      "parent_running_enabled",
+      "next_action"
+    ],
+    "vsix_protocol_tokens": [
+      "TaskRunParentJoinReadinessOutcome",
+      "TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS",
+      "isTaskRunParentJoinReadinessOutcome",
+      "pending_controlled_child_task_ids",
+      "run_remaining_child_tasks_explicitly",
+      "run_parent_task_explicitly"
+    ],
+    "vsix_test_tokens": [
+      "validates controlled child parent-join readiness outcomes",
+      "pendingSiblingParentJoinReadinessOutcome",
+      "run_remaining_child_tasks_explicitly",
+      "raw_failure_payload"
+    ],
+    "architecture_doc_tokens": [
+      "parent_join_readiness_outcome",
+      "runtime-owned child TaskRecords",
+      "pending controlled child task ids",
+      "run_remaining_child_tasks_explicitly",
+      "run_parent_task_explicitly",
+      "parent_running_enabled=false",
+      "explicit parent task.run"
+    ]
+  }
+}

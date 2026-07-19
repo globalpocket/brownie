@@ -246,9 +246,12 @@ export interface TaskRunParentJoinReadinessOutcome {
   child_task_id: string;
   child_run_id: string;
   child_terminal_status: 'Completed' | 'Failed';
-  parent_join_ready: true;
+  terminal_controlled_child_count: number;
+  pending_controlled_child_count: number;
+  pending_controlled_child_task_ids: string[];
+  parent_join_ready: boolean;
   parent_running_enabled: false;
-  next_action: 'run_parent_task_explicitly';
+  next_action: 'run_parent_task_explicitly' | 'run_remaining_child_tasks_explicitly';
 }
 
 export interface RecoveryCycleBudgetOutcome {
@@ -2578,6 +2581,9 @@ const TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS = new Set([
   'child_task_id',
   'child_run_id',
   'child_terminal_status',
+  'terminal_controlled_child_count',
+  'pending_controlled_child_count',
+  'pending_controlled_child_task_ids',
   'parent_join_ready',
   'parent_running_enabled',
   'next_action',
@@ -2657,22 +2663,33 @@ export function isTaskRunChildOrchestrationOutcome(value: unknown): value is Tas
 }
 
 export function isTaskRunParentJoinReadinessOutcome(value: unknown): value is TaskRunParentJoinReadinessOutcome {
-  return (
-    isRecord(value) &&
-    hasOnlyKeys(value, TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS) &&
-    typeof value.parent_task_id === 'string' &&
-    value.parent_task_id.trim().length > 0 &&
-    typeof value.parent_run_id === 'string' &&
-    value.parent_run_id.trim().length > 0 &&
-    typeof value.child_task_id === 'string' &&
-    value.child_task_id.trim().length > 0 &&
-    typeof value.child_run_id === 'string' &&
-    value.child_run_id.trim().length > 0 &&
-    (value.child_terminal_status === 'Completed' || value.child_terminal_status === 'Failed') &&
-    value.parent_join_ready === true &&
-    value.parent_running_enabled === false &&
-    value.next_action === 'run_parent_task_explicitly'
-  );
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS) ||
+    typeof value.parent_task_id !== 'string' ||
+    value.parent_task_id.trim().length === 0 ||
+    typeof value.parent_run_id !== 'string' ||
+    value.parent_run_id.trim().length === 0 ||
+    typeof value.child_task_id !== 'string' ||
+    value.child_task_id.trim().length === 0 ||
+    typeof value.child_run_id !== 'string' ||
+    value.child_run_id.trim().length === 0 ||
+    (value.child_terminal_status !== 'Completed' && value.child_terminal_status !== 'Failed') ||
+    !isNonNegativeInteger(value.terminal_controlled_child_count) ||
+    value.terminal_controlled_child_count === 0 ||
+    !isNonNegativeInteger(value.pending_controlled_child_count) ||
+    !Array.isArray(value.pending_controlled_child_task_ids) ||
+    !value.pending_controlled_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0 && taskId !== value.child_task_id) ||
+    value.pending_controlled_child_count !== value.pending_controlled_child_task_ids.length ||
+    typeof value.parent_join_ready !== 'boolean' ||
+    value.parent_running_enabled !== false
+  ) {
+    return false;
+  }
+  if (value.pending_controlled_child_count === 0) {
+    return value.parent_join_ready === true && value.next_action === 'run_parent_task_explicitly';
+  }
+  return value.parent_join_ready === false && value.next_action === 'run_remaining_child_tasks_explicitly';
 }
 
 function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejectedSummary {

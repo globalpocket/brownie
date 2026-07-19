@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.33';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.33.json';
+const phase = 'M5.34';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.34.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'controlled_child_parent_join_readiness_outcome',
-    `${phase} must declare the controlled child parent-join readiness outcome transition.`
+    manifest.concrete_capability_transition === 'controlled_child_set_parent_join_readiness',
+    `${phase} must declare the controlled child set parent-join readiness transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_child_completion_without_parent_join_readiness_handles',
-    `${phase} must forbid diagnostics-only work or child completion without parent-join readiness handles.`
+    manifest.forbidden_pattern === 'single_child_readiness_overclaim_or_diagnostics_only_report',
+    `${phase} must forbid diagnostics-only work or single-child readiness overclaim.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,13 +75,18 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'Existing child task.run output',
-    'parent-join readiness',
+    'Terminal controlled child task.run output',
+    'parent child-set readiness',
     'parent task id',
     'parent run id',
     'child task id',
     'child run id',
     'child terminal status',
+    'terminal controlled child count',
+    'pending controlled child count',
+    'pending controlled child task ids',
+    'parent_join_ready=false',
+    'run_remaining_child_tasks_explicitly',
     'parent_join_ready=true',
     'parent_running_enabled=false',
     'run_parent_task_explicitly',
@@ -89,6 +94,7 @@ function validateManifest(manifest) {
     'parent join consumption',
     'handoff envelope',
     'child TaskRecord',
+    'Parent task.run before all siblings are terminal',
     'M5.31 initial parent replay',
     'M5.30 first materialization',
     'M5.29 replay-safe',
@@ -138,10 +144,17 @@ function validateSourceEvidence(manifest) {
   for (const token of [
     'parent_join_readiness_outcome_for_terminal_child',
     'parent_join_readiness_outcome_for_replay',
+    'controlled_child_records_for_parent_run',
+    'controlled_child_set_has_terminal_and_pending',
     'controlled_child_failed_agent_loop_summary',
     'TaskRunParentJoinReadinessOutcome',
     'parent_join_readiness_outcome',
+    'terminal_controlled_child_count',
+    'pending_controlled_child_count',
+    'pending_controlled_child_task_ids',
+    'run_remaining_child_tasks_explicitly',
     'run_parent_task_explicitly',
+    'task_run_reports_pending_siblings_before_parent_join_readiness',
     'task_run_parentless_task_omits_parent_join_readiness_outcome',
     'assert_parent_join_readiness_outcome',
     'child_orchestration_outcome_for_replay',
