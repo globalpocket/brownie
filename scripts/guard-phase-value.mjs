@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.32';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.32.json';
+const phase = 'M5.33';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.33.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'parent_join_child_orchestration_outcome_replay',
-    `${phase} must declare the parent-join child-orchestration outcome replay transition.`
+    manifest.concrete_capability_transition === 'controlled_child_parent_join_readiness_outcome',
+    `${phase} must declare the controlled child parent-join readiness outcome transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_replayed_parent_join_without_stable_continuation_child_handles',
-    `${phase} must forbid diagnostics-only work or replayed parent join without stable continuation child handles.`
+    manifest.forbidden_pattern === 'new_diagnostics_rpc_or_child_completion_without_parent_join_readiness_handles',
+    `${phase} must forbid diagnostics-only work or child completion without parent-join readiness handles.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,19 +75,27 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'Existing parent task.run output',
-    'replays bounded child-orchestration handles',
-    'consumed parent-join continuation',
-    'existing queued continuation children',
-    'Existing parent inspection output',
+    'Existing child task.run output',
+    'parent-join readiness',
+    'parent task id',
+    'parent run id',
+    'child task id',
+    'child run id',
+    'child terminal status',
+    'parent_join_ready=true',
+    'parent_running_enabled=false',
+    'run_parent_task_explicitly',
+    'parent TaskRunning',
+    'parent join consumption',
+    'handoff envelope',
     'child TaskRecord',
-    'TaskRunning',
-    'run_child_task_explicitly',
     'M5.31 initial parent replay',
     'M5.30 first materialization',
     'M5.29 replay-safe',
+    'M5.32 parent-join child-orchestration replay',
+    'M5.27 over-budget recovery-cycle child',
     'In-budget recovery-cycle child',
-    'Non-recovery tasks',
+    'Non-controlled and parentless tasks',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -128,6 +136,14 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
+    'parent_join_readiness_outcome_for_terminal_child',
+    'parent_join_readiness_outcome_for_replay',
+    'controlled_child_failed_agent_loop_summary',
+    'TaskRunParentJoinReadinessOutcome',
+    'parent_join_readiness_outcome',
+    'run_parent_task_explicitly',
+    'task_run_parentless_task_omits_parent_join_readiness_outcome',
+    'assert_parent_join_readiness_outcome',
     'child_orchestration_outcome_for_replay',
     'child_orchestration_outcome_for_latest_parent_join_queued_children',
     'child_orchestration_outcome_for_existing_queued_children',

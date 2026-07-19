@@ -222,6 +222,7 @@ export interface TaskRunResult {
   agent_loop: AgentLoopRunSummary;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
+  parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
 }
 
 export interface AgentLoopRunSummary {
@@ -237,6 +238,17 @@ export interface TaskRunChildOrchestrationOutcome {
   queued_child_count: number;
   child_running_enabled: false;
   next_action: 'run_child_task_explicitly';
+}
+
+export interface TaskRunParentJoinReadinessOutcome {
+  parent_task_id: string;
+  parent_run_id: string;
+  child_task_id: string;
+  child_run_id: string;
+  child_terminal_status: 'Completed' | 'Failed';
+  parent_join_ready: true;
+  parent_running_enabled: false;
+  next_action: 'run_parent_task_explicitly';
 }
 
 export interface RecoveryCycleBudgetOutcome {
@@ -2560,6 +2572,17 @@ const TASK_RUN_CHILD_ORCHESTRATION_OUTCOME_KEYS = new Set([
   'next_action',
 ]);
 
+const TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS = new Set([
+  'parent_task_id',
+  'parent_run_id',
+  'child_task_id',
+  'child_run_id',
+  'child_terminal_status',
+  'parent_join_ready',
+  'parent_running_enabled',
+  'next_action',
+]);
+
 function hasOnlyKeys(value: Record<string, unknown>, allowedKeys: Set<string>): boolean {
   return Object.keys(value).every((key) => allowedKeys.has(key));
 }
@@ -2633,6 +2656,25 @@ export function isTaskRunChildOrchestrationOutcome(value: unknown): value is Tas
   );
 }
 
+export function isTaskRunParentJoinReadinessOutcome(value: unknown): value is TaskRunParentJoinReadinessOutcome {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS) &&
+    typeof value.parent_task_id === 'string' &&
+    value.parent_task_id.trim().length > 0 &&
+    typeof value.parent_run_id === 'string' &&
+    value.parent_run_id.trim().length > 0 &&
+    typeof value.child_task_id === 'string' &&
+    value.child_task_id.trim().length > 0 &&
+    typeof value.child_run_id === 'string' &&
+    value.child_run_id.trim().length > 0 &&
+    (value.child_terminal_status === 'Completed' || value.child_terminal_status === 'Failed') &&
+    value.parent_join_ready === true &&
+    value.parent_running_enabled === false &&
+    value.next_action === 'run_parent_task_explicitly'
+  );
+}
+
 function isToolIntentRejectedSummary(value: unknown): value is ToolIntentRejectedSummary {
   return (
     isRecord(value) &&
@@ -2692,7 +2734,8 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
-    (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome))
+    (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
+    (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))
   );
 }
 

@@ -1,0 +1,124 @@
+{
+  "phase": "M5.33",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "controlled_child_parent_join_readiness_outcome",
+  "forbidden_pattern": "new_diagnostics_rpc_or_child_completion_without_parent_join_readiness_handles",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Completes the explicit parent-child-parent control-flow contract by returning bounded parent-join readiness handles from terminal controlled child task.run responses."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets unattended callers resume the parent with an explicit task.run call after child completion or failure without scraping raw ledger records or using diagnostics wrappers."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "controlled_child_parent_join_readiness",
+        "prompt": "Does controlled child task.run return bounded parent-join readiness when the child reaches Completed or Failed?"
+      },
+      {
+        "id": "deterministic_parent_child_handles",
+        "prompt": "Does the outcome include parent task/run ids, child task/run ids, child terminal status, parent_join_ready=true, parent_running_enabled=false, and run_parent_task_explicitly?"
+      },
+      {
+        "id": "no_child_response_parent_mutation",
+        "prompt": "Does child task.run avoid parent TaskRunning, parent join consumption, handoff envelope, and new parent-child TaskRecord mutation?"
+      },
+      {
+        "id": "prior_phase_compatibility",
+        "prompt": "Do M5.32, M5.31, M5.30, M5.29, M5.27, in-budget recovery, and non-recovery behaviors remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw goals, prompts, provider output, file content, commands, stdout/stderr, env, raw tool input, raw failure payloads, scheduler handoff, auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "controlled_child_parent_join_readiness": "Yes. Terminal controlled child task.run responses can include parent_join_readiness_outcome for Completed and Failed child statuses when runtime-owned parent/source provenance is complete.",
+      "deterministic_parent_child_handles": "Yes. The outcome contains only parent_task_id, parent_run_id, child_task_id, child_run_id, child_terminal_status, parent_join_ready=true, parent_running_enabled=false, and next_action=run_parent_task_explicitly.",
+      "no_child_response_parent_mutation": "Yes. The child response path derives readiness from the child TaskRecord and terminal status, and it does not consume parent join state, append parent TaskRunning, append parent handoff envelopes, or create another direct child TaskRecord.",
+      "prior_phase_compatibility": "Yes. Existing child-orchestration replay, initial parent replay, first materialization, replay-safe recovery budget, over-budget recovery rejection, in-budget recovery child run, and non-controlled task behavior remain covered.",
+      "safety_boundary": "Yes. The response exposes no raw prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, scheduler handoff, auto-run, diagnostics wrapper RPC, process exec expansion, network bypass, service control, patch apply, or workspace mutation path."
+    }
+  },
+  "exit_criteria": [
+    "Existing child task.run output returns bounded parent-join readiness for terminal controlled children with complete parent provenance.",
+    "The parent-join readiness outcome includes parent task id and parent run id.",
+    "The parent-join readiness outcome includes child task id, child run id, and child terminal status.",
+    "The parent-join readiness outcome reports parent_join_ready=true.",
+    "The parent-join readiness outcome reports parent_running_enabled=false.",
+    "The parent-join readiness outcome reports next_action=run_parent_task_explicitly.",
+    "Child task.run response appends no parent TaskRunning event.",
+    "Child task.run response appends no parent join consumption or handoff envelope event.",
+    "Child task.run response creates no additional direct child TaskRecord for the parent.",
+    "Parent task.run remains the only path that consumes terminal child result sets.",
+    "M5.32 parent-join child-orchestration replay behavior remains intact.",
+    "M5.31 initial parent replay behavior remains intact.",
+    "M5.30 first materialization child-orchestration outcome behavior remains intact.",
+    "M5.29 replay-safe recovery-cycle budget outcome behavior remains intact.",
+    "M5.27 over-budget recovery-cycle child task.run still rejects before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-controlled and parentless tasks do not expose parent readiness outcomes.",
+    "No raw child prompts, parent prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, parent auto-run, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "parent_join_readiness_outcome_for_terminal_child",
+      "parent_join_readiness_outcome_for_replay",
+      "controlled_child_failed_agent_loop_summary",
+      "TaskRunParentJoinReadinessOutcome",
+      "parent_join_readiness_outcome",
+      "run_parent_task_explicitly",
+      "task_run_parentless_task_omits_parent_join_readiness_outcome",
+      "assert_parent_join_readiness_outcome",
+      "child_orchestration_outcome_for_replay",
+      "child_orchestration_outcome_for_latest_parent_join_queued_children",
+      "child_orchestration_outcome_for_existing_queued_children",
+      "recovery_cycle_budget_outcome_for_replay",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "task_run_parent_join_recovers_failed_controlled_child_without_auto_run",
+      "task_run_replays_parent_join_outcome_for_same_child_completion_fingerprint_without_mutation",
+      "TaskRunning",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded"
+    ],
+    "rust_protocol_tokens": [
+      "TaskRunParentJoinReadinessOutcome",
+      "parent_join_readiness_outcome",
+      "parent_task_id",
+      "parent_run_id",
+      "child_task_id",
+      "child_run_id",
+      "child_terminal_status",
+      "parent_join_ready",
+      "parent_running_enabled",
+      "next_action"
+    ],
+    "vsix_protocol_tokens": [
+      "TaskRunParentJoinReadinessOutcome",
+      "TASK_RUN_PARENT_JOIN_READINESS_OUTCOME_KEYS",
+      "isTaskRunParentJoinReadinessOutcome",
+      "parent_join_readiness_outcome",
+      "run_parent_task_explicitly"
+    ],
+    "vsix_test_tokens": [
+      "validates controlled child parent-join readiness outcomes",
+      "parent_running_enabled: true",
+      "auto_run_parent",
+      "raw_failure_payload"
+    ],
+    "architecture_doc_tokens": [
+      "parent_join_readiness_outcome",
+      "run_parent_task_explicitly",
+      "parent_running_enabled=false",
+      "explicit parent task.run"
+    ]
+  }
+}
