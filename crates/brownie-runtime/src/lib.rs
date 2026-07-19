@@ -16,18 +16,19 @@ use brownie_llm::{
 };
 use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
-    ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
-    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
-    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    ChildInspectConsumedParentJoinRecoverySummary, ChildInspectParentJoinReadinessSummary,
+    ChildTaskInspectSummary, ChildTaskSourceIntentSummary, DiagnosticSeverity, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApproveParams, ProposalApproveResult, ProposalAuditTrailParams,
+    ProposalAuditTrailResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
+    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    ProposalReviewBundleParams, ProposalReviewBundleResult,
+    ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -4848,13 +4849,21 @@ fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
                 return error_response(id, -32603, &format!("internal error: {message}"))
             }
         };
+    let consumed_parent_join_recovery_summary =
+        match consumed_parent_join_recovery_summary_for_child_inspection(&store, &task) {
+            Ok(summary) => summary,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
     match inspect_run(&store, &task.run_id) {
         Ok(run) => result_response(
             id,
             json!(TaskInspectResult {
                 task,
                 run,
-                parent_join_readiness_summary
+                parent_join_readiness_summary,
+                consumed_parent_join_recovery_summary
             }),
         ),
         Err(message) => error_response(id, -32602, &message),
@@ -10716,6 +10725,367 @@ fn parent_join_readiness_summary_for_child_inspection(
         parent_running_enabled: false,
         next_action: next_action.to_string(),
     }))
+}
+
+#[derive(Clone)]
+struct ConsumedParentJoinFingerprint {
+    admission_id: String,
+    child_completion_fingerprint: String,
+    child_completion_child_count: usize,
+    child_terminal_completed_count: usize,
+    child_terminal_failed_count: usize,
+    child_recovery_cycle_depth: usize,
+}
+
+fn consumed_parent_join_recovery_summary_for_child_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<ChildInspectConsumedParentJoinRecoverySummary>, String> {
+    if !task_has_complete_controlled_child_provenance(record) {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(record.parent_task_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(record.parent_run_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_record) = store
+        .tasks()
+        .get_task(&parent_task_id)
+        .map_err(|error| format!("invalid params: {error}"))?
+    else {
+        return Ok(None);
+    };
+    if parent_record.run_id != parent_run_id
+        || parent_record.parent_run_id.is_some()
+        || parent_record.status != TaskStatus::Completed
+    {
+        return Ok(None);
+    }
+
+    let parent_events = store
+        .tasks()
+        .read_ledger_events(&parent_run_id)
+        .map_err(|error| error.to_string())?;
+    let mut controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if !controlled_children
+        .iter()
+        .any(|child| child.task_id == record.task_id)
+    {
+        controlled_children.push(record.clone());
+        sort_controlled_child_records(&mut controlled_children);
+    }
+
+    for event in parent_events.iter().rev() {
+        let Some(consumption) = consumed_parent_join_fingerprint_from_event(event) else {
+            continue;
+        };
+        if !parent_join_consumption_has_terminal_result(&parent_events, &consumption) {
+            continue;
+        }
+        let inspected_is_continuation_child =
+            child_recovery_provenance_matches_consumed_parent_join(record, &consumption)
+                || child_handoff_fingerprint_matches_consumed_parent_join(
+                    &parent_events,
+                    record,
+                    &consumption,
+                );
+        let inspected_is_consumed_terminal_child =
+            consumed_terminal_controlled_child_set_contains_inspected_child(
+                store,
+                &parent_events,
+                &controlled_children,
+                &consumption,
+                &record.task_id,
+            )?;
+        if !inspected_is_continuation_child && !inspected_is_consumed_terminal_child {
+            continue;
+        }
+
+        let continuation_children = continuation_controlled_children_for_consumed_parent_join(
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        );
+        let continuation_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_runnable_child_count = continuation_runnable_child_task_ids.len();
+        let continuation_non_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_non_runnable_child_count = continuation_non_runnable_child_task_ids.len();
+        let continuation_terminal_child_count = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_terminal_child_status(&child.status))
+            .count();
+        let next_action = if continuation_non_runnable_child_count > 0 {
+            "inspect_non_runnable_continuation_child_tasks"
+        } else if continuation_runnable_child_count > 0 {
+            "run_continuation_child_tasks_explicitly"
+        } else {
+            "inspect_parent_task"
+        };
+
+        return Ok(Some(ChildInspectConsumedParentJoinRecoverySummary {
+            parent_task_id,
+            parent_run_id,
+            inspected_child_task_id: record.task_id.clone(),
+            inspected_child_run_id: record.run_id.clone(),
+            inspected_child_status: record.status.clone(),
+            parent_join_consumed: true,
+            consumed_terminal_controlled_child_count: consumption.child_completion_child_count,
+            continuation_controlled_child_count: continuation_children.len(),
+            continuation_runnable_child_count,
+            continuation_runnable_child_task_ids,
+            continuation_non_runnable_child_count,
+            continuation_non_runnable_child_task_ids,
+            continuation_terminal_child_count,
+            parent_running_enabled: false,
+            next_action: next_action.to_string(),
+        }));
+    }
+
+    Ok(None)
+}
+
+fn consumed_parent_join_fingerprint_from_event(
+    event: &LedgerEvent,
+) -> Option<ConsumedParentJoinFingerprint> {
+    if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+        return None;
+    }
+    let payload = event.payload.as_ref()?;
+    let admission_id = non_empty_payload_string(payload, "admission_id")?;
+    let child_completion_fingerprint =
+        non_empty_payload_string(payload, "child_completion_fingerprint")?;
+    if !is_sha256_fingerprint(&child_completion_fingerprint) {
+        return None;
+    }
+    Some(ConsumedParentJoinFingerprint {
+        admission_id,
+        child_completion_fingerprint,
+        child_completion_child_count: payload_usize(payload, "child_completion_child_count")?,
+        child_terminal_completed_count: payload_usize(payload, "child_terminal_completed_count")?,
+        child_terminal_failed_count: payload_usize(payload, "child_terminal_failed_count")?,
+        child_recovery_cycle_depth: payload_usize(payload, "child_recovery_cycle_depth")?,
+    })
+}
+
+fn parent_join_consumption_has_terminal_result(
+    parent_events: &[LedgerEvent],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(running_index) = parent_events.iter().position(|candidate| {
+        candidate.kind == LedgerEventKind::TaskRunning
+            && candidate
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("admission_id"))
+                .and_then(Value::as_str)
+                == Some(consumption.admission_id.as_str())
+    }) else {
+        return false;
+    };
+    parent_events
+        .iter()
+        .skip(running_index + 1)
+        .take_while(|candidate| {
+            candidate.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+        })
+        .any(|candidate| {
+            matches!(
+                candidate.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            )
+        })
+}
+
+fn child_recovery_provenance_matches_consumed_parent_join(
+    child: &TaskRecord,
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(provenance) = child.recovery_cycle_provenance.as_ref() else {
+        return false;
+    };
+    recovery_cycle_child_provenance_is_internally_valid(provenance)
+        && provenance.parent_join_admission_id == consumption.admission_id
+        && provenance.parent_join_child_completion_fingerprint
+            == consumption.child_completion_fingerprint
+        && provenance.parent_join_child_completion_child_count
+            == consumption.child_completion_child_count
+        && provenance.parent_join_terminal_completed_child_count
+            == consumption.child_terminal_completed_count
+        && provenance.parent_join_terminal_failed_child_count
+            == consumption.child_terminal_failed_count
+        && provenance.parent_join_recovery_cycle_depth == consumption.child_recovery_cycle_depth
+}
+
+fn child_handoff_fingerprint_matches_consumed_parent_join(
+    parent_events: &[LedgerEvent],
+    child: &TaskRecord,
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(fingerprint) = child.source_handoff_envelope_fingerprint.as_ref() else {
+        return false;
+    };
+    consumed_parent_join_continuation_handoff_fingerprints(parent_events, consumption)
+        .contains(fingerprint)
+}
+
+fn consumed_terminal_controlled_child_set_contains_inspected_child(
+    store: &BrownieStore,
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+    inspected_child_task_id: &str,
+) -> Result<bool, String> {
+    let mut consumed_children = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .filter(|child| match child.recovery_cycle_provenance.as_ref() {
+            Some(provenance) => {
+                recovery_cycle_child_provenance_is_internally_valid(provenance)
+                    && provenance.parent_join_child_completion_child_count
+                        < consumption.child_completion_child_count
+                    && parent_events.iter().any(|event| {
+                        recovery_cycle_provenance_matches_parent_join(event, provenance)
+                    })
+            }
+            None => true,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_controlled_child_records(&mut consumed_children);
+    if consumed_children.len() != consumption.child_completion_child_count {
+        return Ok(false);
+    }
+    if consumed_children
+        .iter()
+        .filter(|child| child.status == TaskStatus::Completed)
+        .count()
+        != consumption.child_terminal_completed_count
+        || consumed_children
+            .iter()
+            .filter(|child| child.status == TaskStatus::Failed)
+            .count()
+            != consumption.child_terminal_failed_count
+    {
+        return Ok(false);
+    }
+    for child in &consumed_children {
+        if !child_has_terminal_parent_join_outcome(store, child)
+            .map_err(task_run_admission_rejection_message)?
+        {
+            return Ok(false);
+        }
+    }
+    let child_evidence = consumed_children
+        .iter()
+        .map(|child| {
+            parent_join_child_completion_evidence(store, child)
+                .map_err(task_run_admission_rejection_message)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (child_completion_fingerprint, _) =
+        parent_join_child_completion_fingerprint(&child_evidence);
+    if child_completion_fingerprint != consumption.child_completion_fingerprint {
+        return Ok(false);
+    }
+    Ok(consumed_children
+        .iter()
+        .any(|child| child.task_id == inspected_child_task_id))
+}
+
+fn continuation_controlled_children_for_consumed_parent_join(
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Vec<TaskRecord> {
+    let continuation_handoff_fingerprints =
+        consumed_parent_join_continuation_handoff_fingerprints(parent_events, consumption);
+    let mut continuation_children = controlled_children
+        .iter()
+        .filter(|child| {
+            child_recovery_provenance_matches_consumed_parent_join(child, consumption)
+                || child
+                    .source_handoff_envelope_fingerprint
+                    .as_ref()
+                    .is_some_and(|fingerprint| {
+                        continuation_handoff_fingerprints.contains(fingerprint)
+                    })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_controlled_child_records(&mut continuation_children);
+    continuation_children
+}
+
+fn consumed_parent_join_continuation_handoff_fingerprints(
+    parent_events: &[LedgerEvent],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Vec<String> {
+    let mut fingerprints = parent_events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .filter_map(|event| event.payload.as_ref())
+        .filter(|payload| {
+            payload
+                .get("continuation_materialization")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("handoff_envelope_status")
+                    .and_then(Value::as_str)
+                    == Some("Accepted")
+                && payload
+                    .get("parent_join_admission_id")
+                    .and_then(Value::as_str)
+                    == Some(consumption.admission_id.as_str())
+                && payload
+                    .get("parent_join_child_completion_fingerprint")
+                    .and_then(Value::as_str)
+                    == Some(consumption.child_completion_fingerprint.as_str())
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_child_completion_child_count",
+                    consumption.child_completion_child_count,
+                )
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_terminal_completed_child_count",
+                    consumption.child_terminal_completed_count,
+                )
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_terminal_failed_child_count",
+                    consumption.child_terminal_failed_count,
+                )
+        })
+        .filter_map(|payload| {
+            payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|fingerprint| is_sha256_fingerprint(fingerprint))
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort();
+    fingerprints.dedup();
+    fingerprints
 }
 
 fn task_has_complete_controlled_child_provenance(record: &TaskRecord) -> bool {
@@ -18017,6 +18387,86 @@ mod tests {
         }
     }
 
+    fn assert_child_inspect_consumed_parent_join_recovery_summary(
+        summary: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        child: &TaskRecord,
+        child_status: &str,
+        consumed_terminal_controlled_child_count: usize,
+        continuation_runnable_child_task_ids: &[String],
+        continuation_non_runnable_child_task_ids: &[String],
+        continuation_terminal_child_count: usize,
+        next_action: &str,
+    ) {
+        assert_eq!(summary["parent_task_id"], parent_task_id);
+        assert_eq!(summary["parent_run_id"], parent_run_id);
+        assert_eq!(summary["inspected_child_task_id"], child.task_id);
+        assert_eq!(summary["inspected_child_run_id"], child.run_id);
+        assert_eq!(summary["inspected_child_status"], child_status);
+        assert_eq!(summary["parent_join_consumed"], true);
+        assert_eq!(
+            summary["consumed_terminal_controlled_child_count"],
+            consumed_terminal_controlled_child_count
+        );
+        assert_eq!(
+            summary["continuation_controlled_child_count"],
+            continuation_runnable_child_task_ids.len()
+                + continuation_non_runnable_child_task_ids.len()
+                + continuation_terminal_child_count
+        );
+        assert_eq!(
+            summary["continuation_runnable_child_count"],
+            continuation_runnable_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "continuation_runnable_child_task_ids"),
+            continuation_runnable_child_task_ids.to_vec()
+        );
+        assert_eq!(
+            summary["continuation_non_runnable_child_count"],
+            continuation_non_runnable_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "continuation_non_runnable_child_task_ids"),
+            continuation_non_runnable_child_task_ids.to_vec()
+        );
+        assert_eq!(
+            summary["continuation_terminal_child_count"],
+            continuation_terminal_child_count
+        );
+        assert_eq!(summary["parent_running_enabled"], false);
+        assert_eq!(summary["next_action"], next_action);
+        assert_ne!(summary["next_action"], "run_parent_task_explicitly");
+        assert!(summary.get("parent_join_ready").is_none());
+        assert!(summary.get("child_task_id").is_none());
+        assert!(summary.get("child_run_id").is_none());
+        assert!(summary.get("child_terminal_status").is_none());
+
+        let serialized = summary.to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "Run M5.35 pending sibling raw goal",
+            "Create M5.35 pending sibling.",
+            "Run M5.35 non-runnable sibling raw goal",
+            "Create M5.35 non-runnable sibling.",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+            "raw_failure_payload",
+        ] {
+            assert!(!serialized.contains(raw_marker));
+        }
+    }
+
     fn child_count_for_parent_run(store: &BrownieStore, parent_run_id: &str) -> usize {
         store
             .tasks()
@@ -18952,6 +19402,59 @@ mod tests {
             .into_iter()
             .filter(|event| event.kind == LedgerEventKind::TaskRunning)
             .count();
+
+        let initial_child_inspect_after_consumed_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":51,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(initial_child_inspect_after_consumed_join.error.is_none());
+        let initial_child_inspect_after_consumed_join_result =
+            initial_child_inspect_after_consumed_join
+                .result
+                .expect("initial child inspect after consumed join");
+        assert_child_inspect_consumed_parent_join_recovery_summary(
+            &initial_child_inspect_after_consumed_join_result
+                ["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Completed",
+            1,
+            std::slice::from_ref(&continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        let continuation_child_inspect_after_consumed_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":52,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            continuation_child.task_id
+        ));
+        assert!(continuation_child_inspect_after_consumed_join
+            .error
+            .is_none());
+        let continuation_child_inspect_after_consumed_join_result =
+            continuation_child_inspect_after_consumed_join
+                .result
+                .expect("continuation child inspect after consumed join");
+        assert_child_inspect_consumed_parent_join_recovery_summary(
+            &continuation_child_inspect_after_consumed_join_result
+                ["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            continuation_child,
+            "Queued",
+            1,
+            std::slice::from_ref(&continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_after_join,
+            child_count_after_join,
+        );
 
         let replay_parent_join = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{parent_task_id}"}}}}"#
@@ -21582,6 +22085,35 @@ mod tests {
             vec![second_candidate.to_string()]
         );
         assert!(!second_envelope_candidates.contains(&first_candidate.to_string()));
+
+        let initial_child_inspect_after_second_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":8,"method":"task.inspect","params":{{"task_id":"{}"}}}}"#,
+            initial_child.task_id
+        ));
+        assert!(initial_child_inspect_after_second_join.error.is_none());
+        let initial_child_inspect_after_second_join_result =
+            initial_child_inspect_after_second_join
+                .result
+                .expect("initial child inspect after second join");
+        assert_child_inspect_consumed_parent_join_recovery_summary(
+            &initial_child_inspect_after_second_join_result
+                ["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            &initial_child,
+            "Completed",
+            2,
+            std::slice::from_ref(&second_continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        assert!(!payload_string_array(
+            &initial_child_inspect_after_second_join_result
+                ["consumed_parent_join_recovery_summary"],
+            "continuation_runnable_child_task_ids"
+        )
+        .contains(&first_continuation_child.task_id));
 
         let parent = store
             .tasks()

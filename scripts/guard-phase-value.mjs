@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.36';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.36.json';
+const phase = 'M5.37';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.37.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'direct_child_inspection_parent_join_readiness_recovery',
-    `${phase} must declare the direct child inspection parent-join readiness recovery transition.`
+    manifest.concrete_capability_transition === 'direct_child_inspection_consumed_parent_join_recovery',
+    `${phase} must declare the direct child inspection consumed parent-join recovery transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'diagnostics_only_or_child_inspection_without_actionable_parent_join_handles',
-    `${phase} must forbid diagnostics-only child inspection without actionable parent join handles.`
+    manifest.forbidden_pattern === 'diagnostics_only_or_consumed_parent_join_child_inspection_without_continuation_handles',
+    `${phase} must forbid diagnostics-only consumed child inspection without continuation handles.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -76,28 +76,31 @@ function validateManifest(manifest) {
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
     'Existing controlled child task.inspect output',
-    'parent_join_readiness_summary',
+    'consumed_parent_join_recovery_summary',
     'parent task id',
     'parent run id',
     'inspected child task id',
     'inspected child run id',
     'inspected child status',
-    'terminal controlled child count',
-    'pending controlled child count',
-    'pending controlled child task ids',
-    'non-runnable controlled child count',
-    'non-runnable controlled child task ids',
-    'parent_join_ready=false',
-    'run_remaining_child_tasks_explicitly',
-    'inspect_non_runnable_child_tasks',
-    'parent_join_ready=true',
+    'parent_join_consumed=true',
+    'consumed terminal controlled child count',
+    'continuation controlled child count',
+    'continuation runnable child count',
+    'continuation runnable child task ids',
+    'continuation non-runnable child count',
+    'continuation non-runnable child task ids',
+    'continuation terminal child count',
     'parent_running_enabled=false',
+    'run_continuation_child_tasks_explicitly',
+    'inspect_non_runnable_continuation_child_tasks',
+    'inspect_parent_task',
     'run_parent_task_explicitly',
-    'after parent join consumption',
+    'stale continuation child handles',
     'TaskRunning',
     'parent join consumption',
     'handoff envelope',
     'child TaskRecord',
+    'M5.36 direct child parent_join_readiness_summary',
     'M5.35 parent inspection readiness',
     'M5.34 terminal child readiness',
     'M5.32 parent-join child-orchestration replay',
@@ -147,40 +150,32 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
+    'consumed_parent_join_recovery_summary_for_child_inspection',
+    'ChildInspectConsumedParentJoinRecoverySummary',
+    'consumed_parent_join_recovery_summary',
+    'parent_join_consumed',
+    'consumed_terminal_controlled_child_count',
+    'continuation_controlled_child_count',
+    'continuation_runnable_child_count',
+    'continuation_runnable_child_task_ids',
+    'continuation_non_runnable_child_count',
+    'continuation_non_runnable_child_task_ids',
+    'continuation_terminal_child_count',
+    'run_continuation_child_tasks_explicitly',
+    'inspect_non_runnable_continuation_child_tasks',
+    'inspect_parent_task',
+    'consumed_parent_join_continuation_handoff_fingerprints',
+    'continuation_controlled_children_for_consumed_parent_join',
+    'assert_child_inspect_consumed_parent_join_recovery_summary',
+    'task_run_parent_join_materializes_continuation_subtask_without_auto_run',
+    'task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates',
     'parent_join_readiness_summary_for_child_inspection',
     'ChildInspectParentJoinReadinessSummary',
     'parent_join_readiness_summary',
-    'inspected_child_task_id',
-    'inspected_child_run_id',
-    'inspected_child_status',
     'controlled_child_records_for_parent_run',
     'child_has_terminal_parent_join_outcome',
     'parent_join_child_completion_evidence',
-    'parent_join_child_completion_fingerprint_consumed',
-    'terminal_controlled_child_count',
-    'pending_controlled_child_count',
-    'pending_controlled_child_task_ids',
-    'non_runnable_controlled_child_count',
-    'non_runnable_controlled_child_task_ids',
-    'run_remaining_child_tasks_explicitly',
-    'inspect_non_runnable_child_tasks',
-    'run_parent_task_explicitly',
-    'parent_join_readiness_summary_for_parent_inspection',
-    'parent_inspect_reports_child_set_join_readiness_without_mutation',
-    'parent_inspect_reports_non_runnable_children_without_rerun_action',
-    'assert_child_inspect_parent_join_readiness_summary',
-    'assert_parent_inspect_join_readiness_summary',
     'assert_parent_inspection_did_not_mutate',
-    'parent_join_readiness_outcome_for_terminal_child',
-    'parent_join_readiness_outcome_for_replay',
-    'task_run_reports_pending_siblings_before_parent_join_readiness',
-    'task_run_parentless_task_omits_parent_join_readiness_outcome',
-    'child_orchestration_outcome_for_replay',
-    'child_orchestration_outcome_for_latest_parent_join_queued_children',
-    'child_orchestration_outcome_for_existing_queued_children',
-    'recovery_cycle_budget_outcome_for_replay',
-    'task_run_rejects_over_budget_recovery_cycle_child_before_running',
-    'task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance',
     'TaskRunning',
     'ParentJoinContinuationFingerprintConsumed',
     'SubtaskDispatchHandoffEnvelopeRecorded'
