@@ -269,6 +269,21 @@ export interface RunInspectParentJoinReadinessSummary {
   next_action: 'run_parent_task_explicitly' | 'run_remaining_child_tasks_explicitly' | 'inspect_non_runnable_child_tasks';
 }
 
+export interface RunInspectConsumedParentJoinRecoverySummary {
+  parent_task_id: string;
+  parent_run_id: string;
+  parent_join_consumed: true;
+  consumed_terminal_controlled_child_count: number;
+  continuation_controlled_child_count: number;
+  continuation_runnable_child_count: number;
+  continuation_runnable_child_task_ids: string[];
+  continuation_non_runnable_child_count: number;
+  continuation_non_runnable_child_task_ids: string[];
+  continuation_terminal_child_count: number;
+  parent_running_enabled: false;
+  next_action: 'run_continuation_child_tasks_explicitly' | 'inspect_non_runnable_continuation_child_tasks' | 'inspect_parent_task';
+}
+
 export interface ChildInspectParentJoinReadinessSummary {
   parent_task_id: string;
   parent_run_id: string;
@@ -346,6 +361,7 @@ export interface RunInspectSummary {
   status?: TaskStatus | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   parent_join_readiness_summary?: RunInspectParentJoinReadinessSummary | null;
+  consumed_parent_join_recovery_summary?: RunInspectConsumedParentJoinRecoverySummary | null;
   child_task_count: number;
   child_task_ids: string[];
   child_tasks: ChildTaskInspectSummary[];
@@ -2656,6 +2672,21 @@ const RUN_INSPECT_PARENT_JOIN_READINESS_SUMMARY_KEYS = new Set([
   'next_action',
 ]);
 
+const RUN_INSPECT_CONSUMED_PARENT_JOIN_RECOVERY_SUMMARY_KEYS = new Set([
+  'parent_task_id',
+  'parent_run_id',
+  'parent_join_consumed',
+  'consumed_terminal_controlled_child_count',
+  'continuation_controlled_child_count',
+  'continuation_runnable_child_count',
+  'continuation_runnable_child_task_ids',
+  'continuation_non_runnable_child_count',
+  'continuation_non_runnable_child_task_ids',
+  'continuation_terminal_child_count',
+  'parent_running_enabled',
+  'next_action',
+]);
+
 const CHILD_INSPECT_PARENT_JOIN_READINESS_SUMMARY_KEYS = new Set([
   'parent_task_id',
   'parent_run_id',
@@ -2843,6 +2874,51 @@ export function isRunInspectParentJoinReadinessSummary(value: unknown): value is
     return value.terminal_controlled_child_count > 0 && value.parent_join_ready === true && value.next_action === 'run_parent_task_explicitly';
   }
   return value.parent_join_ready === false && value.next_action === 'run_remaining_child_tasks_explicitly';
+}
+
+export function isRunInspectConsumedParentJoinRecoverySummary(value: unknown): value is RunInspectConsumedParentJoinRecoverySummary {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, RUN_INSPECT_CONSUMED_PARENT_JOIN_RECOVERY_SUMMARY_KEYS) ||
+    typeof value.parent_task_id !== 'string' ||
+    value.parent_task_id.trim().length === 0 ||
+    typeof value.parent_run_id !== 'string' ||
+    value.parent_run_id.trim().length === 0 ||
+    value.parent_join_consumed !== true ||
+    !isNonNegativeInteger(value.consumed_terminal_controlled_child_count) ||
+    value.consumed_terminal_controlled_child_count === 0 ||
+    !isNonNegativeInteger(value.continuation_controlled_child_count) ||
+    !isNonNegativeInteger(value.continuation_runnable_child_count) ||
+    !Array.isArray(value.continuation_runnable_child_task_ids) ||
+    !value.continuation_runnable_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0) ||
+    new Set(value.continuation_runnable_child_task_ids).size !== value.continuation_runnable_child_task_ids.length ||
+    value.continuation_runnable_child_count !== value.continuation_runnable_child_task_ids.length ||
+    !isNonNegativeInteger(value.continuation_non_runnable_child_count) ||
+    !Array.isArray(value.continuation_non_runnable_child_task_ids) ||
+    !value.continuation_non_runnable_child_task_ids.every((taskId) => typeof taskId === 'string' && taskId.trim().length > 0) ||
+    new Set(value.continuation_non_runnable_child_task_ids).size !== value.continuation_non_runnable_child_task_ids.length ||
+    value.continuation_non_runnable_child_count !== value.continuation_non_runnable_child_task_ids.length ||
+    !isNonNegativeInteger(value.continuation_terminal_child_count) ||
+    value.continuation_controlled_child_count !== value.continuation_runnable_child_count + value.continuation_non_runnable_child_count + value.continuation_terminal_child_count ||
+    value.parent_running_enabled !== false
+  ) {
+    return false;
+  }
+  const runnableChildTaskIds = value.continuation_runnable_child_task_ids as string[];
+  const nonRunnableChildTaskIds = value.continuation_non_runnable_child_task_ids as string[];
+  if (nonRunnableChildTaskIds.some((taskId) => runnableChildTaskIds.includes(taskId))) {
+    return false;
+  }
+  if (value.next_action === 'run_parent_task_explicitly') {
+    return false;
+  }
+  if (value.continuation_non_runnable_child_count > 0) {
+    return value.next_action === 'inspect_non_runnable_continuation_child_tasks';
+  }
+  if (value.continuation_runnable_child_count > 0) {
+    return value.next_action === 'run_continuation_child_tasks_explicitly';
+  }
+  return value.next_action === 'inspect_parent_task';
 }
 
 export function isChildInspectParentJoinReadinessSummary(value: unknown): value is ChildInspectParentJoinReadinessSummary {
@@ -3075,6 +3151,7 @@ export function isRunInspectSummary(value: unknown): value is RunInspectSummary 
     (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.parent_join_readiness_summary === undefined || value.parent_join_readiness_summary === null || isRunInspectParentJoinReadinessSummary(value.parent_join_readiness_summary)) &&
+    (value.consumed_parent_join_recovery_summary === undefined || value.consumed_parent_join_recovery_summary === null || isRunInspectConsumedParentJoinRecoverySummary(value.consumed_parent_join_recovery_summary)) &&
     isNonNegativeInteger(value.child_task_count) &&
     Array.isArray(value.child_task_ids) &&
     value.child_task_ids.every((taskId) => typeof taskId === 'string') &&

@@ -6,8 +6,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, '..');
 const errors = [];
-const phase = 'M5.37';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.37.json';
+const phase = 'M5.38';
+const manifestPath = 'docs/architecture/phase-value-manifest.m5.38.json';
 
 function readText(relativePath) {
   const filePath = path.join(repoRoot, relativePath);
@@ -42,12 +42,12 @@ function validateManifest(manifest) {
   requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
   requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
   requireManifestValue(
-    manifest.concrete_capability_transition === 'direct_child_inspection_consumed_parent_join_recovery',
-    `${phase} must declare the direct child inspection consumed parent-join recovery transition.`
+    manifest.concrete_capability_transition === 'parent_inspection_consumed_parent_join_recovery',
+    `${phase} must declare the parent inspection consumed parent-join recovery transition.`
   );
   requireManifestValue(
-    manifest.forbidden_pattern === 'diagnostics_only_or_consumed_parent_join_child_inspection_without_continuation_handles',
-    `${phase} must forbid diagnostics-only consumed child inspection without continuation handles.`
+    manifest.forbidden_pattern === 'diagnostics_only_or_parent_inspection_consumed_join_without_continuation_handles',
+    `${phase} must forbid diagnostics-only parent inspection consumed join recovery without continuation handles.`
   );
 
   const mappings = Array.isArray(manifest.strategic_capability_mapping)
@@ -75,13 +75,11 @@ function validateManifest(manifest) {
 
   const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
   for (const token of [
-    'Existing controlled child task.inspect output',
+    'Existing parent run.inspect output',
+    'Parent task.inspect',
     'consumed_parent_join_recovery_summary',
     'parent task id',
     'parent run id',
-    'inspected child task id',
-    'inspected child run id',
-    'inspected child status',
     'parent_join_consumed=true',
     'consumed terminal controlled child count',
     'continuation controlled child count',
@@ -100,6 +98,7 @@ function validateManifest(manifest) {
     'parent join consumption',
     'handoff envelope',
     'child TaskRecord',
+    'M5.37 direct child consumed_parent_join_recovery_summary',
     'M5.36 direct child parent_join_readiness_summary',
     'M5.35 parent inspection readiness',
     'M5.34 terminal child readiness',
@@ -109,7 +108,7 @@ function validateManifest(manifest) {
     'M5.29 replay-safe',
     'M5.27 over-budget recovery-cycle child',
     'In-budget recovery-cycle child',
-    'Non-controlled, parentless, and standalone tasks',
+    'Non-controlled, parentless, child-task, and standalone tasks',
     'No raw child prompts',
     'No scheduler handoff'
   ]) {
@@ -150,8 +149,8 @@ function validateSourceEvidence(manifest) {
 
   const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
   for (const token of [
-    'consumed_parent_join_recovery_summary_for_child_inspection',
-    'ChildInspectConsumedParentJoinRecoverySummary',
+    'consumed_parent_join_recovery_summary_for_parent_inspection',
+    'RunInspectConsumedParentJoinRecoverySummary',
     'consumed_parent_join_recovery_summary',
     'parent_join_consumed',
     'consumed_terminal_controlled_child_count',
@@ -164,13 +163,14 @@ function validateSourceEvidence(manifest) {
     'run_continuation_child_tasks_explicitly',
     'inspect_non_runnable_continuation_child_tasks',
     'inspect_parent_task',
+    'consumed_terminal_controlled_child_set_for_consumed_parent_join',
     'consumed_parent_join_continuation_handoff_fingerprints',
     'continuation_controlled_children_for_consumed_parent_join',
-    'assert_child_inspect_consumed_parent_join_recovery_summary',
+    'assert_parent_inspect_consumed_parent_join_recovery_summary',
     'task_run_parent_join_materializes_continuation_subtask_without_auto_run',
     'task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates',
-    'parent_join_readiness_summary_for_child_inspection',
-    'ChildInspectParentJoinReadinessSummary',
+    'parent_join_readiness_summary_for_parent_inspection',
+    'RunInspectParentJoinReadinessSummary',
     'parent_join_readiness_summary',
     'controlled_child_records_for_parent_run',
     'child_has_terminal_parent_join_outcome',

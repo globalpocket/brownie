@@ -1,0 +1,164 @@
+{
+  "phase": "M5.38",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "parent_inspection_consumed_parent_join_recovery",
+  "forbidden_pattern": "diagnostics_only_or_parent_inspection_consumed_join_without_continuation_handles",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes existing parent run.inspect and parent task.inspect output actionable after a relevant parent join result set has already been consumed."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets unattended parent-centric polling loops recover continuation child task ids and the next explicit action without raw ledger scans or child-id-only recovery."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "parent_consumed_join_recovery",
+        "prompt": "Does existing parent run.inspect and parent task.inspect expose bounded consumed-parent-join recovery for completed parent runs tied to a consumed terminal result set?"
+      },
+      {
+        "id": "continuation_handles",
+        "prompt": "Does the parent-scoped summary include runnable and non-runnable continuation child task ids/counts while avoiding stale continuation handles from older cycles?"
+      },
+      {
+        "id": "consumed_next_action",
+        "prompt": "Does the parent-scoped summary choose run_continuation_child_tasks_explicitly, inspect_non_runnable_continuation_child_tasks, or inspect_parent_task deterministically?"
+      },
+      {
+        "id": "no_parent_rerun_from_consumed_summary",
+        "prompt": "Does the consumed summary avoid run_parent_task_explicitly after parent join consumption?"
+      },
+      {
+        "id": "read_only_parent_inspection",
+        "prompt": "Does parent inspection avoid TaskRunning, parent join consumption, handoff envelope, child TaskRecord, parent task mutation, or child task mutation?"
+      },
+      {
+        "id": "prior_phase_compatibility",
+        "prompt": "Do M5.37 direct child consumed recovery, M5.36 readiness, M5.35 parent inspection readiness, M5.34 terminal child readiness, and continuation replay behavior remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw prompts, provider output, file content, commands, stdout/stderr, env, raw tool input, raw payloads, scheduler handoff, auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "parent_consumed_join_recovery": "Yes. Eligible parent run.inspect and parent task.inspect can include run.consumed_parent_join_recovery_summary derived from existing parent join consumption events, controlled child TaskRecords, and continuation handoff envelopes.",
+      "continuation_handles": "Yes. The summary reports continuation_controlled_child_count, continuation_runnable_child_task_ids, continuation_non_runnable_child_task_ids, and continuation_terminal_child_count for the latest relevant consumed join only.",
+      "consumed_next_action": "Yes. It reports run_continuation_child_tasks_explicitly for runnable continuation handles, inspect_non_runnable_continuation_child_tasks for Running or Cancelled continuation handles, and inspect_parent_task when no continuation handles are recoverable.",
+      "no_parent_rerun_from_consumed_summary": "Yes. consumed_parent_join_recovery_summary sets parent_join_consumed=true and never emits run_parent_task_explicitly.",
+      "read_only_parent_inspection": "Yes. The parent inspection path computes the summary without appending TaskRunning, consuming parent join state, recording handoff envelopes, creating child TaskRecords, running parent tasks, or running child tasks.",
+      "prior_phase_compatibility": "Yes. M5.37 child consumed recovery, M5.36 child readiness, parent inspection readiness, terminal child readiness, continuation materialization replay, and stale continuation candidate behavior remain covered.",
+      "safety_boundary": "Yes. The summary exposes bounded ids/counts and next action only, with no raw goals, prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, scheduler handoff, auto-run, diagnostics wrapper RPC, process exec expansion, network bypass, service control, patch apply, or workspace mutation path."
+    }
+  },
+  "exit_criteria": [
+    "Existing parent run.inspect output returns bounded consumed_parent_join_recovery_summary for eligible completed parent runs after parent join consumption.",
+    "Parent task.inspect returns bounded run.consumed_parent_join_recovery_summary for eligible completed parent tasks after parent join consumption.",
+    "The consumed_parent_join_recovery_summary includes parent task id and parent run id.",
+    "The consumed_parent_join_recovery_summary reports parent_join_consumed=true.",
+    "The consumed_parent_join_recovery_summary includes consumed terminal controlled child count.",
+    "The consumed_parent_join_recovery_summary includes continuation controlled child count.",
+    "The consumed_parent_join_recovery_summary includes continuation runnable child count.",
+    "The consumed_parent_join_recovery_summary includes continuation runnable child task ids.",
+    "The consumed_parent_join_recovery_summary includes continuation non-runnable child count.",
+    "The consumed_parent_join_recovery_summary includes continuation non-runnable child task ids.",
+    "The consumed_parent_join_recovery_summary includes continuation terminal child count.",
+    "The consumed_parent_join_recovery_summary reports parent_running_enabled=false.",
+    "The consumed_parent_join_recovery_summary reports next_action=run_continuation_child_tasks_explicitly when continuation children are runnable.",
+    "The consumed_parent_join_recovery_summary reports next_action=inspect_non_runnable_continuation_child_tasks when any continuation child is Running or Cancelled.",
+    "The consumed_parent_join_recovery_summary reports next_action=inspect_parent_task when no continuation child handles are recoverable.",
+    "The consumed_parent_join_recovery_summary never reports run_parent_task_explicitly.",
+    "Parent inspection after a second continuation cycle does not expose stale continuation child handles from an older cycle.",
+    "Parent inspection appends no TaskRunning event.",
+    "Parent inspection appends no parent join consumption or handoff envelope event.",
+    "Parent inspection creates no child TaskRecord.",
+    "Parent inspection runs no parent or child task.",
+    "M5.37 direct child consumed_parent_join_recovery_summary remains intact.",
+    "M5.36 direct child parent_join_readiness_summary remains intact.",
+    "M5.35 parent inspection readiness remains intact.",
+    "M5.34 terminal child readiness behavior remains intact.",
+    "M5.32 parent-join child-orchestration replay behavior remains intact.",
+    "M5.31 initial parent replay behavior remains intact.",
+    "M5.30 first materialization child-orchestration outcome behavior remains intact.",
+    "M5.29 replay-safe recovery-cycle budget outcome behavior remains intact.",
+    "M5.27 over-budget recovery-cycle child task.run still rejects before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-controlled, parentless, child-task, and standalone tasks do not expose parent-scoped consumed parent join recovery summaries.",
+    "No raw child prompts, parent prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, parent auto-run, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "consumed_parent_join_recovery_summary_for_parent_inspection",
+      "RunInspectConsumedParentJoinRecoverySummary",
+      "consumed_parent_join_recovery_summary",
+      "parent_join_consumed",
+      "consumed_terminal_controlled_child_count",
+      "continuation_controlled_child_count",
+      "continuation_runnable_child_count",
+      "continuation_runnable_child_task_ids",
+      "continuation_non_runnable_child_count",
+      "continuation_non_runnable_child_task_ids",
+      "continuation_terminal_child_count",
+      "run_continuation_child_tasks_explicitly",
+      "inspect_non_runnable_continuation_child_tasks",
+      "inspect_parent_task",
+      "consumed_terminal_controlled_child_set_for_consumed_parent_join",
+      "consumed_parent_join_continuation_handoff_fingerprints",
+      "continuation_controlled_children_for_consumed_parent_join",
+      "assert_parent_inspect_consumed_parent_join_recovery_summary",
+      "task_run_parent_join_materializes_continuation_subtask_without_auto_run",
+      "task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates",
+      "assert_parent_inspection_did_not_mutate",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded"
+    ],
+    "rust_protocol_tokens": [
+      "RunInspectConsumedParentJoinRecoverySummary",
+      "consumed_parent_join_recovery_summary",
+      "parent_join_consumed",
+      "consumed_terminal_controlled_child_count",
+      "continuation_controlled_child_count",
+      "continuation_runnable_child_count",
+      "continuation_runnable_child_task_ids",
+      "continuation_non_runnable_child_count",
+      "continuation_non_runnable_child_task_ids",
+      "continuation_terminal_child_count",
+      "parent_running_enabled",
+      "next_action",
+      "RunInspectSummary"
+    ],
+    "vsix_protocol_tokens": [
+      "RunInspectConsumedParentJoinRecoverySummary",
+      "RUN_INSPECT_CONSUMED_PARENT_JOIN_RECOVERY_SUMMARY_KEYS",
+      "isRunInspectConsumedParentJoinRecoverySummary",
+      "consumed_parent_join_recovery_summary",
+      "continuation_runnable_child_task_ids",
+      "inspect_non_runnable_continuation_child_tasks"
+    ],
+    "vsix_test_tokens": [
+      "isRunInspectConsumedParentJoinRecoverySummary",
+      "parentInspectConsumedParentJoinRecoverySummary",
+      "consumed_parent_join_recovery_summary",
+      "run_continuation_child_tasks_explicitly",
+      "inspect_non_runnable_continuation_child_tasks",
+      "run_parent_task_explicitly",
+      "raw_failure_payload"
+    ],
+    "architecture_doc_tokens": [
+      "Parent run.inspect and parent task.inspect",
+      "run.consumed_parent_join_recovery_summary",
+      "parent_join_consumed=true",
+      "continuation child task ids",
+      "run_continuation_child_tasks_explicitly",
+      "inspect_non_runnable_continuation_child_tasks",
+      "inspect_parent_task",
+      "never reports `run_parent_task_explicitly`"
+    ]
+  }
+}

@@ -104,16 +104,17 @@ use brownie_protocol::{
     ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueParams, ProposalReviewQueueResult,
     ProposalReviewReportParams, ProposalReviewReportResult, ProposalReviewVerdictParams,
     ProposalReviewVerdictResult, RecoveryCycleBudgetOutcome, RecoveryCycleChildProvenance,
-    RunEventsParams, RunEventsResult, RunInspectParams, RunInspectParentJoinReadinessSummary,
-    RunInspectResult, RunInspectSummary, RuntimeActionName, RuntimeConfigGetResult,
-    RuntimeDiagnostic, RuntimeDiagnosticsResult, RuntimeState, RuntimeStatus, TaskGetParams,
-    TaskInspectParams, TaskInspectResult, TaskListResult, TaskRecord, TaskRunAgentLoopSummary,
-    TaskRunChildOrchestrationOutcome, TaskRunParams, TaskRunParentJoinReadinessOutcome,
-    TaskRunResult, TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
+    RunEventsParams, RunEventsResult, RunInspectConsumedParentJoinRecoverySummary,
+    RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
+    RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
+    RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
+    TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
+    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskStartParams,
+    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
@@ -10254,12 +10255,18 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .map(|record| parent_join_readiness_summary_for_parent_inspection(store, record))
         .transpose()?
         .flatten();
+    let consumed_parent_join_recovery_summary = task
+        .as_ref()
+        .map(|record| consumed_parent_join_recovery_summary_for_parent_inspection(store, record))
+        .transpose()?
+        .flatten();
     Ok(RunInspectSummary {
         run_id: run_id.to_string(),
         task_id: task.as_ref().map(|task| task.task_id.clone()),
         status: task.as_ref().map(|task| task.status.clone()),
         recovery_cycle_budget_outcome: recovery_cycle_budget_outcome_from_events(&events),
         parent_join_readiness_summary,
+        consumed_parent_join_recovery_summary,
         child_task_count: child_task_ids.len(),
         child_task_ids,
         child_tasks: child_task_summaries,
@@ -10604,6 +10611,100 @@ fn parent_join_readiness_summary_for_parent_inspection(
         parent_running_enabled: false,
         next_action: next_action.to_string(),
     }))
+}
+
+fn consumed_parent_join_recovery_summary_for_parent_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<RunInspectConsumedParentJoinRecoverySummary>, String> {
+    if record.parent_run_id.is_some() || record.status != TaskStatus::Completed {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(Some(record.task_id.as_str())) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(Some(record.run_id.as_str())) else {
+        return Ok(None);
+    };
+
+    let parent_events = store
+        .tasks()
+        .read_ledger_events(&parent_run_id)
+        .map_err(|error| error.to_string())?;
+    let controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if controlled_children.is_empty() {
+        return Ok(None);
+    }
+
+    for event in parent_events.iter().rev() {
+        let Some(consumption) = consumed_parent_join_fingerprint_from_event(event) else {
+            continue;
+        };
+        if !parent_join_consumption_has_terminal_result(&parent_events, &consumption) {
+            continue;
+        }
+        if consumed_terminal_controlled_child_set_for_consumed_parent_join(
+            store,
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        )?
+        .is_none()
+        {
+            continue;
+        }
+
+        let continuation_children = continuation_controlled_children_for_consumed_parent_join(
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        );
+        let continuation_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_runnable_child_count = continuation_runnable_child_task_ids.len();
+        let continuation_non_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_non_runnable_child_count = continuation_non_runnable_child_task_ids.len();
+        let continuation_terminal_child_count = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_terminal_child_status(&child.status))
+            .count();
+        let next_action = if continuation_non_runnable_child_count > 0 {
+            "inspect_non_runnable_continuation_child_tasks"
+        } else if continuation_runnable_child_count > 0 {
+            "run_continuation_child_tasks_explicitly"
+        } else {
+            "inspect_parent_task"
+        };
+
+        return Ok(Some(RunInspectConsumedParentJoinRecoverySummary {
+            parent_task_id,
+            parent_run_id,
+            parent_join_consumed: true,
+            consumed_terminal_controlled_child_count: consumption.child_completion_child_count,
+            continuation_controlled_child_count: continuation_children.len(),
+            continuation_runnable_child_count,
+            continuation_runnable_child_task_ids,
+            continuation_non_runnable_child_count,
+            continuation_non_runnable_child_task_ids,
+            continuation_terminal_child_count,
+            parent_running_enabled: false,
+            next_action: next_action.to_string(),
+        }));
+    }
+
+    Ok(None)
 }
 
 fn parent_join_readiness_summary_for_child_inspection(
@@ -10952,6 +11053,27 @@ fn consumed_terminal_controlled_child_set_contains_inspected_child(
     consumption: &ConsumedParentJoinFingerprint,
     inspected_child_task_id: &str,
 ) -> Result<bool, String> {
+    Ok(
+        consumed_terminal_controlled_child_set_for_consumed_parent_join(
+            store,
+            parent_events,
+            controlled_children,
+            consumption,
+        )?
+        .is_some_and(|consumed_children| {
+            consumed_children
+                .iter()
+                .any(|child| child.task_id == inspected_child_task_id)
+        }),
+    )
+}
+
+fn consumed_terminal_controlled_child_set_for_consumed_parent_join(
+    store: &BrownieStore,
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Result<Option<Vec<TaskRecord>>, String> {
     let mut consumed_children = controlled_children
         .iter()
         .filter(|child| is_parent_join_terminal_child_status(&child.status))
@@ -10970,7 +11092,7 @@ fn consumed_terminal_controlled_child_set_contains_inspected_child(
         .collect::<Vec<_>>();
     sort_controlled_child_records(&mut consumed_children);
     if consumed_children.len() != consumption.child_completion_child_count {
-        return Ok(false);
+        return Ok(None);
     }
     if consumed_children
         .iter()
@@ -10983,13 +11105,13 @@ fn consumed_terminal_controlled_child_set_contains_inspected_child(
             .count()
             != consumption.child_terminal_failed_count
     {
-        return Ok(false);
+        return Ok(None);
     }
     for child in &consumed_children {
         if !child_has_terminal_parent_join_outcome(store, child)
             .map_err(task_run_admission_rejection_message)?
         {
-            return Ok(false);
+            return Ok(None);
         }
     }
     let child_evidence = consumed_children
@@ -11002,11 +11124,9 @@ fn consumed_terminal_controlled_child_set_contains_inspected_child(
     let (child_completion_fingerprint, _) =
         parent_join_child_completion_fingerprint(&child_evidence);
     if child_completion_fingerprint != consumption.child_completion_fingerprint {
-        return Ok(false);
+        return Ok(None);
     }
-    Ok(consumed_children
-        .iter()
-        .any(|child| child.task_id == inspected_child_task_id))
+    Ok(Some(consumed_children))
 }
 
 fn continuation_controlled_children_for_consumed_parent_join(
@@ -18467,6 +18587,84 @@ mod tests {
         }
     }
 
+    fn assert_parent_inspect_consumed_parent_join_recovery_summary(
+        summary: &Value,
+        parent_task_id: &str,
+        parent_run_id: &str,
+        consumed_terminal_controlled_child_count: usize,
+        continuation_runnable_child_task_ids: &[String],
+        continuation_non_runnable_child_task_ids: &[String],
+        continuation_terminal_child_count: usize,
+        next_action: &str,
+    ) {
+        assert_eq!(summary["parent_task_id"], parent_task_id);
+        assert_eq!(summary["parent_run_id"], parent_run_id);
+        assert_eq!(summary["parent_join_consumed"], true);
+        assert_eq!(
+            summary["consumed_terminal_controlled_child_count"],
+            consumed_terminal_controlled_child_count
+        );
+        assert_eq!(
+            summary["continuation_controlled_child_count"],
+            continuation_runnable_child_task_ids.len()
+                + continuation_non_runnable_child_task_ids.len()
+                + continuation_terminal_child_count
+        );
+        assert_eq!(
+            summary["continuation_runnable_child_count"],
+            continuation_runnable_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "continuation_runnable_child_task_ids"),
+            continuation_runnable_child_task_ids.to_vec()
+        );
+        assert_eq!(
+            summary["continuation_non_runnable_child_count"],
+            continuation_non_runnable_child_task_ids.len()
+        );
+        assert_eq!(
+            payload_string_array(summary, "continuation_non_runnable_child_task_ids"),
+            continuation_non_runnable_child_task_ids.to_vec()
+        );
+        assert_eq!(
+            summary["continuation_terminal_child_count"],
+            continuation_terminal_child_count
+        );
+        assert_eq!(summary["parent_running_enabled"], false);
+        assert_eq!(summary["next_action"], next_action);
+        assert_ne!(summary["next_action"], "run_parent_task_explicitly");
+        assert!(summary.get("parent_join_ready").is_none());
+        assert!(summary.get("inspected_child_task_id").is_none());
+        assert!(summary.get("inspected_child_run_id").is_none());
+        assert!(summary.get("inspected_child_status").is_none());
+        assert!(summary.get("child_task_id").is_none());
+        assert!(summary.get("child_run_id").is_none());
+        assert!(summary.get("child_terminal_status").is_none());
+
+        let serialized = summary.to_string();
+        for raw_marker in [
+            "Run parent orchestrator",
+            "Orchestrator mode may coordinate subtasks.",
+            "RAW_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_FAILED_CHILD_FILE_CONTENT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_23_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_PROMPT_SHOULD_NOT_APPEAR",
+            "RAW_M5_24_FAILED_CHILD_OUTPUT_SHOULD_NOT_APPEAR",
+            "Run M5.35 pending sibling raw goal",
+            "Create M5.35 pending sibling.",
+            "Run M5.35 non-runnable sibling raw goal",
+            "Create M5.35 non-runnable sibling.",
+            "provider",
+            "stdout",
+            "stderr",
+            "input",
+            "raw_failure_payload",
+        ] {
+            assert!(!serialized.contains(raw_marker));
+        }
+    }
+
     fn child_count_for_parent_run(store: &BrownieStore, parent_run_id: &str) -> usize {
         store
             .tasks()
@@ -19448,6 +19646,37 @@ mod tests {
             &[],
             0,
             "run_continuation_child_tasks_explicitly",
+        );
+        let parent_run_inspect_after_consumed_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":53,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect_after_consumed_join.error.is_none());
+        let parent_run_inspect_after_consumed_join_result = parent_run_inspect_after_consumed_join
+            .result
+            .expect("parent run inspect after consumed join")["run"]
+            .clone();
+        assert_parent_inspect_consumed_parent_join_recovery_summary(
+            &parent_run_inspect_after_consumed_join_result["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            1,
+            std::slice::from_ref(&continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        let parent_task_inspect_after_consumed_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":54,"method":"task.inspect","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_task_inspect_after_consumed_join.error.is_none());
+        let parent_task_inspect_after_consumed_join_result =
+            parent_task_inspect_after_consumed_join
+                .result
+                .expect("parent task inspect after consumed join")["run"]
+                .clone();
+        assert_eq!(
+            parent_task_inspect_after_consumed_join_result["consumed_parent_join_recovery_summary"],
+            parent_run_inspect_after_consumed_join_result["consumed_parent_join_recovery_summary"]
         );
         assert_parent_inspection_did_not_mutate(
             &store,
@@ -22114,6 +22343,48 @@ mod tests {
             "continuation_runnable_child_task_ids"
         )
         .contains(&first_continuation_child.task_id));
+        let parent_event_count_after_second_join = parent_events.len();
+        let child_count_after_second_join = child_count_for_parent_run(&store, &parent_run_id);
+        let parent_run_inspect_after_second_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":81,"method":"run.inspect","params":{{"run_id":"{parent_run_id}"}}}}"#
+        ));
+        assert!(parent_run_inspect_after_second_join.error.is_none());
+        let parent_run_inspect_after_second_join_result = parent_run_inspect_after_second_join
+            .result
+            .expect("parent run inspect after second join")["run"]
+            .clone();
+        assert_parent_inspect_consumed_parent_join_recovery_summary(
+            &parent_run_inspect_after_second_join_result["consumed_parent_join_recovery_summary"],
+            &parent_task_id,
+            &parent_run_id,
+            2,
+            std::slice::from_ref(&second_continuation_child.task_id),
+            &[],
+            0,
+            "run_continuation_child_tasks_explicitly",
+        );
+        assert!(!payload_string_array(
+            &parent_run_inspect_after_second_join_result["consumed_parent_join_recovery_summary"],
+            "continuation_runnable_child_task_ids"
+        )
+        .contains(&first_continuation_child.task_id));
+        let parent_task_inspect_after_second_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":82,"method":"task.inspect","params":{{"task_id":"{parent_task_id}"}}}}"#
+        ));
+        assert!(parent_task_inspect_after_second_join.error.is_none());
+        assert_eq!(
+            parent_task_inspect_after_second_join
+                .result
+                .expect("parent task inspect after second join")["run"]
+                ["consumed_parent_join_recovery_summary"],
+            parent_run_inspect_after_second_join_result["consumed_parent_join_recovery_summary"]
+        );
+        assert_parent_inspection_did_not_mutate(
+            &store,
+            &parent_run_id,
+            parent_event_count_after_second_join,
+            child_count_after_second_join,
+        );
 
         let parent = store
             .tasks()
