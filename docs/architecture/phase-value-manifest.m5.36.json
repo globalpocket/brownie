@@ -1,0 +1,182 @@
+{
+  "phase": "M5.36",
+  "current_milestone": "subtask_orchestration",
+  "target_capability": "subtask_orchestration",
+  "concrete_capability_transition": "direct_child_inspection_parent_join_readiness_recovery",
+  "forbidden_pattern": "diagnostics_only_or_child_inspection_without_actionable_parent_join_handles",
+  "project_objective_ref": "docs/architecture/runtime-overview.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "subtask_orchestration",
+      "relationship": "Makes existing controlled child task.inspect output actionable for parent-join readiness when the caller only retained a child task id."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets unattended child-centric polling loops recover the next explicit task.run action after a restart without raw ledger scanning or diagnostics-only reports."
+    }
+  ],
+  "phase_value_gate": {
+    "questions": [
+      {
+        "id": "direct_child_inspection_join_readiness",
+        "prompt": "Does existing controlled child task.inspect expose bounded parent-join readiness for children with complete runtime-owned parent provenance?"
+      },
+      {
+        "id": "inspected_child_identity",
+        "prompt": "Does the summary include inspected child task/run ids and inspected child status without exposing raw child or parent data?"
+      },
+      {
+        "id": "runnable_pending_next_action",
+        "prompt": "Does child inspection report runnable pending child task ids/count and run_remaining_child_tasks_explicitly only while controlled children are rerunnable?"
+      },
+      {
+        "id": "non_runnable_child_next_action",
+        "prompt": "Does child inspection avoid rerun guidance for Running or Cancelled controlled children by exposing bounded non-runnable child ids and inspect_non_runnable_child_tasks?"
+      },
+      {
+        "id": "ready_only_when_unconsumed",
+        "prompt": "Does child inspection report run_parent_task_explicitly only after all controlled children are terminal and before that result set is consumed?"
+      },
+      {
+        "id": "read_only_inspection",
+        "prompt": "Does child inspection avoid TaskRunning, parent join consumption, handoff envelope, child TaskRecord, or child TaskRunning mutation?"
+      },
+      {
+        "id": "prior_phase_compatibility",
+        "prompt": "Do M5.35, M5.34, M5.32, M5.31, M5.30, M5.29, M5.27, in-budget recovery, and non-recovery behaviors remain intact?"
+      },
+      {
+        "id": "safety_boundary",
+        "prompt": "Does this phase avoid raw prompts, provider output, file content, commands, stdout/stderr, env, raw tool input, raw payloads, scheduler handoff, auto-run, diagnostics RPCs, process exec expansion, network bypass, service control, patch apply, and workspace mutation paths?"
+      }
+    ],
+    "answers": {
+      "direct_child_inspection_join_readiness": "Yes. Existing controlled child task.inspect can include parent_join_readiness_summary derived from runtime-owned controlled child TaskRecords sharing parent provenance.",
+      "inspected_child_identity": "Yes. The summary includes inspected_child_task_id, inspected_child_run_id, and inspected_child_status only, without raw goals, prompts, provider responses, file content, command strings, stdout/stderr, env, raw tool input, or raw payloads.",
+      "runnable_pending_next_action": "Yes. Runnable pending controlled children are reported with bounded task ids/count and next_action=run_remaining_child_tasks_explicitly.",
+      "non_runnable_child_next_action": "Yes. Running or Cancelled controlled children are reported with bounded non_runnable_controlled_child_task_ids/count and next_action=inspect_non_runnable_child_tasks instead of invalid rerun guidance.",
+      "ready_only_when_unconsumed": "Yes. Child inspection reports parent_join_ready=true and next_action=run_parent_task_explicitly only when every controlled child is terminal and the child result-set fingerprint has not already been consumed.",
+      "read_only_inspection": "Yes. The child inspection path computes the summary without appending TaskRunning, consuming parent join state, recording handoff envelopes, creating child TaskRecords, or running child tasks.",
+      "prior_phase_compatibility": "Yes. M5.35 parent inspection readiness, M5.34 terminal child readiness, child-orchestration replay, first materialization, replay-safe recovery budget, over-budget recovery rejection, in-budget recovery child run, and non-controlled task behavior remain covered.",
+      "safety_boundary": "Yes. The summary exposes bounded ids/counts/status and next action only, with no raw goals, prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, scheduler handoff, auto-run, diagnostics wrapper RPC, process exec expansion, network bypass, service control, patch apply, or workspace mutation path."
+    }
+  },
+  "exit_criteria": [
+    "Existing controlled child task.inspect output returns bounded parent_join_readiness_summary for eligible controlled children.",
+    "The child task.inspect parent_join_readiness_summary includes parent task id and parent run id.",
+    "The child task.inspect parent_join_readiness_summary includes inspected child task id.",
+    "The child task.inspect parent_join_readiness_summary includes inspected child run id.",
+    "The child task.inspect parent_join_readiness_summary includes inspected child status.",
+    "The child task.inspect parent_join_readiness_summary includes terminal controlled child count.",
+    "The child task.inspect parent_join_readiness_summary includes pending controlled child count.",
+    "The child task.inspect parent_join_readiness_summary includes pending controlled child task ids.",
+    "The child task.inspect parent_join_readiness_summary includes non-runnable controlled child count.",
+    "The child task.inspect parent_join_readiness_summary includes non-runnable controlled child task ids.",
+    "The child task.inspect parent_join_readiness_summary reports parent_join_ready=false when controlled children remain runnable and pending.",
+    "The child task.inspect parent_join_readiness_summary reports next_action=run_remaining_child_tasks_explicitly only while runnable controlled children remain pending.",
+    "The child task.inspect parent_join_readiness_summary reports next_action=inspect_non_runnable_child_tasks when Running or Cancelled controlled children would make rerun guidance invalid.",
+    "The child task.inspect parent_join_readiness_summary reports parent_join_ready=true only when every controlled child is terminal and the result set is unconsumed.",
+    "The child task.inspect parent_join_readiness_summary reports parent_running_enabled=false.",
+    "The child task.inspect parent_join_readiness_summary reports next_action=run_parent_task_explicitly only when every controlled child is terminal and the result set is unconsumed.",
+    "Child inspection after parent join consumption does not expose stale run_parent_task_explicitly.",
+    "Child inspection appends no TaskRunning event.",
+    "Child inspection appends no parent join consumption or handoff envelope event.",
+    "Child inspection creates no child TaskRecord.",
+    "Child inspection runs no child task.",
+    "M5.35 parent inspection readiness remains intact.",
+    "M5.34 terminal child readiness behavior remains intact.",
+    "M5.32 parent-join child-orchestration replay behavior remains intact.",
+    "M5.31 initial parent replay behavior remains intact.",
+    "M5.30 first materialization child-orchestration outcome behavior remains intact.",
+    "M5.29 replay-safe recovery-cycle budget outcome behavior remains intact.",
+    "M5.27 over-budget recovery-cycle child task.run still rejects before TaskRunning.",
+    "In-budget recovery-cycle child materialization and explicit task.run behavior still works.",
+    "Non-controlled, parentless, and standalone tasks do not expose parent readiness summaries.",
+    "No raw child prompts, parent prompts, provider responses, file contents, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text are persisted or exposed.",
+    "No scheduler handoff, external worker, process exec expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, parent auto-run, child auto-run, or new blocked summary wrapper is added."
+  ],
+  "source_evidence": {
+    "rust_runtime_tokens": [
+      "parent_join_readiness_summary_for_child_inspection",
+      "ChildInspectParentJoinReadinessSummary",
+      "parent_join_readiness_summary",
+      "inspected_child_task_id",
+      "inspected_child_run_id",
+      "inspected_child_status",
+      "controlled_child_records_for_parent_run",
+      "child_has_terminal_parent_join_outcome",
+      "parent_join_child_completion_evidence",
+      "parent_join_child_completion_fingerprint_consumed",
+      "terminal_controlled_child_count",
+      "pending_controlled_child_count",
+      "pending_controlled_child_task_ids",
+      "non_runnable_controlled_child_count",
+      "non_runnable_controlled_child_task_ids",
+      "run_remaining_child_tasks_explicitly",
+      "inspect_non_runnable_child_tasks",
+      "run_parent_task_explicitly",
+      "parent_inspect_reports_child_set_join_readiness_without_mutation",
+      "parent_inspect_reports_non_runnable_children_without_rerun_action",
+      "assert_child_inspect_parent_join_readiness_summary",
+      "assert_parent_inspection_did_not_mutate",
+      "parent_join_readiness_summary_for_parent_inspection",
+      "parent_join_readiness_outcome_for_terminal_child",
+      "parent_join_readiness_outcome_for_replay",
+      "task_run_parentless_task_omits_parent_join_readiness_outcome",
+      "child_orchestration_outcome_for_replay",
+      "child_orchestration_outcome_for_latest_parent_join_queued_children",
+      "child_orchestration_outcome_for_existing_queued_children",
+      "recovery_cycle_budget_outcome_for_replay",
+      "task_run_rejects_over_budget_recovery_cycle_child_before_running",
+      "task_run_accepts_recovery_cycle_child_with_parent_ledger_provenance",
+      "TaskRunning",
+      "ParentJoinContinuationFingerprintConsumed",
+      "SubtaskDispatchHandoffEnvelopeRecorded"
+    ],
+    "rust_protocol_tokens": [
+      "ChildInspectParentJoinReadinessSummary",
+      "parent_join_readiness_summary",
+      "inspected_child_task_id",
+      "inspected_child_run_id",
+      "inspected_child_status",
+      "terminal_controlled_child_count",
+      "pending_controlled_child_count",
+      "pending_controlled_child_task_ids",
+      "non_runnable_controlled_child_count",
+      "non_runnable_controlled_child_task_ids",
+      "parent_join_ready",
+      "parent_running_enabled",
+      "next_action",
+      "TaskInspectResult"
+    ],
+    "vsix_protocol_tokens": [
+      "ChildInspectParentJoinReadinessSummary",
+      "CHILD_INSPECT_PARENT_JOIN_READINESS_SUMMARY_KEYS",
+      "isChildInspectParentJoinReadinessSummary",
+      "parent_join_readiness_summary",
+      "inspected_child_task_id",
+      "inspected_child_status",
+      "inspect_non_runnable_child_tasks"
+    ],
+    "vsix_test_tokens": [
+      "isChildInspectParentJoinReadinessSummary",
+      "childInspectParentJoinReadinessSummary",
+      "pendingSiblingChildInspectParentJoinReadinessSummary",
+      "nonRunnableSiblingChildInspectParentJoinReadinessSummary",
+      "isTaskInspectResult",
+      "parent_join_readiness_summary",
+      "inspect_non_runnable_child_tasks",
+      "raw_failure_payload"
+    ],
+    "architecture_doc_tokens": [
+      "Direct controlled child task.inspect",
+      "inspected child task/run ids",
+      "inspected child status",
+      "non-runnable controlled child task ids",
+      "inspect_non_runnable_child_tasks",
+      "run_remaining_child_tasks_explicitly",
+      "run_parent_task_explicitly",
+      "Direct child inspection remains read-only"
+    ]
+  }
+}
