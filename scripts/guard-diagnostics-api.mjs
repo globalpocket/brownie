@@ -25,11 +25,14 @@ function isNonEmptyString(value) {
 }
 
 function validateManifest(manifest) {
-  if (manifest.phase !== 'R1.1') {
-    errors.push('phase-value-manifest.json must describe phase R1.1.');
+  if (!isNonEmptyString(manifest.phase)) {
+    errors.push('phase-value-manifest.json must describe a non-empty phase.');
   }
-  if (manifest.next_milestone_after_r1_1 !== 'agent_loop_integration') {
-    errors.push('phase-value-manifest.json must set next_milestone_after_r1_1 to agent_loop_integration.');
+  if (!isNonEmptyString(manifest.target_capability)) {
+    errors.push('phase-value-manifest.json must include target_capability.');
+  }
+  if (!isNonEmptyString(manifest.concrete_capability_transition)) {
+    errors.push('phase-value-manifest.json must include concrete_capability_transition.');
   }
   if (!isNonEmptyString(manifest.project_objective) && !isNonEmptyString(manifest.project_objective_ref)) {
     errors.push('phase-value-manifest.json must include a project objective or charter reference.');
