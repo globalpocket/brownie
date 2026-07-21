@@ -380,7 +380,7 @@ pub struct ProposalApplyParams {
     pub proposal_id: String,
     pub expected_target_sha256: Option<String>,
     pub expected_target_absent: Option<bool>,
-    pub replacement_content: String,
+    pub replacement_content: Option<String>,
     pub authorize: bool,
 }
 
@@ -919,12 +919,14 @@ pub struct WorkspacePatchApplyResultSummary {
     pub operation: String,
     pub atomic_replacement_completed: bool,
     pub atomic_create_completed: bool,
+    pub atomic_delete_completed: bool,
     pub path: String,
     pub expected_target_sha256: Option<String>,
     pub expected_target_absent: Option<bool>,
     pub pre_write_target_sha256: Option<String>,
     pub pre_write_target_exists: Option<bool>,
     pub post_write_sha256: Option<String>,
+    pub post_delete_target_exists: Option<bool>,
     pub content_chars: usize,
     pub content_bytes: u64,
     pub checked_at: String,

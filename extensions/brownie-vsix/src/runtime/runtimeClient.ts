@@ -251,6 +251,16 @@ export class RuntimeClient {
     return result;
   }
 
+  async applyDeleteFileProposal(runId: string, proposalId: string, expectedTargetSha256: string, authorize = true): Promise<ProposalApplyResult> {
+    const result = await this.call<ProposalApplyResult>('proposal.apply', { run_id: runId, proposal_id: proposalId, expected_target_sha256: expectedTargetSha256, authorize });
+
+    if (!isProposalApplyResult(result)) {
+      throw new RuntimeProtocolError('proposal.apply returned an invalid delete_file result');
+    }
+
+    return result;
+  }
+
   async applyDryRunHistory(runId: string, proposalId: string): Promise<ProposalApplyDryRunHistoryResult> {
     const result = await this.call<ProposalApplyDryRunHistoryResult>('proposal.applyDryRunHistory', { run_id: runId, proposal_id: proposalId });
 
