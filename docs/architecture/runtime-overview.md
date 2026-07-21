@@ -60,9 +60,11 @@ R1 freezes the Phase 3 diagnostics wrapper chain and redirects follow-up work to
 
 See `docs/architecture/diagnostics-api-consolidation.md`, `docs/architecture/phase-value-gate.md`, `docs/architecture/phase-value-manifest.json`, and `docs/architecture/diagnostics-legacy-api-metadata.json` for the inventory, deprecation plan, value/review guard, and R1.1 enforcement metadata.
 
-## Patch apply boundary
+## Controlled Apply Boundary
 
-Patch application remains a read-only design and inspection boundary. Brownie may report proposal readiness, review evidence, dry-run metadata, and diagnostics state, but it must not apply patches, write workspace files, execute shell or git commands, use network access, or return raw file content, raw diffs, raw input JSON, canonical paths, or absolute paths.
+Patch proposal generation remains a dry-run `workspace.write` path: tool intent parsing and task execution do not directly modify files. Beginning with M6.1, the runtime-owned `proposal.apply` RPC is the only workspace mutation path. It is limited to one approved `replace_file` proposal for one existing regular UTF-8 file, requires an explicit one-time authorization flag, checks approval freshness, verifies the caller-provided expected target SHA-256 against a latest preflight and the current file, rejects protected paths, parent traversal, symlinks, stale proposals, and unsafe file kinds, writes through a temporary sibling file, atomically replaces the target, verifies the post-write SHA-256, and records a bounded apply-result ledger event.
+
+Controlled apply must not run shell or git commands, use network access, create files, delete files, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic replacement and verification.
 
 The Phase 3.5-3.51 wrapper-chain history is archived in `docs/architecture/diagnostics-wrapper-history.md`, with the endpoint inventory and deprecation plan in `docs/architecture/diagnostics-api-consolidation.md`. After R1.1, the next milestone is M1 Agent Loop Integration (`agent_loop_integration`).
 

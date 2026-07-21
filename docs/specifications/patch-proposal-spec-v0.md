@@ -79,7 +79,7 @@ The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only met
 
 ## Phase 3.5 apply capability inspection
 
-`proposal.applyCapability` exposes a design-only apply capability contract for an existing proposal. It returns `WorkspacePatchApplyCapabilitySummary` metadata and appends `WorkspacePatchApplyCapabilityChecked` with summary-only fields. Phase 3.5 always reports `apply_supported = false`, `apply_enabled = false`, `mode = dry_run_only`, and `can_apply_now = false` with the reason `Patch apply is not implemented in Phase 3.5.` Patch application remains unimplemented.
+`proposal.applyCapability` exposes an apply capability contract for an existing proposal. It returns `WorkspacePatchApplyCapabilitySummary` metadata and appends `WorkspacePatchApplyCapabilityChecked` with summary-only fields. Historical Phase 3.5 reported `apply_supported = false`, `apply_enabled = false`, `mode = dry_run_only`, and `can_apply_now = false`; after M6.1 it can report `apply_supported = true`, `apply_enabled = true`, `mode = controlled_apply`, and `can_apply_now = true` only when the proposal gates required by `proposal.apply` are satisfied.
 
 ## Phase 3.6 apply dry-run inspection
 
@@ -88,6 +88,16 @@ The runtime appends `WorkspacePatchReadinessReportCreated` with summary-only met
 The dry-run result includes `proposal_id`, `dry_run_id`, `dry_run_status`, `dry_run_reason`, `checked_at`, `required_gates`, `check_count`, `failed_checks`, `blocked_checks`, `no_patch_applied`, `apply_executed`, `workspace_files_changed`, and a bounded checklist. Phase 3.6 always reports `no_patch_applied = true`, `apply_executed = false`, and `workspace_files_changed = false`.
 
 The runtime appends `WorkspacePatchApplyDryRunChecked` with summary-only metadata. It must not apply patches, write workspace files, run shell or git commands, use network access, expose canonical absolute paths, or return/store raw file content, raw diffs, raw input JSON, `content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, or `file_content`.
+
+## M6.1 controlled replace-file apply
+
+`proposal.apply` accepts an existing `Approved` and `Valid` `replace_file` proposal, a caller-provided `expected_target_sha256`, request-only `replacement_content`, and explicit `authorize = true`. It is the only path that may mutate workspace files. `workspace.write`, approval, preflight, readiness, capability inspection, dry-run, history, audit, review, queue, diagnostics, report, digest, and wrapper endpoints remain non-mutating.
+
+The initial apply scope is one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, delete files, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
+
+Before writing, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, replacement content bounds checks, sensitive-like content checks, and deterministic diff matching against the approved proposal metadata. Full replacement content is not persisted in the ledger and is not returned by RPC responses.
+
+On success, the runtime creates a temporary sibling file, writes bounded content, flushes and syncs, atomically replaces the target, verifies the post-write SHA-256, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary`. On failure, it preserves the original file whenever possible, cleans partial temporary files, does not consume authorization before verified success, and records bounded failure metadata for post-write verification failures.
 
 ## Phase 3.7 apply dry-run history
 

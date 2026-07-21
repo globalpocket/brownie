@@ -32,5 +32,6 @@ This repository copy mirrors the automation-owned charter used by the phase loop
 4. M3 Controlled Apply Readiness
 5. M4 Context Management
 6. M5 Subtask Orchestration
+7. M6 Controlled Apply Execution
 
 The phase loop may refine implementation order, split milestones, or insert safety work, but it may not replace this roadmap with observability-only, reporting-only, or wrapper-only work. Every accepted phase must advance at least one strategic capability or remove a documented blocker to one.

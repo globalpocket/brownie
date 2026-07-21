@@ -23,12 +23,12 @@ use brownie_protocol::{
     ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
     ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApproveParams, ProposalApproveResult, ProposalAuditTrailParams,
-    ProposalAuditTrailResult, ProposalInspectParams, ProposalInspectResult, ProposalListParams,
-    ProposalListResult, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    ProposalReviewBundleParams, ProposalReviewBundleResult,
-    ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -118,10 +118,12 @@ use brownie_protocol::{
     WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
-    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
-    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
-    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchApplyResultCheckSummary,
+    WorkspacePatchApplyResultSummary, WorkspacePatchAuditTrailEntry,
+    WorkspacePatchAuditTrailSummary, WorkspacePatchPreflightSnapshotSummary,
+    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
+    WorkspacePatchReadinessReportSummary, WorkspacePatchReviewBundleSummary,
+    WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary,
@@ -191,12 +193,16 @@ use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
     ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
-    DEFAULT_PROPOSAL_PREVIEW_CHARS, MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID,
-    WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS, DEFAULT_PROPOSAL_PREVIEW_CHARS,
+    MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID, WORKSPACE_READ_TOOL_ID,
+    WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::path::Component;
+use std::{
+    io::Write,
+    path::{Component, PathBuf},
+};
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
@@ -226,6 +232,7 @@ const METHOD_PROPOSAL_PREFLIGHT: &str = "proposal.preflight";
 const METHOD_PROPOSAL_READINESS: &str = "proposal.readiness";
 const METHOD_PROPOSAL_APPLY_CAPABILITY: &str = "proposal.applyCapability";
 const METHOD_PROPOSAL_APPLY_DRY_RUN: &str = "proposal.applyDryRun";
+const METHOD_PROPOSAL_APPLY: &str = "proposal.apply";
 const METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY: &str = "proposal.applyDryRunHistory";
 const METHOD_PROPOSAL_AUDIT_TRAIL: &str = "proposal.auditTrail";
 const METHOD_PROPOSAL_REVIEW_BUNDLE: &str = "proposal.reviewBundle";
@@ -377,6 +384,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
             handle_proposal_apply_capability(request.id, request.params)
         }
         METHOD_PROPOSAL_APPLY_DRY_RUN => handle_proposal_apply_dry_run(request.id, request.params),
+        METHOD_PROPOSAL_APPLY => handle_proposal_apply(request.id, request.params),
         METHOD_PROPOSAL_APPLY_DRY_RUN_HISTORY => {
             handle_proposal_apply_dry_run_history(request.id, request.params)
         }
@@ -3410,6 +3418,37 @@ fn handle_proposal_apply_dry_run(id: Value, params: Option<Value>) -> JsonRpcRes
     }
 }
 
+fn handle_proposal_apply(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ProposalApplyParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if params.run_id.trim().is_empty()
+        || params.proposal_id.trim().is_empty()
+        || params.expected_target_sha256.trim().is_empty()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: run_id, proposal_id, and expected_target_sha256 are required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+    match apply_proposal(&store, &params) {
+        Ok((proposal, apply_result)) => result_response(
+            id,
+            json!(ProposalApplyResult {
+                proposal,
+                apply_result
+            }),
+        ),
+        Err(message) => error_response(id, -32602, &message),
+    }
+}
+
 fn handle_proposal_apply_dry_run_history(
     id: Value,
     params: Option<Value>,
@@ -5250,9 +5289,9 @@ fn build_apply_plan_summary(
             pass("diff_preview_available"),
             pass("sensitive_content_not_detected"),
             WorkspacePatchApplyCheckSummary {
-                name: "apply_not_enabled".to_string(),
-                status: "Fail".to_string(),
-                reason: Some("Patch apply is not implemented in Phase 3.3.".to_string()),
+                name: "apply_execution_available".to_string(),
+                status: "Pass".to_string(),
+                reason: Some("Patch apply is available through proposal.apply.".to_string()),
             },
         ],
     }
@@ -5317,7 +5356,7 @@ fn approve_proposal(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
-    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Blocked");
+    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "PendingPreflight");
     store
         .tasks()
         .append_task_event_with_payload(
@@ -5326,9 +5365,9 @@ fn approve_proposal(
             Some(json!({
                 "proposal_id": proposal_id,
                 "plan_id": plan_id,
-                "status": "Blocked",
+                "status": "PendingPreflight",
                 "check_count": apply_plan.checklist.len(),
-                "failed_checks": ["apply_not_enabled"],
+                "failed_checks": [],
             })),
         )
         .map_err(|e| format!("invalid params: {e}"))?;
@@ -5506,9 +5545,9 @@ fn inspect_apply_capability(
         None,
     ));
     checklist.push(apply_capability_check(
-        "apply_execution_disabled",
-        "Blocked",
-        Some("Patch apply execution is not enabled in Phase 3.5."),
+        "apply_execution_supported",
+        "Pass",
+        Some("Patch apply execution is available through proposal.apply."),
     ));
 
     let blocked_checks: Vec<String> = checklist
@@ -5523,25 +5562,32 @@ fn inspect_apply_capability(
         .collect();
     let checked_at = now_rfc3339();
     let capability_id = format!("apply_capability_{}", uuid::Uuid::new_v4().simple());
-    let reason = "Patch apply is not implemented in Phase 3.5.".to_string();
+    let can_apply_now = failed_checks.is_empty() && blocked_checks.is_empty();
+    let reason = if can_apply_now {
+        "proposal.apply can execute after explicit one-time authorization and expected target hash verification."
+    } else {
+        "Proposal is missing required apply gates."
+    }
+    .to_string();
     let required_gates = vec![
         "proposal_valid".to_string(),
         "proposal_approved".to_string(),
         "preflight_snapshot_exists".to_string(),
         "proposal_not_stale".to_string(),
         "readiness_ready".to_string(),
-        "operator_apply_enabled".to_string(),
+        "operator_apply_authorization".to_string(),
+        "expected_target_hash".to_string(),
         "runtime_apply_supported".to_string(),
     ];
     let capability = WorkspacePatchApplyCapabilitySummary {
         proposal_id: proposal_id.to_string(),
         capability_id: capability_id.clone(),
-        apply_supported: false,
-        apply_enabled: false,
-        mode: "dry_run_only".to_string(),
+        apply_supported: true,
+        apply_enabled: can_apply_now,
+        mode: "controlled_apply".to_string(),
         reason,
         required_gates,
-        can_apply_now: false,
+        can_apply_now,
         checked_at: checked_at.clone(),
         check_count: checklist.len(),
         failed_checks,
@@ -5743,9 +5789,9 @@ fn inspect_apply_dry_run(
     });
     checklist.push(apply_dry_run_check("no_raw_content_exposed", "Pass", None));
     checklist.push(apply_dry_run_check(
-        "apply_execution_disabled",
-        "Blocked",
-        Some("Patch apply execution is not enabled in Phase 3.6 dry-run mode."),
+        "apply_execution_supported",
+        "Pass",
+        Some("Patch apply execution is available through proposal.apply; dry-run does not invoke it."),
     ));
     checklist.push(apply_dry_run_check(
         "workspace_files_unchanged",
@@ -5813,6 +5859,894 @@ fn inspect_apply_dry_run(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     Ok((inspect_proposal(store, run_id, proposal_id)?, dry_run))
+}
+
+const APPLY_APPROVAL_TTL_SECONDS: i64 = 15 * 60;
+
+fn apply_result_check(
+    name: &str,
+    status: &str,
+    reason: Option<&str>,
+) -> WorkspacePatchApplyResultCheckSummary {
+    WorkspacePatchApplyResultCheckSummary {
+        name: name.to_string(),
+        status: status.to_string(),
+        reason: reason.map(ToString::to_string),
+    }
+}
+
+fn record_apply_result(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    run_id: &str,
+    proposal_id: &str,
+    mut apply_result: WorkspacePatchApplyResultSummary,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    apply_result.check_count = apply_result.checklist.len();
+    apply_result.failed_checks = apply_result
+        .checklist
+        .iter()
+        .filter(|check| check.status == "Fail")
+        .map(|check| check.name.clone())
+        .collect();
+    apply_result.blocked_checks = apply_result
+        .checklist
+        .iter()
+        .filter(|check| check.status == "Blocked")
+        .map(|check| check.name.clone())
+        .collect();
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            task,
+            LedgerEventKind::WorkspacePatchApplyResultRecorded,
+            Some(json!({
+                "proposal_id": proposal_id,
+                "apply_id": &apply_result.apply_id,
+                "apply_status": &apply_result.apply_status,
+                "apply_reason": &apply_result.apply_reason,
+                "authorization_id": &apply_result.authorization_id,
+                "authorization_consumed": apply_result.authorization_consumed,
+                "applied": apply_result.applied,
+                "atomic_replacement_completed": apply_result.atomic_replacement_completed,
+                "path": &apply_result.path,
+                "expected_target_sha256": &apply_result.expected_target_sha256,
+                "pre_write_target_sha256": &apply_result.pre_write_target_sha256,
+                "post_write_sha256": &apply_result.post_write_sha256,
+                "content_chars": apply_result.content_chars,
+                "content_bytes": apply_result.content_bytes,
+                "checked_at": &apply_result.checked_at,
+                "applied_at": &apply_result.applied_at,
+                "temp_file_cleaned": apply_result.temp_file_cleaned,
+                "check_count": apply_result.check_count,
+                "failed_checks": &apply_result.failed_checks,
+                "blocked_checks": &apply_result.blocked_checks,
+            })),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    Ok((inspect_proposal(store, run_id, proposal_id)?, apply_result))
+}
+
+fn has_consumed_apply_authorization(events: &[LedgerEvent], proposal_id: &str) -> bool {
+    events.iter().any(|event| {
+        if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+            return false;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return false;
+        };
+        payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id)
+            && payload
+                .get("authorization_consumed")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && payload
+                .get("applied")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    })
+}
+
+fn approval_current_failure_reason(approved_at: Option<&str>) -> Option<&'static str> {
+    let Some(approved_at) = approved_at else {
+        return Some("Proposal approval timestamp is missing.");
+    };
+    let Ok(approved_at) =
+        time::OffsetDateTime::parse(approved_at, &time::format_description::well_known::Rfc3339)
+    else {
+        return Some("Proposal approval timestamp is invalid.");
+    };
+    let now = time::OffsetDateTime::now_utc();
+    if approved_at > now + time::Duration::seconds(60) {
+        return Some("Proposal approval timestamp is in the future.");
+    }
+    if now - approved_at > time::Duration::seconds(APPLY_APPROVAL_TTL_SECONDS) {
+        return Some("Proposal approval has expired.");
+    }
+    None
+}
+
+fn resolve_apply_target_path(
+    store: &BrownieStore,
+    proposal: &WorkspacePatchProposalSummary,
+) -> Result<PathBuf, &'static str> {
+    brownie_tools::preflight_workspace_write_path(&proposal.path)
+        .map_err(|_| "Target path is not safe.")?;
+    if std::path::Path::new(&proposal.path)
+        .components()
+        .any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err("Target path is not safe.");
+    }
+    let root = store
+        .workspace_root()
+        .canonicalize()
+        .map_err(|_| "Workspace root is not accessible.")?;
+    let target = root.join(&proposal.path);
+    let symlink_metadata =
+        std::fs::symlink_metadata(&target).map_err(|_| "Target file does not exist.")?;
+    if symlink_metadata.file_type().is_symlink() {
+        return Err("Target path is a symlink.");
+    }
+    if !symlink_metadata.is_file() {
+        return Err("Target path is not a regular file.");
+    }
+    let canonical_target = target
+        .canonicalize()
+        .map_err(|_| "Target file does not exist.")?;
+    if !canonical_target.starts_with(&root) {
+        return Err("Target path escapes workspace root.");
+    }
+    Ok(canonical_target)
+}
+
+struct AtomicReplaceOutcome {
+    post_write_sha256: Option<String>,
+    temp_file_cleaned: bool,
+    atomic_replacement_completed: bool,
+    failure_reason: Option<&'static str>,
+}
+
+fn atomic_replace_existing_file(
+    target: &std::path::Path,
+    replacement_bytes: &[u8],
+) -> AtomicReplaceOutcome {
+    let Some(parent) = target.parent() else {
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: true,
+            atomic_replacement_completed: false,
+            failure_reason: Some("Target parent directory is unavailable."),
+        };
+    };
+    let file_name = target
+        .file_name()
+        .map(|name| name.to_string_lossy().replace('/', "_"))
+        .unwrap_or_else(|| "target".to_string());
+    let temp_path = parent.join(format!(
+        ".{file_name}.brownie-apply-{}.tmp",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let cleanup_temp = |path: &std::path::Path| -> bool {
+        match std::fs::remove_file(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+            Err(_) => false,
+        }
+    };
+    let mut temp_file = match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&temp_path)
+    {
+        Ok(file) => file,
+        Err(_) => {
+            return AtomicReplaceOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: true,
+                atomic_replacement_completed: false,
+                failure_reason: Some("Temporary sibling file creation failed."),
+            }
+        }
+    };
+    if temp_file.write_all(replacement_bytes).is_err() {
+        drop(temp_file);
+        let cleaned = cleanup_temp(&temp_path);
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: cleaned,
+            atomic_replacement_completed: false,
+            failure_reason: Some("Bounded write to temporary sibling file failed."),
+        };
+    }
+    if temp_file.flush().is_err() || temp_file.sync_all().is_err() {
+        drop(temp_file);
+        let cleaned = cleanup_temp(&temp_path);
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: cleaned,
+            atomic_replacement_completed: false,
+            failure_reason: Some("Temporary file flush or sync failed."),
+        };
+    }
+    drop(temp_file);
+    if std::fs::rename(&temp_path, target).is_err() {
+        let cleaned = cleanup_temp(&temp_path);
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: cleaned,
+            atomic_replacement_completed: false,
+            failure_reason: Some("Atomic replacement failed."),
+        };
+    }
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        let _ = parent_dir.sync_all();
+    }
+    let post_write_bytes = match std::fs::read(target) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return AtomicReplaceOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: true,
+                atomic_replacement_completed: true,
+                failure_reason: Some("Post-write verification read failed."),
+            }
+        }
+    };
+    AtomicReplaceOutcome {
+        post_write_sha256: Some(format!("sha256:{}", hex_sha256(&post_write_bytes))),
+        temp_file_cleaned: true,
+        atomic_replacement_completed: true,
+        failure_reason: None,
+    }
+}
+
+fn apply_proposal(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(&params.run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let proposal = inspect_proposal(store, &params.run_id, &params.proposal_id)?;
+    let apply_id = format!("apply_{}", uuid::Uuid::new_v4().simple());
+    let authorization_id = format!("apply_auth_{}", uuid::Uuid::new_v4().simple());
+    let checked_at = now_rfc3339();
+    let replacement_bytes = params.replacement_content.as_bytes();
+    let mut apply_result = WorkspacePatchApplyResultSummary {
+        proposal_id: params.proposal_id.clone(),
+        apply_id,
+        apply_status: "Denied".to_string(),
+        apply_reason: "Apply preconditions were not satisfied.".to_string(),
+        authorization_id,
+        authorization_consumed: false,
+        applied: false,
+        atomic_replacement_completed: false,
+        path: proposal.path.clone(),
+        expected_target_sha256: params.expected_target_sha256.clone(),
+        pre_write_target_sha256: None,
+        post_write_sha256: None,
+        content_chars: params.replacement_content.chars().count(),
+        content_bytes: replacement_bytes.len() as u64,
+        checked_at,
+        applied_at: None,
+        temp_file_cleaned: true,
+        check_count: 0,
+        failed_checks: Vec::new(),
+        blocked_checks: Vec::new(),
+        checklist: vec![apply_result_check("proposal_exists", "Pass", None)],
+    };
+
+    if !params.authorize {
+        apply_result.checklist.push(apply_result_check(
+            "one_time_apply_authorization",
+            "Fail",
+            Some("Apply request must explicitly set authorize=true."),
+        ));
+        apply_result.apply_reason =
+            "Apply request did not include explicit authorization.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "one_time_apply_authorization",
+        "Pass",
+        None,
+    ));
+
+    if proposal.operation != WorkspacePatchOperation::ReplaceFile.as_str() {
+        apply_result.checklist.push(apply_result_check(
+            "replace_file_only",
+            "Fail",
+            Some("Only replace_file proposals can be applied."),
+        ));
+        apply_result.apply_reason = "Proposal operation is not replace_file.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("replace_file_only", "Pass", None));
+
+    if proposal.validation_status == "Blocked" {
+        apply_result.checklist.push(apply_result_check(
+            "proposal_is_valid",
+            "Blocked",
+            proposal.validation_reason.as_deref(),
+        ));
+        apply_result.apply_status = "Denied".to_string();
+        apply_result.apply_reason =
+            "Proposal validation is blocked by sensitive-like content.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    if proposal.validation_status != "Valid" {
+        apply_result.checklist.push(apply_result_check(
+            "proposal_is_valid",
+            "Fail",
+            proposal.validation_reason.as_deref(),
+        ));
+        apply_result.apply_reason = "Proposal validation status is not Valid.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("proposal_is_valid", "Pass", None));
+
+    if proposal.approval_status != "Approved" {
+        apply_result.checklist.push(apply_result_check(
+            "proposal_is_approved",
+            "Fail",
+            Some("Proposal must be approved before apply."),
+        ));
+        apply_result.apply_reason = "Proposal is not approved.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("proposal_is_approved", "Pass", None));
+
+    if let Some(reason) = approval_current_failure_reason(proposal.approved_at.as_deref()) {
+        apply_result.checklist.push(apply_result_check(
+            "approval_not_expired",
+            "Fail",
+            Some(reason),
+        ));
+        apply_result.apply_reason = reason.to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("approval_not_expired", "Pass", None));
+
+    let events = read_existing_run_events(store, &params.run_id)?;
+    if has_consumed_apply_authorization(&events, &params.proposal_id) {
+        apply_result.checklist.push(apply_result_check(
+            "approval_unconsumed",
+            "Fail",
+            Some("Proposal apply authorization has already been consumed."),
+        ));
+        apply_result.apply_reason =
+            "Proposal apply authorization has already been consumed.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("approval_unconsumed", "Pass", None));
+
+    if params.replacement_content.chars().count() > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
+        apply_result.checklist.push(apply_result_check(
+            "replacement_content_bounded",
+            "Fail",
+            Some("Replacement content exceeds the runtime write limit."),
+        ));
+        apply_result.apply_reason =
+            "Replacement content exceeds the runtime write limit.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "replacement_content_bounded",
+        "Pass",
+        None,
+    ));
+
+    if scan_text_for_sensitive_content(&params.replacement_content) {
+        apply_result.checklist.push(apply_result_check(
+            "replacement_content_sensitive_scan",
+            "Blocked",
+            Some("Replacement content contains sensitive-like data."),
+        ));
+        apply_result.apply_reason = "Replacement content contains sensitive-like data.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "replacement_content_sensitive_scan",
+        "Pass",
+        None,
+    ));
+
+    if params.replacement_content.chars().count() != proposal.content_chars
+        || preview_with_limit(&params.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
+            != proposal.content_preview
+    {
+        apply_result.checklist.push(apply_result_check(
+            "replacement_content_matches_proposal",
+            "Fail",
+            Some("Replacement content does not match approved proposal metadata."),
+        ));
+        apply_result.apply_reason =
+            "Replacement content does not match approved proposal metadata.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "replacement_content_matches_proposal",
+        "Pass",
+        None,
+    ));
+
+    if proposal.diff_redacted || proposal.content_preview == "[redacted]" {
+        apply_result.checklist.push(apply_result_check(
+            "proposal_diff_available",
+            "Blocked",
+            Some("Proposal diff or content preview is redacted."),
+        ));
+        apply_result.apply_reason = "Proposal diff or content preview is redacted.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    if proposal.diff_truncated || proposal.diff_preview.is_none() {
+        apply_result.checklist.push(apply_result_check(
+            "proposal_diff_available",
+            "Fail",
+            Some("Proposal diff must be available and untruncated for apply verification."),
+        ));
+        apply_result.apply_reason = "Proposal diff is unavailable or truncated.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("proposal_diff_available", "Pass", None));
+
+    if !is_sha256_fingerprint(&params.expected_target_sha256) {
+        apply_result.checklist.push(apply_result_check(
+            "expected_target_hash_valid",
+            "Fail",
+            Some("Expected target hash must be a sha256 fingerprint."),
+        ));
+        apply_result.apply_reason =
+            "Expected target hash must be a sha256 fingerprint.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "expected_target_hash_valid",
+        "Pass",
+        None,
+    ));
+
+    let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+        apply_result.checklist.push(apply_result_check(
+            "latest_preflight_exists",
+            "Fail",
+            Some("Run proposal.preflight before applying."),
+        ));
+        apply_result.apply_reason = "Latest preflight snapshot is missing.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("latest_preflight_exists", "Pass", None));
+
+    let current_snapshot =
+        match capture_preflight_snapshot(store, &proposal, Some(previous_snapshot)) {
+            Ok(snapshot) => snapshot,
+            Err(reason) => {
+                apply_result.checklist.push(apply_result_check(
+                    "latest_preflight_validation",
+                    "Fail",
+                    Some(&reason),
+                ));
+                apply_result.apply_reason = "Latest preflight validation failed.".to_string();
+                return record_apply_result(
+                    store,
+                    &task,
+                    &params.run_id,
+                    &params.proposal_id,
+                    apply_result,
+                );
+            }
+        };
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &task,
+            LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
+            Some(json!(current_snapshot)),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    if current_snapshot.stale {
+        apply_result.checklist.push(apply_result_check(
+            "latest_preflight_validation",
+            "Fail",
+            current_snapshot
+                .stale_reason
+                .as_deref()
+                .or(Some("Latest preflight snapshot is stale.")),
+        ));
+        apply_result.apply_reason = "Latest preflight validation found a stale target.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "latest_preflight_validation",
+        "Pass",
+        None,
+    ));
+
+    let target_path = match resolve_apply_target_path(store, &proposal) {
+        Ok(path) => path,
+        Err(reason) => {
+            let check_name = if reason.contains("symlink") {
+                "target_file_not_symlink"
+            } else if reason.contains("regular") {
+                "target_file_regular"
+            } else if reason.contains("exist") {
+                "target_file_exists"
+            } else {
+                "target_path_safe"
+            };
+            apply_result
+                .checklist
+                .push(apply_result_check(check_name, "Fail", Some(reason)));
+            apply_result.apply_reason = reason.to_string();
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &params.proposal_id,
+                apply_result,
+            );
+        }
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("target_path_safe", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_exists", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_regular", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_not_symlink", "Pass", None));
+
+    let current_bytes = match std::fs::read(&target_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            apply_result.checklist.push(apply_result_check(
+                "target_file_readable",
+                "Fail",
+                Some("Target file could not be read before apply."),
+            ));
+            apply_result.apply_reason = "Target file could not be read before apply.".to_string();
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &params.proposal_id,
+                apply_result,
+            );
+        }
+    };
+    let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
+    apply_result.pre_write_target_sha256 = Some(pre_write_hash.clone());
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_readable", "Pass", None));
+
+    if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
+        || params.expected_target_sha256 != pre_write_hash
+    {
+        apply_result.checklist.push(apply_result_check(
+            "expected_target_hash_matches",
+            "Fail",
+            Some("Expected target hash does not match current target file."),
+        ));
+        apply_result.apply_reason =
+            "Expected target hash does not match current target file.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "expected_target_hash_matches",
+        "Pass",
+        None,
+    ));
+
+    let current_content = match std::str::from_utf8(&current_bytes) {
+        Ok(content) => content,
+        Err(_) => {
+            apply_result.checklist.push(apply_result_check(
+                "target_file_utf8",
+                "Fail",
+                Some("Target file is not UTF-8."),
+            ));
+            apply_result.apply_reason = "Target file is not UTF-8.".to_string();
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &params.proposal_id,
+                apply_result,
+            );
+        }
+    };
+    if scan_text_for_sensitive_content(current_content) {
+        apply_result.checklist.push(apply_result_check(
+            "target_file_sensitive_scan",
+            "Blocked",
+            Some("Target file contains sensitive-like data."),
+        ));
+        apply_result.apply_reason = "Target file contains sensitive-like data.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_utf8", "Pass", None));
+    apply_result.checklist.push(apply_result_check(
+        "target_file_sensitive_scan",
+        "Pass",
+        None,
+    ));
+
+    let current_diff =
+        synthetic_unified_diff(&proposal.path, current_content, &params.replacement_content);
+    if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "approved_diff_matches_current_target",
+            "Fail",
+            Some("Approved diff does not match the current target and replacement content."),
+        ));
+        apply_result.apply_reason =
+            "Approved diff does not match the current target and replacement content.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "approved_diff_matches_current_target",
+        "Pass",
+        None,
+    ));
+
+    let expected_post_write_hash = format!("sha256:{}", hex_sha256(replacement_bytes));
+    let outcome = atomic_replace_existing_file(&target_path, replacement_bytes);
+    apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
+    apply_result.atomic_replacement_completed = outcome.atomic_replacement_completed;
+    apply_result.post_write_sha256 = outcome.post_write_sha256.clone();
+    if let Some(reason) = outcome.failure_reason {
+        apply_result.checklist.push(apply_result_check(
+            "temporary_sibling_file_created",
+            if reason == "Temporary sibling file creation failed." {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason == "Temporary sibling file creation failed." {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "bounded_write_flushed_and_synced",
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "atomic_replacement_completed",
+            if outcome.atomic_replacement_completed {
+                "Pass"
+            } else {
+                "Fail"
+            },
+            if outcome.atomic_replacement_completed {
+                None
+            } else {
+                Some(reason)
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some(reason),
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = reason.to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "temporary_sibling_file_created",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "bounded_write_flushed_and_synced",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "atomic_replacement_completed",
+        "Pass",
+        None,
+    ));
+    if apply_result.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some("Post-write SHA-256 does not match replacement content."),
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason =
+            "Post-write SHA-256 does not match replacement content.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "post_write_sha256_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason = "Patch applied and post-write SHA-256 verified.".to_string();
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        &task,
+        &params.run_id,
+        &params.proposal_id,
+        apply_result,
+    )
 }
 
 fn inspect_apply_dry_run_history(
@@ -6013,13 +6947,6 @@ fn inspect_proposal_review_verdict(
         }
     }
 
-    if let Some(capability) = &review_bundle.latest_apply_capability {
-        if capability.status == "true" {
-            blocking_reasons
-                .push("Apply capability indicates apply may be available; final review verdict remains inspect-only.".to_string());
-        }
-    }
-
     if let Some(dry_run) = &review_bundle.latest_apply_dry_run {
         if dry_run.status != "Completed" {
             blocking_reasons.push(format!(
@@ -6070,7 +6997,7 @@ fn inspect_proposal_review_verdict(
         (
             "ReadyForHumanReview".to_string(),
             "Complete".to_string(),
-            "Recorded review evidence supports final human review; patch apply remains unauthorized.".to_string(),
+            "Recorded review evidence supports final human review; patch apply still requires explicit proposal.apply authorization.".to_string(),
         )
     };
 
@@ -9622,6 +10549,43 @@ fn proposal_audit_entry(
                 "Apply dry-run check recorded without applying a patch.".to_string(),
             )
         }
+        LedgerEventKind::WorkspacePatchApplyResultRecorded => {
+            let metadata = select_audit_metadata(
+                &payload,
+                &[
+                    "apply_id",
+                    "apply_status",
+                    "apply_reason",
+                    "authorization_id",
+                    "authorization_consumed",
+                    "applied",
+                    "atomic_replacement_completed",
+                    "path",
+                    "expected_target_sha256",
+                    "pre_write_target_sha256",
+                    "post_write_sha256",
+                    "content_chars",
+                    "content_bytes",
+                    "checked_at",
+                    "applied_at",
+                    "temp_file_cleaned",
+                    "check_count",
+                    "failed_checks",
+                    "blocked_checks",
+                ],
+            );
+            (
+                "apply_result_recorded",
+                metadata,
+                format!(
+                    "Apply result recorded with status {}.",
+                    payload
+                        .get("apply_status")
+                        .and_then(Value::as_str)
+                        .unwrap_or("Unknown")
+                ),
+            )
+        }
         _ => return None,
     };
     Some(WorkspacePatchAuditTrailEntry {
@@ -9820,9 +10784,9 @@ fn build_readiness_checklist(
     });
     checklist.push(readiness_check("no_raw_content_exposed", "Pass", None));
     checklist.push(readiness_check(
-        "apply_not_implemented",
-        "Skipped",
-        Some("Patch apply is not implemented in Phase 3.4."),
+        "apply_execution_supported",
+        "Pass",
+        Some("Patch apply is available through proposal.apply after explicit authorization."),
     ));
     checklist
 }
@@ -9954,7 +10918,7 @@ fn readiness_proposal(
             },
         )
     } else {
-        ("Ready", None, "Ready for final human review. Proposal is approved, latest preflight is fresh, target file hash is captured, and a sanitized diff preview is available. Patch apply is not implemented in Phase 3.4.")
+        ("Ready", None, "Ready for final human review. Proposal is approved, latest preflight is fresh, target file hash is captured, a sanitized diff preview is available, and controlled apply execution is available through proposal.apply.")
     };
     let generated_at = now_rfc3339();
     let report_id = format!("report_{}", uuid::Uuid::new_v4().simple());
@@ -10021,7 +10985,7 @@ fn preflight_proposal(
     let previous = latest_snapshot(&events, proposal_id);
     let snapshot = capture_preflight_snapshot(store, &proposal, previous.as_ref())?;
     let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
-    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Blocked");
+    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Ready");
     store
         .tasks()
         .append_task_event_with_payload(
@@ -10038,9 +11002,9 @@ fn preflight_proposal(
             Some(json!({
                 "proposal_id": proposal_id,
                 "plan_id": plan_id,
-                "status": "Blocked",
+                "status": "Ready",
                 "check_count": apply_plan.checklist.len(),
-                "failed_checks": ["apply_not_enabled"],
+                "failed_checks": [],
             })),
         )
         .map_err(|e| format!("invalid params: {e}"))?;
@@ -11809,6 +12773,19 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "required_gates",
         "can_apply_now",
         "checked_at",
+        "apply_id",
+        "apply_status",
+        "apply_reason",
+        "authorization_id",
+        "authorization_consumed",
+        "applied",
+        "atomic_replacement_completed",
+        "expected_target_sha256",
+        "pre_write_target_sha256",
+        "post_write_sha256",
+        "content_bytes",
+        "applied_at",
+        "temp_file_cleaned",
         "dry_run_id",
         "dry_run_status",
         "dry_run_reason",
@@ -14968,6 +15945,39 @@ mod tests {
                 })),
             )
             .expect("append proposal");
+    }
+
+    fn start_fake_readme_patch_proposal() -> (String, String) {
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement README update","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+
+        let list = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.list","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let proposals = list.result.expect("proposal result")["proposals"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(proposals.len(), 1);
+        let proposal_id = proposals[0]["proposal_id"]
+            .as_str()
+            .expect("proposal id")
+            .to_string();
+        (run_id, proposal_id)
     }
 
     #[test]
@@ -23572,9 +24582,9 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|check| check["name"] == "apply_not_enabled")
+                .find(|check| check["name"] == "apply_execution_available")
                 .unwrap()["status"],
-            "Fail"
+            "Pass"
         );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -23619,9 +24629,9 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|check| check["name"] == "apply_not_implemented")
+                .find(|check| check["name"] == "apply_execution_supported")
                 .unwrap()["status"],
-            "Skipped"
+            "Pass"
         );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
@@ -23631,14 +24641,14 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":72,"method":"proposal.applyCapability","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
         ));
         let capability_result = capability.result.expect("capability result");
-        assert_eq!(capability_result["capability"]["apply_supported"], false);
-        assert_eq!(capability_result["capability"]["apply_enabled"], false);
-        assert_eq!(capability_result["capability"]["mode"], "dry_run_only");
+        assert_eq!(capability_result["capability"]["apply_supported"], true);
+        assert_eq!(capability_result["capability"]["apply_enabled"], true);
+        assert_eq!(capability_result["capability"]["mode"], "controlled_apply");
         assert_eq!(
             capability_result["capability"]["reason"],
-            "Patch apply is not implemented in Phase 3.5."
+            "proposal.apply can execute after explicit one-time authorization and expected target hash verification."
         );
-        assert_eq!(capability_result["capability"]["can_apply_now"], false);
+        assert_eq!(capability_result["capability"]["can_apply_now"], true);
         assert!(capability_result["capability"]["required_gates"]
             .as_array()
             .unwrap()
@@ -23656,15 +24666,15 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|check| check["name"] == "apply_execution_disabled")
+                .find(|check| check["name"] == "apply_execution_supported")
                 .unwrap()["status"],
-            "Blocked"
+            "Pass"
         );
-        assert!(capability_result["capability"]["blocked_checks"]
+        assert!(!capability_result["capability"]["blocked_checks"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|check| check == "apply_execution_disabled"));
+            .any(|check| check == "apply_execution_supported"));
         let serialized_capability =
             serde_json::to_string(&capability_result["capability"]).unwrap();
         for forbidden in [
@@ -23737,15 +24747,15 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .iter()
-                .find(|check| check["name"] == "apply_execution_disabled")
+                .find(|check| check["name"] == "apply_execution_supported")
                 .unwrap()["status"],
-            "Blocked"
+            "Pass"
         );
-        assert!(dry_run_result["dry_run"]["blocked_checks"]
+        assert!(!dry_run_result["dry_run"]["blocked_checks"]
             .as_array()
             .unwrap()
             .iter()
-            .any(|check| check == "apply_execution_disabled"));
+            .any(|check| check == "apply_execution_supported"));
         let serialized_dry_run = serde_json::to_string(&dry_run_result["dry_run"]).unwrap();
         for forbidden in [
             "content",
@@ -23937,7 +24947,7 @@ mod tests {
         );
         assert_eq!(
             review_bundle_result["review_bundle"]["latest_apply_capability"]["status"],
-            "false"
+            "true"
         );
         assert_eq!(
             review_bundle_result["review_bundle"]["latest_apply_dry_run"]["source_id"],
@@ -24373,14 +25383,14 @@ mod tests {
             capability_payload["capability_id"],
             capability_result["capability"]["capability_id"]
         );
-        assert_eq!(capability_payload["apply_supported"], false);
-        assert_eq!(capability_payload["apply_enabled"], false);
-        assert_eq!(capability_payload["mode"], "dry_run_only");
+        assert_eq!(capability_payload["apply_supported"], true);
+        assert_eq!(capability_payload["apply_enabled"], true);
+        assert_eq!(capability_payload["mode"], "controlled_apply");
         assert_eq!(
             capability_payload["reason"],
-            "Patch apply is not implemented in Phase 3.5."
+            "proposal.apply can execute after explicit one-time authorization and expected target hash verification."
         );
-        assert_eq!(capability_payload["can_apply_now"], false);
+        assert_eq!(capability_payload["can_apply_now"], true);
         assert_eq!(
             capability_payload["check_count"],
             capability_result["capability"]["check_count"]
@@ -24442,6 +25452,271 @@ mod tests {
         }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn proposal_apply_replaces_existing_file_after_approval_and_current_hash() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (run_id, proposal_id) = start_fake_readme_patch_proposal();
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        let expected_hash = preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "replacement_content": "new README content",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(apply_result["apply_result"]["authorization_consumed"], true);
+        assert_eq!(
+            apply_result["apply_result"]["atomic_replacement_completed"],
+            true
+        );
+        assert!(apply_result["apply_result"]["post_write_sha256"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "new README content"
+        );
+
+        let second_apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": apply_result["apply_result"]["post_write_sha256"],
+                "replacement_content": "new README content",
+                "authorize": true,
+            }
+        });
+        let second_apply = parse_line(&second_apply_request.to_string());
+        let second_apply_result = second_apply.result.expect("second apply result");
+        assert_eq!(
+            second_apply_result["apply_result"]["apply_status"],
+            "Denied"
+        );
+        assert_eq!(
+            second_apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "new README content"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":8,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(events
+            .iter()
+            .any(|event| event["kind"] == "WorkspacePatchApplyResultRecorded"
+                && event["payload"]["apply_status"] == "Applied"));
+        let apply_events: Vec<_> = events
+            .iter()
+            .filter(|event| event["kind"] == "WorkspacePatchApplyResultRecorded")
+            .cloned()
+            .collect();
+        let serialized_events = serde_json::to_string(&apply_events).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "new README content",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_denies_missing_authorization_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (run_id, proposal_id) = start_fake_readme_patch_proposal();
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let expected_hash = preflight.result.expect("preflight result")["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "replacement_content": "new README content",
+                "authorize": false,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["applied"], false);
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_rejects_expected_hash_mismatch_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (run_id, proposal_id) = start_fake_readme_patch_proposal();
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        assert!(preflight.error.is_none());
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+                "replacement_content": "new README content",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "expected_target_hash_matches"));
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn proposal_apply_rejects_symlink_target_without_writing_link_target() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("actual.md"), "original README").expect("write actual");
+        std::os::unix::fs::symlink("actual.md", temp.path().join("README.md"))
+            .expect("symlink readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (run_id, proposal_id) = start_fake_readme_patch_proposal();
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let expected_hash = preflight.result.expect("preflight result")["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "replacement_content": "new README content",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "target_file_not_symlink"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("actual.md")).unwrap(),
+            "original README"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
@@ -24550,13 +25825,13 @@ mod tests {
             inspect_apply_capability(&store, &record.run_id, "proposal_apply_config")
                 .expect("apply capability");
 
-        assert!(!capability.apply_supported);
+        assert!(capability.apply_supported);
         assert!(!capability.apply_enabled);
         assert!(!capability.can_apply_now);
-        assert_eq!(capability.mode, "dry_run_only");
+        assert_eq!(capability.mode, "controlled_apply");
         assert_eq!(
             capability.reason,
-            "Patch apply is not implemented in Phase 3.5."
+            "Proposal is missing required apply gates."
         );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
