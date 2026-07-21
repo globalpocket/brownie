@@ -608,6 +608,7 @@ pub enum LedgerEventKind {
     WorkspacePatchApplyPlanCreated,
     WorkspacePatchApplyCapabilityChecked,
     WorkspacePatchApplyDryRunChecked,
+    WorkspacePatchApplyResultRecorded,
     WorkspacePatchReadinessReportCreated,
     TaskRunning,
     AgentLoopStarted,

@@ -198,7 +198,7 @@ Valid proposals may include a capped synthetic unified diff preview. Blocked pro
 
 The task runtime treats workspace-write proposals as dry-run records until a future phase implements apply. Human approval and rejection are represented by ledger events and reflected in `proposal.list` / `proposal.inspect`, but approval does not modify the workspace.
 
-After `proposal.approve`, the runtime creates a blocked apply-plan summary. The checklist explicitly includes `apply_not_enabled`, with reason `Patch apply is not implemented in Phase 3.2.`, so approval cannot be mistaken for execution. Full proposed content, raw provider responses, raw intent JSON, raw input JSON, patches, and full diffs remain excluded from ledger payloads and RPC responses.
+After `proposal.approve`, the runtime creates an apply-plan summary. Historical Phase 3.2 plans were blocked because apply was unimplemented; after M6.1, the plan can report controlled apply availability, but approval still cannot be mistaken for execution. Only a separate `proposal.apply` request with explicit one-time authorization and an expected target hash may mutate a workspace file. Full proposed content, raw provider responses, raw intent JSON, raw input JSON, patches, and full diffs remain excluded from ledger payloads and RPC responses.
 
 ## Phase 3.3 patch preflight
 
@@ -219,6 +219,12 @@ M3 records a summary-only readiness fingerprint when `proposal.readiness` runs. 
 The M3 fingerprint is a readiness gate only. It does not enable patch apply, does not write workspace files, and does not expose raw file content, raw diffs, raw input JSON, canonical absolute paths, process output, environment values, or network-derived content.
 
 Readiness ledger events are summary-only and must exclude raw content fields (`content`, `raw_content`, `full_content`, `patch`, `diff`, `raw_input`, `canonical_path`, `absolute_path`, `file_content`) and secret-like text.
+
+## M6.1 controlled replace-file apply
+
+M6.1 adds `proposal.apply` as the first runtime-owned workspace mutation path. It is limited to one approved `replace_file` proposal for one existing regular UTF-8 workspace-relative target. It requires explicit one-time authorization, approval freshness, latest preflight validation, expected target SHA-256 verification, protected path and parent traversal denial, symlink rejection, bounded replacement content, temporary sibling file creation, flush/sync, atomic replacement, post-write SHA-256 verification, and a bounded apply-result ledger event.
+
+`proposal.apply` does not run shell, git, tests, network, service control, directory mutation, file creation, file deletion, arbitrary rename, or multi-file transactions. Replacement content is request input only and must not be persisted in the ledger or returned in RPC responses. Failure paths should preserve the original target, clean partial temporary files, and must not consume apply authorization before verified success.
 
 ## M5 subtask orchestration queue
 

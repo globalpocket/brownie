@@ -375,6 +375,15 @@ pub struct ProposalApplyDryRunParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyParams {
+    pub run_id: String,
+    pub proposal_id: String,
+    pub expected_target_sha256: String,
+    pub replacement_content: String,
+    pub authorize: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalApplyDryRunHistoryParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -892,6 +901,38 @@ pub struct WorkspacePatchApplyDryRunSummary {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspacePatchApplyDryRunCheckSummary {
+    pub name: String,
+    pub status: String,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyResultSummary {
+    pub proposal_id: String,
+    pub apply_id: String,
+    pub apply_status: String,
+    pub apply_reason: String,
+    pub authorization_id: String,
+    pub authorization_consumed: bool,
+    pub applied: bool,
+    pub atomic_replacement_completed: bool,
+    pub path: String,
+    pub expected_target_sha256: String,
+    pub pre_write_target_sha256: Option<String>,
+    pub post_write_sha256: Option<String>,
+    pub content_chars: usize,
+    pub content_bytes: u64,
+    pub checked_at: String,
+    pub applied_at: Option<String>,
+    pub temp_file_cleaned: bool,
+    pub check_count: usize,
+    pub failed_checks: Vec<String>,
+    pub blocked_checks: Vec<String>,
+    pub checklist: Vec<WorkspacePatchApplyResultCheckSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyResultCheckSummary {
     pub name: String,
     pub status: String,
     pub reason: Option<String>,
@@ -2126,6 +2167,12 @@ pub struct ProposalApplyCapabilityResult {
 pub struct ProposalApplyDryRunResult {
     pub proposal: WorkspacePatchProposalSummary,
     pub dry_run: WorkspacePatchApplyDryRunSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyResult {
+    pub proposal: WorkspacePatchProposalSummary,
+    pub apply_result: WorkspacePatchApplyResultSummary,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
