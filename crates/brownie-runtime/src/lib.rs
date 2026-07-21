@@ -6552,10 +6552,10 @@ fn apply_create_file_proposal(
             "Fail",
             Some("Post-write SHA-256 did not match proposed content."),
         ));
-        let _ = std::fs::remove_file(&target_path);
         apply_result.apply_status = "Failed".to_string();
         apply_result.apply_reason =
-            "Post-write SHA-256 did not match proposed content.".to_string();
+            "Post-write SHA-256 did not match proposed content; created target was left in place."
+                .to_string();
         return record_apply_result(
             store,
             task,
