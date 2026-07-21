@@ -8,6 +8,7 @@
     "check": "pnpm --filter brownie-vsix check",
     "guard:diagnostics": "node scripts/guard-diagnostics-api.mjs",
     "guard:phase-value": "node scripts/guard-phase-value.mjs",
+    "guard:phase-value:test": "node --test scripts/guard-phase-value.test.mjs",
     "test": "pnpm --filter brownie-vsix test"
   },
   "packageManager": "pnpm@9.0.0",

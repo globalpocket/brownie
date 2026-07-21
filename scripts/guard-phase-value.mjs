@@ -1,215 +1,281 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const repoRoot = path.resolve(__dirname, '..');
-const errors = [];
-const phase = 'M5.38';
-const manifestPath = 'docs/architecture/phase-value-manifest.m5.38.json';
+const defaultRepoRoot = path.resolve(__dirname, '..');
+const defaultManifestPath = 'docs/architecture/phase-value-manifest.json';
 
-function readText(relativePath) {
-  const filePath = path.join(repoRoot, relativePath);
-  try {
-    return fs.readFileSync(filePath, 'utf8');
-  } catch (error) {
-    errors.push(`Failed to read ${relativePath}: ${error.message}`);
-    return '';
-  }
-}
+const requiredValueGateAnswerIds = [
+  'strategic_capabilities',
+  'new_capability',
+  'why_existing_functionality_is_insufficient',
+  'product_gap_if_skipped',
+  'non_duplicative',
+  'no_new_rpc',
+  'no_new_summary',
+  'runtime_behavior_change',
+  'headless_autonomous_contribution',
+  'milestone_progress'
+];
 
-function readJson(relativePath) {
-  try {
-    return JSON.parse(readText(relativePath));
-  } catch (error) {
-    errors.push(`Failed to parse ${relativePath}: ${error.message}`);
-    return {};
-  }
-}
+const guardEngineFiles = [
+  '.github/workflows/ci.yml',
+  'package.json',
+  'scripts/guard-diagnostics-api.mjs',
+  'scripts/guard-phase-value.mjs',
+  'scripts/guard-phase-value.test.mjs',
+  'docs/architecture/phase-value-gate.md',
+  'docs/architecture/phase-value-manifest.json'
+];
 
 function isNonEmptyString(value) {
   return typeof value === 'string' && value.trim().length > 0;
 }
 
-function requireManifestValue(condition, message) {
+function normalizeRelativePath(relativePath) {
+  return relativePath.split(path.sep).join('/').replace(/^\.\//, '');
+}
+
+function readJson(repoRoot, relativePath, errors) {
+  const filePath = path.join(repoRoot, relativePath);
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8'));
+  } catch (error) {
+    errors.push(`Failed to read JSON ${relativePath}: ${error.message}`);
+    return {};
+  }
+}
+
+function requireValue(condition, errors, message) {
   if (!condition) {
     errors.push(message);
   }
 }
 
-function validateManifest(manifest) {
-  requireManifestValue(manifest.phase === phase, `${manifestPath} must describe phase ${phase}.`);
-  requireManifestValue(manifest.target_capability === 'subtask_orchestration', `${phase} target_capability must be subtask_orchestration.`);
-  requireManifestValue(
-    manifest.concrete_capability_transition === 'parent_inspection_consumed_parent_join_recovery',
-    `${phase} must declare the parent inspection consumed parent-join recovery transition.`
-  );
-  requireManifestValue(
-    manifest.forbidden_pattern === 'diagnostics_only_or_parent_inspection_consumed_join_without_continuation_handles',
-    `${phase} must forbid diagnostics-only parent inspection consumed join recovery without continuation handles.`
-  );
+function parseChangedFilesFromEnv(env) {
+  const raw = env.BROWNIE_PHASE_VALUE_CHANGED_FILES;
+  if (!isNonEmptyString(raw)) {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (trimmed.startsWith('[')) {
+    return JSON.parse(trimmed).map(normalizeRelativePath);
+  }
+  return trimmed
+    .split(/[\n,]/)
+    .map((entry) => normalizeRelativePath(entry.trim()))
+    .filter(Boolean);
+}
 
-  const mappings = Array.isArray(manifest.strategic_capability_mapping)
-    ? manifest.strategic_capability_mapping
-    : [];
-  requireManifestValue(mappings.length > 0, `${phase} must include strategic_capability_mapping.`);
-  requireManifestValue(
-    mappings.some((mapping) => mapping.capability === 'subtask_orchestration' && isNonEmptyString(mapping.relationship)),
-    `${phase} strategic_capability_mapping must include subtask_orchestration.`
-  );
+function gitChangedFiles(repoRoot, args, execGit = execFileSync) {
+  try {
+    return {
+      ok: true,
+      files: execGit('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        .split('\n')
+        .map((entry) => normalizeRelativePath(entry.trim()))
+        .filter(Boolean)
+    };
+  } catch {
+    return { ok: false, files: [] };
+  }
+}
 
+function isSafeBaseRefName(baseRefName) {
+  return (
+    isNonEmptyString(baseRefName) &&
+    /^[A-Za-z0-9._/-]+$/.test(baseRefName) &&
+    !baseRefName.includes('..') &&
+    !baseRefName.startsWith('/') &&
+    !baseRefName.endsWith('/')
+  );
+}
+
+function fetchGithubBaseRef(repoRoot, baseRefName, execGit = execFileSync) {
+  if (!isSafeBaseRefName(baseRefName)) {
+    return false;
+  }
+
+  try {
+    execGit(
+      'git',
+      ['fetch', '--no-tags', '--depth=1', 'origin', `+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'] }
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function detectChangedFiles(options = {}) {
+  const repoRoot = options.repoRoot ?? defaultRepoRoot;
+  const env = options.env ?? process.env;
+  const execGit = options.execGit ?? execFileSync;
+  if (Array.isArray(options.changedFiles)) {
+    return [...new Set(options.changedFiles.map(normalizeRelativePath))];
+  }
+
+  const envChangedFiles = parseChangedFilesFromEnv(env);
+  if (envChangedFiles !== null) {
+    return [...new Set(envChangedFiles)];
+  }
+
+  const changed = [
+    ...gitChangedFiles(repoRoot, ['diff', '--name-only'], execGit).files,
+    ...gitChangedFiles(repoRoot, ['diff', '--cached', '--name-only'], execGit).files
+  ];
+
+  if (isNonEmptyString(env.GITHUB_BASE_REF)) {
+    const baseRefName = env.GITHUB_BASE_REF;
+    const baseRef = `origin/${baseRefName}`;
+    let baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`], execGit);
+    if (!baseChangedFiles.ok && env.GITHUB_ACTIONS === 'true' && fetchGithubBaseRef(repoRoot, baseRefName, execGit)) {
+      baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`], execGit);
+      if (!baseChangedFiles.ok) {
+        baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', baseRef, 'HEAD'], execGit);
+      }
+    }
+    changed.push(...baseChangedFiles.files);
+  } else {
+    changed.push(...gitChangedFiles(repoRoot, ['diff', '--name-only', 'HEAD~1...HEAD'], execGit).files);
+  }
+
+  return [...new Set(changed)];
+}
+
+export function findGuardEngineChangedFiles(changedFiles) {
+  return changedFiles
+    .map(normalizeRelativePath)
+    .filter(
+      (changedFile) =>
+        guardEngineFiles.includes(changedFile) ||
+        changedFile.startsWith('.github/workflows/') ||
+        /^docs\/architecture\/phase-value-manifest\.[^.]+(?:\.[^.]+)*\.json$/.test(changedFile)
+    );
+}
+
+function validatePhaseValueGate(manifest, manifestPath, errors) {
   const valueGate = manifest.phase_value_gate ?? {};
   const questions = Array.isArray(valueGate.questions) ? valueGate.questions : [];
   const answers = valueGate.answers ?? {};
-  requireManifestValue(questions.length > 0, `${phase} phase_value_gate.questions must be non-empty.`);
-  for (const question of questions) {
-    requireManifestValue(isNonEmptyString(question.id), `Every ${phase} phase_value_gate question must include an id.`);
+
+  requireValue(questions.length > 0, errors, `${manifestPath} phase_value_gate.questions must be non-empty.`);
+  const questionIds = new Set();
+  for (const [index, question] of questions.entries()) {
+    requireValue(isNonEmptyString(question.id), errors, `${manifestPath} phase_value_gate.questions[${index}].id must be non-empty.`);
     if (isNonEmptyString(question.id)) {
-      requireManifestValue(
+      questionIds.add(question.id);
+      requireValue(
         isNonEmptyString(answers[question.id]),
-        `${phase} phase_value_gate.answers.${question.id} must be non-empty.`
+        errors,
+        `${manifestPath} phase_value_gate.answers.${question.id} must be non-empty.`
       );
     }
   }
 
-  const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
-  for (const token of [
-    'Existing parent run.inspect output',
-    'Parent task.inspect',
-    'consumed_parent_join_recovery_summary',
-    'parent task id',
-    'parent run id',
-    'parent_join_consumed=true',
-    'consumed terminal controlled child count',
-    'continuation controlled child count',
-    'continuation runnable child count',
-    'continuation runnable child task ids',
-    'continuation non-runnable child count',
-    'continuation non-runnable child task ids',
-    'continuation terminal child count',
-    'parent_running_enabled=false',
-    'run_continuation_child_tasks_explicitly',
-    'inspect_non_runnable_continuation_child_tasks',
-    'inspect_parent_task',
-    'run_parent_task_explicitly',
-    'stale continuation child handles',
-    'TaskRunning',
-    'parent join consumption',
-    'handoff envelope',
-    'child TaskRecord',
-    'M5.37 direct child consumed_parent_join_recovery_summary',
-    'M5.36 direct child parent_join_readiness_summary',
-    'M5.35 parent inspection readiness',
-    'M5.34 terminal child readiness',
-    'M5.32 parent-join child-orchestration replay',
-    'M5.31 initial parent replay',
-    'M5.30 first materialization',
-    'M5.29 replay-safe',
-    'M5.27 over-budget recovery-cycle child',
-    'In-budget recovery-cycle child',
-    'Non-controlled, parentless, child-task, and standalone tasks',
-    'No raw child prompts',
-    'No scheduler handoff'
-  ]) {
-    requireManifestValue(
-      exitCriteria.some((criterion) => typeof criterion === 'string' && criterion.includes(token)),
-      `${phase} exit_criteria must mention ${token}.`
+  for (const answerId of requiredValueGateAnswerIds) {
+    requireValue(questionIds.has(answerId), errors, `${manifestPath} phase_value_gate.questions must include ${answerId}.`);
+    requireValue(isNonEmptyString(answers[answerId]), errors, `${manifestPath} phase_value_gate.answers.${answerId} must be non-empty.`);
+  }
+}
+
+function validateGuardEngineChangeReview(manifest, manifestPath, changedFiles, errors) {
+  const guardChangedFiles = findGuardEngineChangedFiles(changedFiles);
+  if (guardChangedFiles.length === 0) {
+    return;
+  }
+
+  const review = manifest.guard_engine_change_review ?? {};
+  requireValue(review.required === true, errors, `${manifestPath} guard_engine_change_review.required must be true when guard engine files change.`);
+  requireValue(review.strict_review_required === true, errors, `${manifestPath} guard_engine_change_review.strict_review_required must be true.`);
+  requireValue(review.no_self_approval === true, errors, `${manifestPath} guard_engine_change_review.no_self_approval must be true.`);
+  requireValue(isNonEmptyString(review.review_intent), errors, `${manifestPath} guard_engine_change_review.review_intent must be non-empty.`);
+
+  const declaredFiles = new Set((Array.isArray(review.changed_files) ? review.changed_files : []).map(normalizeRelativePath));
+  requireValue(declaredFiles.size > 0, errors, `${manifestPath} guard_engine_change_review.changed_files must be non-empty.`);
+  for (const changedFile of guardChangedFiles) {
+    requireValue(
+      declaredFiles.has(changedFile),
+      errors,
+      `${manifestPath} guard_engine_change_review.changed_files must include changed guard file ${changedFile}.`
     );
   }
 }
 
-function requireToken(relativePath, token) {
-  const text = readText(relativePath);
-  if (!text.includes(token)) {
-    errors.push(`${relativePath} must include ${token}.`);
+export function validatePhaseValueManifest(manifest, options = {}) {
+  const errors = [];
+  const manifestPath = options.manifestPath ?? defaultManifestPath;
+  const changedFiles = options.changedFiles ?? [];
+
+  requireValue(Number.isInteger(manifest.schema_version) && manifest.schema_version > 0, errors, `${manifestPath} schema_version must be a positive integer.`);
+  requireValue(isNonEmptyString(manifest.phase), errors, `${manifestPath} phase must be non-empty.`);
+  requireValue(isNonEmptyString(manifest.current_milestone) || isNonEmptyString(manifest.milestone), errors, `${manifestPath} current_milestone or milestone must be non-empty.`);
+  requireValue(isNonEmptyString(manifest.target_capability), errors, `${manifestPath} target_capability must be non-empty.`);
+  requireValue(isNonEmptyString(manifest.concrete_capability_transition), errors, `${manifestPath} concrete_capability_transition must be non-empty.`);
+  requireValue(isNonEmptyString(manifest.forbidden_pattern), errors, `${manifestPath} forbidden_pattern must be non-empty.`);
+  requireValue(
+    isNonEmptyString(manifest.project_objective) || isNonEmptyString(manifest.project_objective_ref),
+    errors,
+    `${manifestPath} must include project_objective or project_objective_ref.`
+  );
+
+  const mappings = Array.isArray(manifest.strategic_capability_mapping) ? manifest.strategic_capability_mapping : [];
+  requireValue(mappings.length > 0, errors, `${manifestPath} strategic_capability_mapping must be non-empty.`);
+  for (const [index, mapping] of mappings.entries()) {
+    requireValue(
+      isNonEmptyString(mapping.capability) && isNonEmptyString(mapping.relationship),
+      errors,
+      `${manifestPath} strategic_capability_mapping[${index}] must include capability and relationship.`
+    );
   }
+
+  validatePhaseValueGate(manifest, manifestPath, errors);
+
+  const reviewGate = manifest.review_value_gate ?? {};
+  requireValue(
+    Array.isArray(reviewGate.reject_when) && reviewGate.reject_when.length > 0,
+    errors,
+    `${manifestPath} review_value_gate.reject_when must be non-empty.`
+  );
+
+  const exitCriteria = Array.isArray(manifest.exit_criteria) ? manifest.exit_criteria : [];
+  requireValue(exitCriteria.length > 0, errors, `${manifestPath} exit_criteria must be non-empty.`);
+  for (const [index, criterion] of exitCriteria.entries()) {
+    requireValue(isNonEmptyString(criterion), errors, `${manifestPath} exit_criteria[${index}] must be non-empty.`);
+  }
+
+  validateGuardEngineChangeReview(manifest, manifestPath, changedFiles, errors);
+
+  return errors;
 }
 
-function validateSourceEvidence(manifest) {
-  const evidence = manifest.source_evidence ?? {};
-  for (const token of evidence.rust_runtime_tokens ?? []) {
-    requireToken('crates/brownie-runtime/src/lib.rs', token);
-  }
-  for (const token of evidence.rust_protocol_tokens ?? []) {
-    requireToken('crates/brownie-protocol/src/lib.rs', token);
-  }
-  for (const token of evidence.rust_store_tokens ?? []) {
-    requireToken('crates/brownie-store/src/lib.rs', token);
-  }
-  for (const token of evidence.vsix_protocol_tokens ?? []) {
-    requireToken('extensions/brownie-vsix/src/runtime/protocol.ts', token);
-  }
-  for (const token of evidence.vsix_test_tokens ?? []) {
-    requireToken('extensions/brownie-vsix/src/test/runtimeClient.test.ts', token);
-  }
-  for (const token of evidence.architecture_doc_tokens ?? []) {
-    requireToken('docs/architecture/runtime-overview.md', token);
-  }
+export function runPhaseValueGuard(options = {}) {
+  const repoRoot = options.repoRoot ?? defaultRepoRoot;
+  const manifestPath = options.manifestPath ?? process.env.BROWNIE_PHASE_VALUE_MANIFEST ?? defaultManifestPath;
+  const errors = [];
+  const manifest = options.manifest ?? readJson(repoRoot, manifestPath, errors);
+  const changedFiles = detectChangedFiles({ repoRoot, env: options.env, changedFiles: options.changedFiles });
+  errors.push(...validatePhaseValueManifest(manifest, { manifestPath, changedFiles }));
+  return { errors, manifestPath, changedFiles };
+}
 
-  const runtimeText = readText('crates/brownie-runtime/src/lib.rs');
-  for (const token of [
-    'consumed_parent_join_recovery_summary_for_parent_inspection',
-    'RunInspectConsumedParentJoinRecoverySummary',
-    'consumed_parent_join_recovery_summary',
-    'parent_join_consumed',
-    'consumed_terminal_controlled_child_count',
-    'continuation_controlled_child_count',
-    'continuation_runnable_child_count',
-    'continuation_runnable_child_task_ids',
-    'continuation_non_runnable_child_count',
-    'continuation_non_runnable_child_task_ids',
-    'continuation_terminal_child_count',
-    'run_continuation_child_tasks_explicitly',
-    'inspect_non_runnable_continuation_child_tasks',
-    'inspect_parent_task',
-    'consumed_terminal_controlled_child_set_for_consumed_parent_join',
-    'consumed_parent_join_continuation_handoff_fingerprints',
-    'continuation_controlled_children_for_consumed_parent_join',
-    'assert_parent_inspect_consumed_parent_join_recovery_summary',
-    'task_run_parent_join_materializes_continuation_subtask_without_auto_run',
-    'task_run_parent_join_materializes_second_continuation_cycle_without_stale_candidates',
-    'parent_join_readiness_summary_for_parent_inspection',
-    'RunInspectParentJoinReadinessSummary',
-    'parent_join_readiness_summary',
-    'controlled_child_records_for_parent_run',
-    'child_has_terminal_parent_join_outcome',
-    'parent_join_child_completion_evidence',
-    'assert_parent_inspection_did_not_mutate',
-    'TaskRunning',
-    'ParentJoinContinuationFingerprintConsumed',
-    'SubtaskDispatchHandoffEnvelopeRecorded'
-  ]) {
-    if (!runtimeText.includes(token)) {
-      errors.push(`${phase} runtime source must include ${token}.`);
+function isMainModule() {
+  return process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+}
+
+if (isMainModule()) {
+  const result = runPhaseValueGuard();
+  if (result.errors.length > 0) {
+    console.error('Phase value guard failed:');
+    for (const error of result.errors) {
+      console.error(`- ${error}`);
     }
+    process.exit(1);
   }
-  const forbiddenWrapperEvents = [
-    'SubtaskDispatchTicketRecorded',
-    'SubtaskAdmissionTokenRecorded',
-    'SubtaskSchedulerPacketRecorded',
-    'SubtaskHandoffReceiptRecorded',
-    'SubtaskChildRunAdmissionSummaryRecorded',
-    'SubtaskChildRunResultSummaryRecorded',
-    'SubtaskContinuationChildMaterialized'
-  ];
-  for (const token of forbiddenWrapperEvents) {
-    if (runtimeText.includes(token)) {
-      errors.push(`${phase} must not add wrapper-only event ${token}.`);
-    }
-  }
+
+  console.log(`Phase value guard passed for ${result.manifestPath}.`);
 }
-
-const manifest = readJson(manifestPath);
-validateManifest(manifest);
-validateSourceEvidence(manifest);
-
-if (errors.length > 0) {
-  console.error('Phase value guard failed:');
-  for (const error of errors) {
-    console.error(`- ${error}`);
-  }
-  process.exit(1);
-}
-
-console.log('Phase value guard passed.');
