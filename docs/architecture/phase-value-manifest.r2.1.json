@@ -117,8 +117,9 @@
     "scripts/guard-phase-value.mjs validates docs/architecture/phase-value-manifest.json as the deterministic current manifest.",
     "scripts/guard-phase-value.mjs contains no M5.38-specific phase or manifest constant.",
     "Guard engine file changes require guard_engine_change_review metadata.",
+    "GitHub Actions shallow pull request checkouts fetch the base ref and fall back to base-tree diff when three-dot diff has no merge base.",
     "Behavior tests prove generic non-M5 manifest validation.",
-    "Behavior tests prove guard engine change detection.",
+    "Behavior tests prove guard engine change detection, including shallow pull request checkout fallback.",
     "No diagnostics wrapper, runtime RPC, ledger event, VSIX protocol surface, controlled apply implementation, scheduler, child auto-run, process execution, network, service control, or patch apply capability is added."
   ],
   "source_evidence": {
@@ -131,11 +132,13 @@
       "defaultManifestPath = 'docs/architecture/phase-value-manifest.json'",
       "requiredValueGateAnswerIds",
       "guard_engine_change_review",
+      "fetchGithubBaseRef",
       "findGuardEngineChangedFiles"
     ],
     "test_tokens": [
       "validates a non-M5 current manifest without source-token hard-coding",
-      "requires explicit review metadata when guard engine files change"
+      "requires explicit review metadata when guard engine files change",
+      "detects guard engine changes from GitHub Actions shallow pull request checkouts"
     ]
   },
   "next_phase_after_r2_1": "M6.1 Controlled Replace-File Apply"

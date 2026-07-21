@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { runPhaseValueGuard } from './guard-phase-value.mjs';
+import { detectChangedFiles, runPhaseValueGuard } from './guard-phase-value.mjs';
 
 function validManifest(overrides = {}) {
   const questions = [
@@ -98,6 +98,36 @@ test('requires explicit review metadata when guard engine files change', () => {
     });
     assert.deepEqual(withReview.errors, []);
   });
+});
+
+test('detects guard engine changes from GitHub Actions shallow pull request checkouts', () => {
+  const calls = [];
+  const execGit = (_file, args) => {
+    calls.push(args);
+    if (args[0] === 'diff' && args[2] === 'origin/main...HEAD') {
+      throw new Error('no merge base');
+    }
+    if (args[0] === 'fetch') {
+      return '';
+    }
+    if (args[0] === 'diff' && args[2] === 'origin/main' && args[3] === 'HEAD') {
+      return 'scripts/guard-phase-value.mjs\n';
+    }
+    return '';
+  };
+
+  const changedFiles = detectChangedFiles({
+    repoRoot: '/tmp/brownie-test',
+    env: {
+      GITHUB_ACTIONS: 'true',
+      GITHUB_BASE_REF: 'main'
+    },
+    execGit
+  });
+
+  assert.deepEqual(changedFiles, ['scripts/guard-phase-value.mjs']);
+  assert(calls.some((args) => args[0] === 'fetch' && args.includes('+refs/heads/main:refs/remotes/origin/main')));
+  assert(calls.some((args) => args[0] === 'diff' && args[2] === 'origin/main' && args[3] === 'HEAD'));
 });
 
 test('requires every mandated phase value answer', () => {

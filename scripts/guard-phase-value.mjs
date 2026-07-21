@@ -70,20 +70,51 @@ function parseChangedFilesFromEnv(env) {
     .filter(Boolean);
 }
 
-function gitChangedFiles(repoRoot, args) {
+function gitChangedFiles(repoRoot, args, execGit = execFileSync) {
   try {
-    return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
-      .split('\n')
-      .map((entry) => normalizeRelativePath(entry.trim()))
-      .filter(Boolean);
+    return {
+      ok: true,
+      files: execGit('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
+        .split('\n')
+        .map((entry) => normalizeRelativePath(entry.trim()))
+        .filter(Boolean)
+    };
   } catch {
-    return [];
+    return { ok: false, files: [] };
+  }
+}
+
+function isSafeBaseRefName(baseRefName) {
+  return (
+    isNonEmptyString(baseRefName) &&
+    /^[A-Za-z0-9._/-]+$/.test(baseRefName) &&
+    !baseRefName.includes('..') &&
+    !baseRefName.startsWith('/') &&
+    !baseRefName.endsWith('/')
+  );
+}
+
+function fetchGithubBaseRef(repoRoot, baseRefName, execGit = execFileSync) {
+  if (!isSafeBaseRefName(baseRefName)) {
+    return false;
+  }
+
+  try {
+    execGit(
+      'git',
+      ['fetch', '--no-tags', '--depth=1', 'origin', `+refs/heads/${baseRefName}:refs/remotes/origin/${baseRefName}`],
+      { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'ignore', 'ignore'] }
+    );
+    return true;
+  } catch {
+    return false;
   }
 }
 
 export function detectChangedFiles(options = {}) {
   const repoRoot = options.repoRoot ?? defaultRepoRoot;
   const env = options.env ?? process.env;
+  const execGit = options.execGit ?? execFileSync;
   if (Array.isArray(options.changedFiles)) {
     return [...new Set(options.changedFiles.map(normalizeRelativePath))];
   }
@@ -94,15 +125,23 @@ export function detectChangedFiles(options = {}) {
   }
 
   const changed = [
-    ...gitChangedFiles(repoRoot, ['diff', '--name-only']),
-    ...gitChangedFiles(repoRoot, ['diff', '--cached', '--name-only'])
+    ...gitChangedFiles(repoRoot, ['diff', '--name-only'], execGit).files,
+    ...gitChangedFiles(repoRoot, ['diff', '--cached', '--name-only'], execGit).files
   ];
 
   if (isNonEmptyString(env.GITHUB_BASE_REF)) {
-    const baseRef = `origin/${env.GITHUB_BASE_REF}`;
-    changed.push(...gitChangedFiles(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`]));
+    const baseRefName = env.GITHUB_BASE_REF;
+    const baseRef = `origin/${baseRefName}`;
+    let baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`], execGit);
+    if (!baseChangedFiles.ok && env.GITHUB_ACTIONS === 'true' && fetchGithubBaseRef(repoRoot, baseRefName, execGit)) {
+      baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`], execGit);
+      if (!baseChangedFiles.ok) {
+        baseChangedFiles = gitChangedFiles(repoRoot, ['diff', '--name-only', baseRef, 'HEAD'], execGit);
+      }
+    }
+    changed.push(...baseChangedFiles.files);
   } else {
-    changed.push(...gitChangedFiles(repoRoot, ['diff', '--name-only', 'HEAD~1...HEAD']));
+    changed.push(...gitChangedFiles(repoRoot, ['diff', '--name-only', 'HEAD~1...HEAD'], execGit).files);
   }
 
   return [...new Set(changed)];
