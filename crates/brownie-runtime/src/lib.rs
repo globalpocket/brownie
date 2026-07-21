@@ -201,7 +201,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     io::Write,
-    path::{Component, PathBuf},
+    path::{Component, Path, PathBuf},
 };
 
 const JSONRPC_VERSION: &str = "2.0";
@@ -3423,14 +3423,11 @@ fn handle_proposal_apply(id: Value, params: Option<Value>) -> JsonRpcResponse<Va
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    if params.run_id.trim().is_empty()
-        || params.proposal_id.trim().is_empty()
-        || params.expected_target_sha256.trim().is_empty()
-    {
+    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
         return error_response(
             id,
             -32602,
-            "invalid params: run_id, proposal_id, and expected_target_sha256 are required",
+            "invalid params: run_id and proposal_id are required",
         );
     }
     let store = match BrownieStore::from_env_or_cwd() {
@@ -5223,6 +5220,10 @@ fn latest_apply_plan(
             proposal_id,
             payload.get("plan_id")?.as_str()?,
             payload.get("status")?.as_str()?,
+            payload
+                .get("operation")
+                .and_then(Value::as_str)
+                .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str()),
         ))
     })
 }
@@ -5266,34 +5267,49 @@ fn build_apply_plan_summary(
     proposal_id: &str,
     plan_id: &str,
     status: &str,
+    operation: &str,
 ) -> WorkspacePatchApplyPlanSummary {
     let pass = |name: &str| WorkspacePatchApplyCheckSummary {
         name: name.to_string(),
         status: "Pass".to_string(),
         reason: None,
     };
-    WorkspacePatchApplyPlanSummary {
-        proposal_id: proposal_id.to_string(),
-        plan_id: plan_id.to_string(),
-        status: status.to_string(),
-        checklist: vec![
-            pass("proposal_exists"),
-            pass("proposal_is_valid"),
-            pass("proposal_is_approved"),
-            pass("target_path_safe"),
+    let mut checklist = vec![
+        pass("proposal_exists"),
+        pass("proposal_is_valid"),
+        pass("proposal_is_approved"),
+        pass("target_path_safe"),
+    ];
+    if operation == WorkspacePatchOperation::CreateFile.as_str() {
+        checklist.extend([
+            pass("target_parent_exists"),
+            pass("target_parent_directory"),
+            pass("target_parent_not_symlink"),
+            pass("target_absent"),
+        ]);
+    } else {
+        checklist.extend([
             pass("target_file_exists"),
             pass("target_file_regular"),
             pass("target_file_utf8"),
             pass("target_file_hash_captured"),
-            pass("proposal_not_stale"),
-            pass("diff_preview_available"),
-            pass("sensitive_content_not_detected"),
-            WorkspacePatchApplyCheckSummary {
-                name: "apply_execution_available".to_string(),
-                status: "Pass".to_string(),
-                reason: Some("Patch apply is available through proposal.apply.".to_string()),
-            },
-        ],
+        ]);
+    }
+    checklist.extend([
+        pass("proposal_not_stale"),
+        pass("diff_preview_available"),
+        pass("sensitive_content_not_detected"),
+    ]);
+    checklist.push(WorkspacePatchApplyCheckSummary {
+        name: "apply_execution_available".to_string(),
+        status: "Pass".to_string(),
+        reason: Some("Patch apply is available through proposal.apply.".to_string()),
+    });
+    WorkspacePatchApplyPlanSummary {
+        proposal_id: proposal_id.to_string(),
+        plan_id: plan_id.to_string(),
+        status: status.to_string(),
+        checklist,
     }
 }
 
@@ -5356,7 +5372,12 @@ fn approve_proposal(
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
-    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "PendingPreflight");
+    let apply_plan = build_apply_plan_summary(
+        proposal_id,
+        &plan_id,
+        "PendingPreflight",
+        &proposal.operation,
+    );
     store
         .tasks()
         .append_task_event_with_payload(
@@ -5365,6 +5386,7 @@ fn approve_proposal(
             Some(json!({
                 "proposal_id": proposal_id,
                 "plan_id": plan_id,
+                "operation": &proposal.operation,
                 "status": "PendingPreflight",
                 "check_count": apply_plan.checklist.len(),
                 "failed_checks": [],
@@ -5914,10 +5936,14 @@ fn record_apply_result(
                 "authorization_id": &apply_result.authorization_id,
                 "authorization_consumed": apply_result.authorization_consumed,
                 "applied": apply_result.applied,
+                "operation": &apply_result.operation,
                 "atomic_replacement_completed": apply_result.atomic_replacement_completed,
+                "atomic_create_completed": apply_result.atomic_create_completed,
                 "path": &apply_result.path,
                 "expected_target_sha256": &apply_result.expected_target_sha256,
+                "expected_target_absent": apply_result.expected_target_absent,
                 "pre_write_target_sha256": &apply_result.pre_write_target_sha256,
+                "pre_write_target_exists": apply_result.pre_write_target_exists,
                 "post_write_sha256": &apply_result.post_write_sha256,
                 "content_chars": apply_result.content_chars,
                 "content_bytes": apply_result.content_bytes,
@@ -6011,6 +6037,52 @@ fn resolve_apply_target_path(
     Ok(canonical_target)
 }
 
+fn resolve_create_apply_target_path(
+    store: &BrownieStore,
+    proposal: &WorkspacePatchProposalSummary,
+) -> Result<PathBuf, &'static str> {
+    brownie_tools::preflight_workspace_write_path(&proposal.path)
+        .map_err(|_| "Target path is not safe.")?;
+    let relative_path = Path::new(&proposal.path);
+    if relative_path.components().any(|component| {
+        matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        )
+    }) {
+        return Err("Target path is not safe.");
+    }
+    let file_name = relative_path
+        .file_name()
+        .ok_or("Target file name is missing.")?;
+    let root = store
+        .workspace_root()
+        .canonicalize()
+        .map_err(|_| "Workspace root is not accessible.")?;
+    let parent_relative = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    let parent = root.join(parent_relative);
+    let parent_metadata = std::fs::symlink_metadata(&parent)
+        .map_err(|_| "Target parent directory does not exist.")?;
+    if parent_metadata.file_type().is_symlink() {
+        return Err("Target parent directory is a symlink.");
+    }
+    if !parent_metadata.is_dir() {
+        return Err("Target parent path is not a directory.");
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| "Target parent directory is not accessible.")?;
+    if !canonical_parent.starts_with(&root) {
+        return Err("Target parent escapes workspace root.");
+    }
+    let target = canonical_parent.join(file_name);
+    match std::fs::symlink_metadata(&target) {
+        Ok(_) => Err("Target path already exists."),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(target),
+        Err(_) => Err("Target path is not accessible."),
+    }
+}
+
 struct AtomicReplaceOutcome {
     post_write_sha256: Option<String>,
     temp_file_cleaned: bool,
@@ -6018,10 +6090,97 @@ struct AtomicReplaceOutcome {
     failure_reason: Option<&'static str>,
 }
 
-fn atomic_replace_existing_file(
-    target: &std::path::Path,
-    replacement_bytes: &[u8],
-) -> AtomicReplaceOutcome {
+struct AtomicCreateOutcome {
+    post_write_sha256: Option<String>,
+    temp_file_cleaned: bool,
+    atomic_create_completed: bool,
+    failure_reason: Option<&'static str>,
+}
+
+fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOutcome {
+    let Some(parent) = target.parent() else {
+        return AtomicCreateOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: true,
+            atomic_create_completed: false,
+            failure_reason: Some("Target parent directory is unavailable."),
+        };
+    };
+    let mut temp_file = match tempfile::NamedTempFile::new_in(parent) {
+        Ok(file) => file,
+        Err(_) => {
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: true,
+                atomic_create_completed: false,
+                failure_reason: Some("Temporary sibling file creation failed."),
+            }
+        }
+    };
+    if temp_file.write_all(content_bytes).is_err() {
+        let cleaned = temp_file.close().is_ok();
+        return AtomicCreateOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: cleaned,
+            atomic_create_completed: false,
+            failure_reason: Some("Bounded write to temporary sibling file failed."),
+        };
+    }
+    if temp_file.flush().is_err() || temp_file.as_file().sync_all().is_err() {
+        let cleaned = temp_file.close().is_ok();
+        return AtomicCreateOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: cleaned,
+            atomic_create_completed: false,
+            failure_reason: Some("Temporary file flush or sync failed."),
+        };
+    }
+    match temp_file.persist_noclobber(target) {
+        Ok(persisted_file) => {
+            let _ = persisted_file.sync_all();
+        }
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let cleaned = error.file.close().is_ok();
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: cleaned,
+                atomic_create_completed: false,
+                failure_reason: Some("Target path already exists."),
+            };
+        }
+        Err(error) => {
+            let cleaned = error.file.close().is_ok();
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: cleaned,
+                atomic_create_completed: false,
+                failure_reason: Some("Atomic create failed."),
+            };
+        }
+    }
+    if let Ok(parent_dir) = std::fs::File::open(parent) {
+        let _ = parent_dir.sync_all();
+    }
+    let post_write_bytes = match std::fs::read(target) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: true,
+                atomic_create_completed: true,
+                failure_reason: Some("Post-write verification read failed."),
+            }
+        }
+    };
+    AtomicCreateOutcome {
+        post_write_sha256: Some(format!("sha256:{}", hex_sha256(&post_write_bytes))),
+        temp_file_cleaned: true,
+        atomic_create_completed: true,
+        failure_reason: None,
+    }
+}
+
+fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
     let Some(parent) = target.parent() else {
         return AtomicReplaceOutcome {
             post_write_sha256: None,
@@ -6038,7 +6197,7 @@ fn atomic_replace_existing_file(
         ".{file_name}.brownie-apply-{}.tmp",
         uuid::Uuid::new_v4().simple()
     ));
-    let cleanup_temp = |path: &std::path::Path| -> bool {
+    let cleanup_temp = |path: &Path| -> bool {
         match std::fs::remove_file(path) {
             Ok(()) => true,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
@@ -6112,6 +6271,318 @@ fn atomic_replace_existing_file(
     }
 }
 
+fn append_preflight_snapshot_event(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    snapshot: &WorkspacePatchPreflightSnapshotSummary,
+) -> Result<(), String> {
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            task,
+            LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
+            Some(json!(snapshot)),
+        )
+        .map_err(|e| format!("invalid params: {e}"))
+}
+
+fn apply_create_file_proposal(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    params: &ProposalApplyParams,
+    proposal: &WorkspacePatchProposalSummary,
+    mut apply_result: WorkspacePatchApplyResultSummary,
+    content_bytes: &[u8],
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    if params.expected_target_absent != Some(true) {
+        apply_result.checklist.push(apply_result_check(
+            "expected_target_absent_confirmed",
+            "Fail",
+            Some("Create-file apply requires expected_target_absent=true."),
+        ));
+        apply_result.apply_reason =
+            "Create-file apply requires explicit target absence confirmation.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "expected_target_absent_confirmed",
+        "Pass",
+        None,
+    ));
+
+    let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+        apply_result.checklist.push(apply_result_check(
+            "latest_preflight_exists",
+            "Fail",
+            Some("Run proposal.preflight before applying."),
+        ));
+        apply_result.apply_reason = "Latest preflight snapshot is missing.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("latest_preflight_exists", "Pass", None));
+
+    let current_snapshot =
+        match capture_preflight_snapshot(store, proposal, Some(previous_snapshot)) {
+            Ok(snapshot) => snapshot,
+            Err(reason) => {
+                apply_result.checklist.push(apply_result_check(
+                    "latest_preflight_validation",
+                    "Fail",
+                    Some(&reason),
+                ));
+                apply_result.apply_reason = "Latest preflight validation failed.".to_string();
+                return record_apply_result(
+                    store,
+                    task,
+                    &params.run_id,
+                    &params.proposal_id,
+                    apply_result,
+                );
+            }
+        };
+    append_preflight_snapshot_event(store, task, &current_snapshot)?;
+    apply_result.pre_write_target_exists = Some(current_snapshot.file_exists);
+    if current_snapshot.stale {
+        apply_result.checklist.push(apply_result_check(
+            "latest_preflight_validation",
+            "Fail",
+            current_snapshot
+                .stale_reason
+                .as_deref()
+                .or(Some("Latest preflight snapshot is stale.")),
+        ));
+        apply_result.apply_reason = "Latest preflight validation found a stale target.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "latest_preflight_validation",
+        "Pass",
+        None,
+    ));
+    if current_snapshot.file_exists {
+        apply_result.checklist.push(apply_result_check(
+            "target_absent_current",
+            "Fail",
+            Some("Target path already exists."),
+        ));
+        apply_result.apply_reason = "Target path already exists.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("target_absent_current", "Pass", None));
+
+    let target_path = match resolve_create_apply_target_path(store, proposal) {
+        Ok(path) => path,
+        Err(reason) => {
+            let check_name = if reason.contains("parent directory does not exist") {
+                "target_parent_exists"
+            } else if reason.contains("parent path is not a directory") {
+                "target_parent_directory"
+            } else if reason.contains("parent directory is a symlink") {
+                "target_parent_not_symlink"
+            } else if reason.contains("already exists") {
+                "target_absent_current"
+            } else {
+                "target_path_safe"
+            };
+            apply_result
+                .checklist
+                .push(apply_result_check(check_name, "Fail", Some(reason)));
+            apply_result.apply_reason = reason.to_string();
+            return record_apply_result(
+                store,
+                task,
+                &params.run_id,
+                &params.proposal_id,
+                apply_result,
+            );
+        }
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("target_path_safe", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_parent_exists", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_parent_directory", "Pass", None));
+    apply_result.checklist.push(apply_result_check(
+        "target_parent_not_symlink",
+        "Pass",
+        None,
+    ));
+
+    let create_diff = synthetic_unified_diff(&proposal.path, "", &params.replacement_content);
+    if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "approved_diff_matches_absent_target",
+            "Fail",
+            Some("Approved diff does not match absent target and proposed content."),
+        ));
+        apply_result.apply_reason =
+            "Approved diff does not match absent target and proposed content.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "approved_diff_matches_absent_target",
+        "Pass",
+        None,
+    ));
+
+    let expected_post_write_hash = format!("sha256:{}", hex_sha256(content_bytes));
+    let outcome = atomic_create_new_file(&target_path, content_bytes);
+    apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
+    apply_result.atomic_create_completed = outcome.atomic_create_completed;
+    apply_result.post_write_sha256 = outcome.post_write_sha256.clone();
+    if let Some(reason) = outcome.failure_reason {
+        apply_result.checklist.push(apply_result_check(
+            "temporary_sibling_file_created",
+            if reason == "Temporary sibling file creation failed." {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason == "Temporary sibling file creation failed." {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "bounded_write_flushed_and_synced",
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "atomic_create_completed",
+            if outcome.atomic_create_completed {
+                "Pass"
+            } else {
+                "Fail"
+            },
+            if outcome.atomic_create_completed {
+                None
+            } else {
+                Some(reason)
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some(reason),
+        ));
+        apply_result.apply_status = if reason == "Target path already exists." {
+            "Denied".to_string()
+        } else {
+            "Failed".to_string()
+        };
+        apply_result.apply_reason = reason.to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "temporary_sibling_file_created",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "bounded_write_flushed_and_synced",
+        "Pass",
+        None,
+    ));
+    apply_result
+        .checklist
+        .push(apply_result_check("atomic_create_completed", "Pass", None));
+    if apply_result.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some("Post-write SHA-256 did not match proposed content."),
+        ));
+        let _ = std::fs::remove_file(&target_path);
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason =
+            "Post-write SHA-256 did not match proposed content.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "post_write_sha256_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason = "File created and post-write SHA-256 verified.".to_string();
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        task,
+        &params.run_id,
+        &params.proposal_id,
+        apply_result,
+    )
+}
+
 fn apply_proposal(
     store: &BrownieStore,
     params: &ProposalApplyParams,
@@ -6132,6 +6603,7 @@ fn apply_proposal(
     let authorization_id = format!("apply_auth_{}", uuid::Uuid::new_v4().simple());
     let checked_at = now_rfc3339();
     let replacement_bytes = params.replacement_content.as_bytes();
+    let operation = proposal.operation.clone();
     let mut apply_result = WorkspacePatchApplyResultSummary {
         proposal_id: params.proposal_id.clone(),
         apply_id,
@@ -6140,10 +6612,14 @@ fn apply_proposal(
         authorization_id,
         authorization_consumed: false,
         applied: false,
+        operation: operation.clone(),
         atomic_replacement_completed: false,
+        atomic_create_completed: false,
         path: proposal.path.clone(),
         expected_target_sha256: params.expected_target_sha256.clone(),
+        expected_target_absent: params.expected_target_absent,
         pre_write_target_sha256: None,
+        pre_write_target_exists: None,
         post_write_sha256: None,
         content_chars: params.replacement_content.chars().count(),
         content_bytes: replacement_bytes.len() as u64,
@@ -6178,13 +6654,15 @@ fn apply_proposal(
         None,
     ));
 
-    if proposal.operation != WorkspacePatchOperation::ReplaceFile.as_str() {
+    if operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        && operation != WorkspacePatchOperation::CreateFile.as_str()
+    {
         apply_result.checklist.push(apply_result_check(
-            "replace_file_only",
+            "supported_operation",
             "Fail",
-            Some("Only replace_file proposals can be applied."),
+            Some("Only replace_file and create_file proposals can be applied."),
         ));
-        apply_result.apply_reason = "Proposal operation is not replace_file.".to_string();
+        apply_result.apply_reason = "Proposal operation is not supported.".to_string();
         return record_apply_result(
             store,
             &task,
@@ -6195,7 +6673,7 @@ fn apply_proposal(
     }
     apply_result
         .checklist
-        .push(apply_result_check("replace_file_only", "Pass", None));
+        .push(apply_result_check("supported_operation", "Pass", None));
 
     if proposal.validation_status == "Blocked" {
         apply_result.checklist.push(apply_result_check(
@@ -6394,7 +6872,35 @@ fn apply_proposal(
         .checklist
         .push(apply_result_check("proposal_diff_available", "Pass", None));
 
-    if !is_sha256_fingerprint(&params.expected_target_sha256) {
+    if operation == WorkspacePatchOperation::CreateFile.as_str() {
+        return apply_create_file_proposal(
+            store,
+            &task,
+            params,
+            &proposal,
+            apply_result,
+            replacement_bytes,
+        );
+    }
+
+    let Some(expected_target_sha256) = params.expected_target_sha256.as_deref() else {
+        apply_result.checklist.push(apply_result_check(
+            "expected_target_hash_valid",
+            "Fail",
+            Some("Expected target hash must be provided for replace_file apply."),
+        ));
+        apply_result.apply_reason =
+            "Expected target hash must be provided for replace_file apply.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    };
+
+    if !is_sha256_fingerprint(expected_target_sha256) {
         apply_result.checklist.push(apply_result_check(
             "expected_target_hash_valid",
             "Fail",
@@ -6454,14 +6960,7 @@ fn apply_proposal(
                 );
             }
         };
-    store
-        .tasks()
-        .append_task_event_with_payload(
-            &task,
-            LedgerEventKind::WorkspacePatchPreflightSnapshotCreated,
-            Some(json!(current_snapshot)),
-        )
-        .map_err(|e| format!("invalid params: {e}"))?;
+    append_preflight_snapshot_event(store, &task, &current_snapshot)?;
     if current_snapshot.stale {
         apply_result.checklist.push(apply_result_check(
             "latest_preflight_validation",
@@ -6544,12 +7043,13 @@ fn apply_proposal(
     };
     let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
     apply_result.pre_write_target_sha256 = Some(pre_write_hash.clone());
+    apply_result.pre_write_target_exists = Some(true);
     apply_result
         .checklist
         .push(apply_result_check("target_file_readable", "Pass", None));
 
     if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
-        || params.expected_target_sha256 != pre_write_hash
+        || expected_target_sha256 != pre_write_hash
     {
         apply_result.checklist.push(apply_result_check(
             "expected_target_hash_matches",
@@ -10985,7 +11485,7 @@ fn preflight_proposal(
     let previous = latest_snapshot(&events, proposal_id);
     let snapshot = capture_preflight_snapshot(store, &proposal, previous.as_ref())?;
     let plan_id = format!("plan_{}", uuid::Uuid::new_v4().simple());
-    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Ready");
+    let apply_plan = build_apply_plan_summary(proposal_id, &plan_id, "Ready", &proposal.operation);
     store
         .tasks()
         .append_task_event_with_payload(
@@ -11002,6 +11502,7 @@ fn preflight_proposal(
             Some(json!({
                 "proposal_id": proposal_id,
                 "plan_id": plan_id,
+                "operation": &proposal.operation,
                 "status": "Ready",
                 "check_count": apply_plan.checklist.len(),
                 "failed_checks": [],
@@ -11038,6 +11539,25 @@ fn capture_preflight_snapshot(
         return Err("invalid params: target path is not safe".to_string());
     }
     let target = root.join(&proposal.path);
+    if proposal.operation == WorkspacePatchOperation::CreateFile.as_str() {
+        let relative_path = Path::new(&proposal.path);
+        let parent_relative = relative_path.parent().unwrap_or_else(|| Path::new(""));
+        let parent = root.join(parent_relative);
+        let parent_metadata = std::fs::symlink_metadata(&parent)
+            .map_err(|_| "invalid params: target parent directory does not exist".to_string())?;
+        if parent_metadata.file_type().is_symlink() {
+            return Err("invalid params: target parent directory is a symlink".to_string());
+        }
+        if !parent_metadata.is_dir() {
+            return Err("invalid params: target parent path is not a directory".to_string());
+        }
+        let canonical_parent = parent
+            .canonicalize()
+            .map_err(|_| "invalid params: target parent directory is not accessible".to_string())?;
+        if !canonical_parent.starts_with(&root) {
+            return Err("invalid params: target parent escapes workspace root".to_string());
+        }
+    }
     let canonical_for_hash = target.canonicalize().unwrap_or(target.clone());
     if canonical_for_hash.exists() && !canonical_for_hash.starts_with(&root) {
         return Err("invalid params: target path escapes workspace root".to_string());
@@ -11048,11 +11568,17 @@ fn capture_preflight_snapshot(
     );
     let captured_at = now_rfc3339();
     let snapshot_id = format!("snapshot_{}", uuid::Uuid::new_v4().simple());
-    let metadata = std::fs::metadata(&target);
+    let metadata = if proposal.operation == WorkspacePatchOperation::CreateFile.as_str() {
+        std::fs::symlink_metadata(&target)
+    } else {
+        std::fs::metadata(&target)
+    };
     let (file_exists, mut file_kind, file_size_bytes, file_modified_unix_ms, mut file_sha256) =
         match metadata {
             Ok(metadata) => {
-                let kind = if metadata.is_file() {
+                let kind = if metadata.file_type().is_symlink() {
+                    "Symlink"
+                } else if metadata.is_file() {
                     "File"
                 } else if metadata.is_dir() {
                     "Directory"
@@ -11081,7 +11607,9 @@ fn capture_preflight_snapshot(
         file_sha256 = None;
     }
     let stale = previous.is_some_and(|prev| {
-        prev.file_sha256 != file_sha256
+        prev.file_exists != file_exists
+            || prev.file_kind != file_kind
+            || prev.file_sha256 != file_sha256
             || prev.file_size_bytes != file_size_bytes
             || prev.file_modified_unix_ms != file_modified_unix_ms
     });
@@ -15479,7 +16007,12 @@ fn append_workspace_patch_proposal(
         .get("content")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    let proposal = build_workspace_patch_proposal(store, path, content);
+    let operation = decision
+        .input
+        .get("operation")
+        .and_then(Value::as_str)
+        .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str());
+    let proposal = build_workspace_patch_proposal(store, path, operation, content);
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::WorkspacePatchProposed,
@@ -15487,7 +16020,7 @@ fn append_workspace_patch_proposal(
             "proposal_id": format!("proposal_{}", uuid::Uuid::new_v4().simple()),
             "tool_id": WORKSPACE_WRITE_TOOL_ID,
             "path": path,
-            "operation": WorkspacePatchOperation::ReplaceFile.as_str(),
+            "operation": operation,
             "content_preview": proposal.content_preview,
             "content_chars": proposal.content_chars,
             "truncated": proposal.truncated,
@@ -15515,6 +16048,7 @@ struct ProposalBuildResult {
 fn build_workspace_patch_proposal(
     store: &BrownieStore,
     path: &str,
+    operation: &str,
     content: &str,
 ) -> ProposalBuildResult {
     let content_chars = content.chars().count();
@@ -15544,11 +16078,75 @@ fn build_workspace_patch_proposal(
         result.validation_reason = Some("path is not a safe workspace-relative path");
         return result;
     }
+    if operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        && operation != WorkspacePatchOperation::CreateFile.as_str()
+    {
+        result.validation_status = "Invalid";
+        result.validation_reason = Some("workspace write operation is unsupported");
+        return result;
+    }
     let Ok(root) = store.workspace_root().canonicalize() else {
         result.validation_status = "Invalid";
         result.validation_reason = Some("workspace root is not accessible");
         return result;
     };
+    if operation == WorkspacePatchOperation::CreateFile.as_str() {
+        let relative_path = Path::new(path);
+        let Some(file_name) = relative_path.file_name() else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target file name is missing");
+            return result;
+        };
+        let parent_relative = relative_path.parent().unwrap_or_else(|| Path::new(""));
+        let parent = root.join(parent_relative);
+        let Ok(parent_metadata) = std::fs::symlink_metadata(&parent) else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target parent directory does not exist");
+            return result;
+        };
+        if parent_metadata.file_type().is_symlink() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target parent directory is a symlink");
+            return result;
+        }
+        if !parent_metadata.is_dir() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target parent path is not a directory");
+            return result;
+        }
+        let Ok(canonical_parent) = parent.canonicalize() else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target parent directory is not accessible");
+            return result;
+        };
+        if !canonical_parent.starts_with(&root) {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target parent escapes workspace root");
+            return result;
+        }
+        let target = canonical_parent.join(file_name);
+        match std::fs::symlink_metadata(&target) {
+            Ok(_) => {
+                result.validation_status = "Invalid";
+                result.validation_reason = Some("target path already exists");
+                return result;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => {
+                result.validation_status = "Invalid";
+                result.validation_reason = Some("target path is not accessible");
+                return result;
+            }
+        }
+        let diff = synthetic_unified_diff(path, "", content);
+        result.diff_truncated =
+            diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
+        result.diff_preview = Some(preview_with_limit(
+            &diff,
+            DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
+        ));
+        return result;
+    }
     let target = root.join(path);
     let Ok(canonical_target) = target.canonicalize() else {
         result.validation_status = "Invalid";
@@ -15942,6 +16540,38 @@ mod tests {
                     "diff_preview": diff_preview,
                     "diff_truncated": false,
                     "diff_redacted": diff_redacted,
+                })),
+            )
+            .expect("append proposal");
+    }
+
+    fn append_generated_patch_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        operation: &str,
+        content: &str,
+    ) {
+        let proposal = build_workspace_patch_proposal(store, path, operation, content);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(json!({
+                    "proposal_id": proposal_id,
+                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
+                    "path": path,
+                    "operation": operation,
+                    "content_preview": proposal.content_preview,
+                    "content_chars": proposal.content_chars,
+                    "truncated": proposal.truncated,
+                    "validation_status": proposal.validation_status,
+                    "validation_reason": proposal.validation_reason,
+                    "diff_preview": proposal.diff_preview,
+                    "diff_truncated": proposal.diff_truncated,
+                    "diff_redacted": proposal.diff_redacted,
                 })),
             )
             .expect("append proposal");
@@ -25720,6 +26350,377 @@ mod tests {
     }
 
     #[test]
+    fn proposal_apply_creates_new_file_after_approval_and_absent_preflight() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create a bounded file".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        let proposal_id = "proposal_create_file";
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "notes/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created content\n",
+        );
+
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply create test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        assert_eq!(preflight_result["snapshot"]["file_exists"], false);
+        assert_eq!(preflight_result["snapshot"]["file_kind"], "Missing");
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_absent": true,
+                "replacement_content": "created content\n",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["proposal"]["operation"], "create_file");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["operation"], "create_file");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(apply_result["apply_result"]["authorization_consumed"], true);
+        assert_eq!(
+            apply_result["apply_result"]["atomic_create_completed"],
+            true
+        );
+        assert_eq!(
+            apply_result["apply_result"]["atomic_replacement_completed"],
+            false
+        );
+        assert_eq!(
+            apply_result["apply_result"]["expected_target_sha256"],
+            Value::Null
+        );
+        assert_eq!(apply_result["apply_result"]["expected_target_absent"], true);
+        assert_eq!(
+            apply_result["apply_result"]["pre_write_target_exists"],
+            false
+        );
+        assert!(apply_result["apply_result"]["post_write_sha256"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/new.md")).unwrap(),
+            "created content\n"
+        );
+
+        let second_apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_absent": true,
+                "replacement_content": "created content\n",
+                "authorize": true,
+            }
+        });
+        let second_apply = parse_line(&second_apply_request.to_string());
+        let second_apply_result = second_apply.result.expect("second apply result");
+        assert_eq!(
+            second_apply_result["apply_result"]["apply_status"],
+            "Denied"
+        );
+        assert_eq!(
+            second_apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(second_apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "approval_unconsumed"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/new.md")).unwrap(),
+            "created content\n"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":8,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let apply_events: Vec<_> = events
+            .iter()
+            .filter(|event| event["kind"] == "WorkspacePatchApplyResultRecorded")
+            .cloned()
+            .collect();
+        let serialized_events = serde_json::to_string(&apply_events).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "created content",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_create_file_denies_missing_authorization_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create a bounded file".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        let proposal_id = "proposal_create_missing_authorization";
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "notes/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created content\n",
+        );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply create test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        assert!(preflight.error.is_none());
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_absent": true,
+                "replacement_content": "created content\n",
+                "authorize": false,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["applied"], false);
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "one_time_apply_authorization"));
+        assert!(!temp.path().join("notes/new.md").exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_create_file_denies_missing_absence_confirmation_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create a bounded file".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        let proposal_id = "proposal_create_missing_absence";
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "notes/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created content\n",
+        );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply create test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        assert!(preflight.error.is_none());
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "replacement_content": "created content\n",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "expected_target_absent_confirmed"));
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(!temp.path().join("notes/new.md").exists());
+
+        let false_absence_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_absent": false,
+                "replacement_content": "created content\n",
+                "authorize": true,
+            }
+        });
+        let false_absence = parse_line(&false_absence_request.to_string());
+        let false_absence_result = false_absence.result.expect("false absence result");
+        assert_eq!(
+            false_absence_result["apply_result"]["apply_status"],
+            "Denied"
+        );
+        assert_eq!(
+            false_absence_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(false_absence_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "expected_target_absent_confirmed"));
+        assert!(!temp.path().join("notes/new.md").exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_create_file_rejects_raced_existing_target_without_overwrite() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create a bounded file".into(),
+                mode_id: Some("implementer".into()),
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        let proposal_id = "proposal_create_race";
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "notes/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created content\n",
+        );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"apply create test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        assert!(preflight.error.is_none());
+        std::fs::write(temp.path().join("notes/new.md"), "external content\n")
+            .expect("external write");
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_absent": true,
+                "replacement_content": "created content\n",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "latest_preflight_validation"));
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/new.md")).unwrap(),
+            "external content\n"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn proposal_readiness_reports_not_ready_for_unapproved_proposal() {
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
@@ -28096,11 +29097,15 @@ mod tests {
             temp.path().join("link.txt"),
         )
         .expect("symlink");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(temp.path().join("docs"), temp.path().join("docs-link"))
+            .expect("symlink parent");
         let store = BrownieStore::new(temp.path());
 
         let missing = build_workspace_patch_proposal(
             &store,
             "missing.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
             "new
 ",
         );
@@ -28111,7 +29116,10 @@ mod tests {
         );
 
         let directory = build_workspace_patch_proposal(
-            &store, "docs", "new
+            &store,
+            "docs",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "new
 ",
         );
         assert_eq!(directory.validation_status, "Invalid");
@@ -28120,9 +29128,84 @@ mod tests {
             Some("target path is not a file")
         );
 
+        let create_file = build_workspace_patch_proposal(
+            &store,
+            "docs/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "new
+",
+        );
+        assert_eq!(create_file.validation_status, "Valid");
+        assert!(create_file
+            .diff_preview
+            .as_deref()
+            .unwrap()
+            .contains("+++ b/docs/new.md"));
+
+        let create_existing = build_workspace_patch_proposal(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "new
+",
+        );
+        assert_eq!(create_existing.validation_status, "Invalid");
+        assert_eq!(
+            create_existing.validation_reason,
+            Some("target path already exists")
+        );
+
+        let create_missing_parent = build_workspace_patch_proposal(
+            &store,
+            "missing/new.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "new
+",
+        );
+        assert_eq!(create_missing_parent.validation_status, "Invalid");
+        assert_eq!(
+            create_missing_parent.validation_reason,
+            Some("target parent directory does not exist")
+        );
+
+        #[cfg(unix)]
+        {
+            let create_target_symlink = build_workspace_patch_proposal(
+                &store,
+                "link.txt",
+                WorkspacePatchOperation::CreateFile.as_str(),
+                "new
+",
+            );
+            assert_eq!(create_target_symlink.validation_status, "Invalid");
+            assert_eq!(
+                create_target_symlink.validation_reason,
+                Some("target path already exists")
+            );
+
+            let create_parent_symlink = build_workspace_patch_proposal(
+                &store,
+                "docs-link/new.md",
+                WorkspacePatchOperation::CreateFile.as_str(),
+                "new
+",
+            );
+            assert_eq!(create_parent_symlink.validation_status, "Invalid");
+            assert_eq!(
+                create_parent_symlink.validation_reason,
+                Some("target parent directory is a symlink")
+            );
+            assert_eq!(
+                std::fs::read_to_string(outside.path().join("outside.txt")).unwrap(),
+                "outside workspace
+"
+            );
+        }
+
         let proposed_secret = build_workspace_patch_proposal(
             &store,
             "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
             "sk-proposed
 ",
         );
@@ -28134,6 +29217,7 @@ mod tests {
         let existing_secret = build_workspace_patch_proposal(
             &store,
             "secret.txt",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
             "safe
 ",
         );
@@ -28148,7 +29232,10 @@ mod tests {
         #[cfg(unix)]
         {
             let symlink_escape = build_workspace_patch_proposal(
-                &store, "link.txt", "safe
+                &store,
+                "link.txt",
+                WorkspacePatchOperation::ReplaceFile.as_str(),
+                "safe
 ",
             );
             assert_eq!(symlink_escape.validation_status, "Invalid");
@@ -28162,6 +29249,7 @@ mod tests {
         let large = build_workspace_patch_proposal(
             &store,
             "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
             &"new line
 "
             .repeat(1000),

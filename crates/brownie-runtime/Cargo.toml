@@ -20,11 +20,9 @@ brownie-tools = { path = "../brownie-tools" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+tempfile.workspace = true
 time.workspace = true
 uuid.workspace = true
-
-[dev-dependencies]
-tempfile.workspace = true
 
 [lib]
 path = "src/lib.rs"

@@ -359,12 +359,14 @@ pub struct WorkspacePatchProposal {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum WorkspacePatchOperation {
     ReplaceFile,
+    CreateFile,
 }
 
 impl WorkspacePatchOperation {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::ReplaceFile => "replace_file",
+            Self::CreateFile => "create_file",
         }
     }
 }
@@ -394,8 +396,11 @@ pub fn preflight_workspace_write_input_with_limit(
     let Some(operation) = object.get("operation") else {
         return Err("workspace.write input.operation is required.");
     };
-    if operation.as_str() != Some("replace_file") {
-        return Err("workspace.write input.operation must be replace_file.");
+    let Some(operation) = operation.as_str() else {
+        return Err("workspace.write input.operation must be a string.");
+    };
+    if operation != "replace_file" && operation != "create_file" {
+        return Err("workspace.write input.operation must be replace_file or create_file.");
     }
     let Some(content) = object.get("content") else {
         return Err("workspace.write input.content is required.");
@@ -1093,6 +1098,13 @@ mod tests {
     #[test]
     fn parser_accepts_valid_workspace_write_replace_file_intent() {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Propose README update\",\"input\":{\"path\":\"README.md\",\"operation\":\"replace_file\",\"content\":\"new content\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
+    fn parser_accepts_valid_workspace_write_create_file_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Propose new note\",\"input\":{\"path\":\"notes/new.md\",\"operation\":\"create_file\",\"content\":\"new content\"}}]}\n```");
         assert_eq!(parsed.requests.len(), 1);
         assert!(parsed.rejected.is_empty());
     }

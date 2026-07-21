@@ -5,7 +5,7 @@ The runtime must not modify workspace files, apply patches, invoke git, or execu
 
 ## Accepted intent shape
 
-Only `workspace.write` requests with `operation: "replace_file"` are accepted. The input must include a workspace-relative `path` and string `content`.
+Only `workspace.write` requests with `operation: "replace_file"` or `operation: "create_file"` are accepted. The input must include a workspace-relative `path` and string `content`.
 
 Rejected paths include empty paths, absolute paths, parent traversal, and protected components: `.git`, `.brownie`, `node_modules`, and `target`.
 
@@ -41,7 +41,11 @@ Phase 3.1 keeps the Phase 3.0 dry-run contract: `workspace.write` proposals neve
 
 For `replace_file`, validation requires a safe workspace-relative path, no protected path components, an existing target file, a regular file target, UTF-8 target content, UTF-8 proposed content, configured content size compliance, and no sensitive-like findings in proposed or existing content. Missing targets are `Invalid` with `target file does not exist`. Sensitive-like proposed content is `Blocked`, stores `content_preview` as `[redacted]`, suppresses diff preview, and records no matched secret values. Sensitive-like existing file content also blocks diff preview.
 
+For `create_file`, validation requires a safe workspace-relative path, no protected path components, an existing non-symlink parent directory inside the workspace, an absent target path, UTF-8 proposed content, configured content size compliance, and no sensitive-like findings in proposed content. Existing target files, directories, and symlinks are `Invalid` with `target path already exists`; missing parents are `Invalid` with `target parent directory does not exist`.
+
 Valid replacements get a deterministic synthetic unified diff preview generated from existing file text and proposed text. The preview is capped by the runtime diff preview cap; only the capped preview may be stored in the ledger or returned by inspection. `diff_truncated` reports cap truncation and `diff_redacted` reports sensitive-content suppression. Full proposed content and raw full diffs are never persisted.
+
+Valid creates get a deterministic synthetic unified diff preview generated from an empty old file and the proposed text. Full proposed content and raw full diffs are never persisted.
 
 `WorkspacePatchProposed` payloads include validation and diff-preview metadata: `validation_status`, `validation_reason`, `diff_preview`, `diff_truncated`, and `diff_redacted`. Forbidden fields remain `content`, `raw_content`, `full_content`, `patch`, and `raw_input`.
 
@@ -55,7 +59,7 @@ Patch proposals have an approval lifecycle reconstructed from the ledger event s
 
 `proposal.reject` records human rejection for a `Pending` proposal and appends `WorkspacePatchRejected`. Rejected proposals cannot later be approved.
 
-Apply plans contain bounded checklist summaries: `proposal_exists`, `proposal_is_valid`, `proposal_is_approved`, `target_path_safe`, `target_file_exists`, `target_file_utf8`, `diff_preview_available`, `sensitive_content_not_detected`, and `apply_not_enabled`. In Phase 3.2, `apply_not_enabled` is always non-passing with reason `Patch apply is not implemented in Phase 3.2.`.
+Apply plans contain bounded checklist summaries. `replace_file` plans include target-file existence, regular-file, UTF-8, and hash-capture checks. `create_file` plans include target-parent existence, parent-directory, parent-not-symlink, and target-absence checks. Approval remains non-mutating.
 
 ## Phase 3.3 preflight snapshots
 
@@ -63,7 +67,7 @@ Apply plans contain bounded checklist summaries: `proposal_exists`, `proposal_is
 
 A preflight snapshot includes `proposal_id`, `snapshot_id`, workspace-relative `path`, `canonical_path_hash`, `file_exists`, `file_kind`, `file_size_bytes`, `file_modified_unix_ms`, `file_sha256`, `captured_at`, `stale`, and `stale_reason`. `canonical_path_hash` is a SHA-256 hash of the canonical target path; the canonical absolute path itself is never returned. File contents, full proposed content, raw input JSON, patches, and full diffs are never persisted in snapshots or RPC responses.
 
-Repeated preflight creates a new snapshot each time. The first snapshot is not stale. Later snapshots are stale when `file_sha256`, `file_size_bytes`, or `file_modified_unix_ms` differs from the previous latest snapshot. `proposal.list` and `proposal.inspect` return the latest snapshot in `latest_snapshot`.
+Repeated preflight creates a new snapshot each time. The first snapshot is not stale. Later snapshots are stale when `file_exists`, `file_kind`, `file_sha256`, `file_size_bytes`, or `file_modified_unix_ms` differs from the previous latest snapshot. `proposal.list` and `proposal.inspect` return the latest snapshot in `latest_snapshot`.
 
 Approval and rejection reasons are bounded to 1000 characters. Secret-like reasons are stored and returned as `[redacted]` with `approval_reason_redacted = true`; matched secret values are not stored in the ledger.
 
@@ -98,6 +102,16 @@ The initial apply scope is one file per apply, workspace-relative paths only, ex
 Before writing, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, replacement content bounds checks, sensitive-like content checks, and deterministic diff matching against the approved proposal metadata. Full replacement content is not persisted in the ledger and is not returned by RPC responses.
 
 On success, the runtime creates a temporary sibling file, writes bounded content, flushes and syncs, atomically replaces the target, verifies the post-write SHA-256, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary`. On failure, it preserves the original file whenever possible, cleans partial temporary files, does not consume authorization before verified success, and records bounded failure metadata for post-write verification failures.
+
+## M6.2 controlled create-file apply
+
+`proposal.apply` also accepts an existing `Approved` and `Valid` `create_file` proposal, request-only `replacement_content`, explicit `authorize = true`, and `expected_target_absent = true`. It reuses the same side-effecting Rust runtime RPC as `replace_file`; no additional apply endpoint or readiness wrapper is introduced.
+
+The create scope is one file per apply, workspace-relative paths only, an existing non-symlink parent directory inside the workspace, absent target only, protected paths denied, target symlinks denied as existing targets, parent traversal denied, approved proposal required, and approval must be current and unconsumed. It does not overwrite files, create parent directories, delete files, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
+
+Before writing, the runtime performs latest preflight validation, target-absence verification, path and parent validation, symlink rejection, proposed content bounds checks, sensitive-like content checks, and deterministic diff matching against the approved absent-target proposal metadata. Full proposed content is not persisted in the ledger and is not returned by RPC responses.
+
+On success, the runtime creates a temporary sibling file, writes bounded content, flushes and syncs, atomically links the temp file into the target path without overwrite, verifies the post-write SHA-256, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `expected_target_absent`, `pre_write_target_exists`, `atomic_create_completed`, and hash/count/check metadata. On failure, it avoids overwriting existing targets, cleans partial temporary files, does not consume authorization before verified success, and records bounded failure metadata for post-write verification failures.
 
 ## Phase 3.7 apply dry-run history
 
