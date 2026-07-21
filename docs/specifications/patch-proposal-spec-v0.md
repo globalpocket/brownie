@@ -5,7 +5,7 @@ The runtime must not modify workspace files, apply patches, invoke git, or execu
 
 ## Accepted intent shape
 
-Only `workspace.write` requests with `operation: "replace_file"` or `operation: "create_file"` are accepted. The input must include a workspace-relative `path` and string `content`.
+Only `workspace.write` requests with `operation: "replace_file"`, `operation: "create_file"`, or `operation: "delete_file"` are accepted. The input must include a workspace-relative `path`. `replace_file` and `create_file` require string `content`; `delete_file` must omit `content`.
 
 Rejected paths include empty paths, absolute paths, parent traversal, and protected components: `.git`, `.brownie`, `node_modules`, and `target`.
 
@@ -43,9 +43,13 @@ For `replace_file`, validation requires a safe workspace-relative path, no prote
 
 For `create_file`, validation requires a safe workspace-relative path, no protected path components, an existing non-symlink parent directory inside the workspace, an absent target path, UTF-8 proposed content, configured content size compliance, and no sensitive-like findings in proposed content. Existing target files, directories, and symlinks are `Invalid` with `target path already exists`; missing parents are `Invalid` with `target parent directory does not exist`.
 
+For `delete_file`, validation requires a safe workspace-relative path, no protected path components, an existing regular non-symlink target file inside the workspace, UTF-8 target content, configured diff preview compliance, no proposed content, and no sensitive-like findings in existing target content. Missing targets are `Invalid` with `target file does not exist`; directories are `Invalid` with `target path is not a file`; symlinks are `Invalid` with `target path is a symlink`.
+
 Valid replacements get a deterministic synthetic unified diff preview generated from existing file text and proposed text. The preview is capped by the runtime diff preview cap; only the capped preview may be stored in the ledger or returned by inspection. `diff_truncated` reports cap truncation and `diff_redacted` reports sensitive-content suppression. Full proposed content and raw full diffs are never persisted.
 
 Valid creates get a deterministic synthetic unified diff preview generated from an empty old file and the proposed text. Full proposed content and raw full diffs are never persisted.
+
+Valid deletes get a deterministic synthetic unified diff preview generated from existing file text to an empty replacement. Full file content and raw full diffs are never persisted.
 
 `WorkspacePatchProposed` payloads include validation and diff-preview metadata: `validation_status`, `validation_reason`, `diff_preview`, `diff_truncated`, and `diff_redacted`. Forbidden fields remain `content`, `raw_content`, `full_content`, `patch`, and `raw_input`.
 
@@ -59,7 +63,7 @@ Patch proposals have an approval lifecycle reconstructed from the ledger event s
 
 `proposal.reject` records human rejection for a `Pending` proposal and appends `WorkspacePatchRejected`. Rejected proposals cannot later be approved.
 
-Apply plans contain bounded checklist summaries. `replace_file` plans include target-file existence, regular-file, UTF-8, and hash-capture checks. `create_file` plans include target-parent existence, parent-directory, parent-not-symlink, and target-absence checks. Approval remains non-mutating.
+Apply plans contain bounded checklist summaries. `replace_file` plans include target-file existence, regular-file, UTF-8, and hash-capture checks. `create_file` plans include target-parent existence, parent-directory, parent-not-symlink, and target-absence checks. `delete_file` plans include target-file existence, regular-file, target-not-symlink, UTF-8, and hash-capture checks. Approval remains non-mutating.
 
 ## Phase 3.3 preflight snapshots
 
@@ -97,7 +101,7 @@ The runtime appends `WorkspacePatchApplyDryRunChecked` with summary-only metadat
 
 `proposal.apply` accepts an existing `Approved` and `Valid` `replace_file` proposal, a caller-provided `expected_target_sha256`, request-only `replacement_content`, and explicit `authorize = true`. It is the only path that may mutate workspace files. `workspace.write`, approval, preflight, readiness, capability inspection, dry-run, history, audit, review, queue, diagnostics, report, digest, and wrapper endpoints remain non-mutating.
 
-The initial apply scope is one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, delete files, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
+The M6.1 replace scope is one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, delete files, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
 
 Before writing, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, replacement content bounds checks, sensitive-like content checks, and deterministic diff matching against the approved proposal metadata. Full replacement content is not persisted in the ledger and is not returned by RPC responses.
 
@@ -112,6 +116,16 @@ The create scope is one file per apply, workspace-relative paths only, an existi
 Before writing, the runtime performs latest preflight validation, target-absence verification, path and parent validation, symlink rejection, proposed content bounds checks, sensitive-like content checks, and deterministic diff matching against the approved absent-target proposal metadata. Full proposed content is not persisted in the ledger and is not returned by RPC responses.
 
 On success, the runtime creates a temporary sibling file, writes bounded content, flushes and syncs, atomically links the temp file into the target path without overwrite, verifies the post-write SHA-256, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `expected_target_absent`, `pre_write_target_exists`, `atomic_create_completed`, and hash/count/check metadata. On failure, it avoids overwriting existing targets, cleans partial temporary files, does not consume authorization before verified success, and records bounded failure metadata for post-write verification failures.
+
+## M6.3 controlled delete-file apply
+
+`proposal.apply` also accepts an existing `Approved` and `Valid` `delete_file` proposal, a caller-provided `expected_target_sha256`, explicit `authorize = true`, and no `replacement_content`. It reuses the same side-effecting Rust runtime RPC as `replace_file` and `create_file`; no additional apply endpoint, readiness wrapper, report, digest, preview, or history surface is introduced.
+
+The delete scope is one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, create parent directories, mutate directories, rename between arbitrary paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
+
+Before deleting, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, target UTF-8 and sensitive-like content checks, replacement-content omission checks, and deterministic diff matching against the approved deletion proposal metadata. Full target content is not persisted in the apply-result ledger payload and is not returned by the apply RPC response.
+
+On success, the runtime removes the target file, syncs the parent directory when possible, verifies post-delete absence, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `pre_write_target_sha256`, `pre_write_target_exists`, `atomic_delete_completed`, `post_delete_target_exists`, and check metadata. On denial or failure, it does not consume authorization before verified success, preserves the file whenever a precondition fails, and records bounded failure metadata for post-delete verification failures.
 
 ## Phase 3.7 apply dry-run history
 

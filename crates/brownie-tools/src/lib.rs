@@ -360,6 +360,7 @@ pub struct WorkspacePatchProposal {
 pub enum WorkspacePatchOperation {
     ReplaceFile,
     CreateFile,
+    DeleteFile,
 }
 
 impl WorkspacePatchOperation {
@@ -367,6 +368,7 @@ impl WorkspacePatchOperation {
         match self {
             Self::ReplaceFile => "replace_file",
             Self::CreateFile => "create_file",
+            Self::DeleteFile => "delete_file",
         }
     }
 }
@@ -399,8 +401,16 @@ pub fn preflight_workspace_write_input_with_limit(
     let Some(operation) = operation.as_str() else {
         return Err("workspace.write input.operation must be a string.");
     };
-    if operation != "replace_file" && operation != "create_file" {
-        return Err("workspace.write input.operation must be replace_file or create_file.");
+    if operation != "replace_file" && operation != "create_file" && operation != "delete_file" {
+        return Err(
+            "workspace.write input.operation must be replace_file, create_file, or delete_file.",
+        );
+    }
+    if operation == "delete_file" {
+        if object.contains_key("content") {
+            return Err("workspace.write input.content must be omitted for delete_file.");
+        }
+        return Ok(());
     }
     let Some(content) = object.get("content") else {
         return Err("workspace.write input.content is required.");
@@ -1110,6 +1120,13 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_valid_workspace_write_delete_file_intent_without_content() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Remove obsolete note\",\"input\":{\"path\":\"notes/obsolete.md\",\"operation\":\"delete_file\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+    }
+
+    #[test]
     fn parser_rejects_invalid_workspace_write_inputs() {
         for (input, reason) in [
             (
@@ -1131,6 +1148,10 @@ mod tests {
             (
                 serde_json::json!({"path":"README.md","operation":"append","content":"x"}),
                 "unsupported operation",
+            ),
+            (
+                serde_json::json!({"path":"README.md","operation":"delete_file","content":"x"}),
+                "delete with content",
             ),
         ] {
             assert!(preflight_workspace_write_input(&input).is_err(), "{reason}");
