@@ -241,6 +241,16 @@ export class RuntimeClient {
     return result;
   }
 
+  async applyCreateFileProposal(runId: string, proposalId: string, content: string, authorize = true): Promise<ProposalApplyResult> {
+    const result = await this.call<ProposalApplyResult>('proposal.apply', { run_id: runId, proposal_id: proposalId, expected_target_absent: true, replacement_content: content, authorize });
+
+    if (!isProposalApplyResult(result)) {
+      throw new RuntimeProtocolError('proposal.apply returned an invalid create_file result');
+    }
+
+    return result;
+  }
+
   async applyDryRunHistory(runId: string, proposalId: string): Promise<ProposalApplyDryRunHistoryResult> {
     const result = await this.call<ProposalApplyDryRunHistoryResult>('proposal.applyDryRunHistory', { run_id: runId, proposal_id: proposalId });
 
