@@ -73,6 +73,8 @@ M7.1 allows task-scoped execution for the fixed `verification.cargo_fmt_check` v
 
 M7.2 allows the agent loop to request the fixed `verification.cargo_check` verifier for compile and type-check goals when the active mode has `ExecuteProcess`. The runtime executes the request through the same controlled tool path as standalone `tool.execute`, requires `Cargo.toml` and `Cargo.lock`, rejects workspaces with `build.rs` in this phase, runs only `cargo check --workspace --all-targets --locked --offline`, uses an isolated target directory outside the workspace, disables Cargo network access, and records only bounded `ToolExecution*` evidence. This still does not authorize generic `process.exec`, caller-supplied commands, argv, cwd, environment, stdin, shell, package/feature/target selection, timeout overrides, raw stdout/stderr, raw input JSON, target directory paths, file content, absolute paths, canonical paths, environment values, network access, git execution, service control, arbitrary tests, or workspace mutation.
 
+M7.3 promotes requested controlled verifier evidence from advisory ledger data to a runtime completion gate. Before terminal task status is recorded, `task.run` re-reads the current run ledger and requires every task-scoped `verification.cargo_fmt_check` or `verification.cargo_check` request to have fresh terminal passed evidence. Passing evidence preserves `Completed`; denied, rejected, failed, timed-out, spawn-failed, missing, malformed, or stale evidence forces `Failed` and returns bounded `verification_completion_gate` metadata for headless recovery. Tasks that request no controlled verifier keep their existing completion behavior.
+
 ## Subtasks
 
 Subtasks must not dump full transcript history back to a parent task.

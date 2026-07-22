@@ -467,7 +467,7 @@ impl VerificationCommandExecutor {
                     0,
                     ProcessCapture::empty(),
                     ProcessCapture::empty(),
-                    Some("failed to spawn verification command."),
+                    Some("failed to spawn verifier."),
                     verification_safety_metadata(check_id),
                 ));
             }
@@ -516,7 +516,7 @@ impl VerificationCommandExecutor {
                 duration_ms,
                 stdout_capture,
                 stderr_capture,
-                Some("verification command timed out."),
+                Some("verifier timed out."),
                 verification_safety_metadata(check_id),
             ));
         }
@@ -546,7 +546,7 @@ impl VerificationCommandExecutor {
                 duration_ms,
                 stdout_capture,
                 stderr_capture,
-                Some("verification command exited with nonzero status."),
+                Some("verifier exited with nonzero status."),
                 verification_safety_metadata(check_id),
             )),
         }

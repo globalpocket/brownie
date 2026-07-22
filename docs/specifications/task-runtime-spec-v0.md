@@ -226,6 +226,12 @@ M6.1 adds `proposal.apply` as the first runtime-owned workspace mutation path. I
 
 `proposal.apply` does not run shell, git, tests, network, service control, directory mutation, file creation, file deletion, arbitrary rename, or multi-file transactions. Replacement content is request input only and must not be persisted in the ledger or returned in RPC responses. Failure paths should preserve the original target, clean partial temporary files, and must not consume apply authorization before verified success.
 
+## M7.3 verification evidence completion gate
+
+M7.3 keeps `task.run` as the runtime-owned task lifecycle authority and adds a terminal completion gate for task-scoped controlled verifier requests. If a run requests `verification.cargo_fmt_check` or `verification.cargo_check`, the runtime re-reads the current run ledger before terminal status and requires fresh terminal `ToolExecutionCompleted` evidence with `verification_status = "Passed"` for every requested verifier.
+
+When all required verifier evidence passes, `task.run` may complete and returns bounded `verification_completion_gate` metadata. When required verifier evidence is denied, rejected, failed, timed out, spawn-failed, missing, malformed, or stale, `task.run` records `AgentLoopCompleted` with final state `Failed`, persists terminal `TaskFailed`, and includes bounded gate metadata on the terminal event and RPC result. Runs without controlled verifier requests retain their prior completion behavior.
+
 ## M5 subtask orchestration queue
 
 M5 keeps `task.run` as the only runtime-owned execution path and adds a deterministic queue record for approved `subtask.spawn` assistant intent. The runtime appends `SubtaskOrchestrationQueued` with a stable parent run reference, queue position, summary-only input metadata, and `execution_enabled = false`.

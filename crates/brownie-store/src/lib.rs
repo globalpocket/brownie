@@ -172,6 +172,16 @@ impl TaskStore {
         status: TaskStatus,
         event_kind: LedgerEventKind,
     ) -> Result<TaskRecord> {
+        self.update_task_status_with_payload(task_id, status, event_kind, None)
+    }
+
+    pub fn update_task_status_with_payload(
+        &self,
+        task_id: &str,
+        status: TaskStatus,
+        event_kind: LedgerEventKind,
+        payload: Option<serde_json::Value>,
+    ) -> Result<TaskRecord> {
         let Some(mut record) = self.get_task(task_id)? else {
             bail!("task not found: {task_id}");
         };
@@ -179,7 +189,7 @@ impl TaskStore {
         record.status = status;
         record.updated_at = timestamp()?;
         self.write_task_state(&record)?;
-        self.append_task_event(&record, event_kind)?;
+        self.append_task_event_with_payload(&record, event_kind, payload)?;
         Ok(record)
     }
 
