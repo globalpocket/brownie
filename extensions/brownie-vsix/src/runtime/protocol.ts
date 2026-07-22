@@ -252,6 +252,7 @@ export interface TaskRunResult {
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
+  verification_recovery_repair?: TaskRunVerificationRecoveryRepairOutcome | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
@@ -272,6 +273,20 @@ export interface TaskRunVerificationCompletionGate {
   failed_verifier_tool_ids: string[];
   failure_reasons: string[];
   next_action: 'complete_task' | 'inspect_verification_failure_and_retry_task';
+}
+
+export interface TaskRunVerificationRecoveryRepairOutcome {
+  source_task_id: string;
+  source_run_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  failure_fingerprint: string;
+  failed_verifier_tool_ids: string[];
+  proposal_id: string;
+  proposal_count: number;
+  replayed: boolean;
+  apply_enabled: false;
+  next_action: 'review_and_authorize_recovery_proposal';
 }
 
 export interface TaskRunChildOrchestrationOutcome {
@@ -2743,6 +2758,20 @@ const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
   'replayed',
 ]);
 
+const TASK_RUN_VERIFICATION_RECOVERY_REPAIR_KEYS = new Set([
+  'source_task_id',
+  'source_run_id',
+  'recovery_task_id',
+  'recovery_run_id',
+  'failure_fingerprint',
+  'failed_verifier_tool_ids',
+  'proposal_id',
+  'proposal_count',
+  'replayed',
+  'apply_enabled',
+  'next_action',
+]);
+
 const RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS = new Set([
   'recovery_cycle_budget_status',
   'parent_join_admission_id',
@@ -2905,6 +2934,33 @@ export function isVerificationRecoveryAdmission(value: unknown): value is Verifi
     value.recovery_running_enabled === false &&
     value.next_action === 'run_recovery_task_explicitly' &&
     typeof value.replayed === 'boolean'
+  );
+}
+
+export function isTaskRunVerificationRecoveryRepairOutcome(value: unknown): value is TaskRunVerificationRecoveryRepairOutcome {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, TASK_RUN_VERIFICATION_RECOVERY_REPAIR_KEYS) &&
+    hasNoForbiddenRawFields(value) &&
+    typeof value.source_task_id === 'string' &&
+    value.source_task_id.trim().length > 0 &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.recovery_task_id === 'string' &&
+    value.recovery_task_id.trim().length > 0 &&
+    typeof value.recovery_run_id === 'string' &&
+    value.recovery_run_id.trim().length > 0 &&
+    typeof value.failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.failure_fingerprint) &&
+    isStringArray(value.failed_verifier_tool_ids) &&
+    value.failed_verifier_tool_ids.length > 0 &&
+    typeof value.proposal_id === 'string' &&
+    value.proposal_id.trim().length > 0 &&
+    isNonNegativeInteger(value.proposal_count) &&
+    value.proposal_count > 0 &&
+    typeof value.replayed === 'boolean' &&
+    value.apply_enabled === false &&
+    value.next_action === 'review_and_authorize_recovery_proposal'
   );
 }
 
@@ -3235,6 +3291,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
     (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
+    (value.verification_recovery_repair === undefined || value.verification_recovery_repair === null || isTaskRunVerificationRecoveryRepairOutcome(value.verification_recovery_repair)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))

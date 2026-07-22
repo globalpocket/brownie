@@ -77,6 +77,8 @@ M7.3 promotes requested controlled verifier evidence from advisory ledger data t
 
 M8.1 lets the caller continue from that bounded terminal failure without inventing an external retry ledger. `task.start` may include `verification_recovery_source`; the runtime validates the source failed task/run and expected verifier failure fingerprint before creating a `Created` recovery task. Admission is idempotent per failure fingerprint, returns `next_action=run_recovery_task_explicitly`, and does not auto-run the recovery task, call an LLM, execute a verifier, or mutate the workspace.
 
+M8.2 lets the caller explicitly run the admitted recovery task through the existing `task.run` RPC. The runtime revalidates stored recovery provenance against the latest source task/run verifier-gate failure before appending `TaskRunning`, then permits approved `workspace.write` intent to create at most one recovery-scoped patch proposal through the existing WriteWorkspace permission and proposal pipeline. The response includes bounded `verification_recovery_repair` metadata with source and recovery IDs, failure fingerprint, failed verifier tool IDs, proposal ID/count, `apply_enabled=false`, `next_action=review_and_authorize_recovery_proposal`, and replay status. Replays of the completed recovery run return the same outcome without duplicating task-running evidence or proposal events. M8.2 still does not apply the proposal, retry verification, run shell/git/network/service actions, or expose raw output, commands, prompts, provider responses, file content, paths, environment values, tool input, or raw request bodies.
+
 ## Subtasks
 
 Subtasks must not dump full transcript history back to a parent task.
