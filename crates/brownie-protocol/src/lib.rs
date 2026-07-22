@@ -296,6 +296,16 @@ pub enum ToolExecuteStatus {
 pub struct TaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_source: Option<VerificationRecoverySource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationRecoverySource {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub expected_failure_fingerprint: String,
+    pub authorize_recovery: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -303,6 +313,20 @@ pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
     pub status: TaskStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_admission: Option<VerificationRecoveryAdmission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationRecoveryAdmission {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub failure_fingerprint: String,
+    pub recovery_running_enabled: bool,
+    pub next_action: String,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2528,6 +2552,7 @@ pub struct ChildTaskInspectSummary {
     pub source_handoff_envelope_fingerprint: Option<String>,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
     pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
+    pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
@@ -2558,6 +2583,18 @@ pub struct RecoveryCycleChildProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationRecoveryProvenance {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub failure_fingerprint: String,
+    pub required_verifier_count: usize,
+    pub passed_verifier_count: usize,
+    pub failed_verifier_count: usize,
+    pub failed_verifier_tool_ids: Vec<String>,
+    pub failure_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -2582,6 +2619,8 @@ pub struct TaskRecord {
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
     #[serde(default)]
     pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
+    #[serde(default)]
+    pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
     pub created_at: String,
     pub updated_at: String,
 }

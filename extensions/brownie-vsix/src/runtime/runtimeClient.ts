@@ -119,10 +119,16 @@ export class RuntimeClient {
   }
 
   async startTask(params: TaskStartParams): Promise<TaskStartResult> {
-    const result = await this.call<TaskStartResult>('task.start', {
+    const requestParams: { goal: string; mode_id?: string; verification_recovery_source?: unknown } = {
       goal: params.goal,
-      mode_id: params.modeId,
-    });
+    };
+    if (params.modeId !== undefined) {
+      requestParams.mode_id = params.modeId;
+    }
+    if (params.verificationRecoverySource !== undefined) {
+      requestParams.verification_recovery_source = params.verificationRecoverySource;
+    }
+    const result = await this.call<TaskStartResult>('task.start', requestParams);
 
     if (!isTaskStartResult(result)) {
       throw new RuntimeProtocolError('task.start returned an invalid result');

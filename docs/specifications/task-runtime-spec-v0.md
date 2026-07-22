@@ -107,6 +107,16 @@ If a caller supplies an unknown `mode_id`, `task.start` returns JSON-RPC `-32602
 
 After task creation, the run ledger records `TaskStarted` followed by `ModeResolved`. The `ModeResolved` payload stores a compact policy summary rather than the full policy.
 
+## M8.1 verification failure recovery task admission
+
+`task.start` may include an optional `verification_recovery_source` object. This is not a new task execution path; it is an admission guard for creating a durable recovery task from terminal M7 verifier-gate failure evidence.
+
+The source object contains `source_task_id`, `source_run_id`, `expected_failure_fingerprint`, and `authorize_recovery`. The runtime re-reads the source `TaskRecord` and source run ledger before admission. It requires the source task to be terminal `Failed`, the source run ID to match, the latest derived `verification_completion_gate` to be `Failed`, the terminal task event to carry failed verifier-gate metadata, authorization to be explicit, and the expected fingerprint to match the bounded runtime-derived fingerprint.
+
+On success, the runtime creates a new `Created` recovery task or replays the existing recovery task for the same failure fingerprint. The recovery `TaskRecord` stores optional `verification_recovery_provenance` with source task/run IDs, failure fingerprint, verifier counts, failed verifier tool IDs, and bounded failure reasons. Existing task records without this field deserialize as `null`.
+
+The recovery run ledger records `TaskStarted` with the same bounded provenance plus `recovery_running_enabled=false` and `next_action=run_recovery_task_explicitly`. Admission does not append `TaskRunning`, call an LLM, execute a verifier, run shell/git/tests, mutate the workspace, or expose raw stdout, stderr, command strings, environment values, prompts, provider responses, raw file content, or raw tool input.
+
 ## Phase 1.4 permission gate update
 
 Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
