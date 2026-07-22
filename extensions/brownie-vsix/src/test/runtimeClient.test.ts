@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome } from '../runtime/protocol';
+import { isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -1022,6 +1022,40 @@ describe('RuntimeClient', () => {
     })).toBe(true);
     expect(isTaskRunVerificationRecoveryRepairOutcome({ ...outcome, stdout: 'raw output' })).toBe(false);
     expect(isTaskRunVerificationRecoveryRepairOutcome({ ...outcome, apply_enabled: true })).toBe(false);
+  });
+
+  it('accepts bounded task.run verification recovery retry outcomes and rejects raw fields', () => {
+    const failureFingerprint = `sha256:${'a'.repeat(64)}`;
+    const applyFingerprint = `sha256:${'b'.repeat(64)}`;
+    const outcome = {
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      recovery_task_id: 'task_recovery',
+      recovery_run_id: 'run_recovery',
+      retry_task_id: 'task_retry',
+      retry_run_id: 'run_retry',
+      proposal_id: 'proposal_1',
+      apply_id: 'apply_1',
+      failure_fingerprint: failureFingerprint,
+      apply_fingerprint: applyFingerprint,
+      retried_verifier_tool_ids: ['verification.cargo_fmt_check'],
+      passed_verifier_tool_ids: [],
+      failed_verifier_tool_ids: ['verification.cargo_fmt_check'],
+      retry_status: 'Failed',
+      replayed: false,
+      next_action: 'inspect_verification_failure_and_retry_task',
+    };
+
+    expect(isTaskRunVerificationRecoveryRetryOutcome(outcome)).toBe(true);
+    expect(isTaskRunResult({
+      task_id: 'task_retry',
+      run_id: 'run_retry',
+      status: 'Failed',
+      agent_loop: { final_state: 'Failed', completion_summary: 'retry failed' },
+      verification_recovery_retry: outcome,
+    })).toBe(true);
+    expect(isTaskRunVerificationRecoveryRetryOutcome({ ...outcome, stdout: 'raw output' })).toBe(false);
+    expect(isTaskRunVerificationRecoveryRetryOutcome({ ...outcome, retried_verifier_tool_ids: [] })).toBe(false);
   });
 
   it('creates a task.run request', async () => {

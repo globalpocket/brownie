@@ -110,22 +110,24 @@ use brownie_protocol::{
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
     TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome, TaskStartParams,
-    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryProvenance,
-    VerificationRecoverySource, WorkspacePatchApplyCapabilityCheckSummary,
-    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
-    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchApplyResultCheckSummary,
-    WorkspacePatchApplyResultSummary, WorkspacePatchAuditTrailEntry,
-    WorkspacePatchAuditTrailSummary, WorkspacePatchPreflightSnapshotSummary,
-    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
-    WorkspacePatchReadinessReportSummary, WorkspacePatchReviewBundleSummary,
-    WorkspacePatchReviewQueueDiagnosticsCheckSummary,
+    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
+    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    VerificationRecoveryAdmission, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
+    VerificationRecoveryRetrySource, VerificationRecoverySource,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
+    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
+    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchApplyResultCheckSummary, WorkspacePatchApplyResultSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
+    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary,
@@ -189,7 +191,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     BrownieStore, ChildTaskStartParams, LedgerEvent, LedgerEventKind,
-    ParentJoinContinuationRunAdmission, VerificationRecoveryTaskStartParams,
+    ParentJoinContinuationRunAdmission, VerificationRecoveryRetryTaskStartParams,
+    VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -1695,6 +1698,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         goal,
         mode_id,
         verification_recovery_source,
+        verification_recovery_retry_source,
     } = params;
 
     if goal.trim().is_empty() {
@@ -1710,6 +1714,14 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         Ok(policy) => policy,
         Err(message) => return error_response(id, -32602, &message),
     };
+
+    if verification_recovery_source.is_some() && verification_recovery_retry_source.is_some() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: specify only one verification recovery source envelope",
+        );
+    }
 
     if let Some(source) = verification_recovery_source {
         let provenance = match verification_recovery_provenance_for_source(&store, &source) {
@@ -1755,6 +1767,65 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                             next_action: "run_recovery_task_explicitly".into(),
                             replayed: admission.replayed,
                         }),
+                        verification_recovery_retry_admission: None,
+                    }),
+                )
+            }
+            Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else if let Some(source) = verification_recovery_retry_source {
+        let provenance = match verification_recovery_retry_provenance_for_source(&store, &source) {
+            Ok(provenance) => provenance,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        let failure_fingerprint = provenance.failure_fingerprint.clone();
+        let apply_fingerprint = provenance.apply_fingerprint.clone();
+        match store.tasks().start_verification_recovery_retry_task(
+            VerificationRecoveryRetryTaskStartParams {
+                goal,
+                mode_id: Some(policy.mode_id.clone()),
+                provenance,
+            },
+        ) {
+            Ok(admission) => {
+                if !admission.replayed {
+                    if let Err(error) = store.tasks().append_task_event_with_payload(
+                        &admission.record,
+                        LedgerEventKind::ModeResolved,
+                        Some(mode_resolved_payload(&policy)),
+                    ) {
+                        return error_response(id, -32603, &format!("internal error: {error}"));
+                    }
+                }
+                result_response(
+                    id,
+                    json!(TaskStartResult {
+                        task_id: admission.record.task_id.clone(),
+                        run_id: admission.record.run_id.clone(),
+                        status: admission.record.status.clone(),
+                        verification_recovery_admission: None,
+                        verification_recovery_retry_admission: Some(
+                            VerificationRecoveryRetryAdmission {
+                                source_task_id: source.source_task_id,
+                                source_run_id: source.source_run_id,
+                                recovery_task_id: source.recovery_task_id,
+                                recovery_run_id: source.recovery_run_id,
+                                retry_task_id: admission.record.task_id,
+                                retry_run_id: admission.record.run_id,
+                                proposal_id: source.proposal_id,
+                                apply_id: source.apply_id,
+                                failure_fingerprint,
+                                apply_fingerprint,
+                                retry_running_enabled: false,
+                                next_action: "run_verification_retry_task_explicitly".into(),
+                                replayed: admission.replayed,
+                            }
+                        ),
                     }),
                 )
             }
@@ -1765,6 +1836,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
             goal,
             mode_id: Some(policy.mode_id.clone()),
             verification_recovery_source: None,
+            verification_recovery_retry_source: None,
         };
 
         match store.tasks().start_task(params) {
@@ -1783,6 +1855,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         run_id: record.run_id,
                         status: record.status,
                         verification_recovery_admission: None,
+                        verification_recovery_retry_admission: None,
                     }),
                 )
             }
@@ -1837,6 +1910,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
+                    verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: None,
@@ -1845,6 +1919,32 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
         Ok(None) => {}
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    match verification_recovery_retry_outcome_for_replay(&store, &record) {
+        Ok(Some((agent_loop, verification_completion_gate, verification_recovery_retry))) => {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop,
+                    verification_completion_gate,
+                    verification_recovery_repair: None,
+                    verification_recovery_retry: Some(verification_recovery_retry),
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    if record.verification_recovery_retry_provenance.is_some() {
+        return handle_verification_recovery_retry_task_run(id, store, record);
     }
 
     match recovery_cycle_budget_outcome_for_replay(&store, &record) {
@@ -1858,6 +1958,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: None,
@@ -1879,6 +1980,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: Some(child_orchestration_outcome),
                     parent_join_readiness_outcome: None,
@@ -1900,6 +2002,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
@@ -2366,9 +2469,188 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     },
                     verification_completion_gate,
                     verification_recovery_repair,
+                    verification_recovery_retry: None,
                     recovery_cycle_budget_outcome,
                     child_orchestration_outcome,
                     parent_join_readiness_outcome,
+                }),
+            )
+        }
+        Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+    }
+}
+
+fn handle_verification_recovery_retry_task_run(
+    id: Value,
+    store: BrownieStore,
+    record: TaskRecord,
+) -> JsonRpcResponse<Value> {
+    if let Err(rejection) = revalidate_verification_recovery_retry_task_for_run(&store, &record) {
+        return match rejection {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                error_response(id, -32602, message)
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    }
+
+    match validate_task_run_admission(&record, &store) {
+        Ok(TaskRunAdmission::Standard) => {}
+        Ok(TaskRunAdmission::ParentJoinContinuation(_)) => {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: verification recovery retry task cannot admit parent join continuation",
+            )
+        }
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    }
+
+    let running = match store.tasks().update_task_status(
+        &record.task_id,
+        TaskStatus::Running,
+        LedgerEventKind::TaskRunning,
+    ) {
+        Ok(record) => record,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let policy = match resolve_policy_for_task_run(&running, &store) {
+        Ok(policy) => policy,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    if let Err(error) = append_permission_checks(&store, &running, &policy) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = append_tool_plan_events(&store, &running, &policy) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::AgentLoopStarted,
+        Some(json!({
+            "entrypoint": METHOD_TASK_RUN,
+            "state": agent_loop_state_name(AgentLoopState::BuildingContext),
+            "verification_recovery_retry": true,
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+
+    let Some(provenance) = running.verification_recovery_retry_provenance.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing verification recovery retry provenance",
+        );
+    };
+    for tool_id in &provenance.retried_verifier_tool_ids {
+        if let Err(error) =
+            append_verification_recovery_retry_tool_execution(&store, &running, &policy, tool_id)
+        {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
+        Ok(events) => events,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let verification_completion_gate =
+        verification_completion_gate_for_run(&completion_gate_events);
+    let agent_loop_final_state = match verification_completion_gate.as_ref() {
+        Some(gate) if gate.status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED => {
+            AgentLoopState::Failed
+        }
+        Some(_) => AgentLoopState::Completed,
+        None => AgentLoopState::Failed,
+    };
+    let agent_loop_completion_summary = match verification_completion_gate.as_ref() {
+        Some(gate) if gate.status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED => {
+            verification_completion_gate_failed_summary(gate)
+        }
+        Some(gate) => format!(
+            "Verification recovery retry completed: required_verifier_count={} passed_verifier_count={}",
+            gate.required_verifier_count, gate.passed_verifier_count
+        ),
+        None => "Verification recovery retry failed: missing verifier completion gate.".to_string(),
+    };
+
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &running,
+        LedgerEventKind::AgentLoopCompleted,
+        Some(json!({
+            "final_state": agent_loop_state_name(agent_loop_final_state),
+            "completion_summary": agent_loop_completion_summary.clone(),
+            "completion_result_fingerprint": completion_result_fingerprint(
+                agent_loop_final_state,
+                &agent_loop_completion_summary,
+                "",
+            ),
+            "verification_recovery_retry": true,
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+
+    let final_status = match agent_loop_final_state {
+        AgentLoopState::Completed => TaskStatus::Completed,
+        AgentLoopState::Cancelled => TaskStatus::Cancelled,
+        _ => TaskStatus::Failed,
+    };
+    let event_kind = match final_status {
+        TaskStatus::Completed => LedgerEventKind::TaskCompleted,
+        TaskStatus::Cancelled => LedgerEventKind::TaskCancelled,
+        _ => LedgerEventKind::TaskFailed,
+    };
+    let terminal_payload = verification_completion_gate
+        .as_ref()
+        .map(verification_completion_gate_payload);
+    match store.tasks().update_task_status_with_payload(
+        &running.task_id,
+        final_status,
+        event_kind,
+        terminal_payload,
+    ) {
+        Ok(record) => {
+            let verification_recovery_retry = match verification_recovery_retry_outcome_for_run(
+                &store,
+                &record,
+                verification_completion_gate.as_ref(),
+                false,
+            ) {
+                Ok(outcome) => outcome,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop: TaskRunAgentLoopSummary {
+                        final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
+                        completion_summary: agent_loop_completion_summary,
+                    },
+                    verification_completion_gate,
+                    verification_recovery_repair: None,
+                    verification_recovery_retry,
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
                 }),
             )
         }
@@ -3292,6 +3574,7 @@ fn fail_llm_request(
                         agent_loop: controlled_child_failed_agent_loop_summary(),
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
+                        verification_recovery_retry: None,
                         recovery_cycle_budget_outcome: None,
                         child_orchestration_outcome: None,
                         parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
@@ -13772,6 +14055,7 @@ fn child_task_inspect_summary(
         source_intent_summary: task.source_intent_summary.clone(),
         recovery_cycle_provenance: task.recovery_cycle_provenance.clone(),
         verification_recovery_provenance: task.verification_recovery_provenance.clone(),
+        verification_recovery_retry_provenance: task.verification_recovery_retry_provenance.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
         completion_final_state,
@@ -14679,6 +14963,105 @@ fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate
     })
 }
 
+fn append_verification_recovery_retry_tool_execution(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    policy: &CompiledModePolicy,
+    tool_id: &str,
+) -> anyhow::Result<()> {
+    let definition = BuiltinToolRegistry::get(tool_id)
+        .ok_or_else(|| anyhow::anyhow!("unknown verification retry tool id: {tool_id}"))?;
+    if !is_verification_tool_id(&definition.tool_id) {
+        anyhow::bail!("unsupported verification retry tool id: {tool_id}");
+    }
+    let check_id = match definition.tool_id.as_str() {
+        VERIFICATION_CARGO_FMT_CHECK_TOOL_ID => "cargo_fmt_check",
+        VERIFICATION_CARGO_CHECK_TOOL_ID => "cargo_check",
+        _ => anyhow::bail!("unsupported verification retry tool id: {tool_id}"),
+    };
+    let input = json!({
+        "check_id": check_id,
+    });
+    let permission = RuntimePermissionGate::check(policy, definition.required_action.clone());
+    let intent_payload = json!({
+        "tool_id": definition.tool_id,
+        "required_action": runtime_action_name(&definition.required_action),
+        "allowed": permission.allowed,
+        "reason": permission.reason,
+        "request_reason": "verification_recovery_retry",
+        "input_summary": summarize_intent_input(&input),
+        "verification_recovery_retry": true,
+    });
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolIntentPermissionChecked,
+        Some(intent_payload.clone()),
+    )?;
+    store.tasks().append_task_event_with_payload(
+        record,
+        if permission.allowed {
+            LedgerEventKind::ToolIntentApproved
+        } else {
+            LedgerEventKind::ToolIntentDenied
+        },
+        Some(intent_payload),
+    )?;
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionRequested,
+        Some(json!({
+            "tool_id": definition.tool_id,
+            "input_summary": summarize_intent_input(&input),
+            "verification_recovery_retry": true,
+        })),
+    )?;
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionPermissionChecked,
+        Some(json!({
+            "tool_id": definition.tool_id,
+            "required_action": runtime_action_name(&definition.required_action),
+            "allowed": permission.allowed,
+            "reason": permission.reason,
+            "verification_recovery_retry": true,
+        })),
+    )?;
+    if !permission.allowed {
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolExecutionDenied,
+            Some(json!({
+                "tool_id": definition.tool_id,
+                "status": "Denied",
+                "reason": permission.reason,
+                "verification_recovery_retry": true,
+            })),
+        )?;
+        return Ok(());
+    }
+
+    let result = ToolExecutor::execute_controlled(
+        store.workspace_root(),
+        ToolExecutionRequest {
+            tool_id: definition.tool_id,
+            input,
+        },
+    )?;
+    let kind = match result.status {
+        ToolExecutionStatus::Completed => LedgerEventKind::ToolExecutionCompleted,
+        ToolExecutionStatus::Denied => LedgerEventKind::ToolExecutionDenied,
+        ToolExecutionStatus::Failed => LedgerEventKind::ToolExecutionFailed,
+    };
+    let mut payload = tool_execution_ledger_payload(&result);
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("verification_recovery_retry".to_string(), json!(true));
+    }
+    store
+        .tasks()
+        .append_task_event_with_payload(record, kind, Some(payload))?;
+    Ok(())
+}
+
 #[derive(Debug, Clone)]
 enum VerificationRecoveryAdmissionError {
     InvalidParams(String),
@@ -14775,6 +15158,273 @@ fn verification_recovery_provenance_for_source(
     })
 }
 
+#[derive(Debug, Clone)]
+struct VerificationRecoveryApplyEvidence {
+    apply_fingerprint: String,
+}
+
+fn verification_recovery_retry_provenance_for_source(
+    store: &BrownieStore,
+    source: &VerificationRecoveryRetrySource,
+) -> Result<VerificationRecoveryRetryProvenance, VerificationRecoveryAdmissionError> {
+    validate_verification_recovery_retry_source_shape(source)?;
+
+    let recovery_source = VerificationRecoverySource {
+        source_task_id: source.source_task_id.clone(),
+        source_run_id: source.source_run_id.clone(),
+        expected_failure_fingerprint: source.expected_failure_fingerprint.clone(),
+        authorize_recovery: true,
+    };
+    let latest_recovery_provenance =
+        verification_recovery_provenance_for_source(store, &recovery_source)?;
+
+    let recovery_task = store
+        .tasks()
+        .get_task(&source.recovery_task_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: verification_recovery_retry_source.recovery_task_id was not found"
+                    .into(),
+            )
+        })?;
+    if recovery_task.run_id != source.recovery_run_id {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification_recovery_retry_source.recovery_run_id does not match recovery task"
+                .into(),
+        ));
+    }
+    let Some(recovery_provenance) = recovery_task.verification_recovery_provenance.as_ref() else {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source task is not a recovery task".into(),
+        ));
+    };
+    if recovery_provenance != &latest_recovery_provenance {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source recovery provenance is stale"
+                .into(),
+        ));
+    }
+
+    let proposals =
+        verification_recovery_repair_proposals_for_run(store, &recovery_task, recovery_provenance)
+            .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    if !proposals
+        .iter()
+        .any(|proposal| proposal.proposal_id == source.proposal_id)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source proposal is not recovery-scoped"
+                .into(),
+        ));
+    }
+
+    let apply_evidence = latest_recovery_apply_evidence(
+        store,
+        &source.recovery_run_id,
+        &source.proposal_id,
+        &source.apply_id,
+    )?;
+    if apply_evidence.apply_fingerprint != source.expected_apply_fingerprint {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification_recovery_retry_source.expected_apply_fingerprint is stale"
+                .into(),
+        ));
+    }
+
+    let retried_verifier_tool_ids = recovery_provenance
+        .failed_verifier_tool_ids
+        .iter()
+        .map(|tool_id| tool_id.as_str())
+        .collect::<Vec<_>>();
+    if retried_verifier_tool_ids.is_empty()
+        || !retried_verifier_tool_ids
+            .iter()
+            .all(|tool_id| is_verification_tool_id(tool_id))
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source has unsupported verifier set"
+                .into(),
+        ));
+    }
+
+    Ok(VerificationRecoveryRetryProvenance {
+        source_task_id: source.source_task_id.clone(),
+        source_run_id: source.source_run_id.clone(),
+        recovery_task_id: source.recovery_task_id.clone(),
+        recovery_run_id: source.recovery_run_id.clone(),
+        proposal_id: source.proposal_id.clone(),
+        apply_id: source.apply_id.clone(),
+        failure_fingerprint: source.expected_failure_fingerprint.clone(),
+        apply_fingerprint: source.expected_apply_fingerprint.clone(),
+        retried_verifier_tool_ids: retried_verifier_tool_ids
+            .into_iter()
+            .map(ToString::to_string)
+            .collect(),
+    })
+}
+
+fn validate_verification_recovery_retry_source_shape(
+    source: &VerificationRecoveryRetrySource,
+) -> Result<(), VerificationRecoveryAdmissionError> {
+    for (field, value) in [
+        ("source_task_id", source.source_task_id.as_str()),
+        ("source_run_id", source.source_run_id.as_str()),
+        ("recovery_task_id", source.recovery_task_id.as_str()),
+        ("recovery_run_id", source.recovery_run_id.as_str()),
+        ("proposal_id", source.proposal_id.as_str()),
+        ("apply_id", source.apply_id.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: verification_recovery_retry_source.{field} must not be empty"
+            )));
+        }
+    }
+    if !source.authorize_verification_retry {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification_recovery_retry_source.authorize_verification_retry must be true"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&source.expected_failure_fingerprint) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification_recovery_retry_source.expected_failure_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&source.expected_apply_fingerprint) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification_recovery_retry_source.expected_apply_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
+fn latest_recovery_apply_evidence(
+    store: &BrownieStore,
+    recovery_run_id: &str,
+    proposal_id: &str,
+    apply_id: &str,
+) -> Result<VerificationRecoveryApplyEvidence, VerificationRecoveryAdmissionError> {
+    let events = store
+        .tasks()
+        .read_ledger_events(recovery_run_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let payload = events
+        .iter()
+        .rev()
+        .find_map(|event| {
+            if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+                return None;
+            }
+            let Value::Object(_) = event.payload.as_ref()? else {
+                return None;
+            };
+            let payload = event.payload.clone()?;
+            if payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id)
+                && payload.get("apply_id").and_then(Value::as_str) == Some(apply_id)
+            {
+                Some(payload)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: verification recovery retry source has no matching apply result"
+                    .into(),
+            )
+        })?;
+
+    if payload.get("apply_status").and_then(Value::as_str) != Some("Applied")
+        || payload.get("applied").and_then(Value::as_bool) != Some(true)
+        || payload
+            .get("authorization_consumed")
+            .and_then(Value::as_bool)
+            != Some(true)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source apply result is not applied".into(),
+        ));
+    }
+    let operation = payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let operation_verified = match operation {
+        "replace_file" => {
+            payload
+                .get("atomic_replacement_completed")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("post_write_sha256")
+                    .and_then(Value::as_str)
+                    .filter(|hash| is_sha256_fingerprint(hash))
+                    .is_some()
+        }
+        "create_file" => {
+            payload
+                .get("atomic_create_completed")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("post_write_sha256")
+                    .and_then(Value::as_str)
+                    .filter(|hash| is_sha256_fingerprint(hash))
+                    .is_some()
+        }
+        "delete_file" => {
+            payload
+                .get("atomic_delete_completed")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("post_delete_target_exists")
+                    .and_then(Value::as_bool)
+                    == Some(false)
+        }
+        _ => false,
+    };
+    if !operation_verified {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: verification recovery retry source apply post-state is not verified"
+                .into(),
+        ));
+    }
+
+    Ok(VerificationRecoveryApplyEvidence {
+        apply_fingerprint: verification_recovery_apply_fingerprint(&payload),
+    })
+}
+
+fn verification_recovery_apply_fingerprint(payload: &Value) -> String {
+    let canonical = json!({
+        "version": "verification_recovery_apply_fingerprint_v1",
+        "proposal_id": payload.get("proposal_id").and_then(Value::as_str),
+        "apply_id": payload.get("apply_id").and_then(Value::as_str),
+        "apply_status": payload.get("apply_status").and_then(Value::as_str),
+        "authorization_consumed": payload.get("authorization_consumed").and_then(Value::as_bool),
+        "applied": payload.get("applied").and_then(Value::as_bool),
+        "operation": payload.get("operation").and_then(Value::as_str),
+        "atomic_replacement_completed": payload.get("atomic_replacement_completed").and_then(Value::as_bool),
+        "atomic_create_completed": payload.get("atomic_create_completed").and_then(Value::as_bool),
+        "atomic_delete_completed": payload.get("atomic_delete_completed").and_then(Value::as_bool),
+        "path": payload.get("path").and_then(Value::as_str),
+        "expected_target_sha256": payload.get("expected_target_sha256").and_then(Value::as_str),
+        "expected_target_absent": payload.get("expected_target_absent").and_then(Value::as_bool),
+        "pre_write_target_sha256": payload.get("pre_write_target_sha256").and_then(Value::as_str),
+        "pre_write_target_exists": payload.get("pre_write_target_exists").and_then(Value::as_bool),
+        "post_write_sha256": payload.get("post_write_sha256").and_then(Value::as_str),
+        "post_delete_target_exists": payload.get("post_delete_target_exists").and_then(Value::as_bool),
+        "content_chars": payload.get("content_chars").and_then(Value::as_u64),
+        "content_bytes": payload.get("content_bytes").and_then(Value::as_u64),
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
 fn revalidate_verification_recovery_task_for_run(
     store: &BrownieStore,
     record: &TaskRecord,
@@ -14807,6 +15457,134 @@ fn revalidate_verification_recovery_task_for_run(
         ));
     }
     Ok(true)
+}
+
+fn revalidate_verification_recovery_retry_task_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<bool, TaskRunAdmissionRejection> {
+    let Some(provenance) = record.verification_recovery_retry_provenance.as_ref() else {
+        return Ok(false);
+    };
+    let source = VerificationRecoveryRetrySource {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        recovery_task_id: provenance.recovery_task_id.clone(),
+        recovery_run_id: provenance.recovery_run_id.clone(),
+        proposal_id: provenance.proposal_id.clone(),
+        apply_id: provenance.apply_id.clone(),
+        expected_failure_fingerprint: provenance.failure_fingerprint.clone(),
+        expected_apply_fingerprint: provenance.apply_fingerprint.clone(),
+        authorize_verification_retry: true,
+    };
+    let latest =
+        verification_recovery_retry_provenance_for_source(store, &source).map_err(|error| {
+            match error {
+                VerificationRecoveryAdmissionError::InvalidParams(_) => {
+                    TaskRunAdmissionRejection::InvalidParams(
+                        "invalid params: verification recovery retry provenance is stale",
+                    )
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    TaskRunAdmissionRejection::Internal(message)
+                }
+            }
+        })?;
+    if latest != *provenance {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification recovery retry provenance is stale",
+        ));
+    }
+    Ok(true)
+}
+
+fn verification_recovery_retry_outcome_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> anyhow::Result<
+    Option<(
+        TaskRunAgentLoopSummary,
+        Option<TaskRunVerificationCompletionGate>,
+        TaskRunVerificationRecoveryRetryOutcome,
+    )>,
+> {
+    if record.verification_recovery_retry_provenance.is_none()
+        || !matches!(record.status, TaskStatus::Completed | TaskStatus::Failed)
+    {
+        return Ok(None);
+    }
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let gate = verification_completion_gate_for_run(&events);
+    let Some(outcome) =
+        verification_recovery_retry_outcome_for_run(store, record, gate.as_ref(), true)?
+    else {
+        return Ok(None);
+    };
+    let summary = match record.status {
+        TaskStatus::Completed => {
+            "Verification recovery retry already completed; replaying bounded retry outcome."
+        }
+        TaskStatus::Failed => {
+            "Verification recovery retry already failed; replaying bounded retry outcome."
+        }
+        _ => "Verification recovery retry replayed.",
+    };
+    Ok(Some((
+        TaskRunAgentLoopSummary {
+            final_state: match record.status {
+                TaskStatus::Completed => agent_loop_state_name(AgentLoopState::Completed),
+                TaskStatus::Failed => agent_loop_state_name(AgentLoopState::Failed),
+                _ => agent_loop_state_name(AgentLoopState::Failed),
+            }
+            .to_string(),
+            completion_summary: summary.to_string(),
+        },
+        gate,
+        outcome,
+    )))
+}
+
+fn verification_recovery_retry_outcome_for_run(
+    _store: &BrownieStore,
+    record: &TaskRecord,
+    gate: Option<&TaskRunVerificationCompletionGate>,
+    replayed: bool,
+) -> anyhow::Result<Option<TaskRunVerificationRecoveryRetryOutcome>> {
+    let Some(provenance) = record.verification_recovery_retry_provenance.as_ref() else {
+        return Ok(None);
+    };
+    let passed_verifier_tool_ids = gate
+        .map(|gate| gate.passed_verifier_tool_ids.clone())
+        .unwrap_or_default();
+    let failed_verifier_tool_ids = gate
+        .map(|gate| gate.failed_verifier_tool_ids.clone())
+        .unwrap_or_else(|| provenance.retried_verifier_tool_ids.clone());
+    let retry_status = gate
+        .map(|gate| gate.status.clone())
+        .unwrap_or_else(|| VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string());
+    let next_action = if retry_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+        "complete_recovered_task"
+    } else {
+        "inspect_verification_failure_and_retry_task"
+    };
+    Ok(Some(TaskRunVerificationRecoveryRetryOutcome {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        recovery_task_id: provenance.recovery_task_id.clone(),
+        recovery_run_id: provenance.recovery_run_id.clone(),
+        retry_task_id: record.task_id.clone(),
+        retry_run_id: record.run_id.clone(),
+        proposal_id: provenance.proposal_id.clone(),
+        apply_id: provenance.apply_id.clone(),
+        failure_fingerprint: provenance.failure_fingerprint.clone(),
+        apply_fingerprint: provenance.apply_fingerprint.clone(),
+        retried_verifier_tool_ids: provenance.retried_verifier_tool_ids.clone(),
+        passed_verifier_tool_ids,
+        failed_verifier_tool_ids,
+        retry_status,
+        replayed,
+        next_action: next_action.to_string(),
+    }))
 }
 
 #[derive(Debug, Clone)]
@@ -18961,6 +19739,7 @@ mod tests {
                 goal: "created source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("created source");
         let running = store
@@ -18969,6 +19748,7 @@ mod tests {
                 goal: "running source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("running source");
         store
@@ -18985,6 +19765,7 @@ mod tests {
                 goal: "completed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("completed source");
         store
@@ -19001,6 +19782,7 @@ mod tests {
                 goal: "cancelled source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("cancelled source");
         store
@@ -19017,6 +19799,7 @@ mod tests {
                 goal: "non-verification failed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("failed source");
         store
@@ -19341,6 +20124,240 @@ mod tests {
         );
         assert_eq!(repair["proposal_count"], 1);
         assert_eq!(repair["apply_enabled"], false);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_start_and_run_verification_recovery_retry_after_applied_recovery_proposal() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"m8_3_fmt_retry\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(
+            temp.path().join("src/lib.rs"),
+            "pub fn raw_m8_3_fmt_failure_marker( )->i32{1}\n",
+        )
+        .expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+            );
+        let (recovery_task_id, recovery_run_id) = start_verification_recovery_task_from_source(
+            &source_task_id,
+            &source_run_id,
+            &fingerprint,
+            "Implement recovery edit",
+            "implementer",
+        );
+        let recovery_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(recovery_run.error.is_none());
+        let recovery_result = recovery_run.result.expect("recovery result");
+        let repair = &recovery_result["verification_recovery_repair"];
+        let proposal_id = repair["proposal_id"].as_str().expect("proposal id");
+
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.approve","params":{{"run_id":"{recovery_run_id}","proposal_id":"{proposal_id}","reason":"retry apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.preflight","params":{{"run_id":"{recovery_run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        let expected_hash = preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": recovery_run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "replacement_content": "new README content",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        assert!(apply.error.is_none());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(apply_result["apply_result"]["authorization_consumed"], true);
+        let apply_id = apply_result["apply_result"]["apply_id"]
+            .as_str()
+            .expect("apply id")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let apply_payload = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery apply events")
+            .into_iter()
+            .rev()
+            .find(|event| {
+                event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("apply_id"))
+                        .and_then(Value::as_str)
+                        == Some(apply_id.as_str())
+            })
+            .and_then(|event| event.payload)
+            .expect("apply payload");
+        let apply_fingerprint = super::verification_recovery_apply_fingerprint(&apply_payload);
+
+        let retry_start = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "task.start",
+                "params": {
+                    "goal": "Retry failed verification after recovery apply",
+                    "mode_id": "verifier",
+                    "verification_recovery_retry_source": {
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "recovery_task_id": recovery_task_id,
+                        "recovery_run_id": recovery_run_id,
+                        "proposal_id": proposal_id,
+                        "apply_id": apply_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "expected_apply_fingerprint": apply_fingerprint,
+                        "authorize_verification_retry": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            retry_start.error.is_none(),
+            "retry start error: {:?}",
+            retry_start.error
+        );
+        let retry_start_result = retry_start.result.expect("retry start result");
+        let retry_task_id = retry_start_result["task_id"]
+            .as_str()
+            .expect("retry task id")
+            .to_string();
+        let retry_run_id = retry_start_result["run_id"]
+            .as_str()
+            .expect("retry run id")
+            .to_string();
+        assert_eq!(
+            retry_start_result["verification_recovery_retry_admission"]["retry_running_enabled"],
+            false
+        );
+        assert_eq!(
+            retry_start_result["verification_recovery_retry_admission"]["next_action"],
+            "run_verification_retry_task_explicitly"
+        );
+
+        let retry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ));
+        assert!(retry_run.error.is_none());
+        let retry_result = retry_run.result.expect("retry result");
+        assert_eq!(retry_result["status"], "Failed");
+        let retry = &retry_result["verification_recovery_retry"];
+        assert_eq!(retry["source_task_id"], source_task_id);
+        assert_eq!(retry["source_run_id"], source_run_id);
+        assert_eq!(retry["recovery_task_id"], recovery_task_id);
+        assert_eq!(retry["recovery_run_id"], recovery_run_id);
+        assert_eq!(retry["proposal_id"], proposal_id);
+        assert_eq!(retry["apply_id"], apply_id);
+        assert_eq!(retry["failure_fingerprint"], fingerprint);
+        assert_eq!(retry["apply_fingerprint"], apply_fingerprint);
+        assert_eq!(
+            retry["retried_verifier_tool_ids"][0],
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
+        );
+        assert_eq!(retry["retry_status"], "Failed");
+        assert_eq!(retry["replayed"], false);
+        assert_eq!(
+            retry_result["verification_completion_gate"]["required_verifier_tool_ids"][0],
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
+        );
+
+        let retry_events = store
+            .tasks()
+            .read_ledger_events(&retry_run_id)
+            .expect("retry events");
+        assert_eq!(
+            retry_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            retry_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ToolExecutionRequested
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("tool_id"))
+                            .and_then(Value::as_str)
+                            == Some(VERIFICATION_CARGO_FMT_CHECK_TOOL_ID)
+                })
+                .count(),
+            1
+        );
+        let retry_tool_terminal_payload = retry_events
+            .iter()
+            .find_map(|event| {
+                if !matches!(
+                    event.kind,
+                    LedgerEventKind::ToolExecutionCompleted | LedgerEventKind::ToolExecutionFailed
+                ) {
+                    return None;
+                }
+                let payload = event.payload.as_ref()?;
+                if payload.get("tool_id").and_then(Value::as_str)
+                    == Some(VERIFICATION_CARGO_FMT_CHECK_TOOL_ID)
+                {
+                    Some(payload)
+                } else {
+                    None
+                }
+            })
+            .expect("retry tool terminal payload");
+        assert_eq!(retry_tool_terminal_payload["check_id"], "cargo_fmt_check");
+        assert_eq!(retry_tool_terminal_payload["process_launched"], true);
+        assert_eq!(retry_tool_terminal_payload["output_redacted"], true);
+        assert!(!retry_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded));
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":10,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ));
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["verification_recovery_retry"]["replayed"],
+            true
+        );
+        let retry_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&retry_run_id)
+            .expect("retry events after replay");
+        assert_eq!(retry_events_after_replay.len(), retry_events.len());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -22298,6 +23315,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -22405,6 +23423,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let parser_decision = ToolIntentDecision {
@@ -22679,6 +23698,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
@@ -22735,6 +23755,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -23278,6 +24299,7 @@ mod tests {
                 goal: "Parent recovery-cycle admission".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let provenance = RecoveryCycleChildProvenance {
@@ -25913,6 +26935,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         store
@@ -25962,6 +26985,7 @@ mod tests {
                 goal: "Parent over-budget recovery cycle".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let continuation = ParentJoinContinuationMaterialization {
@@ -26070,6 +27094,7 @@ mod tests {
                 goal: "Parent over-budget recovery-cycle outcome".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start parent");
         let running_parent = store
@@ -29295,6 +30320,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29439,6 +30465,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29511,6 +30538,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29578,6 +30606,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29648,6 +30677,7 @@ mod tests {
                 goal: "delete obsolete symlink".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29719,6 +30749,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29865,6 +30896,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -29931,6 +30963,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -30024,6 +31057,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -30091,6 +31125,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -30128,6 +31163,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -30174,6 +31210,7 @@ mod tests {
                 goal: "apply capability".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -30214,6 +31251,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(&store, &record, "proposal_blocked", "Blocked", None, true);
@@ -30245,6 +31283,7 @@ mod tests {
                 goal: "review verdict".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -30288,6 +31327,7 @@ mod tests {
                 goal: "review queue".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                verification_recovery_retry_source: None,
             })
             .expect("start task");
 
