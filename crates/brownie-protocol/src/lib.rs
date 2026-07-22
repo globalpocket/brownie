@@ -651,6 +651,8 @@ pub struct TaskRunResult {
     pub status: TaskStatus,
     pub agent_loop: TaskRunAgentLoopSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_completion_gate: Option<TaskRunVerificationCompletionGate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
@@ -662,6 +664,19 @@ pub struct TaskRunResult {
 pub struct TaskRunAgentLoopSummary {
     pub final_state: String,
     pub completion_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunVerificationCompletionGate {
+    pub status: String,
+    pub required_verifier_count: usize,
+    pub passed_verifier_count: usize,
+    pub failed_verifier_count: usize,
+    pub required_verifier_tool_ids: Vec<String>,
+    pub passed_verifier_tool_ids: Vec<String>,
+    pub failed_verifier_tool_ids: Vec<String>,
+    pub failure_reasons: Vec<String>,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -379,7 +379,7 @@ impl FakeLlm {
             ));
         } else if contains_any(
             &request_signal,
-            &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
+            &["cargo fmt", "fmt", "format", "formatting"],
         ) {
             requests.push((
                 "verification.cargo_fmt_check",

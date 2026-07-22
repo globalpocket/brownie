@@ -220,6 +220,7 @@ export interface TaskRunResult {
   run_id: string;
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
+  verification_completion_gate?: TaskRunVerificationCompletionGate | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
@@ -228,6 +229,18 @@ export interface TaskRunResult {
 export interface AgentLoopRunSummary {
   final_state: string;
   completion_summary: string;
+}
+
+export interface TaskRunVerificationCompletionGate {
+  status: 'Passed' | 'Failed';
+  required_verifier_count: number;
+  passed_verifier_count: number;
+  failed_verifier_count: number;
+  required_verifier_tool_ids: string[];
+  passed_verifier_tool_ids: string[];
+  failed_verifier_tool_ids: string[];
+  failure_reasons: string[];
+  next_action: 'complete_task' | 'inspect_verification_failure_and_retry_task';
 }
 
 export interface TaskRunChildOrchestrationOutcome {
@@ -3125,6 +3138,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     typeof value.run_id === 'string' &&
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
+    (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))
@@ -3136,6 +3150,21 @@ export function isAgentLoopRunSummary(value: unknown): value is AgentLoopRunSumm
     isRecord(value) &&
     typeof value.final_state === 'string' &&
     typeof value.completion_summary === 'string'
+  );
+}
+
+export function isTaskRunVerificationCompletionGate(value: unknown): value is TaskRunVerificationCompletionGate {
+  return (
+    isRecord(value) &&
+    (value.status === 'Passed' || value.status === 'Failed') &&
+    typeof value.required_verifier_count === 'number' &&
+    typeof value.passed_verifier_count === 'number' &&
+    typeof value.failed_verifier_count === 'number' &&
+    isStringArray(value.required_verifier_tool_ids) &&
+    isStringArray(value.passed_verifier_tool_ids) &&
+    isStringArray(value.failed_verifier_tool_ids) &&
+    isStringArray(value.failure_reasons) &&
+    (value.next_action === 'complete_task' || value.next_action === 'inspect_verification_failure_and_retry_task')
   );
 }
 
@@ -3322,4 +3351,8 @@ function isJsonRpcError(value: unknown): value is JsonRpcError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((entry) => typeof entry === 'string');
 }

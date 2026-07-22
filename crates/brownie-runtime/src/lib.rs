@@ -109,21 +109,21 @@ use brownie_protocol::{
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskStartParams,
-    TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, WorkspacePatchApplyCapabilityCheckSummary,
-    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
-    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
-    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
-    WorkspacePatchApplyPlanSummary, WorkspacePatchApplyResultCheckSummary,
-    WorkspacePatchApplyResultSummary, WorkspacePatchAuditTrailEntry,
-    WorkspacePatchAuditTrailSummary, WorkspacePatchPreflightSnapshotSummary,
-    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
-    WorkspacePatchReadinessReportSummary, WorkspacePatchReviewBundleSummary,
-    WorkspacePatchReviewQueueDiagnosticsCheckSummary,
+    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult,
+    TaskRunVerificationCompletionGate, TaskStartParams, TaskStartResult, TaskStatus,
+    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
+    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
+    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
+    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
+    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
+    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
+    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
+    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
+    WorkspacePatchApplyResultCheckSummary, WorkspacePatchApplyResultSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
+    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary,
@@ -1774,6 +1774,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    verification_completion_gate: None,
                     recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: None,
@@ -1793,6 +1794,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    verification_completion_gate: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: Some(child_orchestration_outcome),
                     parent_join_readiness_outcome: None,
@@ -1812,6 +1814,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    verification_completion_gate: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
@@ -2175,6 +2178,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
+    let completion_gate_events = match store.tasks().read_ledger_events(&running.run_id) {
+        Ok(events) => events,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let verification_completion_gate =
+        verification_completion_gate_for_run(&completion_gate_events);
+    if let Some(gate) = verification_completion_gate.as_ref() {
+        if gate.status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED {
+            agent_loop_final_state = AgentLoopState::Failed;
+            agent_loop_completion_summary = verification_completion_gate_failed_summary(gate);
+            agent_loop_final_response_content.clear();
+        }
+    }
+
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::AgentLoopCompleted,
@@ -2211,11 +2228,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Ok(outcome) => outcome,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
+    let terminal_payload = verification_completion_gate
+        .as_ref()
+        .map(verification_completion_gate_payload);
 
-    match store
-        .tasks()
-        .update_task_status(&running.task_id, final_status, event_kind)
-    {
+    match store.tasks().update_task_status_with_payload(
+        &running.task_id,
+        final_status,
+        event_kind,
+        terminal_payload,
+    ) {
         Ok(record) => {
             let parent_join_readiness_outcome =
                 match parent_join_readiness_outcome_for_terminal_child(&store, &record) {
@@ -2234,6 +2256,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    verification_completion_gate,
                     recovery_cycle_budget_outcome,
                     child_orchestration_outcome,
                     parent_join_readiness_outcome,
@@ -3158,6 +3181,7 @@ fn fail_llm_request(
                         run_id: record.run_id,
                         status: record.status,
                         agent_loop: controlled_child_failed_agent_loop_summary(),
+                        verification_completion_gate: None,
                         recovery_cycle_budget_outcome: None,
                         child_orchestration_outcome: None,
                         parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
@@ -13736,6 +13760,14 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "target_dir_isolated",
         "network_disabled",
         "cleanup_succeeded",
+        "verification_completion_gate_status",
+        "required_verifier_count",
+        "passed_verifier_count",
+        "failed_verifier_count",
+        "required_verifier_tool_ids",
+        "passed_verifier_tool_ids",
+        "failed_verifier_tool_ids",
+        "failure_reasons",
         "provider",
         "model",
         "message_count",
@@ -13919,6 +13951,10 @@ fn timeline_entry(event: &LedgerEvent) -> String {
             "status",
             "check_id",
             "verification_status",
+            "verification_completion_gate_status",
+            "required_verifier_count",
+            "passed_verifier_count",
+            "failed_verifier_count",
             "timed_out",
             "subtask_id",
             "parent_task_id",
@@ -14318,6 +14354,218 @@ fn tool_execute_result(result: brownie_tools::ToolExecutionResult) -> ToolExecut
     }
 }
 
+const VERIFICATION_COMPLETION_GATE_STATUS_PASSED: &str = "Passed";
+const VERIFICATION_COMPLETION_GATE_STATUS_FAILED: &str = "Failed";
+
+struct RequiredVerificationIntent {
+    tool_id: String,
+    event_index: usize,
+    rejected: bool,
+}
+
+fn verification_completion_gate_for_run(
+    events: &[LedgerEvent],
+) -> Option<TaskRunVerificationCompletionGate> {
+    let required = required_verification_intents(events);
+    if required.is_empty() {
+        return None;
+    }
+
+    let mut passed_verifier_tool_ids = Vec::new();
+    let mut failed_verifier_tool_ids = Vec::new();
+    let mut failure_reasons = Vec::new();
+
+    for intent in &required {
+        if intent.rejected {
+            failed_verifier_tool_ids.push(intent.tool_id.clone());
+            failure_reasons.push(format!("{}:RejectedToolIntent", intent.tool_id));
+            continue;
+        }
+
+        match terminal_verification_event_after(events, intent.event_index, &intent.tool_id) {
+            Some(event) if event.kind == LedgerEventKind::ToolExecutionCompleted => {
+                let verification_status = event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("verification_status"))
+                    .and_then(Value::as_str);
+                if verification_status == Some(VERIFICATION_COMPLETION_GATE_STATUS_PASSED) {
+                    passed_verifier_tool_ids.push(intent.tool_id.clone());
+                } else {
+                    failed_verifier_tool_ids.push(intent.tool_id.clone());
+                    failure_reasons.push(format!(
+                        "{}:{}",
+                        intent.tool_id,
+                        verification_status.unwrap_or("MalformedTerminalEvidence")
+                    ));
+                }
+            }
+            Some(event) if event.kind == LedgerEventKind::ToolExecutionDenied => {
+                failed_verifier_tool_ids.push(intent.tool_id.clone());
+                failure_reasons.push(format!("{}:Denied", intent.tool_id));
+            }
+            Some(event) if event.kind == LedgerEventKind::ToolExecutionFailed => {
+                let verification_status = event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("verification_status"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("Failed");
+                failed_verifier_tool_ids.push(intent.tool_id.clone());
+                failure_reasons.push(format!("{}:{verification_status}", intent.tool_id));
+            }
+            Some(_) => {
+                failed_verifier_tool_ids.push(intent.tool_id.clone());
+                failure_reasons.push(format!("{}:MalformedTerminalEvidence", intent.tool_id));
+            }
+            None => {
+                failed_verifier_tool_ids.push(intent.tool_id.clone());
+                let reason =
+                    if stale_verification_event_before(events, intent.event_index, &intent.tool_id)
+                    {
+                        "StaleTerminalEvidence"
+                    } else {
+                        "MissingTerminalEvidence"
+                    };
+                failure_reasons.push(format!("{}:{reason}", intent.tool_id));
+            }
+        }
+    }
+
+    let required_verifier_tool_ids = required
+        .iter()
+        .map(|intent| intent.tool_id.clone())
+        .collect::<Vec<_>>();
+    let status = if failed_verifier_tool_ids.is_empty() {
+        VERIFICATION_COMPLETION_GATE_STATUS_PASSED
+    } else {
+        VERIFICATION_COMPLETION_GATE_STATUS_FAILED
+    };
+    let next_action = if failed_verifier_tool_ids.is_empty() {
+        "complete_task"
+    } else {
+        "inspect_verification_failure_and_retry_task"
+    };
+
+    Some(TaskRunVerificationCompletionGate {
+        status: status.to_string(),
+        required_verifier_count: required_verifier_tool_ids.len(),
+        passed_verifier_count: passed_verifier_tool_ids.len(),
+        failed_verifier_count: failed_verifier_tool_ids.len(),
+        required_verifier_tool_ids,
+        passed_verifier_tool_ids,
+        failed_verifier_tool_ids,
+        failure_reasons,
+        next_action: next_action.to_string(),
+    })
+}
+
+fn required_verification_intents(events: &[LedgerEvent]) -> Vec<RequiredVerificationIntent> {
+    let mut required: Vec<RequiredVerificationIntent> = Vec::new();
+    for (event_index, event) in events.iter().enumerate() {
+        if !matches!(
+            event.kind,
+            LedgerEventKind::ToolIntentPermissionChecked | LedgerEventKind::ToolIntentRejected
+        ) {
+            continue;
+        }
+        let Some(tool_id) = event
+            .payload
+            .as_ref()
+            .and_then(|payload| payload.get("tool_id"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        if !is_verification_tool_id(tool_id) {
+            continue;
+        }
+        let rejected = event.kind == LedgerEventKind::ToolIntentRejected;
+        if let Some(position) = required.iter().position(|intent| intent.tool_id == tool_id) {
+            required[position].event_index = event_index;
+            required[position].rejected = rejected;
+        } else {
+            required.push(RequiredVerificationIntent {
+                tool_id: tool_id.to_string(),
+                event_index,
+                rejected,
+            });
+        }
+    }
+    required
+}
+
+fn terminal_verification_event_after<'a>(
+    events: &'a [LedgerEvent],
+    required_event_index: usize,
+    tool_id: &str,
+) -> Option<&'a LedgerEvent> {
+    events
+        .iter()
+        .enumerate()
+        .rev()
+        .filter(|(event_index, _)| *event_index > required_event_index)
+        .map(|(_, event)| event)
+        .find(|event| is_terminal_verification_event_for_tool(event, tool_id))
+}
+
+fn stale_verification_event_before(
+    events: &[LedgerEvent],
+    required_event_index: usize,
+    tool_id: &str,
+) -> bool {
+    events.iter().enumerate().any(|(event_index, event)| {
+        event_index < required_event_index
+            && is_terminal_verification_event_for_tool(event, tool_id)
+    })
+}
+
+fn is_terminal_verification_event_for_tool(event: &LedgerEvent, tool_id: &str) -> bool {
+    matches!(
+        event.kind,
+        LedgerEventKind::ToolExecutionCompleted
+            | LedgerEventKind::ToolExecutionDenied
+            | LedgerEventKind::ToolExecutionFailed
+    ) && event
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("tool_id"))
+        .and_then(Value::as_str)
+        == Some(tool_id)
+}
+
+fn is_verification_tool_id(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        VERIFICATION_CARGO_FMT_CHECK_TOOL_ID | VERIFICATION_CARGO_CHECK_TOOL_ID
+    )
+}
+
+fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate) -> Value {
+    json!({
+        "verification_completion_gate_status": gate.status,
+        "required_verifier_count": gate.required_verifier_count,
+        "passed_verifier_count": gate.passed_verifier_count,
+        "failed_verifier_count": gate.failed_verifier_count,
+        "required_verifier_tool_ids": gate.required_verifier_tool_ids.clone(),
+        "passed_verifier_tool_ids": gate.passed_verifier_tool_ids.clone(),
+        "failed_verifier_tool_ids": gate.failed_verifier_tool_ids.clone(),
+        "failure_reasons": gate.failure_reasons.clone(),
+        "next_action": gate.next_action.clone(),
+    })
+}
+
+fn verification_completion_gate_failed_summary(gate: &TaskRunVerificationCompletionGate) -> String {
+    format!(
+        "Verification completion gate failed: required_verifier_count={} passed_verifier_count={} failed_verifier_count={} failed_verifier_tool_ids={} next_action={}",
+        gate.required_verifier_count,
+        gate.passed_verifier_count,
+        gate.failed_verifier_count,
+        gate.failed_verifier_tool_ids.join(","),
+        gate.next_action
+    )
+}
+
 fn append_tool_intent_events(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
@@ -14421,7 +14669,10 @@ fn handle_approved_workspace_intents(
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolExecutionRequested,
-            Some(json!({ "tool_id": decision.tool_id, "input": decision.input })),
+            Some(json!({
+                "tool_id": decision.tool_id,
+                "input_summary": summarize_intent_input(&decision.input),
+            })),
         )?;
         let permission = RuntimePermissionGate::check(policy, decision.required_action.clone());
         store.tasks().append_task_event_with_payload(
@@ -14472,7 +14723,10 @@ fn append_controlled_tool_execution_denied(
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolExecutionRequested,
-        Some(json!({ "tool_id": decision.tool_id, "input": decision.input })),
+        Some(json!({
+            "tool_id": decision.tool_id,
+            "input_summary": summarize_intent_input(&decision.input),
+        })),
     )?;
     let permission = RuntimePermissionGate::check(policy, decision.required_action.clone());
     store.tasks().append_task_event_with_payload(
@@ -17543,7 +17797,9 @@ mod tests {
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Completed");
+        assert!(run_result.get("verification_completion_gate").is_none());
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -17685,7 +17941,16 @@ mod tests {
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Completed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Passed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["required_verifier_tool_ids"][0],
+            "verification.cargo_fmt_check"
+        );
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -17720,11 +17985,21 @@ mod tests {
         assert!(!ledger.contains("stdout"));
         assert!(!ledger.contains("stderr"));
         assert!(!ledger.contains("command"));
+        let task_completed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskCompleted)
+            .expect("task completed event");
+        let completed_payload = task_completed.payload.as_ref().expect("completion payload");
+        assert_eq!(
+            completed_payload["verification_completion_gate_status"],
+            "Passed"
+        );
 
         let events_response = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
         ));
         let sanitized = events_response.result.expect("events result").to_string();
+        assert!(sanitized.contains("verification_completion_gate_status"));
         assert!(sanitized.contains("verification_status"));
         assert!(sanitized.contains("standard_output_bytes"));
         assert!(!sanitized.contains("pub fn ok"));
@@ -17756,7 +18031,16 @@ mod tests {
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Completed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Passed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["required_verifier_tool_ids"][0],
+            "verification.cargo_check"
+        );
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -17798,11 +18082,21 @@ mod tests {
         assert!(!ledger.contains("command"));
         assert!(!ledger.contains("CARGO_TARGET_DIR"));
         assert!(!ledger.contains("CARGO_NET_OFFLINE"));
+        let task_completed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskCompleted)
+            .expect("task completed event");
+        let completed_payload = task_completed.payload.as_ref().expect("completion payload");
+        assert_eq!(
+            completed_payload["verification_completion_gate_status"],
+            "Passed"
+        );
 
         let events_response = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
         ));
         let sanitized = events_response.result.expect("events result").to_string();
+        assert!(sanitized.contains("verification_completion_gate_status"));
         assert!(sanitized.contains("verification.cargo_check"));
         assert!(sanitized.contains("target_dir_isolated"));
         assert!(sanitized.contains("network_disabled"));
@@ -17811,6 +18105,160 @@ mod tests {
         assert!(!sanitized.contains("stdout"));
         assert!(!sanitized.contains("stderr"));
         assert!(!sanitized.contains("CARGO_TARGET_DIR"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_fails_when_required_cargo_fmt_verifier_fails() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"task_fmt_fail\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn bad( )->i32{1}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Failed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["failed_verifier_tool_ids"][0],
+            "verification.cargo_fmt_check"
+        );
+        assert!(run_result["agent_loop"]["completion_summary"]
+            .as_str()
+            .expect("summary")
+            .contains("Verification completion gate failed"));
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionFailed
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    .and_then(Value::as_str)
+                    == Some("verification.cargo_fmt_check")
+        }));
+        let task_failed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .expect("task failed event");
+        let failed_payload = task_failed.payload.as_ref().expect("failure payload");
+        assert_eq!(
+            failed_payload["verification_completion_gate_status"],
+            "Failed"
+        );
+        assert!(!ledger.contains("pub fn bad"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+        assert!(!ledger.contains("command"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_fails_when_required_cargo_check_verifier_fails() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "task_check_fail",
+            "pub fn broken() -> MissingType { 1 }\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify compilation with cargo check","mode_id":"verifier"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Failed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["failed_verifier_tool_ids"][0],
+            "verification.cargo_check"
+        );
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolExecutionFailed
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    .and_then(Value::as_str)
+                    == Some("verification.cargo_check")
+        }));
+        let task_failed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .expect("task failed event");
+        let failed_payload = task_failed.payload.as_ref().expect("failure payload");
+        assert_eq!(
+            failed_payload["verification_completion_gate_status"],
+            "Failed"
+        );
+        assert!(!ledger.contains("MissingType"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+        assert!(!ledger.contains("command"));
+        assert!(!temp.path().join("target").exists());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -17835,7 +18283,16 @@ mod tests {
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Failed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["failed_verifier_tool_ids"][0],
+            "verification.cargo_fmt_check"
+        );
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -17863,6 +18320,15 @@ mod tests {
         let payload = denied.payload.as_ref().expect("payload");
         assert_eq!(payload["status"], "Denied");
         assert!(payload["reason"].as_str().expect("reason").len() > 0);
+        let task_failed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .expect("task failed event");
+        let failed_payload = task_failed.payload.as_ref().expect("failure payload");
+        assert_eq!(
+            failed_payload["verification_completion_gate_status"],
+            "Failed"
+        );
         assert!(!ledger.contains("process_launched\":true"));
         assert!(!ledger.contains("stdout"));
         assert!(!ledger.contains("stderr"));
@@ -17892,7 +18358,16 @@ mod tests {
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Failed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["failed_verifier_tool_ids"][0],
+            "verification.cargo_check"
+        );
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -17920,6 +18395,15 @@ mod tests {
         let payload = denied.payload.as_ref().expect("payload");
         assert_eq!(payload["status"], "Denied");
         assert!(payload["reason"].as_str().expect("reason").len() > 0);
+        let task_failed = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .expect("task failed event");
+        let failed_payload = task_failed.payload.as_ref().expect("failure payload");
+        assert_eq!(
+            failed_payload["verification_completion_gate_status"],
+            "Failed"
+        );
         assert!(!ledger.contains("process_launched\":true"));
         assert!(!ledger.contains("target_dir_isolated"));
         assert!(!ledger.contains("stdout"));
