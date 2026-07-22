@@ -71,6 +71,8 @@ Tool results must be recorded into the run ledger. Large tool output can be comp
 
 M7.1 allows task-scoped execution for the fixed `verification.cargo_fmt_check` verifier when the active mode has `ExecuteProcess`. The agent loop may request it for verification-like goals, and the runtime records bounded `ToolExecution*` evidence that headless callers can inspect. This does not authorize generic `process.exec`: callers cannot provide commands, argv, cwd, environment, stdin, shell, or timeouts, and verifier ledger evidence must remain free of raw stdout, stderr, command strings, raw input JSON, file content, absolute paths, canonical paths, environment values, and secrets.
 
+M7.2 allows the agent loop to request the fixed `verification.cargo_check` verifier for compile and type-check goals when the active mode has `ExecuteProcess`. The runtime executes the request through the same controlled tool path as standalone `tool.execute`, requires `Cargo.toml` and `Cargo.lock`, rejects workspaces with `build.rs` in this phase, runs only `cargo check --workspace --all-targets --locked --offline`, uses an isolated target directory outside the workspace, disables Cargo network access, and records only bounded `ToolExecution*` evidence. This still does not authorize generic `process.exec`, caller-supplied commands, argv, cwd, environment, stdin, shell, package/feature/target selection, timeout overrides, raw stdout/stderr, raw input JSON, target directory paths, file content, absolute paths, canonical paths, environment values, network access, git execution, service control, arbitrary tests, or workspace mutation.
+
 ## Subtasks
 
 Subtasks must not dump full transcript history back to a parent task.
