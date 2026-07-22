@@ -69,6 +69,8 @@ Tool execution is mediated by `brownie-tools` and policy compiled from AgentMode
 
 Tool results must be recorded into the run ledger. Large tool output can be compacted for prompt materialization, but the ledger remains the source of truth.
 
+M7.1 allows task-scoped execution for the fixed `verification.cargo_fmt_check` verifier when the active mode has `ExecuteProcess`. The agent loop may request it for verification-like goals, and the runtime records bounded `ToolExecution*` evidence that headless callers can inspect. This does not authorize generic `process.exec`: callers cannot provide commands, argv, cwd, environment, stdin, shell, or timeouts, and verifier ledger evidence must remain free of raw stdout, stderr, command strings, raw input JSON, file content, absolute paths, canonical paths, environment values, and secrets.
+
 ## Subtasks
 
 Subtasks must not dump full transcript history back to a parent task.

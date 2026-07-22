@@ -270,12 +270,15 @@ pub struct FakeLlm;
 
 impl FakeLlm {
     pub fn complete(request: &LlmRequest) -> LlmResponse {
-        let prompt = request
+        let prompt_text = request
             .messages
             .iter()
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n");
+        let prompt = prompt_text.to_lowercase();
+        let request_signal = extract_goal_signal(&prompt_text)
+            .unwrap_or(prompt_text.as_str())
             .to_lowercase();
         if prompt.contains("failed_child")
             && prompt.matches("completed_child").count() >= 2
@@ -356,14 +359,17 @@ impl FakeLlm {
             "workspace.read",
             "Inspect workspace context before proceeding.",
         )];
-        if contains_any(&prompt, &["implement", "edit", "修正", "実装"]) {
+        if contains_any(&request_signal, &["implement", "edit", "修正", "実装"]) {
             requests.push(("workspace.write", "Need to edit workspace files."));
         }
         if contains_any(
-            &prompt,
-            &["test", "check", "verify", "検証", "テスト", "実行"],
+            &request_signal,
+            &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
         ) {
-            requests.push(("process.exec", "Need to run verification commands."));
+            requests.push((
+                "verification.cargo_fmt_check",
+                "Need to run the controlled cargo fmt verifier.",
+            ));
         }
         if prompt.contains("orchestrator") {
             requests.push((
@@ -673,6 +679,13 @@ fn contains_any(haystack: &str, needles: &[&str]) -> bool {
     needles.iter().any(|needle| haystack.contains(needle))
 }
 
+fn extract_goal_signal(prompt: &str) -> Option<&str> {
+    let marker = "Goal:\n";
+    let start = prompt.rfind(marker)? + marker.len();
+    let rest = &prompt[start..];
+    Some(rest.split("\n\nLedger:").next().unwrap_or(rest).trim()).filter(|goal| !goal.is_empty())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -766,6 +779,20 @@ mod tests {
         assert!(content.contains("```brownie-tool-intent"));
         assert!(content.contains("workspace.read"));
         assert!(content.contains(r#""path": "README.md""#));
+    }
+
+    #[test]
+    fn fake_llm_requests_controlled_verifier_for_check_goals() {
+        let request = LlmRequest {
+            model: FAKE_LLM_MODEL.into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: "Please verify formatting.".into(),
+            }],
+        };
+        let content = FakeLlm::complete(&request).content;
+        assert!(content.contains("verification.cargo_fmt_check"));
+        assert!(!content.contains("process.exec"));
     }
 
     #[test]

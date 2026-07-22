@@ -70,6 +70,12 @@ M6.3 extends the same `proposal.apply` authority to one approved `delete_file` p
 
 Controlled apply must not run shell or git commands, use network access, create parent directories, overwrite existing targets during create, remove files outside the approved `delete_file` path, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file or absent target whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic mutation and verification.
 
+## Controlled Verification Boundary
+
+M7.1 introduces the first runtime-owned verification execution path. The built-in `verification.cargo_fmt_check` tool is the only executable verifier in this slice: it requires `ExecuteProcess` permission, runs exactly `cargo fmt --check` at the workspace root, rejects caller-supplied command, argv, cwd, environment, stdin, shell, timeout, or unknown fields, and reports bounded status metadata through `tool.execute` and task-scoped `ToolExecution*` ledger events.
+
+Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
+
 The Phase 3.5-3.51 wrapper-chain history is archived in `docs/architecture/diagnostics-wrapper-history.md`, with the endpoint inventory and deprecation plan in `docs/architecture/diagnostics-api-consolidation.md`. After R1.1, the next milestone is M1 Agent Loop Integration (`agent_loop_integration`).
 
 ## Subtask Recovery Outcomes
