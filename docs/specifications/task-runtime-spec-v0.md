@@ -198,6 +198,14 @@ Runtime LLM configuration includes `sensitive_guard` (`off`, `warn`, `fail`) wit
 
 During `task.run`, approved `workspace.read` intents continue to use read-only execution. Approved `workspace.write` intents are not executed; they create `WorkspacePatchProposed` ledger events with bounded preview metadata only. Denied write intents create no proposal.
 
+## M8.2 verification recovery repair proposal
+
+An admitted verification recovery task may be run only through the existing explicit `task.run` path. Before recording `TaskRunning`, the runtime re-reads the source task and source run ledger and revalidates the recovery task's stored `verification_recovery_provenance` against the latest failed verifier-gate evidence. If the source task, source run, terminal gate evidence, failed verifier set, or failure fingerprint no longer matches, `task.run` returns `-32602` before creating new run evidence.
+
+When the revalidated recovery run contains approved `workspace.write` intent and the active mode has `WriteWorkspace`, the runtime may append one recovery-scoped `WorkspacePatchProposed` event through the existing proposal path. The event adds only bounded recovery metadata: source task/run IDs, recovery task/run IDs, failure fingerprint, failed verifier tool IDs, and a boolean recovery marker. A recovery task that has already proposed a repair does not create another recovery proposal on replay or repeated execution.
+
+`TaskRunResult` may include `verification_recovery_repair` with bounded recovery and proposal handles, `proposal_count`, `replayed`, `apply_enabled=false`, and `next_action=review_and_authorize_recovery_proposal`. This is a repair proposal handoff only. It does not apply patches, retry verifiers, execute shell/git/network/service actions, or expose raw stdout, stderr, command strings, prompts, provider responses, file content, paths, environment values, raw tool input, or raw request bodies.
+
 ## Phase 3.1 patch proposal validation
 
 Approved `workspace.write` intents remain dry-run proposals only: task execution does not write files and does not apply patches. For `replace_file` proposals, the runtime validates the target path and current target file, scans proposed and existing content for sensitive-like data, and stores only bounded previews.

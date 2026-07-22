@@ -13,6 +13,8 @@ Rejected paths include empty paths, absolute paths, parent traversal, and protec
 
 Proposal generation is gated by `WriteWorkspace`. If the active runtime policy denies `WriteWorkspace`, the runtime records the normal denied tool-intent event and does not create a proposal.
 
+M8.2 keeps recovery repair proposals inside the same permission boundary. An admitted verification recovery task may create at most one recovery-scoped `WorkspacePatchProposed` event during explicit `task.run`, and only when the recovery task has current source verifier-failure provenance and the `workspace.write` intent is approved by `WriteWorkspace`. The proposal remains non-mutating: review, approval, preflight, and a later explicit `proposal.apply` authorization are still required before any workspace file can change.
+
 ## Ledger event
 
 Approved write intents append `WorkspacePatchProposed` with metadata only:
@@ -30,6 +32,8 @@ Approved write intents append `WorkspacePatchProposed` with metadata only:
 ```
 
 The ledger event must not include `content`, `raw_content`, `full_content`, `patch`, `diff`, or `raw_input`.
+
+Recovery-scoped M8.2 proposal payloads may add only bounded provenance fields: `verification_recovery_repair`, `source_task_id`, `source_run_id`, `recovery_task_id`, `recovery_run_id`, `failure_fingerprint`, and `failed_verifier_tool_ids`. They must not include raw verifier output, command strings, prompts, provider responses, file content, canonical paths, absolute paths, environment values, raw tool input, or raw request bodies.
 
 ## Inspection
 

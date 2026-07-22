@@ -81,6 +81,14 @@ The runtime admits this request only when the source task exists, its run ID mat
 
 Successful admission creates or replays exactly one recovery task/run for the source failure fingerprint. The response includes `verification_recovery_admission` with source IDs, recovery IDs, `failure_fingerprint`, `recovery_running_enabled: false`, `next_action: "run_recovery_task_explicitly"`, and `replayed`. Admission does not run the recovery task, invoke an LLM, execute a verifier, mutate the workspace, or enable generic `process.exec`.
 
+M8.2 extends `task.run` responses for admitted verification recovery tasks with optional bounded repair proposal metadata:
+
+```json
+{"verification_recovery_repair":{"source_task_id":"task_<uuid>","source_run_id":"run_<uuid>","recovery_task_id":"task_<uuid>","recovery_run_id":"run_<uuid>","failure_fingerprint":"sha256:<64 lowercase hex>","failed_verifier_tool_ids":["verification.cargo_fmt_check"],"proposal_id":"proposal_<uuid>","proposal_count":1,"replayed":false,"apply_enabled":false,"next_action":"review_and_authorize_recovery_proposal"}}
+```
+
+The runtime returns this field only after revalidating the recovery task's stored provenance against the latest source verifier-gate failure and creating or replaying one recovery-scoped `WorkspacePatchProposed` event through the existing `workspace.write` proposal path. It is not an apply result and does not mutate files, retry verification, expose raw verifier output, or add a new RPC.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

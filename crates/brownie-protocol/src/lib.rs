@@ -677,6 +677,8 @@ pub struct TaskRunResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_completion_gate: Option<TaskRunVerificationCompletionGate>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_repair: Option<TaskRunVerificationRecoveryRepairOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
@@ -700,6 +702,21 @@ pub struct TaskRunVerificationCompletionGate {
     pub passed_verifier_tool_ids: Vec<String>,
     pub failed_verifier_tool_ids: Vec<String>,
     pub failure_reasons: Vec<String>,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunVerificationRecoveryRepairOutcome {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub failure_fingerprint: String,
+    pub failed_verifier_tool_ids: Vec<String>,
+    pub proposal_id: String,
+    pub proposal_count: usize,
+    pub replayed: bool,
+    pub apply_enabled: bool,
     pub next_action: String,
 }
 
