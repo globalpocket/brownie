@@ -1,11 +1,12 @@
 //! Runtime tool abstraction crate.
 
+use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{bail, Context};
 use brownie_agentmodes::{CompiledModePolicy, RuntimeAction, RuntimePermissionGate};
@@ -16,6 +17,7 @@ pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
 pub const WORKSPACE_WRITE_TOOL_ID: &str = "workspace.write";
 pub const SUBTASK_SPAWN_TOOL_ID: &str = "subtask.spawn";
 pub const VERIFICATION_CARGO_FMT_CHECK_TOOL_ID: &str = "verification.cargo_fmt_check";
+pub const VERIFICATION_CARGO_CHECK_TOOL_ID: &str = "verification.cargo_check";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
@@ -77,6 +79,7 @@ impl BuiltinToolRegistry {
             tool("workspace.read", "Workspace Read", "Dry-run definition for workspace read requests.", RuntimeAction::ReadWorkspace),
             tool("workspace.write", "Workspace Write", "Dry-run definition for workspace write requests; no writes are executed in Phase 1.6.", RuntimeAction::WriteWorkspace),
             verification_cargo_fmt_check_tool(),
+            verification_cargo_check_tool(),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
@@ -226,6 +229,9 @@ impl ToolExecutor {
             VERIFICATION_CARGO_FMT_CHECK_TOOL_ID => {
                 VerificationCommandExecutor::cargo_fmt_check(workspace_root, &request.input)
             }
+            VERIFICATION_CARGO_CHECK_TOOL_ID => {
+                VerificationCommandExecutor::cargo_check(workspace_root, &request.input)
+            }
             _ => Ok(ToolExecutionResult {
                 tool_id: request.tool_id,
                 status: ToolExecutionStatus::Denied,
@@ -282,6 +288,13 @@ impl ProcessCapture {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct VerificationSafetyMetadata {
+    target_dir_isolated: Option<bool>,
+    network_disabled: Option<bool>,
+    cleanup_succeeded: Option<bool>,
+}
+
 pub struct VerificationCommandExecutor;
 
 impl VerificationCommandExecutor {
@@ -291,6 +304,8 @@ impl VerificationCommandExecutor {
     ) -> anyhow::Result<ToolExecutionResult> {
         if let Err(reason) = preflight_verification_cargo_fmt_check_input(input) {
             return Ok(verification_result(
+                VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+                "cargo_fmt_check",
                 ToolExecutionStatus::Failed,
                 "Rejected",
                 false,
@@ -300,24 +315,118 @@ impl VerificationCommandExecutor {
                 ProcessCapture::empty(),
                 ProcessCapture::empty(),
                 Some(reason),
+                VerificationSafetyMetadata::default(),
             ));
         }
         Self::run_fixed(
             workspace_root,
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+            "cargo_fmt_check",
             "cargo",
             &["fmt", "--check"],
             Duration::from_millis(DEFAULT_VERIFICATION_TIMEOUT_MS),
+            None,
         )
+    }
+
+    pub fn cargo_check(
+        workspace_root: &Path,
+        input: &Value,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        let safety = VerificationSafetyMetadata {
+            target_dir_isolated: Some(true),
+            network_disabled: Some(true),
+            cleanup_succeeded: None,
+        };
+        if let Err(reason) = preflight_verification_cargo_check_input(input) {
+            return Ok(verification_result(
+                VERIFICATION_CARGO_CHECK_TOOL_ID,
+                "cargo_check",
+                ToolExecutionStatus::Failed,
+                "Rejected",
+                false,
+                None,
+                false,
+                0,
+                ProcessCapture::empty(),
+                ProcessCapture::empty(),
+                Some(reason),
+                safety,
+            ));
+        }
+        if let Err(reason) = preflight_cargo_check_workspace(workspace_root) {
+            return Ok(verification_result(
+                VERIFICATION_CARGO_CHECK_TOOL_ID,
+                "cargo_check",
+                ToolExecutionStatus::Failed,
+                "Rejected",
+                false,
+                None,
+                false,
+                0,
+                ProcessCapture::empty(),
+                ProcessCapture::empty(),
+                Some(reason),
+                safety,
+            ));
+        }
+        let target_dir = match prepare_isolated_cargo_target_dir(workspace_root) {
+            Ok(path) => path,
+            Err(reason) => {
+                return Ok(verification_result(
+                    VERIFICATION_CARGO_CHECK_TOOL_ID,
+                    "cargo_check",
+                    ToolExecutionStatus::Failed,
+                    "SpawnFailed",
+                    false,
+                    None,
+                    false,
+                    0,
+                    ProcessCapture::empty(),
+                    ProcessCapture::empty(),
+                    Some(reason),
+                    VerificationSafetyMetadata {
+                        target_dir_isolated: Some(false),
+                        network_disabled: Some(true),
+                        cleanup_succeeded: None,
+                    },
+                ));
+            }
+        };
+        let env_vars = minimal_cargo_check_env(&target_dir);
+        let mut result = Self::run_fixed(
+            workspace_root,
+            VERIFICATION_CARGO_CHECK_TOOL_ID,
+            "cargo_check",
+            "cargo",
+            &[
+                "check",
+                "--workspace",
+                "--all-targets",
+                "--locked",
+                "--offline",
+            ],
+            Duration::from_millis(DEFAULT_VERIFICATION_TIMEOUT_MS),
+            Some(env_vars),
+        )?;
+        let cleanup_succeeded = fs::remove_dir_all(&target_dir).is_ok() || !target_dir.exists();
+        result.output["cleanup_succeeded"] = json!(cleanup_succeeded);
+        Ok(result)
     }
 
     fn run_fixed(
         workspace_root: &Path,
+        tool_id: &str,
+        check_id: &str,
         program: &str,
         args: &[&str],
         timeout: Duration,
+        env_vars: Option<Vec<(String, OsString)>>,
     ) -> anyhow::Result<ToolExecutionResult> {
         let Ok(root) = workspace_root.canonicalize() else {
             return Ok(verification_result(
+                tool_id,
+                check_id,
                 ToolExecutionStatus::Failed,
                 "SpawnFailed",
                 false,
@@ -327,20 +436,29 @@ impl VerificationCommandExecutor {
                 ProcessCapture::empty(),
                 ProcessCapture::empty(),
                 Some("workspace root is unavailable."),
+                verification_safety_metadata(check_id),
             ));
         };
         let start = Instant::now();
-        let mut child = match Command::new(program)
+        let mut command = Command::new(program);
+        command
             .args(args)
             .current_dir(root)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-        {
+            .stderr(Stdio::piped());
+        if let Some(env_vars) = env_vars {
+            command.env_clear();
+            for (key, value) in env_vars {
+                command.env(key, value);
+            }
+        }
+        let mut child = match command.spawn() {
             Ok(child) => child,
             Err(_) => {
                 return Ok(verification_result(
+                    tool_id,
+                    check_id,
                     ToolExecutionStatus::Failed,
                     "SpawnFailed",
                     false,
@@ -350,6 +468,7 @@ impl VerificationCommandExecutor {
                     ProcessCapture::empty(),
                     ProcessCapture::empty(),
                     Some("failed to spawn verification command."),
+                    verification_safety_metadata(check_id),
                 ));
             }
         };
@@ -387,6 +506,8 @@ impl VerificationCommandExecutor {
 
         if timed_out {
             return Ok(verification_result(
+                tool_id,
+                check_id,
                 ToolExecutionStatus::Failed,
                 "TimedOut",
                 true,
@@ -396,10 +517,13 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 Some("verification command timed out."),
+                verification_safety_metadata(check_id),
             ));
         }
         match exit_code {
             Some(0) => Ok(verification_result(
+                tool_id,
+                check_id,
                 ToolExecutionStatus::Completed,
                 "Passed",
                 true,
@@ -409,8 +533,11 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 None,
+                verification_safety_metadata(check_id),
             )),
             _ => Ok(verification_result(
+                tool_id,
+                check_id,
                 ToolExecutionStatus::Failed,
                 "Failed",
                 true,
@@ -420,6 +547,7 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 Some("verification command exited with nonzero status."),
+                verification_safety_metadata(check_id),
             )),
         }
     }
@@ -454,6 +582,8 @@ fn join_capture(handle: Option<thread::JoinHandle<ProcessCapture>>) -> ProcessCa
 }
 
 fn verification_result(
+    tool_id: &str,
+    check_id: &str,
     status: ToolExecutionStatus,
     verification_status: &str,
     process_launched: bool,
@@ -463,9 +593,10 @@ fn verification_result(
     stdout: ProcessCapture,
     stderr: ProcessCapture,
     reason: Option<&str>,
+    safety: VerificationSafetyMetadata,
 ) -> ToolExecutionResult {
     let mut output = json!({
-        "check_id": "cargo_fmt_check",
+        "check_id": check_id,
         "verification_status": verification_status,
         "process_launched": process_launched,
         "exit_code": exit_code,
@@ -480,11 +611,110 @@ fn verification_result(
     if let Some(reason) = reason {
         output["reason"] = json!(reason);
     }
+    if let Some(target_dir_isolated) = safety.target_dir_isolated {
+        output["target_dir_isolated"] = json!(target_dir_isolated);
+    }
+    if let Some(network_disabled) = safety.network_disabled {
+        output["network_disabled"] = json!(network_disabled);
+    }
+    if let Some(cleanup_succeeded) = safety.cleanup_succeeded {
+        output["cleanup_succeeded"] = json!(cleanup_succeeded);
+    }
     ToolExecutionResult {
-        tool_id: VERIFICATION_CARGO_FMT_CHECK_TOOL_ID.to_string(),
+        tool_id: tool_id.to_string(),
         status,
         output,
     }
+}
+
+fn verification_safety_metadata(check_id: &str) -> VerificationSafetyMetadata {
+    match check_id {
+        "cargo_check" => VerificationSafetyMetadata {
+            target_dir_isolated: Some(true),
+            network_disabled: Some(true),
+            cleanup_succeeded: None,
+        },
+        _ => VerificationSafetyMetadata::default(),
+    }
+}
+
+fn minimal_cargo_check_env(target_dir: &Path) -> Vec<(String, OsString)> {
+    let mut env_vars = Vec::new();
+    for key in ["PATH", "HOME", "CARGO_HOME", "RUSTUP_HOME", "RUSTC"] {
+        if let Some(value) = std::env::var_os(key) {
+            env_vars.push((key.to_string(), value));
+        }
+    }
+    env_vars.push(("CARGO_NET_OFFLINE".to_string(), OsString::from("true")));
+    env_vars.push(("CARGO_TERM_COLOR".to_string(), OsString::from("never")));
+    env_vars.push((
+        "CARGO_TARGET_DIR".to_string(),
+        target_dir.as_os_str().to_os_string(),
+    ));
+    env_vars
+}
+
+fn preflight_cargo_check_workspace(workspace_root: &Path) -> Result<(), &'static str> {
+    if !workspace_root.join("Cargo.toml").is_file() {
+        return Err("verification.cargo_check requires a workspace Cargo.toml.");
+    }
+    if !workspace_root.join("Cargo.lock").is_file() {
+        return Err("verification.cargo_check requires an existing Cargo.lock.");
+    }
+    if workspace_contains_build_script(workspace_root) {
+        return Err("verification.cargo_check does not support workspaces with build scripts in this phase.");
+    }
+    Ok(())
+}
+
+fn workspace_contains_build_script(workspace_root: &Path) -> bool {
+    let mut stack = vec![workspace_root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "build.rs" {
+                return true;
+            }
+            if is_blocked_component(name.as_ref()) {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    false
+}
+
+fn prepare_isolated_cargo_target_dir(workspace_root: &Path) -> Result<PathBuf, &'static str> {
+    let root = workspace_root
+        .canonicalize()
+        .map_err(|_| "workspace root is unavailable.")?;
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let target_dir = std::env::temp_dir().join(format!(
+        "brownie-cargo-check-target-{}-{nonce}",
+        std::process::id()
+    ));
+    fs::create_dir(&target_dir)
+        .map_err(|_| "failed to prepare isolated cargo target directory.")?;
+    let canonical_target = target_dir
+        .canonicalize()
+        .map_err(|_| "failed to prepare isolated cargo target directory.")?;
+    if canonical_target.starts_with(&root) {
+        let _ = fs::remove_dir_all(&target_dir);
+        return Err("isolated cargo target directory is unsafe.");
+    }
+    Ok(target_dir)
 }
 
 fn tool(
@@ -536,6 +766,22 @@ fn verification_cargo_fmt_check_tool() -> ToolDefinition {
                 name: "check_id".to_string(),
                 required: false,
                 description: "Optional literal cargo_fmt_check identifier; arbitrary command fields are rejected.".to_string(),
+            }],
+        },
+    }
+}
+
+fn verification_cargo_check_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: VERIFICATION_CARGO_CHECK_TOOL_ID.to_string(),
+        display_name: "Cargo Check".to_string(),
+        description: "Controlled fixed verification command: cargo check --workspace --all-targets --locked --offline with an isolated target directory. Callers cannot supply argv, cwd, environment, stdin, shell, or timeout.".to_string(),
+        required_action: RuntimeAction::ExecuteProcess,
+        input_schema: ToolInputSchema {
+            fields: vec![ToolInputField {
+                name: "check_id".to_string(),
+                required: false,
+                description: "Optional literal cargo_check identifier; arbitrary command fields are rejected.".to_string(),
             }],
         },
     }
@@ -1007,6 +1253,12 @@ impl ToolIntentParser {
                     continue;
                 }
             }
+            if tool_id_value == VERIFICATION_CARGO_CHECK_TOOL_ID {
+                if let Err(reason) = preflight_verification_cargo_check_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
             requests.push(AssistantToolRequest {
                 tool_id: tool_id_value,
                 reason: reason_value,
@@ -1080,6 +1332,29 @@ fn preflight_verification_cargo_fmt_check_input(input: &Value) -> Result<(), &'s
             }
             _ => {
                 return Err("verification.cargo_fmt_check does not accept unknown input fields.");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn preflight_verification_cargo_check_input(input: &Value) -> Result<(), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("verification.cargo_check input must be an object.");
+    };
+    for (key, value) in object {
+        match key.as_str() {
+            "check_id" => {
+                if value.as_str() != Some("cargo_check") {
+                    return Err("verification.cargo_check input.check_id must be cargo_check when provided.");
+                }
+            }
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" | "package" | "packages" | "features" | "target" | "path" => {
+                return Err("verification.cargo_check does not accept command, argv, cwd, env, stdin, shell, timeout, package, feature, target, or path input.");
+            }
+            _ => {
+                return Err("verification.cargo_check does not accept unknown input fields.");
             }
         }
     }
@@ -1189,6 +1464,21 @@ impl ToolPlanner {
         }
         if contains_any(
             &goal,
+            &[
+                "cargo check",
+                "typecheck",
+                "type-check",
+                "type check",
+                "compile",
+                "compilation",
+            ],
+        ) {
+            items.push(plan_item(
+                VERIFICATION_CARGO_CHECK_TOOL_ID,
+                "Goal suggests running the controlled cargo check verifier.",
+            ));
+        } else if contains_any(
+            &goal,
             &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
         ) {
             items.push(plan_item(
@@ -1265,6 +1555,7 @@ mod tests {
                 "workspace.read",
                 "workspace.write",
                 "verification.cargo_fmt_check",
+                "verification.cargo_check",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -1289,6 +1580,21 @@ mod tests {
         assert!(ids.contains(&"workspace.write"));
         assert!(ids.contains(&"verification.cargo_fmt_check"));
         assert!(ids.contains(&"subtask.spawn"));
+    }
+    #[test]
+    fn planner_routes_compile_goals_to_cargo_check_verifier() {
+        let plan = ToolPlanner::plan(ToolPlanningInput {
+            task_id: "task_1".into(),
+            goal: "Compile and type-check the workspace".into(),
+            mode_id: "verifier".into(),
+        });
+        let ids: Vec<_> = plan
+            .items
+            .iter()
+            .map(|item| item.tool_id.as_str())
+            .collect();
+        assert!(ids.contains(&"verification.cargo_check"));
+        assert!(!ids.contains(&"verification.cargo_fmt_check"));
     }
     #[test]
     fn evaluator_allows_and_denies_with_runtime_gate() {
@@ -1375,6 +1681,14 @@ mod tests {
     }
 
     #[test]
+    fn parser_accepts_controlled_cargo_check_verification_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"verification.cargo_check\",\"reason\":\"Verify compilation.\",\"input\":{\"check_id\":\"cargo_check\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, VERIFICATION_CARGO_CHECK_TOOL_ID);
+    }
+
+    #[test]
     fn parser_rejects_verification_command_overrides() {
         for input in [
             serde_json::json!({"command":"cargo test"}),
@@ -1387,6 +1701,21 @@ mod tests {
         ] {
             assert!(
                 preflight_verification_cargo_fmt_check_input(&input).is_err(),
+                "{input:?}"
+            );
+            assert!(
+                preflight_verification_cargo_check_input(&input).is_err(),
+                "{input:?}"
+            );
+        }
+        for input in [
+            serde_json::json!({"package":"brownie-tools"}),
+            serde_json::json!({"features":["all"]}),
+            serde_json::json!({"target":"x86_64-unknown-linux-gnu"}),
+            serde_json::json!({"path":"crates/brownie-tools"}),
+        ] {
+            assert!(
+                preflight_verification_cargo_check_input(&input).is_err(),
                 "{input:?}"
             );
         }
@@ -1699,14 +2028,114 @@ mod tests {
         assert!(!serialized.contains("stderr"));
     }
 
+    fn write_cargo_check_fixture(root: &Path, package_name: &str, source: &str) {
+        std::fs::create_dir(root.join("src")).expect("mkdir");
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+            ),
+        )
+        .expect("manifest");
+        std::fs::write(
+            root.join("Cargo.lock"),
+            format!(
+                "# This file is automatically @generated by Cargo.\n# It is not intended for manual editing.\nversion = 4\n\n[[package]]\nname = \"{package_name}\"\nversion = \"0.1.0\"\n"
+            ),
+        )
+        .expect("lock");
+        std::fs::write(root.join("src/lib.rs"), source).expect("src");
+    }
+
+    #[test]
+    fn verification_executor_reports_cargo_check_pass_with_isolated_target_dir() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(temp.path(), "check_pass", "pub fn ok() -> i32 { 1 }\n");
+
+        let result =
+            VerificationCommandExecutor::cargo_check(temp.path(), &json!({})).expect("execute");
+
+        assert_eq!(result.tool_id, VERIFICATION_CARGO_CHECK_TOOL_ID);
+        assert_eq!(result.status, ToolExecutionStatus::Completed);
+        assert_eq!(result.output["check_id"], "cargo_check");
+        assert_eq!(result.output["verification_status"], "Passed");
+        assert_eq!(result.output["process_launched"], true);
+        assert_eq!(result.output["output_redacted"], true);
+        assert_eq!(result.output["target_dir_isolated"], true);
+        assert_eq!(result.output["network_disabled"], true);
+        assert_eq!(result.output["cleanup_succeeded"], true);
+        assert!(!temp.path().join("target").exists());
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("pub fn ok"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+        assert!(!serialized.contains("CARGO_TARGET_DIR"));
+    }
+
+    #[test]
+    fn verification_executor_reports_cargo_check_failure_without_raw_output() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "check_fail",
+            "pub fn bad() -> MissingType { 1 }\n",
+        );
+
+        let result =
+            VerificationCommandExecutor::cargo_check(temp.path(), &json!({})).expect("execute");
+
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["verification_status"], "Failed");
+        assert_eq!(result.output["process_launched"], true);
+        assert_eq!(result.output["output_redacted"], true);
+        assert_eq!(result.output["target_dir_isolated"], true);
+        assert_eq!(result.output["network_disabled"], true);
+        assert!(!temp.path().join("target").exists());
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("MissingType"));
+        assert!(!serialized.contains("pub fn bad"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+    }
+
+    #[test]
+    fn verification_executor_rejects_cargo_check_without_lockfile_or_with_build_script() {
+        let missing_lock = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(missing_lock.path().join("src")).expect("mkdir");
+        std::fs::write(
+            missing_lock.path().join("Cargo.toml"),
+            "[package]\nname = \"missing_lock\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(missing_lock.path().join("src/lib.rs"), "pub fn ok() {}\n").expect("src");
+        let result = VerificationCommandExecutor::cargo_check(missing_lock.path(), &json!({}))
+            .expect("execute");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["verification_status"], "Rejected");
+        assert_eq!(result.output["process_launched"], false);
+        assert!(!missing_lock.path().join("target").exists());
+
+        let build_script = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(build_script.path(), "build_script", "pub fn ok() {}\n");
+        std::fs::write(build_script.path().join("build.rs"), "fn main() {}\n").expect("build rs");
+        let result = VerificationCommandExecutor::cargo_check(build_script.path(), &json!({}))
+            .expect("execute");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["verification_status"], "Rejected");
+        assert_eq!(result.output["process_launched"], false);
+    }
+
     #[test]
     fn verification_executor_reports_spawn_failure_and_timeout_as_bounded_results() {
         let temp = tempfile::tempdir().expect("tempdir");
         let spawn_failed = VerificationCommandExecutor::run_fixed(
             temp.path(),
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+            "cargo_fmt_check",
             "__brownie_missing_verifier_binary__",
             &[],
             Duration::from_millis(1),
+            None,
         )
         .expect("spawn failure result");
         assert_eq!(spawn_failed.status, ToolExecutionStatus::Failed);
@@ -1715,9 +2144,12 @@ mod tests {
 
         let timed_out = VerificationCommandExecutor::run_fixed(
             temp.path(),
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+            "cargo_fmt_check",
             "sleep",
             &["2"],
             Duration::from_millis(10),
+            None,
         )
         .expect("timeout result");
         assert_eq!(timed_out.status, ToolExecutionStatus::Failed);

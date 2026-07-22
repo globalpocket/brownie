@@ -364,6 +364,21 @@ impl FakeLlm {
         }
         if contains_any(
             &request_signal,
+            &[
+                "cargo check",
+                "typecheck",
+                "type-check",
+                "type check",
+                "compile",
+                "compilation",
+            ],
+        ) {
+            requests.push((
+                "verification.cargo_check",
+                "Need to run the controlled cargo check verifier.",
+            ));
+        } else if contains_any(
+            &request_signal,
             &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
         ) {
             requests.push((
@@ -782,7 +797,7 @@ mod tests {
     }
 
     #[test]
-    fn fake_llm_requests_controlled_verifier_for_check_goals() {
+    fn fake_llm_requests_controlled_fmt_verifier_for_formatting_goals() {
         let request = LlmRequest {
             model: FAKE_LLM_MODEL.into(),
             messages: vec![LlmMessage {
@@ -792,6 +807,21 @@ mod tests {
         };
         let content = FakeLlm::complete(&request).content;
         assert!(content.contains("verification.cargo_fmt_check"));
+        assert!(!content.contains("process.exec"));
+    }
+
+    #[test]
+    fn fake_llm_requests_controlled_cargo_check_verifier_for_compile_goals() {
+        let request = LlmRequest {
+            model: FAKE_LLM_MODEL.into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: "Please compile and type-check the Rust workspace.".into(),
+            }],
+        };
+        let content = FakeLlm::complete(&request).content;
+        assert!(content.contains("verification.cargo_check"));
+        assert!(!content.contains("verification.cargo_fmt_check"));
         assert!(!content.contains("process.exec"));
     }
 
