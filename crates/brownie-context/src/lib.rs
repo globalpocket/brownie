@@ -885,6 +885,7 @@ mod tests {
             source_intent_summary: None,
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
+            verification_recovery_retry_provenance: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:01Z".into(),
         }
