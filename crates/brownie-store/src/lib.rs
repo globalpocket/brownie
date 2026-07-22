@@ -9,7 +9,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus,
+    TaskStatus, VerificationRecoveryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -68,6 +68,19 @@ pub struct ChildTaskStartParams {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationRecoveryTaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub provenance: VerificationRecoveryProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationRecoveryTaskStartResult {
+    pub record: TaskRecord,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParentJoinContinuationRunAdmission {
     pub child_completion_fingerprint: String,
     pub child_completion_child_count: usize,
@@ -107,6 +120,7 @@ impl TaskStore {
             source_handoff_envelope_fingerprint: None,
             source_intent_summary: None,
             recovery_cycle_provenance: None,
+            verification_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -137,6 +151,7 @@ impl TaskStore {
             source_handoff_envelope_fingerprint: Some(params.source_handoff_envelope_fingerprint),
             source_intent_summary: params.source_intent_summary,
             recovery_cycle_provenance: params.recovery_cycle_provenance,
+            verification_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -164,6 +179,78 @@ impl TaskStore {
         )?;
 
         Ok(record)
+    }
+
+    pub fn start_verification_recovery_task(
+        &self,
+        params: VerificationRecoveryTaskStartParams,
+    ) -> Result<VerificationRecoveryTaskStartResult> {
+        let _lock = self.acquire_run_admission_lock(&params.provenance.source_run_id)?;
+        if let Some(record) = self.find_verification_recovery_task_by_failure_fingerprint(
+            &params.provenance.failure_fingerprint,
+        )? {
+            return Ok(VerificationRecoveryTaskStartResult {
+                record,
+                replayed: true,
+            });
+        }
+
+        let now = timestamp()?;
+        let task_id = format!("task_{}", Uuid::new_v4());
+        let run_id = format!("run_{}", Uuid::new_v4());
+        let record = TaskRecord {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            goal: params.goal,
+            mode_id: params.mode_id,
+            status: TaskStatus::Created,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            verification_recovery_provenance: Some(params.provenance),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let run_dir = self.run_dir(&run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        self.write_task_state(&record)?;
+        let provenance = record.verification_recovery_provenance.clone();
+        self.append_task_event_with_payload(
+            &record,
+            LedgerEventKind::TaskStarted,
+            Some(serde_json::json!({
+                "status": "Created",
+                "verification_recovery_provenance": provenance,
+                "source_task_id": record
+                    .verification_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_task_id.clone()),
+                "source_run_id": record
+                    .verification_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_run_id.clone()),
+                "failure_fingerprint": record
+                    .verification_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.failure_fingerprint.clone()),
+                "execution_enabled": false,
+                "recovery_running_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "next_action": "run_recovery_task_explicitly",
+                "reason": "Verification failure recovery task admitted from bounded verifier completion-gate evidence; recovery execution remains explicit."
+            })),
+        )?;
+
+        Ok(VerificationRecoveryTaskStartResult {
+            record,
+            replayed: false,
+        })
     }
 
     pub fn update_task_status(
@@ -301,6 +388,23 @@ impl TaskStore {
                 && record.source_candidate_id.as_deref() == Some(source_candidate_id)
                 && record.source_handoff_envelope_fingerprint.as_deref()
                     == Some(source_handoff_envelope_fingerprint)
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_verification_recovery_task_by_failure_fingerprint(
+        &self,
+        failure_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record
+                .verification_recovery_provenance
+                .as_ref()
+                .map(|provenance| provenance.failure_fingerprint.as_str())
+                == Some(failure_fingerprint)
             {
                 return Ok(Some(record));
             }
@@ -657,6 +761,7 @@ mod tests {
             .start_task(TaskStartParams {
                 goal: "test goal".into(),
                 mode_id: Some("orchestrator".into()),
+                verification_recovery_source: None,
             })
             .expect("start task");
 
@@ -682,6 +787,7 @@ mod tests {
             .start_task(TaskStartParams {
                 goal: "run me".into(),
                 mode_id: None,
+                verification_recovery_source: None,
             })
             .expect("start task");
 
@@ -718,6 +824,7 @@ mod tests {
             .start_task(TaskStartParams {
                 goal: "read ledger".into(),
                 mode_id: None,
+                verification_recovery_source: None,
             })
             .expect("start task");
         store
@@ -744,6 +851,7 @@ mod tests {
             .start_task(TaskStartParams {
                 goal: "list me".into(),
                 mode_id: None,
+                verification_recovery_source: None,
             })
             .expect("start task");
 
@@ -762,6 +870,7 @@ mod tests {
             .start_task(TaskStartParams {
                 goal: "parent".into(),
                 mode_id: Some("orchestrator".into()),
+                verification_recovery_source: None,
             })
             .expect("start parent");
 

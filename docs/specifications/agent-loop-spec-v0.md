@@ -75,6 +75,8 @@ M7.2 allows the agent loop to request the fixed `verification.cargo_check` verif
 
 M7.3 promotes requested controlled verifier evidence from advisory ledger data to a runtime completion gate. Before terminal task status is recorded, `task.run` re-reads the current run ledger and requires every task-scoped `verification.cargo_fmt_check` or `verification.cargo_check` request to have fresh terminal passed evidence. Passing evidence preserves `Completed`; denied, rejected, failed, timed-out, spawn-failed, missing, malformed, or stale evidence forces `Failed` and returns bounded `verification_completion_gate` metadata for headless recovery. Tasks that request no controlled verifier keep their existing completion behavior.
 
+M8.1 lets the caller continue from that bounded terminal failure without inventing an external retry ledger. `task.start` may include `verification_recovery_source`; the runtime validates the source failed task/run and expected verifier failure fingerprint before creating a `Created` recovery task. Admission is idempotent per failure fingerprint, returns `next_action=run_recovery_task_explicitly`, and does not auto-run the recovery task, call an LLM, execute a verifier, or mutate the workspace.
+
 ## Subtasks
 
 Subtasks must not dump full transcript history back to a parent task.

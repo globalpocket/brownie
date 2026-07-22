@@ -71,6 +71,16 @@ Expected response line:
 
 `goal` must be non-empty after trimming whitespace. Empty goals return `-32602`.
 
+M8.1 extends `task.start` with optional verification recovery admission:
+
+```json
+{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Recover verifier failure","mode_id":"implementer","verification_recovery_source":{"source_task_id":"task_<uuid>","source_run_id":"run_<uuid>","expected_failure_fingerprint":"sha256:<64 lowercase hex>","authorize_recovery":true}}}
+```
+
+The runtime admits this request only when the source task exists, its run ID matches, its status is terminal `Failed`, the source run ledger currently derives a failed `verification_completion_gate`, the terminal task event records failed verifier-gate metadata, `authorize_recovery` is `true`, and the expected fingerprint matches the runtime-derived fingerprint. Missing authorization, stale fingerprint, completed/running/cancelled sources, missing source evidence, and non-verification failures return `-32602` before a recovery task is created.
+
+Successful admission creates or replays exactly one recovery task/run for the source failure fingerprint. The response includes `verification_recovery_admission` with source IDs, recovery IDs, `failure_fingerprint`, `recovery_running_enabled: false`, `next_action: "run_recovery_task_explicitly"`, and `replayed`. Admission does not run the recovery task, invoke an LLM, execute a verifier, mutate the workspace, or enable generic `process.exec`.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

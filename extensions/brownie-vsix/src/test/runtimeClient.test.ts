@@ -949,6 +949,53 @@ describe('RuntimeClient', () => {
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.start', params: { goal: 'test goal', mode_id: 'orchestrator' } }]);
   });
 
+  it('creates a task.start verification recovery request', async () => {
+    const fingerprint = `sha256:${'a'.repeat(64)}`;
+    const result = {
+      task_id: 'task_recovery',
+      run_id: 'run_recovery',
+      status: 'Created',
+      verification_recovery_admission: {
+        source_task_id: 'task_source',
+        source_run_id: 'run_source',
+        recovery_task_id: 'task_recovery',
+        recovery_run_id: 'run_recovery',
+        failure_fingerprint: fingerprint,
+        recovery_running_enabled: false,
+        next_action: 'run_recovery_task_explicitly',
+        replayed: false,
+      },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.startTask({
+      goal: 'recover verifier failure',
+      modeId: 'implementer',
+      verificationRecoverySource: {
+        source_task_id: 'task_source',
+        source_run_id: 'run_source',
+        expected_failure_fingerprint: fingerprint,
+        authorize_recovery: true,
+      },
+    })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'task.start',
+      params: {
+        goal: 'recover verifier failure',
+        mode_id: 'implementer',
+        verification_recovery_source: {
+          source_task_id: 'task_source',
+          source_run_id: 'run_source',
+          expected_failure_fingerprint: fingerprint,
+          authorize_recovery: true,
+        },
+      },
+    }]);
+  });
+
   it('creates a task.run request', async () => {
     const result = { task_id: 'task_1', run_id: 'run_1', status: 'Completed', agent_loop: { final_state: 'Completed', completion_summary: 'LLM agent loop completed for task_1' } };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });

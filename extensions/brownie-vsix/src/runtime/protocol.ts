@@ -189,6 +189,17 @@ export interface RecoveryCycleChildProvenance {
   parent_join_recovery_cycle_depth: number;
 }
 
+export interface VerificationRecoveryProvenance {
+  source_task_id: string;
+  source_run_id: string;
+  failure_fingerprint: string;
+  required_verifier_count: number;
+  passed_verifier_count: number;
+  failed_verifier_count: number;
+  failed_verifier_tool_ids: string[];
+  failure_reasons: string[];
+}
+
 export interface ToolIntentParseResult {
   mode_id: string;
   parser: ToolIntentParserSummary;
@@ -207,12 +218,32 @@ export interface ToolExecuteResult {
 export interface TaskStartParams {
   goal: string;
   modeId?: string;
+  verificationRecoverySource?: VerificationRecoverySource | null;
+}
+
+export interface VerificationRecoverySource {
+  source_task_id: string;
+  source_run_id: string;
+  expected_failure_fingerprint: string;
+  authorize_recovery: boolean;
 }
 
 export interface TaskStartResult {
   task_id: string;
   run_id: string;
   status: TaskStatus;
+  verification_recovery_admission?: VerificationRecoveryAdmission | null;
+}
+
+export interface VerificationRecoveryAdmission {
+  source_task_id: string;
+  source_run_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  failure_fingerprint: string;
+  recovery_running_enabled: boolean;
+  next_action: string;
+  replayed: boolean;
 }
 
 export interface TaskRunResult {
@@ -355,6 +386,7 @@ export interface TaskRecord {
   source_handoff_envelope_fingerprint?: string | null;
   source_intent_summary?: ChildTaskSourceIntentSummary | null;
   recovery_cycle_provenance?: RecoveryCycleChildProvenance | null;
+  verification_recovery_provenance?: VerificationRecoveryProvenance | null;
   created_at: string;
   updated_at: string;
 }
@@ -418,6 +450,7 @@ export interface ChildTaskInspectSummary {
   source_handoff_envelope_fingerprint?: string | null;
   source_intent_summary?: ChildTaskSourceIntentSummary | null;
   recovery_cycle_provenance?: RecoveryCycleChildProvenance | null;
+  verification_recovery_provenance?: VerificationRecoveryProvenance | null;
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
@@ -2688,6 +2721,28 @@ const RECOVERY_CYCLE_CHILD_PROVENANCE_KEYS = new Set([
   'parent_join_recovery_cycle_depth',
 ]);
 
+const VERIFICATION_RECOVERY_PROVENANCE_KEYS = new Set([
+  'source_task_id',
+  'source_run_id',
+  'failure_fingerprint',
+  'required_verifier_count',
+  'passed_verifier_count',
+  'failed_verifier_count',
+  'failed_verifier_tool_ids',
+  'failure_reasons',
+]);
+
+const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
+  'source_task_id',
+  'source_run_id',
+  'recovery_task_id',
+  'recovery_run_id',
+  'failure_fingerprint',
+  'recovery_running_enabled',
+  'next_action',
+  'replayed',
+]);
+
 const RECOVERY_CYCLE_BUDGET_OUTCOME_KEYS = new Set([
   'recovery_cycle_budget_status',
   'parent_join_admission_id',
@@ -2810,6 +2865,46 @@ export function isRecoveryCycleChildProvenance(value: unknown): value is Recover
     typeof value.parent_join_recovery_cycle === 'boolean' &&
     isNonNegativeInteger(value.parent_join_recovery_cycle_depth) &&
     ((value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth >= 1) || (!value.parent_join_recovery_cycle && value.parent_join_recovery_cycle_depth === 0))
+  );
+}
+
+export function isVerificationRecoveryProvenance(value: unknown): value is VerificationRecoveryProvenance {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, VERIFICATION_RECOVERY_PROVENANCE_KEYS) &&
+    typeof value.source_task_id === 'string' &&
+    value.source_task_id.trim().length > 0 &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.failure_fingerprint) &&
+    isNonNegativeInteger(value.required_verifier_count) &&
+    isNonNegativeInteger(value.passed_verifier_count) &&
+    isNonNegativeInteger(value.failed_verifier_count) &&
+    value.passed_verifier_count + value.failed_verifier_count === value.required_verifier_count &&
+    isStringArray(value.failed_verifier_tool_ids) &&
+    value.failed_verifier_tool_ids.length === value.failed_verifier_count &&
+    isStringArray(value.failure_reasons)
+  );
+}
+
+export function isVerificationRecoveryAdmission(value: unknown): value is VerificationRecoveryAdmission {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, VERIFICATION_RECOVERY_ADMISSION_KEYS) &&
+    typeof value.source_task_id === 'string' &&
+    value.source_task_id.trim().length > 0 &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.recovery_task_id === 'string' &&
+    value.recovery_task_id.trim().length > 0 &&
+    typeof value.recovery_run_id === 'string' &&
+    value.recovery_run_id.trim().length > 0 &&
+    typeof value.failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.failure_fingerprint) &&
+    value.recovery_running_enabled === false &&
+    value.next_action === 'run_recovery_task_explicitly' &&
+    typeof value.replayed === 'boolean'
   );
 }
 
@@ -3127,7 +3222,8 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
     isRecord(value) &&
     typeof value.task_id === 'string' &&
     typeof value.run_id === 'string' &&
-    isTaskStatus(value.status)
+    isTaskStatus(value.status) &&
+    (value.verification_recovery_admission === undefined || value.verification_recovery_admission === null || isVerificationRecoveryAdmission(value.verification_recovery_admission))
   );
 }
 
@@ -3183,6 +3279,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
     (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
     (value.recovery_cycle_provenance === undefined || value.recovery_cycle_provenance === null || isRecoveryCycleChildProvenance(value.recovery_cycle_provenance)) &&
+    (value.verification_recovery_provenance === undefined || value.verification_recovery_provenance === null || isVerificationRecoveryProvenance(value.verification_recovery_provenance)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -3216,6 +3313,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     (value.source_handoff_envelope_fingerprint === undefined || value.source_handoff_envelope_fingerprint === null || typeof value.source_handoff_envelope_fingerprint === 'string') &&
     (value.source_intent_summary === undefined || value.source_intent_summary === null || isChildTaskSourceIntentSummary(value.source_intent_summary)) &&
     (value.recovery_cycle_provenance === undefined || value.recovery_cycle_provenance === null || isRecoveryCycleChildProvenance(value.recovery_cycle_provenance)) &&
+    (value.verification_recovery_provenance === undefined || value.verification_recovery_provenance === null || isVerificationRecoveryProvenance(value.verification_recovery_provenance)) &&
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&
