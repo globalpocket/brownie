@@ -18726,6 +18726,141 @@ mod tests {
     }
 
     #[test]
+    fn task_start_rejects_invalid_verification_recovery_sources_without_task_creation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let created = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "created source".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+            })
+            .expect("created source");
+        let running = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "running source".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+            })
+            .expect("running source");
+        store
+            .tasks()
+            .update_task_status(
+                &running.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running");
+        let completed = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "completed source".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+            })
+            .expect("completed source");
+        store
+            .tasks()
+            .update_task_status(
+                &completed.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("mark completed");
+        let cancelled = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "cancelled source".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+            })
+            .expect("cancelled source");
+        store
+            .tasks()
+            .update_task_status(
+                &cancelled.task_id,
+                TaskStatus::Cancelled,
+                LedgerEventKind::TaskCancelled,
+            )
+            .expect("mark cancelled");
+        let non_verification_failed = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "non-verification failed source".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+            })
+            .expect("failed source");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &non_verification_failed.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+                Some(json!({
+                    "reason": "Synthetic failure without verification completion gate."
+                })),
+            )
+            .expect("mark failed");
+
+        let task_count = store.tasks().list_tasks().expect("list tasks").len();
+        let dummy_fingerprint = format!("sha256:{}", "0".repeat(64));
+        let invalid_sources = [
+            (created.task_id.as_str(), created.run_id.as_str()),
+            (running.task_id.as_str(), running.run_id.as_str()),
+            (completed.task_id.as_str(), completed.run_id.as_str()),
+            (cancelled.task_id.as_str(), cancelled.run_id.as_str()),
+            (
+                non_verification_failed.task_id.as_str(),
+                non_verification_failed.run_id.as_str(),
+            ),
+            ("task_missing", "run_missing"),
+            (created.task_id.as_str(), "run_mismatch"),
+        ];
+
+        for (source_task_id, source_run_id) in invalid_sources {
+            let denied = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 7,
+                    "method": "task.start",
+                    "params": {
+                        "goal": "Recover invalid source",
+                        "mode_id": "implementer",
+                        "verification_recovery_source": {
+                            "source_task_id": source_task_id,
+                            "source_run_id": source_run_id,
+                            "expected_failure_fingerprint": dummy_fingerprint,
+                            "authorize_recovery": true
+                        }
+                    }
+                })
+                .to_string(),
+            );
+            assert!(
+                denied.error.is_some(),
+                "expected rejection for {source_task_id}/{source_run_id}"
+            );
+            assert_eq!(
+                store
+                    .tasks()
+                    .list_tasks()
+                    .expect("tasks after invalid source")
+                    .len(),
+                task_count
+            );
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_start_admits_verification_recovery_from_failed_cargo_check_gate() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
