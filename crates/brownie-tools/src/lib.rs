@@ -1,7 +1,11 @@
 //! Runtime tool abstraction crate.
 
 use std::fs;
+use std::io::Read;
 use std::path::{Component, Path};
+use std::process::{Command, Stdio};
+use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Context};
 use brownie_agentmodes::{CompiledModePolicy, RuntimeAction, RuntimePermissionGate};
@@ -11,7 +15,10 @@ use serde_json::{json, Value};
 pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
 pub const WORKSPACE_WRITE_TOOL_ID: &str = "workspace.write";
 pub const SUBTASK_SPAWN_TOOL_ID: &str = "subtask.spawn";
+pub const VERIFICATION_CARGO_FMT_CHECK_TOOL_ID: &str = "verification.cargo_fmt_check";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
+pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
+pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
@@ -69,6 +76,7 @@ impl BuiltinToolRegistry {
         vec![
             tool("workspace.read", "Workspace Read", "Dry-run definition for workspace read requests.", RuntimeAction::ReadWorkspace),
             tool("workspace.write", "Workspace Write", "Dry-run definition for workspace write requests; no writes are executed in Phase 1.6.", RuntimeAction::WriteWorkspace),
+            verification_cargo_fmt_check_tool(),
             tool("process.exec", "Process Exec", "Dry-run definition for process execution requests; no commands are executed in Phase 1.6.", RuntimeAction::ExecuteProcess),
             subtask_spawn_tool(),
             tool("network.access", "Network Access", "Dry-run definition for network access requests.", RuntimeAction::AccessNetwork),
@@ -193,6 +201,41 @@ fn is_blocked_component(component: &str) -> bool {
 pub struct ToolExecutor;
 
 impl ToolExecutor {
+    pub fn execute_controlled(
+        workspace_root: &Path,
+        request: ToolExecutionRequest,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        if BuiltinToolRegistry::get(&request.tool_id).is_none() {
+            return Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Failed,
+                output: json!({ "reason": "Unknown tool id." }),
+            });
+        }
+        match request.tool_id.as_str() {
+            WORKSPACE_READ_TOOL_ID => {
+                let Some(path) = request.input.get("path").and_then(Value::as_str) else {
+                    return Ok(ToolExecutionResult {
+                        tool_id: request.tool_id,
+                        status: ToolExecutionStatus::Failed,
+                        output: json!({ "reason": "workspace.read input.path must be a string." }),
+                    });
+                };
+                WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
+            }
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID => {
+                VerificationCommandExecutor::cargo_fmt_check(workspace_root, &request.input)
+            }
+            _ => Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Denied,
+                output: json!({
+                    "reason": "Tool execution is not enabled for this tool."
+                }),
+            }),
+        }
+    }
+
     pub fn execute_read_only(
         workspace_root: &Path,
         request: ToolExecutionRequest,
@@ -221,6 +264,226 @@ impl ToolExecutor {
             });
         };
         WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcessCapture {
+    bytes: usize,
+    truncated: bool,
+}
+
+impl ProcessCapture {
+    fn empty() -> Self {
+        Self {
+            bytes: 0,
+            truncated: false,
+        }
+    }
+}
+
+pub struct VerificationCommandExecutor;
+
+impl VerificationCommandExecutor {
+    pub fn cargo_fmt_check(
+        workspace_root: &Path,
+        input: &Value,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        if let Err(reason) = preflight_verification_cargo_fmt_check_input(input) {
+            return Ok(verification_result(
+                ToolExecutionStatus::Failed,
+                "Rejected",
+                false,
+                None,
+                false,
+                0,
+                ProcessCapture::empty(),
+                ProcessCapture::empty(),
+                Some(reason),
+            ));
+        }
+        Self::run_fixed(
+            workspace_root,
+            "cargo",
+            &["fmt", "--check"],
+            Duration::from_millis(DEFAULT_VERIFICATION_TIMEOUT_MS),
+        )
+    }
+
+    fn run_fixed(
+        workspace_root: &Path,
+        program: &str,
+        args: &[&str],
+        timeout: Duration,
+    ) -> anyhow::Result<ToolExecutionResult> {
+        let Ok(root) = workspace_root.canonicalize() else {
+            return Ok(verification_result(
+                ToolExecutionStatus::Failed,
+                "SpawnFailed",
+                false,
+                None,
+                false,
+                0,
+                ProcessCapture::empty(),
+                ProcessCapture::empty(),
+                Some("workspace root is unavailable."),
+            ));
+        };
+        let start = Instant::now();
+        let mut child = match Command::new(program)
+            .args(args)
+            .current_dir(root)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(_) => {
+                return Ok(verification_result(
+                    ToolExecutionStatus::Failed,
+                    "SpawnFailed",
+                    false,
+                    None,
+                    false,
+                    0,
+                    ProcessCapture::empty(),
+                    ProcessCapture::empty(),
+                    Some("failed to spawn verification command."),
+                ));
+            }
+        };
+        let stdout_handle = child
+            .stdout
+            .take()
+            .map(|stdout| thread::spawn(move || capture_pipe(stdout)));
+        let stderr_handle = child
+            .stderr
+            .take()
+            .map(|stderr| thread::spawn(move || capture_pipe(stderr)));
+
+        let mut timed_out = false;
+        let exit_code = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status.code(),
+                Ok(None) if start.elapsed() >= timeout => {
+                    timed_out = true;
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+                Ok(None) => thread::sleep(Duration::from_millis(25)),
+                Err(_) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break None;
+                }
+            }
+        };
+
+        let stdout_capture = join_capture(stdout_handle);
+        let stderr_capture = join_capture(stderr_handle);
+        let duration_ms = start.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
+
+        if timed_out {
+            return Ok(verification_result(
+                ToolExecutionStatus::Failed,
+                "TimedOut",
+                true,
+                exit_code,
+                true,
+                duration_ms,
+                stdout_capture,
+                stderr_capture,
+                Some("verification command timed out."),
+            ));
+        }
+        match exit_code {
+            Some(0) => Ok(verification_result(
+                ToolExecutionStatus::Completed,
+                "Passed",
+                true,
+                Some(0),
+                false,
+                duration_ms,
+                stdout_capture,
+                stderr_capture,
+                None,
+            )),
+            _ => Ok(verification_result(
+                ToolExecutionStatus::Failed,
+                "Failed",
+                true,
+                exit_code,
+                false,
+                duration_ms,
+                stdout_capture,
+                stderr_capture,
+                Some("verification command exited with nonzero status."),
+            )),
+        }
+    }
+}
+
+fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
+    let mut total = 0usize;
+    let mut truncated = false;
+    let mut buffer = [0u8; 8192];
+    loop {
+        let Ok(read) = reader.read(&mut buffer) else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        total = total.saturating_add(read);
+        if total > MAX_VERIFICATION_CAPTURE_BYTES {
+            truncated = true;
+        }
+    }
+    ProcessCapture {
+        bytes: total.min(MAX_VERIFICATION_CAPTURE_BYTES),
+        truncated,
+    }
+}
+
+fn join_capture(handle: Option<thread::JoinHandle<ProcessCapture>>) -> ProcessCapture {
+    handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_else(ProcessCapture::empty)
+}
+
+fn verification_result(
+    status: ToolExecutionStatus,
+    verification_status: &str,
+    process_launched: bool,
+    exit_code: Option<i32>,
+    timed_out: bool,
+    duration_ms: u64,
+    stdout: ProcessCapture,
+    stderr: ProcessCapture,
+    reason: Option<&str>,
+) -> ToolExecutionResult {
+    let mut output = json!({
+        "check_id": "cargo_fmt_check",
+        "verification_status": verification_status,
+        "process_launched": process_launched,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "duration_ms": duration_ms,
+        "standard_output_bytes": stdout.bytes,
+        "standard_error_bytes": stderr.bytes,
+        "standard_output_truncated": stdout.truncated,
+        "standard_error_truncated": stderr.truncated,
+        "output_redacted": true,
+    });
+    if let Some(reason) = reason {
+        output["reason"] = json!(reason);
+    }
+    ToolExecutionResult {
+        tool_id: VERIFICATION_CARGO_FMT_CHECK_TOOL_ID.to_string(),
+        status,
+        output,
     }
 }
 
@@ -258,6 +521,22 @@ fn subtask_spawn_tool() -> ToolDefinition {
                     description: "Optional existing mode id for the child task. Must resolve before materialization.".to_string(),
                 },
             ],
+        },
+    }
+}
+
+fn verification_cargo_fmt_check_tool() -> ToolDefinition {
+    ToolDefinition {
+        tool_id: VERIFICATION_CARGO_FMT_CHECK_TOOL_ID.to_string(),
+        display_name: "Cargo Fmt Check".to_string(),
+        description: "Controlled fixed verification command: cargo fmt --check. Callers cannot supply argv, cwd, environment, stdin, shell, or timeout.".to_string(),
+        required_action: RuntimeAction::ExecuteProcess,
+        input_schema: ToolInputSchema {
+            fields: vec![ToolInputField {
+                name: "check_id".to_string(),
+                required: false,
+                description: "Optional literal cargo_fmt_check identifier; arbitrary command fields are rejected.".to_string(),
+            }],
         },
     }
 }
@@ -722,6 +1001,12 @@ impl ToolIntentParser {
                     continue;
                 }
             }
+            if tool_id_value == VERIFICATION_CARGO_FMT_CHECK_TOOL_ID {
+                if let Err(reason) = preflight_verification_cargo_fmt_check_input(&input) {
+                    rejected.push(rejection(Some(tool_id_value), reason, "invalid_input"));
+                    continue;
+                }
+            }
             requests.push(AssistantToolRequest {
                 tool_id: tool_id_value,
                 reason: reason_value,
@@ -776,6 +1061,29 @@ fn preflight_workspace_read_input(input: &Value) -> Result<(), &'static str> {
         return Err("workspace.read input.path must be a string.");
     };
     preflight_workspace_read_path(path)
+}
+
+fn preflight_verification_cargo_fmt_check_input(input: &Value) -> Result<(), &'static str> {
+    let Some(object) = input.as_object() else {
+        return Err("verification.cargo_fmt_check input must be an object.");
+    };
+    for (key, value) in object {
+        match key.as_str() {
+            "check_id" => {
+                if value.as_str() != Some("cargo_fmt_check") {
+                    return Err("verification.cargo_fmt_check input.check_id must be cargo_fmt_check when provided.");
+                }
+            }
+            "command" | "argv" | "args" | "cwd" | "env" | "stdin" | "shell" | "timeout"
+            | "timeout_ms" => {
+                return Err("verification.cargo_fmt_check does not accept command, argv, cwd, env, stdin, shell, or timeout input.");
+            }
+            _ => {
+                return Err("verification.cargo_fmt_check does not accept unknown input fields.");
+            }
+        }
+    }
+    Ok(())
 }
 
 fn extract_fenced_blocks(content: &str) -> Vec<&str> {
@@ -881,11 +1189,11 @@ impl ToolPlanner {
         }
         if contains_any(
             &goal,
-            &["test", "check", "verify", "run", "検証", "テスト", "実行"],
+            &["test", "check", "verify", "fmt", "format", "検証", "テスト"],
         ) {
             items.push(plan_item(
-                "process.exec",
-                "Goal suggests running tests or checks.",
+                VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+                "Goal suggests running the controlled format verifier.",
             ));
         }
         if input.mode_id == "orchestrator" {
@@ -956,6 +1264,7 @@ mod tests {
             vec![
                 "workspace.read",
                 "workspace.write",
+                "verification.cargo_fmt_check",
                 "process.exec",
                 "subtask.spawn",
                 "network.access",
@@ -978,7 +1287,7 @@ mod tests {
             .collect();
         assert!(ids.contains(&"workspace.read"));
         assert!(ids.contains(&"workspace.write"));
-        assert!(ids.contains(&"process.exec"));
+        assert!(ids.contains(&"verification.cargo_fmt_check"));
         assert!(ids.contains(&"subtask.spawn"));
     }
     #[test]
@@ -1052,6 +1361,35 @@ mod tests {
         let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"unknown.tool\",\"reason\":\"Need it.\"}]}\n```");
         assert!(parsed.requests.is_empty());
         assert_eq!(parsed.rejected[0].tool_id.as_deref(), Some("unknown.tool"));
+    }
+
+    #[test]
+    fn parser_accepts_controlled_cargo_fmt_verification_intent() {
+        let parsed = ToolIntentParser::parse_assistant_content("```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"verification.cargo_fmt_check\",\"reason\":\"Verify formatting.\",\"input\":{\"check_id\":\"cargo_fmt_check\"}}]}\n```");
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(
+            parsed.requests[0].tool_id,
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
+        );
+    }
+
+    #[test]
+    fn parser_rejects_verification_command_overrides() {
+        for input in [
+            serde_json::json!({"command":"cargo test"}),
+            serde_json::json!({"argv":["fmt","--check"]}),
+            serde_json::json!({"cwd":"crates/brownie-runtime"}),
+            serde_json::json!({"env":{"RUSTFLAGS":"-Awarnings"}}),
+            serde_json::json!({"stdin":"raw"}),
+            serde_json::json!({"timeout_ms":1}),
+            serde_json::json!({"unknown":true}),
+        ] {
+            assert!(
+                preflight_verification_cargo_fmt_check_input(&input).is_err(),
+                "{input:?}"
+            );
+        }
     }
 
     #[test]
@@ -1276,5 +1614,115 @@ mod tests {
         )
         .expect("execute");
         assert_eq!(result.status, ToolExecutionStatus::Denied);
+    }
+
+    #[test]
+    fn controlled_executor_denies_generic_process_exec() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: "process.exec".into(),
+                input: serde_json::json!({"command":"cargo fmt --check"}),
+            },
+        )
+        .expect("execute");
+        assert_eq!(result.status, ToolExecutionStatus::Denied);
+        assert_eq!(result.tool_id, "process.exec");
+    }
+
+    #[test]
+    fn verification_executor_rejects_caller_supplied_process_fields_without_launch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = ToolExecutor::execute_controlled(
+            temp.path(),
+            ToolExecutionRequest {
+                tool_id: VERIFICATION_CARGO_FMT_CHECK_TOOL_ID.into(),
+                input: serde_json::json!({"command":"cargo test"}),
+            },
+        )
+        .expect("execute");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["verification_status"], "Rejected");
+        assert_eq!(result.output["process_launched"], false);
+        assert!(result.output.get("command").is_none());
+        assert!(result.output.get("stdout").is_none());
+        assert!(result.output.get("stderr").is_none());
+    }
+
+    #[test]
+    fn verification_executor_reports_cargo_fmt_pass_without_raw_output() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"fmt_pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn ok() {}\n").expect("src");
+
+        let result =
+            VerificationCommandExecutor::cargo_fmt_check(temp.path(), &json!({})).expect("execute");
+
+        assert_eq!(result.status, ToolExecutionStatus::Completed);
+        assert_eq!(result.output["verification_status"], "Passed");
+        assert_eq!(result.output["process_launched"], true);
+        assert_eq!(result.output["output_redacted"], true);
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("pub fn"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+    }
+
+    #[test]
+    fn verification_executor_reports_cargo_fmt_failure_without_raw_output() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"fmt_fail\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn bad( )->i32{1}\n").expect("src");
+
+        let result =
+            VerificationCommandExecutor::cargo_fmt_check(temp.path(), &json!({})).expect("execute");
+
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+        assert_eq!(result.output["verification_status"], "Failed");
+        assert_eq!(result.output["process_launched"], true);
+        assert_eq!(result.output["output_redacted"], true);
+        let serialized = result.output.to_string();
+        assert!(!serialized.contains("pub fn"));
+        assert!(!serialized.contains("bad"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+    }
+
+    #[test]
+    fn verification_executor_reports_spawn_failure_and_timeout_as_bounded_results() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let spawn_failed = VerificationCommandExecutor::run_fixed(
+            temp.path(),
+            "__brownie_missing_verifier_binary__",
+            &[],
+            Duration::from_millis(1),
+        )
+        .expect("spawn failure result");
+        assert_eq!(spawn_failed.status, ToolExecutionStatus::Failed);
+        assert_eq!(spawn_failed.output["verification_status"], "SpawnFailed");
+        assert_eq!(spawn_failed.output["process_launched"], false);
+
+        let timed_out = VerificationCommandExecutor::run_fixed(
+            temp.path(),
+            "sleep",
+            &["2"],
+            Duration::from_millis(10),
+        )
+        .expect("timeout result");
+        assert_eq!(timed_out.status, ToolExecutionStatus::Failed);
+        assert_eq!(timed_out.output["verification_status"], "TimedOut");
+        assert_eq!(timed_out.output["timed_out"], true);
+        assert_eq!(timed_out.output["output_redacted"], true);
     }
 }

@@ -194,8 +194,8 @@ use brownie_tools::{
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
     ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
     DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS, DEFAULT_PROPOSAL_PREVIEW_CHARS,
-    MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID, WORKSPACE_READ_TOOL_ID,
-    WORKSPACE_WRITE_TOOL_ID,
+    MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+    WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -5015,7 +5015,7 @@ fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    match ToolExecutor::execute_read_only(
+    match ToolExecutor::execute_controlled(
         store.workspace_root(),
         ToolExecutionRequest {
             tool_id: definition.tool_id,
@@ -13722,6 +13722,17 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "content_preview",
         "bytes_read",
         "truncated",
+        "check_id",
+        "verification_status",
+        "process_launched",
+        "exit_code",
+        "timed_out",
+        "duration_ms",
+        "standard_output_bytes",
+        "standard_error_bytes",
+        "standard_output_truncated",
+        "standard_error_truncated",
+        "output_redacted",
         "provider",
         "model",
         "message_count",
@@ -13903,6 +13914,9 @@ fn timeline_entry(event: &LedgerEvent) -> String {
         for key in [
             "tool_id",
             "status",
+            "check_id",
+            "verification_status",
+            "timed_out",
             "subtask_id",
             "parent_task_id",
             "parent_run_id",
@@ -14375,7 +14389,14 @@ fn handle_approved_workspace_intents(
         ToolIntentParser::parse_assistant_content(assistant_content),
     );
     for decision in evaluation.items {
+        let controlled_execution_tool = matches!(
+            decision.tool_id.as_str(),
+            WORKSPACE_READ_TOOL_ID | VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
+        );
         if !decision.allowed {
+            if controlled_execution_tool {
+                append_controlled_tool_execution_denied(store, record, policy, &decision)?;
+            }
             continue;
         }
         if decision.tool_id == WORKSPACE_WRITE_TOOL_ID {
@@ -14389,7 +14410,7 @@ fn handle_approved_workspace_intents(
             append_subtask_orchestration_queued(store, record, &decision)?;
             continue;
         }
-        if decision.tool_id != WORKSPACE_READ_TOOL_ID {
+        if !controlled_execution_tool {
             continue;
         }
         store.tasks().append_task_event_with_payload(
@@ -14416,7 +14437,7 @@ fn handle_approved_workspace_intents(
             )?;
             continue;
         }
-        let result = ToolExecutor::execute_read_only(
+        let result = ToolExecutor::execute_controlled(
             store.workspace_root(),
             ToolExecutionRequest {
                 tool_id: decision.tool_id,
@@ -14434,6 +14455,40 @@ fn handle_approved_workspace_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
+    Ok(())
+}
+
+fn append_controlled_tool_execution_denied(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    decision: &ToolIntentDecision,
+) -> anyhow::Result<()> {
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionRequested,
+        Some(json!({ "tool_id": decision.tool_id, "input": decision.input })),
+    )?;
+    let permission = RuntimePermissionGate::check(policy, decision.required_action.clone());
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionPermissionChecked,
+        Some(json!({
+            "tool_id": decision.tool_id,
+            "required_action": runtime_action_name(&permission.action),
+            "allowed": permission.allowed,
+            "reason": permission.reason,
+        })),
+    )?;
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionDenied,
+        Some(json!({
+            "tool_id": decision.tool_id,
+            "status": "Denied",
+            "reason": permission.reason,
+        })),
+    )?;
     Ok(())
 }
 
@@ -16847,6 +16902,23 @@ fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) ->
     if let Some(truncated) = result.output.get("truncated") {
         payload.insert("truncated".to_string(), truncated.clone());
     }
+    for key in [
+        "check_id",
+        "verification_status",
+        "process_launched",
+        "exit_code",
+        "timed_out",
+        "duration_ms",
+        "standard_output_bytes",
+        "standard_error_bytes",
+        "standard_output_truncated",
+        "standard_error_truncated",
+        "output_redacted",
+    ] {
+        if let Some(value) = result.output.get(key) {
+            payload.insert(key.to_string(), value.clone());
+        }
+    }
     if let Some(reason) = result.output.get("reason") {
         payload.insert("reason".to_string(), reason.clone());
     }
@@ -17282,6 +17354,86 @@ mod tests {
     }
 
     #[test]
+    fn tool_execute_controlled_cargo_fmt_check_returns_completed_without_raw_output() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"runtime_fmt_pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn ok() {}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"verification.cargo_fmt_check","input":{}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Completed");
+        assert_eq!(result["tool_id"], "verification.cargo_fmt_check");
+        assert_eq!(result["output"]["verification_status"], "Passed");
+        assert_eq!(result["output"]["process_launched"], true);
+        assert_eq!(result["output"]["output_redacted"], true);
+        let serialized = result.to_string();
+        assert!(serialized.contains("standard_output_bytes"));
+        assert!(serialized.contains("standard_error_bytes"));
+        assert!(!serialized.contains("pub fn ok"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+        assert!(!serialized.contains("command"));
+        assert!(!serialized.contains("RUSTFLAGS"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn tool_execute_rejects_verification_command_overrides_without_launch() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"verification.cargo_fmt_check","input":{"command":"cargo test","env":{"RUSTFLAGS":"-Awarnings"}}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["output"]["verification_status"], "Rejected");
+        assert_eq!(result["output"]["process_launched"], false);
+        let serialized = result.to_string();
+        assert!(!serialized.contains("cargo test"));
+        assert!(!serialized.contains("RUSTFLAGS"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn tool_execute_generic_process_exec_remains_denied_for_verifier() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"process.exec","input":{"command":"cargo fmt --check"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Denied");
+        assert_eq!(result["tool_id"], "process.exec");
+        assert!(!result.to_string().contains("cargo fmt --check"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_with_readme_records_second_pass_events() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -17421,6 +17573,137 @@ mod tests {
     }
 
     #[test]
+    fn task_run_executes_controlled_verifier_and_records_bounded_metadata() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"task_fmt_pass\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn ok() {}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        let verifier_event = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("verification.cargo_fmt_check")
+            })
+            .expect("verification completion event");
+        let payload = verifier_event.payload.as_ref().expect("payload");
+        assert_eq!(payload["verification_status"], "Passed");
+        assert_eq!(payload["process_launched"], true);
+        assert_eq!(payload["output_redacted"], true);
+        assert!(payload.get("standard_output_bytes").is_some());
+        assert!(payload.get("standard_error_bytes").is_some());
+        assert!(!ledger.contains("pub fn ok"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+        assert!(!ledger.contains("command"));
+
+        let events_response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let sanitized = events_response.result.expect("events result").to_string();
+        assert!(sanitized.contains("verification_status"));
+        assert!(sanitized.contains("standard_output_bytes"));
+        assert!(!sanitized.contains("pub fn ok"));
+        assert!(!sanitized.contains("stdout"));
+        assert!(!sanitized.contains("stderr"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_records_verifier_tool_execution_denied_without_launch_for_orchestrator() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "# Brownie\n").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        let denied = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionDenied
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("verification.cargo_fmt_check")
+            })
+            .expect("verification denied event");
+        let payload = denied.payload.as_ref().expect("payload");
+        assert_eq!(payload["status"], "Denied");
+        assert!(payload["reason"].as_str().expect("reason").len() > 0);
+        assert!(!ledger.contains("process_launched\":true"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn run_inspection_methods_return_sanitized_summaries() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -17551,6 +17834,17 @@ mod tests {
             "output_preview": "safe",
             "bytes_read": 42,
             "truncated": false,
+            "check_id": "cargo_fmt_check",
+            "verification_status": "Passed",
+            "process_launched": true,
+            "exit_code": 0,
+            "timed_out": false,
+            "duration_ms": 12,
+            "standard_output_bytes": 0,
+            "standard_error_bytes": 0,
+            "standard_output_truncated": false,
+            "standard_error_truncated": false,
+            "output_redacted": true,
             "reason": "ok",
             "content": "secret",
             "full_content": "secret",
@@ -17634,6 +17928,17 @@ mod tests {
         assert_eq!(sanitized["output_preview"], "safe");
         assert_eq!(sanitized["bytes_read"], 42);
         assert_eq!(sanitized["truncated"], false);
+        assert_eq!(sanitized["check_id"], "cargo_fmt_check");
+        assert_eq!(sanitized["verification_status"], "Passed");
+        assert_eq!(sanitized["process_launched"], true);
+        assert_eq!(sanitized["exit_code"], 0);
+        assert_eq!(sanitized["timed_out"], false);
+        assert_eq!(sanitized["duration_ms"], 12);
+        assert_eq!(sanitized["standard_output_bytes"], 0);
+        assert_eq!(sanitized["standard_error_bytes"], 0);
+        assert_eq!(sanitized["standard_output_truncated"], false);
+        assert_eq!(sanitized["standard_error_truncated"], false);
+        assert_eq!(sanitized["output_redacted"], true);
         assert_eq!(sanitized["reason"], "ok");
         assert_eq!(sanitized["subtask_id"], "subtask_run_1_1");
         assert_eq!(sanitized["queue_position"], 1);
@@ -18879,8 +19184,6 @@ mod tests {
                 LedgerEventKind::ToolPermissionChecked,
                 LedgerEventKind::ToolPlanApproved,
                 LedgerEventKind::ToolPermissionChecked,
-                LedgerEventKind::ToolPlanDenied,
-                LedgerEventKind::ToolPermissionChecked,
                 LedgerEventKind::ToolPlanApproved,
                 LedgerEventKind::AgentLoopStarted,
                 LedgerEventKind::PromptBuilt,
@@ -18888,8 +19191,6 @@ mod tests {
                 LedgerEventKind::ToolIntentParsed,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 LedgerEventKind::ToolIntentApproved,
-                LedgerEventKind::ToolIntentPermissionChecked,
-                LedgerEventKind::ToolIntentDenied,
                 LedgerEventKind::ToolIntentPermissionChecked,
                 LedgerEventKind::ToolIntentApproved,
                 LedgerEventKind::ToolExecutionRequested,
@@ -30749,8 +31050,11 @@ mod tests {
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 7);
+        assert_eq!(tools.len(), 8);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == "verification.cargo_fmt_check"));
     }
 
     #[test]
@@ -30776,6 +31080,9 @@ mod tests {
         assert!(items
             .iter()
             .any(|item| item["tool_id"] == "workspace.write" && item["allowed"] == false));
+        assert!(items.iter().any(|item| {
+            item["tool_id"] == "verification.cargo_fmt_check" && item["allowed"] == false
+        }));
         assert!(items
             .iter()
             .any(|item| item["tool_id"] == "subtask.spawn" && item["allowed"] == true));
