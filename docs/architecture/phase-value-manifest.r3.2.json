@@ -114,6 +114,8 @@
   "exit_criteria": [
     "verification recovery task.run with denied workspace.write records TaskFailed and returns verification_recovery_repair.gate_status=Failed",
     "missing repair proposal failure uses failure_reason=MissingRecoveryRepairProposal and next_action=inspect_recovery_repair_gate_failure",
+    "unusable recovery-scoped proposals with validation_status other than Valid fail with failure_reason=RecoveryRepairProposalNotApplicable",
+    "failed repair-gate attempts do not permanently replay-lock the source failure fingerprint; a later authorized recovery start can create a fresh recovery task",
     "successful recovery repair handoff still returns exactly one proposal_id with gate_status=Passed and apply_enabled=false",
     "verification recovery retry task.run emits requirement_source_kind=verification_recovery_retry_apply, source_apply_id, and sha256 requirement_fingerprint on the completion gate",
     "recovery retry controlled verifier terminal evidence carries the same verification_requirement_fingerprint required by the gate",
@@ -128,11 +130,13 @@
       "MissingRecoveryRepairProposal",
       "AmbiguousRecoveryRepairProposals",
       "InvalidRecoveryRepairProvenance",
+      "RecoveryRepairProposalNotApplicable",
       "verification_requirement_fingerprint",
       "verification_recovery_retry_apply"
     ],
     "test_tokens": [
       "task_run_recovery_task_with_denied_workspace_write_fails_closed_without_repair_proposal",
+      "task_run_recovery_task_with_unusable_workspace_proposal_fails_repair_gate",
       "task_start_and_run_verification_recovery_retry_after_applied_recovery_proposal",
       "accepts bounded task.run verification recovery repair outcomes and rejects raw fields"
     ],

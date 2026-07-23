@@ -1088,6 +1088,22 @@ describe('RuntimeClient', () => {
       failure_reason: 'MissingRecoveryRepairProposal',
       next_action: 'inspect_recovery_repair_gate_failure',
     })).toBe(true);
+    expect(isTaskRunVerificationRecoveryRepairOutcome({
+      ...outcome,
+      gate_status: 'Failed',
+      proposal_id: null,
+      proposal_count: 1,
+      failure_reason: 'RecoveryRepairProposalNotApplicable',
+      next_action: 'inspect_recovery_repair_gate_failure',
+    })).toBe(true);
+    expect(isTaskRunVerificationRecoveryRepairOutcome({
+      ...outcome,
+      gate_status: 'Failed',
+      proposal_id: null,
+      proposal_count: 1,
+      failure_reason: 'MissingRecoveryRepairProposal',
+      next_action: 'inspect_recovery_repair_gate_failure',
+    })).toBe(false);
   });
 
   it('accepts bounded task.run verification recovery retry outcomes and rejects raw fields', () => {

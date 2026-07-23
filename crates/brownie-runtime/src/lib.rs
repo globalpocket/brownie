@@ -15487,7 +15487,7 @@ fn verification_recovery_retry_provenance_for_source(
             .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
     if !proposals
         .iter()
-        .any(|proposal| proposal.proposal_id == source.proposal_id)
+        .any(|proposal| proposal.applicable && proposal.proposal_id == source.proposal_id)
     {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
             "invalid params: verification recovery retry source proposal is not recovery-scoped"
@@ -15870,6 +15870,7 @@ fn verification_recovery_retry_outcome_for_run(
 #[derive(Debug, Clone)]
 struct VerificationRecoveryRepairProposalEvidence {
     proposal_id: String,
+    applicable: bool,
 }
 
 fn verification_recovery_repair_outcome_for_replay(
@@ -15920,14 +15921,23 @@ fn verification_recovery_repair_outcome_for_run(
     let proposals = verification_recovery_repair_proposals_for_run(store, record, provenance)?;
     let invalid_proposal_seen =
         invalid_verification_recovery_repair_proposal_seen(store, record, provenance)?;
-    let (gate_status, proposal_id, failure_reason, next_action) = match proposals.len() {
-        1 => (
+    let applicable_proposal = proposals
+        .iter()
+        .find(|proposal| proposal.applicable)
+        .map(|proposal| proposal.proposal_id.clone());
+    let proposal_count = proposals.len();
+    let (gate_status, proposal_id, failure_reason, next_action) = match proposal_count {
+        1 if applicable_proposal.is_some() => (
             VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
-            proposals
-                .first()
-                .map(|proposal| proposal.proposal_id.clone()),
+            applicable_proposal,
             None,
             "review_and_authorize_recovery_proposal".to_string(),
+        ),
+        1 => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            None,
+            Some("RecoveryRepairProposalNotApplicable".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
         ),
         0 if invalid_proposal_seen => (
             VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
@@ -15957,7 +15967,7 @@ fn verification_recovery_repair_outcome_for_run(
         failure_fingerprint: provenance.failure_fingerprint.clone(),
         failed_verifier_tool_ids: provenance.failed_verifier_tool_ids.clone(),
         proposal_id,
-        proposal_count: proposals.len(),
+        proposal_count,
         failure_reason,
         replayed,
         apply_enabled: false,
@@ -16011,7 +16021,11 @@ fn verification_recovery_repair_proposals_for_run(
         else {
             continue;
         };
-        proposals.push(VerificationRecoveryRepairProposalEvidence { proposal_id });
+        let applicable = payload.get("validation_status").and_then(Value::as_str) == Some("Valid");
+        proposals.push(VerificationRecoveryRepairProposalEvidence {
+            proposal_id,
+            applicable,
+        });
     }
     Ok(proposals)
 }
@@ -20921,6 +20935,143 @@ mod tests {
             failed_payload["failure_reason"],
             "MissingRecoveryRepairProposal"
         );
+
+        let recovery_again = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "task.start",
+                "params": {
+                    "goal": "Implement recovery edit",
+                    "mode_id": "implementer",
+                    "verification_recovery_source": {
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "authorize_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            recovery_again.error.is_none(),
+            "second recovery admission error: {:?}",
+            recovery_again.error
+        );
+        let recovery_again_result = recovery_again.result.expect("second recovery result");
+        let second_recovery_task_id = recovery_again_result["task_id"]
+            .as_str()
+            .expect("second recovery task id")
+            .to_string();
+        assert_ne!(second_recovery_task_id, recovery_task_id);
+        assert_eq!(
+            recovery_again_result["verification_recovery_admission"]["replayed"],
+            false
+        );
+        let second_recovery_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{second_recovery_task_id}"}}}}"#
+        ));
+        assert!(second_recovery_run.error.is_none());
+        let second_recovery_result = second_recovery_run.result.expect("second run result");
+        assert_eq!(second_recovery_result["status"], "Completed");
+        assert_eq!(
+            second_recovery_result["verification_recovery_repair"]["gate_status"],
+            "Passed"
+        );
+        assert_eq!(
+            second_recovery_result["verification_recovery_repair"]["proposal_count"],
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_recovery_task_with_unusable_workspace_proposal_fails_repair_gate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"m8_2_unusable_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn bad( )->i32{1}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+            );
+        std::fs::remove_file(temp.path().join("README.md")).expect("remove readme");
+        std::fs::create_dir(temp.path().join("README.md")).expect("readme directory");
+
+        let (recovery_task_id, recovery_run_id) = start_verification_recovery_task_from_source(
+            &source_task_id,
+            &source_run_id,
+            &fingerprint,
+            "Implement recovery edit",
+            "implementer",
+        );
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(run_result["agent_loop"]["final_state"], "Failed");
+        let repair = &run_result["verification_recovery_repair"];
+        assert_eq!(repair["gate_status"], "Failed");
+        assert_eq!(repair["proposal_count"], 1);
+        assert_eq!(
+            repair["failure_reason"],
+            "RecoveryRepairProposalNotApplicable"
+        );
+        assert_eq!(
+            repair["next_action"],
+            "inspect_recovery_repair_gate_failure"
+        );
+        assert!(repair.get("proposal_id").is_none());
+
+        let store = BrownieStore::new(temp.path());
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events");
+        let proposal_payload = recovery_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .and_then(|event| event.payload.as_ref())
+            .expect("proposal payload");
+        assert_eq!(proposal_payload["verification_recovery_repair"], true);
+        assert_eq!(proposal_payload["source_task_id"], source_task_id);
+        assert_eq!(proposal_payload["source_run_id"], source_run_id);
+        assert_eq!(proposal_payload["recovery_task_id"], recovery_task_id);
+        assert_eq!(proposal_payload["recovery_run_id"], recovery_run_id);
+        assert_eq!(proposal_payload["failure_fingerprint"], fingerprint);
+        assert_eq!(proposal_payload["validation_status"], "Invalid");
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["verification_recovery_repair"]["failure_reason"],
+            "RecoveryRepairProposalNotApplicable"
+        );
+        assert_eq!(
+            replay_result["verification_recovery_repair"]["replayed"],
+            true
+        );
+        let recovery_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("events after replay");
+        assert_eq!(recovery_events_after_replay.len(), recovery_events.len());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

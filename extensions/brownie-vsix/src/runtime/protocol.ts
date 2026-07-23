@@ -3127,11 +3127,16 @@ export function isTaskRunVerificationRecoveryRepairOutcome(value: unknown): valu
     value.proposal_count === 1 &&
     (value.failure_reason === undefined || value.failure_reason === null) &&
     value.next_action === 'review_and_authorize_recovery_proposal';
+  const failedRepairReason = isRecord(value) && typeof value.failure_reason === 'string' ? value.failure_reason : null;
+  const failedRepairProposalCountMatches = isRecord(value) &&
+    isNonNegativeInteger(value.proposal_count) &&
+    (failedRepairReason === 'RecoveryRepairProposalNotApplicable'
+      ? value.proposal_count > 0
+      : value.proposal_count === 0 || value.proposal_count > 1);
   const failedRepairGate = isRecord(value) &&
     value.gate_status === 'Failed' &&
     proposalIdIsAbsent &&
-    isNonNegativeInteger(value.proposal_count) &&
-    (value.proposal_count === 0 || value.proposal_count > 1) &&
+    failedRepairProposalCountMatches &&
     typeof value.failure_reason === 'string' &&
     recoveryRepairFailureReasons.has(value.failure_reason) &&
     value.next_action === 'inspect_recovery_repair_gate_failure';
