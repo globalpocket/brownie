@@ -2402,6 +2402,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
+    if let Some(repair) = verification_recovery_repair.as_ref() {
+        if repair.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED {
+            agent_loop_final_state = AgentLoopState::Failed;
+            agent_loop_completion_summary = verification_recovery_repair_failed_summary(repair);
+            agent_loop_final_response_content.clear();
+        }
+    }
 
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -2439,9 +2446,10 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Ok(outcome) => outcome,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
-    let terminal_payload = verification_completion_gate
-        .as_ref()
-        .map(verification_completion_gate_payload);
+    let terminal_payload = task_run_terminal_payload(
+        verification_completion_gate.as_ref(),
+        verification_recovery_repair.as_ref(),
+    );
 
     match store.tasks().update_task_status_with_payload(
         &running.task_id,
@@ -2555,10 +2563,15 @@ fn handle_verification_recovery_retry_task_run(
             "internal error: missing verification recovery retry provenance",
         );
     };
+    let runtime_requirement = runtime_verification_requirement_for_record(&running);
     for tool_id in &provenance.retried_verifier_tool_ids {
-        if let Err(error) =
-            append_verification_recovery_retry_tool_execution(&store, &running, &policy, tool_id)
-        {
+        if let Err(error) = append_verification_recovery_retry_tool_execution(
+            &store,
+            &running,
+            &policy,
+            tool_id,
+            runtime_requirement.as_ref(),
+        ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
     }
@@ -2567,8 +2580,10 @@ fn handle_verification_recovery_retry_task_run(
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    let verification_completion_gate =
-        verification_completion_gate_for_run(&completion_gate_events);
+    let verification_completion_gate = verification_completion_gate_for_run_with_requirement(
+        &completion_gate_events,
+        runtime_requirement.as_ref(),
+    );
     let agent_loop_final_state = match verification_completion_gate.as_ref() {
         Some(gate) if gate.status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED => {
             AgentLoopState::Failed
@@ -14776,18 +14791,49 @@ struct RequiredVerificationIntent {
     tool_id: String,
     event_index: usize,
     rejected: bool,
+    requirement_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeVerificationRequirement {
+    requirement_id: String,
+    source_kind: String,
+    source_apply_id: String,
+    requirement_fingerprint: String,
+    required_verifier_tool_ids: Vec<String>,
 }
 
 fn verification_completion_gate_for_run(
     events: &[LedgerEvent],
 ) -> Option<TaskRunVerificationCompletionGate> {
-    let required = required_verification_intents(events);
+    verification_completion_gate_for_run_with_requirement(events, None)
+}
+
+fn verification_completion_gate_for_run_with_requirement(
+    events: &[LedgerEvent],
+    runtime_requirement: Option<&RuntimeVerificationRequirement>,
+) -> Option<TaskRunVerificationCompletionGate> {
+    let mut required = required_verification_intents(events);
+    if let Some(requirement) = runtime_requirement {
+        for tool_id in &requirement.required_verifier_tool_ids {
+            if required.iter().any(|intent| intent.tool_id == *tool_id) {
+                continue;
+            }
+            required.push(RequiredVerificationIntent {
+                tool_id: tool_id.clone(),
+                event_index: 0,
+                rejected: false,
+                requirement_fingerprint: Some(requirement.requirement_fingerprint.clone()),
+            });
+        }
+    }
     if required.is_empty() {
         return None;
     }
 
     let mut passed_verifier_tool_ids = Vec::new();
     let mut failed_verifier_tool_ids = Vec::new();
+    let mut missing_verifier_tool_ids = Vec::new();
     let mut failure_reasons = Vec::new();
 
     for intent in &required {
@@ -14798,6 +14844,17 @@ fn verification_completion_gate_for_run(
         }
 
         match terminal_verification_event_after(events, intent.event_index, &intent.tool_id) {
+            Some(event)
+                if intent.requirement_fingerprint.as_deref().is_some()
+                    && !event_matches_requirement(
+                        event,
+                        intent.requirement_fingerprint.as_deref(),
+                    ) =>
+            {
+                failed_verifier_tool_ids.push(intent.tool_id.clone());
+                missing_verifier_tool_ids.push(intent.tool_id.clone());
+                failure_reasons.push(format!("{}:RequirementFingerprintMismatch", intent.tool_id));
+            }
             Some(event) if event.kind == LedgerEventKind::ToolExecutionCompleted => {
                 let verification_status = event
                     .payload
@@ -14835,13 +14892,17 @@ fn verification_completion_gate_for_run(
             }
             None => {
                 failed_verifier_tool_ids.push(intent.tool_id.clone());
-                let reason =
-                    if stale_verification_event_before(events, intent.event_index, &intent.tool_id)
-                    {
-                        "StaleTerminalEvidence"
-                    } else {
-                        "MissingTerminalEvidence"
-                    };
+                missing_verifier_tool_ids.push(intent.tool_id.clone());
+                let reason = if stale_verification_event_before(
+                    events,
+                    intent.event_index,
+                    &intent.tool_id,
+                    intent.requirement_fingerprint.as_deref(),
+                ) {
+                    "StaleTerminalEvidence"
+                } else {
+                    "MissingTerminalEvidence"
+                };
                 failure_reasons.push(format!("{}:{reason}", intent.tool_id));
             }
         }
@@ -14864,12 +14925,19 @@ fn verification_completion_gate_for_run(
 
     Some(TaskRunVerificationCompletionGate {
         status: status.to_string(),
+        requirement_id: runtime_requirement.map(|requirement| requirement.requirement_id.clone()),
+        requirement_source_kind: runtime_requirement
+            .map(|requirement| requirement.source_kind.clone()),
+        source_apply_id: runtime_requirement.map(|requirement| requirement.source_apply_id.clone()),
+        requirement_fingerprint: runtime_requirement
+            .map(|requirement| requirement.requirement_fingerprint.clone()),
         required_verifier_count: required_verifier_tool_ids.len(),
         passed_verifier_count: passed_verifier_tool_ids.len(),
         failed_verifier_count: failed_verifier_tool_ids.len(),
         required_verifier_tool_ids,
         passed_verifier_tool_ids,
         failed_verifier_tool_ids,
+        missing_verifier_tool_ids,
         failure_reasons,
         next_action: next_action.to_string(),
     })
@@ -14899,11 +14967,23 @@ fn required_verification_intents(events: &[LedgerEvent]) -> Vec<RequiredVerifica
         if let Some(position) = required.iter().position(|intent| intent.tool_id == tool_id) {
             required[position].event_index = event_index;
             required[position].rejected = rejected;
+            required[position].requirement_fingerprint = event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("verification_requirement_fingerprint"))
+                .and_then(Value::as_str)
+                .map(ToString::to_string);
         } else {
             required.push(RequiredVerificationIntent {
                 tool_id: tool_id.to_string(),
                 event_index,
                 rejected,
+                requirement_fingerprint: event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("verification_requirement_fingerprint"))
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
             });
         }
     }
@@ -14928,10 +15008,12 @@ fn stale_verification_event_before(
     events: &[LedgerEvent],
     required_event_index: usize,
     tool_id: &str,
+    requirement_fingerprint: Option<&str>,
 ) -> bool {
     events.iter().enumerate().any(|(event_index, event)| {
         event_index < required_event_index
             && is_terminal_verification_event_for_tool(event, tool_id)
+            && event_matches_requirement(event, requirement_fingerprint)
     })
 }
 
@@ -14949,6 +15031,20 @@ fn is_terminal_verification_event_for_tool(event: &LedgerEvent, tool_id: &str) -
         == Some(tool_id)
 }
 
+fn event_matches_requirement(event: &LedgerEvent, requirement_fingerprint: Option<&str>) -> bool {
+    match requirement_fingerprint {
+        Some(requirement_fingerprint) => {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("verification_requirement_fingerprint"))
+                .and_then(Value::as_str)
+                == Some(requirement_fingerprint)
+        }
+        None => true,
+    }
+}
+
 fn is_verification_tool_id(tool_id: &str) -> bool {
     matches!(
         tool_id,
@@ -14957,7 +15053,7 @@ fn is_verification_tool_id(tool_id: &str) -> bool {
 }
 
 fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate) -> Value {
-    json!({
+    let mut payload = json!({
         "verification_completion_gate_status": gate.status,
         "required_verifier_count": gate.required_verifier_count,
         "passed_verifier_count": gate.passed_verifier_count,
@@ -14965,9 +15061,95 @@ fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate
         "required_verifier_tool_ids": gate.required_verifier_tool_ids.clone(),
         "passed_verifier_tool_ids": gate.passed_verifier_tool_ids.clone(),
         "failed_verifier_tool_ids": gate.failed_verifier_tool_ids.clone(),
+        "missing_verifier_tool_ids": gate.missing_verifier_tool_ids.clone(),
         "failure_reasons": gate.failure_reasons.clone(),
         "next_action": gate.next_action.clone(),
-    })
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(requirement_id) = gate.requirement_id.as_ref() {
+            object.insert(
+                "verification_requirement_id".to_string(),
+                json!(requirement_id),
+            );
+        }
+        if let Some(source_kind) = gate.requirement_source_kind.as_ref() {
+            object.insert(
+                "verification_requirement_source_kind".to_string(),
+                json!(source_kind),
+            );
+        }
+        if let Some(source_apply_id) = gate.source_apply_id.as_ref() {
+            object.insert("source_apply_id".to_string(), json!(source_apply_id));
+        }
+        if let Some(fingerprint) = gate.requirement_fingerprint.as_ref() {
+            object.insert(
+                "verification_requirement_fingerprint".to_string(),
+                json!(fingerprint),
+            );
+        }
+    }
+    payload
+}
+
+fn verification_recovery_repair_payload(
+    repair: &TaskRunVerificationRecoveryRepairOutcome,
+) -> Value {
+    let mut payload = json!({
+        "verification_recovery_repair_gate_status": repair.gate_status,
+        "verification_recovery_repair": true,
+        "source_task_id": repair.source_task_id,
+        "source_run_id": repair.source_run_id,
+        "recovery_task_id": repair.recovery_task_id,
+        "recovery_run_id": repair.recovery_run_id,
+        "failure_fingerprint": repair.failure_fingerprint,
+        "failed_verifier_tool_ids": repair.failed_verifier_tool_ids,
+        "proposal_count": repair.proposal_count,
+        "apply_enabled": repair.apply_enabled,
+        "next_action": repair.next_action,
+    });
+    if let Some(object) = payload.as_object_mut() {
+        if let Some(proposal_id) = repair.proposal_id.as_ref() {
+            object.insert("proposal_id".to_string(), json!(proposal_id));
+        }
+        if let Some(reason) = repair.failure_reason.as_ref() {
+            object.insert("failure_reason".to_string(), json!(reason));
+        }
+    }
+    payload
+}
+
+fn task_run_terminal_payload(
+    verification_completion_gate: Option<&TaskRunVerificationCompletionGate>,
+    verification_recovery_repair: Option<&TaskRunVerificationRecoveryRepairOutcome>,
+) -> Option<Value> {
+    let mut payload = json!({});
+    if let Some(gate) = verification_completion_gate {
+        merge_json_object(&mut payload, verification_completion_gate_payload(gate));
+    }
+    if let Some(repair) = verification_recovery_repair {
+        merge_json_object(&mut payload, verification_recovery_repair_payload(repair));
+    }
+    if payload
+        .as_object()
+        .map(|object| object.is_empty())
+        .unwrap_or(true)
+    {
+        None
+    } else {
+        Some(payload)
+    }
+}
+
+fn merge_json_object(target: &mut Value, source: Value) {
+    let Some(target_object) = target.as_object_mut() else {
+        return;
+    };
+    let Some(source_object) = source.as_object() else {
+        return;
+    };
+    for (key, value) in source_object {
+        target_object.insert(key.clone(), value.clone());
+    }
 }
 
 fn append_verification_recovery_retry_tool_execution(
@@ -14975,6 +15157,7 @@ fn append_verification_recovery_retry_tool_execution(
     record: &TaskRecord,
     policy: &CompiledModePolicy,
     tool_id: &str,
+    runtime_requirement: Option<&RuntimeVerificationRequirement>,
 ) -> anyhow::Result<()> {
     let definition = BuiltinToolRegistry::get(tool_id)
         .ok_or_else(|| anyhow::anyhow!("unknown verification retry tool id: {tool_id}"))?;
@@ -14990,7 +15173,7 @@ fn append_verification_recovery_retry_tool_execution(
         "check_id": check_id,
     });
     let permission = RuntimePermissionGate::check(policy, definition.required_action.clone());
-    let intent_payload = json!({
+    let mut intent_payload = json!({
         "tool_id": definition.tool_id,
         "required_action": runtime_action_name(&definition.required_action),
         "allowed": permission.allowed,
@@ -14999,6 +15182,7 @@ fn append_verification_recovery_retry_tool_execution(
         "input_summary": summarize_intent_input(&input),
         "verification_recovery_retry": true,
     });
+    add_runtime_requirement_payload_fields(&mut intent_payload, runtime_requirement);
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolIntentPermissionChecked,
@@ -15016,33 +15200,45 @@ fn append_verification_recovery_retry_tool_execution(
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolExecutionRequested,
-        Some(json!({
-            "tool_id": definition.tool_id,
-            "input_summary": summarize_intent_input(&input),
-            "verification_recovery_retry": true,
-        })),
+        Some({
+            let mut payload = json!({
+                "tool_id": definition.tool_id,
+                "input_summary": summarize_intent_input(&input),
+                "verification_recovery_retry": true,
+            });
+            add_runtime_requirement_payload_fields(&mut payload, runtime_requirement);
+            payload
+        }),
     )?;
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::ToolExecutionPermissionChecked,
-        Some(json!({
-            "tool_id": definition.tool_id,
-            "required_action": runtime_action_name(&definition.required_action),
-            "allowed": permission.allowed,
-            "reason": permission.reason,
-            "verification_recovery_retry": true,
-        })),
+        Some({
+            let mut payload = json!({
+                "tool_id": definition.tool_id,
+                "required_action": runtime_action_name(&definition.required_action),
+                "allowed": permission.allowed,
+                "reason": permission.reason,
+                "verification_recovery_retry": true,
+            });
+            add_runtime_requirement_payload_fields(&mut payload, runtime_requirement);
+            payload
+        }),
     )?;
     if !permission.allowed {
         store.tasks().append_task_event_with_payload(
             record,
             LedgerEventKind::ToolExecutionDenied,
-            Some(json!({
-                "tool_id": definition.tool_id,
-                "status": "Denied",
-                "reason": permission.reason,
-                "verification_recovery_retry": true,
-            })),
+            Some({
+                let mut payload = json!({
+                    "tool_id": definition.tool_id,
+                    "status": "Denied",
+                    "reason": permission.reason,
+                    "verification_recovery_retry": true,
+                });
+                add_runtime_requirement_payload_fields(&mut payload, runtime_requirement);
+                payload
+            }),
         )?;
         return Ok(());
     }
@@ -15063,10 +15259,83 @@ fn append_verification_recovery_retry_tool_execution(
     if let Some(object) = payload.as_object_mut() {
         object.insert("verification_recovery_retry".to_string(), json!(true));
     }
+    add_runtime_requirement_payload_fields(&mut payload, runtime_requirement);
     store
         .tasks()
         .append_task_event_with_payload(record, kind, Some(payload))?;
     Ok(())
+}
+
+fn add_runtime_requirement_payload_fields(
+    payload: &mut Value,
+    runtime_requirement: Option<&RuntimeVerificationRequirement>,
+) {
+    let Some(requirement) = runtime_requirement else {
+        return;
+    };
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "verification_requirement_id".to_string(),
+            json!(requirement.requirement_id),
+        );
+        object.insert(
+            "verification_requirement_source_kind".to_string(),
+            json!(requirement.source_kind),
+        );
+        object.insert(
+            "source_apply_id".to_string(),
+            json!(requirement.source_apply_id),
+        );
+        object.insert(
+            "verification_requirement_fingerprint".to_string(),
+            json!(requirement.requirement_fingerprint),
+        );
+    }
+}
+
+fn runtime_verification_requirement_for_record(
+    record: &TaskRecord,
+) -> Option<RuntimeVerificationRequirement> {
+    let provenance = record.verification_recovery_retry_provenance.as_ref()?;
+    let mut required_verifier_tool_ids = provenance.retried_verifier_tool_ids.clone();
+    required_verifier_tool_ids.sort();
+    required_verifier_tool_ids.dedup();
+    if required_verifier_tool_ids.is_empty() {
+        return None;
+    }
+    let source_kind = "verification_recovery_retry_apply".to_string();
+    let canonical = json!({
+        "version": "runtime_required_verification_requirement_v1",
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "source_kind": source_kind,
+        "source_task_id": provenance.source_task_id,
+        "source_run_id": provenance.source_run_id,
+        "recovery_task_id": provenance.recovery_task_id,
+        "recovery_run_id": provenance.recovery_run_id,
+        "proposal_id": provenance.proposal_id,
+        "apply_id": provenance.apply_id,
+        "failure_fingerprint": provenance.failure_fingerprint,
+        "apply_fingerprint": provenance.apply_fingerprint,
+        "required_verifier_tool_ids": required_verifier_tool_ids,
+    });
+    let requirement_fingerprint =
+        format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()));
+    let requirement_id = format!(
+        "verification_requirement_{}",
+        requirement_fingerprint
+            .trim_start_matches("sha256:")
+            .chars()
+            .take(16)
+            .collect::<String>()
+    );
+    Some(RuntimeVerificationRequirement {
+        requirement_id,
+        source_kind,
+        source_apply_id: provenance.apply_id.clone(),
+        requirement_fingerprint,
+        required_verifier_tool_ids,
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -15218,7 +15487,7 @@ fn verification_recovery_retry_provenance_for_source(
             .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
     if !proposals
         .iter()
-        .any(|proposal| proposal.proposal_id == source.proposal_id)
+        .any(|proposal| proposal.applicable && proposal.proposal_id == source.proposal_id)
     {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
             "invalid params: verification recovery retry source proposal is not recovery-scoped"
@@ -15521,7 +15790,11 @@ fn verification_recovery_retry_outcome_for_replay(
         return Ok(None);
     }
     let events = store.tasks().read_ledger_events(&record.run_id)?;
-    let gate = verification_completion_gate_for_run(&events);
+    let runtime_requirement = runtime_verification_requirement_for_record(record);
+    let gate = verification_completion_gate_for_run_with_requirement(
+        &events,
+        runtime_requirement.as_ref(),
+    );
     let Some(outcome) =
         verification_recovery_retry_outcome_for_run(store, record, gate.as_ref(), true)?
     else {
@@ -15597,6 +15870,7 @@ fn verification_recovery_retry_outcome_for_run(
 #[derive(Debug, Clone)]
 struct VerificationRecoveryRepairProposalEvidence {
     proposal_id: String,
+    applicable: bool,
 }
 
 fn verification_recovery_repair_outcome_for_replay(
@@ -15608,18 +15882,29 @@ fn verification_recovery_repair_outcome_for_replay(
         TaskRunVerificationRecoveryRepairOutcome,
     )>,
 > {
-    if record.verification_recovery_provenance.is_none() || record.status != TaskStatus::Completed {
+    if record.verification_recovery_provenance.is_none()
+        || !matches!(record.status, TaskStatus::Completed | TaskStatus::Failed)
+    {
         return Ok(None);
     }
     let Some(outcome) = verification_recovery_repair_outcome_for_run(store, record, true)? else {
         return Ok(None);
     };
+    let final_state = match record.status {
+        TaskStatus::Completed => AgentLoopState::Completed,
+        TaskStatus::Failed => AgentLoopState::Failed,
+        _ => AgentLoopState::Failed,
+    };
+    let completion_summary = if outcome.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+        "Verification recovery repair proposal already exists; replaying bounded proposal handle."
+            .to_string()
+    } else {
+        verification_recovery_repair_failed_summary(&outcome)
+    };
     Ok(Some((
         TaskRunAgentLoopSummary {
-            final_state: agent_loop_state_name(AgentLoopState::Completed).to_string(),
-            completion_summary:
-                "Verification recovery repair proposal already exists; replaying bounded proposal handle."
-                    .to_string(),
+            final_state: agent_loop_state_name(final_state).to_string(),
+            completion_summary,
         },
         outcome,
     )))
@@ -15634,21 +15919,59 @@ fn verification_recovery_repair_outcome_for_run(
         return Ok(None);
     };
     let proposals = verification_recovery_repair_proposals_for_run(store, record, provenance)?;
-    let Some(first) = proposals.first() else {
-        return Ok(None);
+    let invalid_proposal_seen =
+        invalid_verification_recovery_repair_proposal_seen(store, record, provenance)?;
+    let applicable_proposal = proposals
+        .iter()
+        .find(|proposal| proposal.applicable)
+        .map(|proposal| proposal.proposal_id.clone());
+    let proposal_count = proposals.len();
+    let (gate_status, proposal_id, failure_reason, next_action) = match proposal_count {
+        1 if applicable_proposal.is_some() => (
+            VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
+            applicable_proposal,
+            None,
+            "review_and_authorize_recovery_proposal".to_string(),
+        ),
+        1 => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            None,
+            Some("RecoveryRepairProposalNotApplicable".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+        0 if invalid_proposal_seen => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            None,
+            Some("InvalidRecoveryRepairProvenance".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+        0 => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            None,
+            Some("MissingRecoveryRepairProposal".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+        _ => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            None,
+            Some("AmbiguousRecoveryRepairProposals".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
     };
     Ok(Some(TaskRunVerificationRecoveryRepairOutcome {
+        gate_status,
         source_task_id: provenance.source_task_id.clone(),
         source_run_id: provenance.source_run_id.clone(),
         recovery_task_id: record.task_id.clone(),
         recovery_run_id: record.run_id.clone(),
         failure_fingerprint: provenance.failure_fingerprint.clone(),
         failed_verifier_tool_ids: provenance.failed_verifier_tool_ids.clone(),
-        proposal_id: first.proposal_id.clone(),
-        proposal_count: proposals.len(),
+        proposal_id,
+        proposal_count,
+        failure_reason,
         replayed,
         apply_enabled: false,
-        next_action: "review_and_authorize_recovery_proposal".to_string(),
+        next_action,
     }))
 }
 
@@ -15698,9 +16021,58 @@ fn verification_recovery_repair_proposals_for_run(
         else {
             continue;
         };
-        proposals.push(VerificationRecoveryRepairProposalEvidence { proposal_id });
+        let applicable = payload.get("validation_status").and_then(Value::as_str) == Some("Valid");
+        proposals.push(VerificationRecoveryRepairProposalEvidence {
+            proposal_id,
+            applicable,
+        });
     }
     Ok(proposals)
+}
+
+fn invalid_verification_recovery_repair_proposal_seen(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    provenance: &VerificationRecoveryProvenance,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    for event in events {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            continue;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload) else {
+            continue;
+        };
+        if payload
+            .get("verification_recovery_repair")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            continue;
+        }
+        let failed_verifier_tool_ids = payload_string_array(&payload, "failed_verifier_tool_ids");
+        let valid = payload.get("source_task_id").and_then(Value::as_str)
+            == Some(provenance.source_task_id.as_str())
+            && payload.get("source_run_id").and_then(Value::as_str)
+                == Some(provenance.source_run_id.as_str())
+            && payload.get("recovery_task_id").and_then(Value::as_str)
+                == Some(record.task_id.as_str())
+            && payload.get("recovery_run_id").and_then(Value::as_str)
+                == Some(record.run_id.as_str())
+            && payload.get("failure_fingerprint").and_then(Value::as_str)
+                == Some(provenance.failure_fingerprint.as_str())
+            && failed_verifier_tool_ids.as_slice()
+                == provenance.failed_verifier_tool_ids.as_slice()
+            && payload
+                .get("proposal_id")
+                .and_then(Value::as_str)
+                .map(|proposal_id| !proposal_id.trim().is_empty())
+                == Some(true);
+        if !valid {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn verification_recovery_failure_fingerprint(
@@ -15757,6 +16129,20 @@ fn verification_completion_gate_failed_summary(gate: &TaskRunVerificationComplet
         gate.failed_verifier_count,
         gate.failed_verifier_tool_ids.join(","),
         gate.next_action
+    )
+}
+
+fn verification_recovery_repair_failed_summary(
+    repair: &TaskRunVerificationRecoveryRepairOutcome,
+) -> String {
+    format!(
+        "Verification recovery repair gate failed: proposal_count={} failure_reason={} next_action={}",
+        repair.proposal_count,
+        repair
+            .failure_reason
+            .as_deref()
+            .unwrap_or("UnknownRecoveryRepairFailure"),
+        repair.next_action
     )
 }
 
@@ -20001,6 +20387,7 @@ mod tests {
         let run_result = run.result.expect("run result");
         assert_eq!(run_result["status"], "Completed");
         let repair = &run_result["verification_recovery_repair"];
+        assert_eq!(repair["gate_status"], "Passed");
         assert_eq!(repair["source_task_id"], source_task_id);
         assert_eq!(repair["source_run_id"], source_run_id);
         assert_eq!(repair["recovery_task_id"], recovery_task_id);
@@ -20154,6 +20541,7 @@ mod tests {
         assert_eq!(repair["source_task_id"], source_task_id);
         assert_eq!(repair["source_run_id"], source_run_id);
         assert_eq!(repair["failure_fingerprint"], fingerprint);
+        assert_eq!(repair["gate_status"], "Passed");
         assert_eq!(
             repair["failed_verifier_tool_ids"][0],
             VERIFICATION_CARGO_CHECK_TOOL_ID
@@ -20308,6 +20696,20 @@ mod tests {
         assert!(retry_run.error.is_none());
         let retry_result = retry_run.result.expect("retry result");
         assert_eq!(retry_result["status"], "Failed");
+        assert_eq!(
+            retry_result["verification_completion_gate"]["requirement_source_kind"],
+            "verification_recovery_retry_apply"
+        );
+        assert_eq!(
+            retry_result["verification_completion_gate"]["source_apply_id"],
+            apply_id
+        );
+        assert!(
+            retry_result["verification_completion_gate"]["requirement_fingerprint"]
+                .as_str()
+                .expect("requirement fingerprint")
+                .starts_with("sha256:")
+        );
         let retry = &retry_result["verification_recovery_retry"];
         assert_eq!(retry["source_task_id"], source_task_id);
         assert_eq!(retry["source_run_id"], source_run_id);
@@ -20374,6 +20776,10 @@ mod tests {
             })
             .expect("retry tool terminal payload");
         assert_eq!(retry_tool_terminal_payload["check_id"], "cargo_fmt_check");
+        assert_eq!(
+            retry_tool_terminal_payload["verification_requirement_fingerprint"],
+            retry_result["verification_completion_gate"]["requirement_fingerprint"]
+        );
         assert_eq!(retry_tool_terminal_payload["process_launched"], true);
         assert_eq!(retry_tool_terminal_payload["output_redacted"], true);
         assert!(!retry_events
@@ -20454,7 +20860,7 @@ mod tests {
     }
 
     #[test]
-    fn task_run_recovery_task_with_denied_workspace_write_does_not_create_repair_proposal() {
+    fn task_run_recovery_task_with_denied_workspace_write_fails_closed_without_repair_proposal() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::fs::create_dir(temp.path().join("src")).expect("mkdir");
@@ -20484,7 +20890,17 @@ mod tests {
         ));
         assert!(run.error.is_none());
         let run_result = run.result.expect("run result");
-        assert!(run_result.get("verification_recovery_repair").is_none());
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(run_result["agent_loop"]["final_state"], "Failed");
+        let repair = &run_result["verification_recovery_repair"];
+        assert_eq!(repair["gate_status"], "Failed");
+        assert_eq!(repair["proposal_count"], 0);
+        assert_eq!(repair["failure_reason"], "MissingRecoveryRepairProposal");
+        assert_eq!(
+            repair["next_action"],
+            "inspect_recovery_repair_gate_failure"
+        );
+        assert!(repair.get("proposal_id").is_none());
         let store = BrownieStore::new(temp.path());
         let recovery_events = store
             .tasks()
@@ -20506,6 +20922,156 @@ mod tests {
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
             "original README"
         );
+        let failed_payload = recovery_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskFailed)
+            .and_then(|event| event.payload.as_ref())
+            .expect("failed terminal payload");
+        assert_eq!(
+            failed_payload["verification_recovery_repair_gate_status"],
+            "Failed"
+        );
+        assert_eq!(
+            failed_payload["failure_reason"],
+            "MissingRecoveryRepairProposal"
+        );
+
+        let recovery_again = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 5,
+                "method": "task.start",
+                "params": {
+                    "goal": "Implement recovery edit",
+                    "mode_id": "implementer",
+                    "verification_recovery_source": {
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "authorize_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            recovery_again.error.is_none(),
+            "second recovery admission error: {:?}",
+            recovery_again.error
+        );
+        let recovery_again_result = recovery_again.result.expect("second recovery result");
+        let second_recovery_task_id = recovery_again_result["task_id"]
+            .as_str()
+            .expect("second recovery task id")
+            .to_string();
+        assert_ne!(second_recovery_task_id, recovery_task_id);
+        assert_eq!(
+            recovery_again_result["verification_recovery_admission"]["replayed"],
+            false
+        );
+        let second_recovery_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{second_recovery_task_id}"}}}}"#
+        ));
+        assert!(second_recovery_run.error.is_none());
+        let second_recovery_result = second_recovery_run.result.expect("second run result");
+        assert_eq!(second_recovery_result["status"], "Completed");
+        assert_eq!(
+            second_recovery_result["verification_recovery_repair"]["gate_status"],
+            "Passed"
+        );
+        assert_eq!(
+            second_recovery_result["verification_recovery_repair"]["proposal_count"],
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_recovery_task_with_unusable_workspace_proposal_fails_repair_gate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"m8_2_unusable_repair\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn bad( )->i32{1}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+            );
+        std::fs::remove_file(temp.path().join("README.md")).expect("remove readme");
+        std::fs::create_dir(temp.path().join("README.md")).expect("readme directory");
+
+        let (recovery_task_id, recovery_run_id) = start_verification_recovery_task_from_source(
+            &source_task_id,
+            &source_run_id,
+            &fingerprint,
+            "Implement recovery edit",
+            "implementer",
+        );
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(run_result["agent_loop"]["final_state"], "Failed");
+        let repair = &run_result["verification_recovery_repair"];
+        assert_eq!(repair["gate_status"], "Failed");
+        assert_eq!(repair["proposal_count"], 1);
+        assert_eq!(
+            repair["failure_reason"],
+            "RecoveryRepairProposalNotApplicable"
+        );
+        assert_eq!(
+            repair["next_action"],
+            "inspect_recovery_repair_gate_failure"
+        );
+        assert!(repair.get("proposal_id").is_none());
+
+        let store = BrownieStore::new(temp.path());
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events");
+        let proposal_payload = recovery_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .and_then(|event| event.payload.as_ref())
+            .expect("proposal payload");
+        assert_eq!(proposal_payload["verification_recovery_repair"], true);
+        assert_eq!(proposal_payload["source_task_id"], source_task_id);
+        assert_eq!(proposal_payload["source_run_id"], source_run_id);
+        assert_eq!(proposal_payload["recovery_task_id"], recovery_task_id);
+        assert_eq!(proposal_payload["recovery_run_id"], recovery_run_id);
+        assert_eq!(proposal_payload["failure_fingerprint"], fingerprint);
+        assert_eq!(proposal_payload["validation_status"], "Invalid");
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["verification_recovery_repair"]["failure_reason"],
+            "RecoveryRepairProposalNotApplicable"
+        );
+        assert_eq!(
+            replay_result["verification_recovery_repair"]["replayed"],
+            true
+        );
+        let recovery_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("events after replay");
+        assert_eq!(recovery_events_after_replay.len(), recovery_events.len());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

@@ -201,9 +201,11 @@ impl TaskStore {
         params: VerificationRecoveryTaskStartParams,
     ) -> Result<VerificationRecoveryTaskStartResult> {
         let _lock = self.acquire_run_admission_lock(&params.provenance.source_run_id)?;
-        if let Some(record) = self.find_verification_recovery_task_by_failure_fingerprint(
-            &params.provenance.failure_fingerprint,
-        )? {
+        if let Some(record) = self
+            .find_replayable_verification_recovery_task_by_failure_fingerprint(
+                &params.provenance.failure_fingerprint,
+            )?
+        {
             return Ok(VerificationRecoveryTaskStartResult {
                 record,
                 replayed: true,
@@ -526,6 +528,54 @@ impl TaskStore {
             }
         }
         Ok(None)
+    }
+
+    fn find_replayable_verification_recovery_task_by_failure_fingerprint(
+        &self,
+        failure_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record
+                .verification_recovery_provenance
+                .as_ref()
+                .map(|provenance| provenance.failure_fingerprint.as_str())
+                == Some(failure_fingerprint)
+                && !self.is_terminal_failed_verification_recovery_repair_gate(&record)?
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    fn is_terminal_failed_verification_recovery_repair_gate(
+        &self,
+        record: &TaskRecord,
+    ) -> Result<bool> {
+        if record.status != TaskStatus::Failed {
+            return Ok(false);
+        }
+        let events = self.read_ledger_events(&record.run_id)?;
+        Ok(events
+            .iter()
+            .rev()
+            .find(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::TaskCompleted
+                        | LedgerEventKind::TaskFailed
+                        | LedgerEventKind::TaskCancelled
+                )
+            })
+            .is_some_and(|event| {
+                event.kind == LedgerEventKind::TaskFailed
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("verification_recovery_repair_gate_status"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("Failed")
+            }))
     }
 
     pub fn find_verification_recovery_retry_task_by_apply_fingerprint(

@@ -308,28 +308,35 @@ export interface AgentLoopRunSummary {
 
 export interface TaskRunVerificationCompletionGate {
   status: 'Passed' | 'Failed';
+  requirement_id?: string | null;
+  requirement_source_kind?: 'verification_recovery_retry_apply' | null;
+  source_apply_id?: string | null;
+  requirement_fingerprint?: string | null;
   required_verifier_count: number;
   passed_verifier_count: number;
   failed_verifier_count: number;
   required_verifier_tool_ids: string[];
   passed_verifier_tool_ids: string[];
   failed_verifier_tool_ids: string[];
+  missing_verifier_tool_ids?: string[];
   failure_reasons: string[];
   next_action: 'complete_task' | 'inspect_verification_failure_and_retry_task';
 }
 
 export interface TaskRunVerificationRecoveryRepairOutcome {
+  gate_status: 'Passed' | 'Failed';
   source_task_id: string;
   source_run_id: string;
   recovery_task_id: string;
   recovery_run_id: string;
   failure_fingerprint: string;
   failed_verifier_tool_ids: string[];
-  proposal_id: string;
+  proposal_id?: string | null;
   proposal_count: number;
+  failure_reason?: 'MissingRecoveryRepairProposal' | 'AmbiguousRecoveryRepairProposals' | 'InvalidRecoveryRepairProvenance' | 'RecoveryRepairProposalNotApplicable' | null;
   replayed: boolean;
   apply_enabled: false;
-  next_action: 'review_and_authorize_recovery_proposal';
+  next_action: 'review_and_authorize_recovery_proposal' | 'inspect_recovery_repair_gate_failure';
 }
 
 export interface TaskRunVerificationRecoveryRetryOutcome {
@@ -2851,6 +2858,7 @@ const VERIFICATION_RECOVERY_RETRY_ADMISSION_KEYS = new Set([
 ]);
 
 const TASK_RUN_VERIFICATION_RECOVERY_REPAIR_KEYS = new Set([
+  'gate_status',
   'source_task_id',
   'source_run_id',
   'recovery_task_id',
@@ -2859,6 +2867,7 @@ const TASK_RUN_VERIFICATION_RECOVERY_REPAIR_KEYS = new Set([
   'failed_verifier_tool_ids',
   'proposal_id',
   'proposal_count',
+  'failure_reason',
   'replayed',
   'apply_enabled',
   'next_action',
@@ -3104,10 +3113,38 @@ export function isVerificationRecoveryRetryAdmission(value: unknown): value is V
 }
 
 export function isTaskRunVerificationRecoveryRepairOutcome(value: unknown): value is TaskRunVerificationRecoveryRepairOutcome {
+  const recoveryRepairFailureReasons = new Set([
+    'MissingRecoveryRepairProposal',
+    'AmbiguousRecoveryRepairProposals',
+    'InvalidRecoveryRepairProvenance',
+    'RecoveryRepairProposalNotApplicable',
+  ]);
+  const proposalIdIsPresent = isRecord(value) && typeof value.proposal_id === 'string' && value.proposal_id.trim().length > 0;
+  const proposalIdIsAbsent = isRecord(value) && (value.proposal_id === undefined || value.proposal_id === null);
+  const passedRepairGate = isRecord(value) &&
+    value.gate_status === 'Passed' &&
+    proposalIdIsPresent &&
+    value.proposal_count === 1 &&
+    (value.failure_reason === undefined || value.failure_reason === null) &&
+    value.next_action === 'review_and_authorize_recovery_proposal';
+  const failedRepairReason = isRecord(value) && typeof value.failure_reason === 'string' ? value.failure_reason : null;
+  const failedRepairProposalCountMatches = isRecord(value) &&
+    isNonNegativeInteger(value.proposal_count) &&
+    (failedRepairReason === 'RecoveryRepairProposalNotApplicable'
+      ? value.proposal_count > 0
+      : value.proposal_count === 0 || value.proposal_count > 1);
+  const failedRepairGate = isRecord(value) &&
+    value.gate_status === 'Failed' &&
+    proposalIdIsAbsent &&
+    failedRepairProposalCountMatches &&
+    typeof value.failure_reason === 'string' &&
+    recoveryRepairFailureReasons.has(value.failure_reason) &&
+    value.next_action === 'inspect_recovery_repair_gate_failure';
   return (
     isRecord(value) &&
     hasOnlyKeys(value, TASK_RUN_VERIFICATION_RECOVERY_REPAIR_KEYS) &&
     hasNoForbiddenRawFields(value) &&
+    (value.gate_status === 'Passed' || value.gate_status === 'Failed') &&
     typeof value.source_task_id === 'string' &&
     value.source_task_id.trim().length > 0 &&
     typeof value.source_run_id === 'string' &&
@@ -3120,13 +3157,10 @@ export function isTaskRunVerificationRecoveryRepairOutcome(value: unknown): valu
     isSha256Fingerprint(value.failure_fingerprint) &&
     isStringArray(value.failed_verifier_tool_ids) &&
     value.failed_verifier_tool_ids.length > 0 &&
-    typeof value.proposal_id === 'string' &&
-    value.proposal_id.trim().length > 0 &&
     isNonNegativeInteger(value.proposal_count) &&
-    value.proposal_count > 0 &&
     typeof value.replayed === 'boolean' &&
     value.apply_enabled === false &&
-    value.next_action === 'review_and_authorize_recovery_proposal'
+    (passedRepairGate || failedRepairGate)
   );
 }
 
@@ -3514,12 +3548,17 @@ export function isTaskRunVerificationCompletionGate(value: unknown): value is Ta
   return (
     isRecord(value) &&
     (value.status === 'Passed' || value.status === 'Failed') &&
+    (value.requirement_id === undefined || value.requirement_id === null || (typeof value.requirement_id === 'string' && value.requirement_id.trim().length > 0)) &&
+    (value.requirement_source_kind === undefined || value.requirement_source_kind === null || value.requirement_source_kind === 'verification_recovery_retry_apply') &&
+    (value.source_apply_id === undefined || value.source_apply_id === null || (typeof value.source_apply_id === 'string' && value.source_apply_id.trim().length > 0)) &&
+    (value.requirement_fingerprint === undefined || value.requirement_fingerprint === null || (typeof value.requirement_fingerprint === 'string' && isSha256Fingerprint(value.requirement_fingerprint))) &&
     typeof value.required_verifier_count === 'number' &&
     typeof value.passed_verifier_count === 'number' &&
     typeof value.failed_verifier_count === 'number' &&
     isStringArray(value.required_verifier_tool_ids) &&
     isStringArray(value.passed_verifier_tool_ids) &&
     isStringArray(value.failed_verifier_tool_ids) &&
+    (value.missing_verifier_tool_ids === undefined || isStringArray(value.missing_verifier_tool_ids)) &&
     isStringArray(value.failure_reasons) &&
     (value.next_action === 'complete_task' || value.next_action === 'inspect_verification_failure_and_retry_task')
   );

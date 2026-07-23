@@ -731,26 +731,40 @@ pub struct TaskRunAgentLoopSummary {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunVerificationCompletionGate {
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement_source_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_apply_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requirement_fingerprint: Option<String>,
     pub required_verifier_count: usize,
     pub passed_verifier_count: usize,
     pub failed_verifier_count: usize,
     pub required_verifier_tool_ids: Vec<String>,
     pub passed_verifier_tool_ids: Vec<String>,
     pub failed_verifier_tool_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub missing_verifier_tool_ids: Vec<String>,
     pub failure_reasons: Vec<String>,
     pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunVerificationRecoveryRepairOutcome {
+    pub gate_status: String,
     pub source_task_id: String,
     pub source_run_id: String,
     pub recovery_task_id: String,
     pub recovery_run_id: String,
     pub failure_fingerprint: String,
     pub failed_verifier_tool_ids: Vec<String>,
-    pub proposal_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
     pub proposal_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
     pub replayed: bool,
     pub apply_enabled: bool,
     pub next_action: String,
