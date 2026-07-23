@@ -3554,8 +3554,89 @@ export function isLedgerEventSummary(value: unknown): value is LedgerEventSummar
     typeof value.task_id === 'string' &&
     typeof value.run_id === 'string' &&
     typeof value.kind === 'string' &&
-    typeof value.timestamp === 'string'
+    typeof value.timestamp === 'string' &&
+    (value.payload === undefined || value.payload === null || isSanitizedLedgerPayload(value.payload))
   );
+}
+
+function isSanitizedLedgerPayload(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const forbiddenKeys = [
+    'stdout',
+    'stderr',
+    'raw_stdout',
+    'raw_stderr',
+    'raw_output',
+    'command',
+    'argv',
+    'args',
+    'cwd',
+    'env',
+    'environment',
+    'stdin',
+    'shell',
+    'target_dir',
+    'canonical_path',
+    'absolute_path',
+    'file_content',
+    'content',
+    'full_content',
+    'raw_input',
+    'network_disabled',
+  ];
+  if (forbiddenKeys.some((key) => Object.prototype.hasOwnProperty.call(value, key))) {
+    return false;
+  }
+  const booleanKeys = [
+    'truncated',
+    'process_launched',
+    'timed_out',
+    'standard_output_truncated',
+    'standard_error_truncated',
+    'output_redacted',
+    'target_dir_isolated',
+    'cleanup_succeeded',
+    'cargo_dependency_fetch_offline',
+    'os_network_isolated',
+    'compile_time_code_sandboxed',
+    'trusted_workspace_required',
+    'process_tree_timeout_supported',
+    'process_tree_kill_attempted',
+    'process_tree_kill_succeeded',
+  ];
+  for (const key of booleanKeys) {
+    if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] !== 'boolean') {
+      return false;
+    }
+  }
+  const numberKeys = [
+    'bytes_read',
+    'exit_code',
+    'duration_ms',
+    'standard_output_bytes',
+    'standard_error_bytes',
+  ];
+  for (const key of numberKeys) {
+    if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] !== 'number' && value[key] !== null) {
+      return false;
+    }
+  }
+  const stringKeys = [
+    'check_id',
+    'verification_status',
+    'process_tree_kill_reason',
+    'reason',
+    'tool_id',
+    'status',
+  ];
+  for (const key of stringKeys) {
+    if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] !== 'string') {
+      return false;
+    }
+  }
+  return true;
 }
 
 export function isRunEventsResult(value: unknown): value is RunEventsResult {

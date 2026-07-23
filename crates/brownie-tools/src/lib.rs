@@ -3,8 +3,11 @@
 use std::ffi::OsString;
 use std::fs;
 use std::io::Read;
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -21,6 +24,7 @@ pub const VERIFICATION_CARGO_CHECK_TOOL_ID: &str = "verification.cargo_check";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
+const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
@@ -291,8 +295,38 @@ impl ProcessCapture {
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 struct VerificationSafetyMetadata {
     target_dir_isolated: Option<bool>,
-    network_disabled: Option<bool>,
     cleanup_succeeded: Option<bool>,
+    cargo_dependency_fetch_offline: Option<bool>,
+    os_network_isolated: Option<bool>,
+    compile_time_code_sandboxed: Option<bool>,
+    trusted_workspace_required: Option<bool>,
+    process_tree_timeout_supported: Option<bool>,
+    process_tree_kill_attempted: Option<bool>,
+    process_tree_kill_succeeded: Option<bool>,
+    process_tree_kill_reason: Option<&'static str>,
+}
+
+impl VerificationSafetyMetadata {
+    fn with_target_dir_isolated(mut self, isolated: bool) -> Self {
+        self.target_dir_isolated = Some(isolated);
+        self
+    }
+
+    fn with_process_tree_not_timed_out(mut self) -> Self {
+        self.process_tree_timeout_supported = Some(process_tree_timeout_supported());
+        self.process_tree_kill_attempted = Some(false);
+        self.process_tree_kill_succeeded = Some(false);
+        self.process_tree_kill_reason = Some("not_timed_out");
+        self
+    }
+
+    fn with_process_tree_kill(mut self, succeeded: bool, reason: &'static str) -> Self {
+        self.process_tree_timeout_supported = Some(process_tree_timeout_supported());
+        self.process_tree_kill_attempted = Some(true);
+        self.process_tree_kill_succeeded = Some(succeeded);
+        self.process_tree_kill_reason = Some(reason);
+        self
+    }
 }
 
 pub struct VerificationCommandExecutor;
@@ -335,8 +369,12 @@ impl VerificationCommandExecutor {
     ) -> anyhow::Result<ToolExecutionResult> {
         let safety = VerificationSafetyMetadata {
             target_dir_isolated: Some(true),
-            network_disabled: Some(true),
             cleanup_succeeded: None,
+            cargo_dependency_fetch_offline: Some(true),
+            os_network_isolated: Some(false),
+            compile_time_code_sandboxed: Some(false),
+            trusted_workspace_required: Some(true),
+            ..VerificationSafetyMetadata::default()
         };
         if let Err(reason) = preflight_verification_cargo_check_input(input) {
             return Ok(verification_result(
@@ -385,11 +423,7 @@ impl VerificationCommandExecutor {
                     ProcessCapture::empty(),
                     ProcessCapture::empty(),
                     Some(reason),
-                    VerificationSafetyMetadata {
-                        target_dir_isolated: Some(false),
-                        network_disabled: Some(true),
-                        cleanup_succeeded: None,
-                    },
+                    safety.with_target_dir_isolated(false),
                 ));
             }
         };
@@ -436,7 +470,7 @@ impl VerificationCommandExecutor {
                 ProcessCapture::empty(),
                 ProcessCapture::empty(),
                 Some("workspace root is unavailable."),
-                verification_safety_metadata(check_id),
+                verification_safety_metadata(check_id).with_process_tree_not_timed_out(),
             ));
         };
         let start = Instant::now();
@@ -447,6 +481,7 @@ impl VerificationCommandExecutor {
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_process_tree_timeout(&mut command);
         if let Some(env_vars) = env_vars {
             command.env_clear();
             for (key, value) in env_vars {
@@ -468,26 +503,27 @@ impl VerificationCommandExecutor {
                     ProcessCapture::empty(),
                     ProcessCapture::empty(),
                     Some("failed to spawn verifier."),
-                    verification_safety_metadata(check_id),
+                    verification_safety_metadata(check_id).with_process_tree_not_timed_out(),
                 ));
             }
         };
-        let stdout_handle = child
-            .stdout
-            .take()
-            .map(|stdout| thread::spawn(move || capture_pipe(stdout)));
-        let stderr_handle = child
-            .stderr
-            .take()
-            .map(|stderr| thread::spawn(move || capture_pipe(stderr)));
+        let stdout_handle = child.stdout.take().map(capture_pipe_async);
+        let stderr_handle = child.stderr.take().map(capture_pipe_async);
 
         let mut timed_out = false;
+        let mut timeout_kill_succeeded = false;
+        let mut timeout_kill_reason = "not_timed_out";
         let exit_code = loop {
             match child.try_wait() {
                 Ok(Some(status)) => break status.code(),
                 Ok(None) if start.elapsed() >= timeout => {
                     timed_out = true;
-                    let _ = child.kill();
+                    let (succeeded, reason) = terminate_process_tree(child.id());
+                    timeout_kill_succeeded = succeeded;
+                    timeout_kill_reason = reason;
+                    if !succeeded {
+                        let _ = child.kill();
+                    }
                     let _ = child.wait();
                     break None;
                 }
@@ -517,7 +553,8 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 Some("verifier timed out."),
-                verification_safety_metadata(check_id),
+                verification_safety_metadata(check_id)
+                    .with_process_tree_kill(timeout_kill_succeeded, timeout_kill_reason),
             ));
         }
         match exit_code {
@@ -533,7 +570,7 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 None,
-                verification_safety_metadata(check_id),
+                verification_safety_metadata(check_id).with_process_tree_not_timed_out(),
             )),
             _ => Ok(verification_result(
                 tool_id,
@@ -547,10 +584,25 @@ impl VerificationCommandExecutor {
                 stdout_capture,
                 stderr_capture,
                 Some("verifier exited with nonzero status."),
-                verification_safety_metadata(check_id),
+                verification_safety_metadata(check_id).with_process_tree_not_timed_out(),
             )),
         }
     }
+}
+
+struct ProcessCaptureHandle {
+    receiver: mpsc::Receiver<ProcessCapture>,
+}
+
+fn capture_pipe_async<R>(reader: R) -> ProcessCaptureHandle
+where
+    R: Read + Send + 'static,
+{
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = sender.send(capture_pipe(reader));
+    });
+    ProcessCaptureHandle { receiver }
 }
 
 fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
@@ -575,10 +627,48 @@ fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     }
 }
 
-fn join_capture(handle: Option<thread::JoinHandle<ProcessCapture>>) -> ProcessCapture {
+fn join_capture(handle: Option<ProcessCaptureHandle>) -> ProcessCapture {
     handle
-        .and_then(|handle| handle.join().ok())
+        .and_then(|handle| {
+            handle
+                .receiver
+                .recv_timeout(Duration::from_millis(VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS))
+                .ok()
+        })
         .unwrap_or_else(ProcessCapture::empty)
+}
+
+#[cfg(unix)]
+fn configure_process_tree_timeout(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_tree_timeout(_command: &mut Command) {}
+
+fn process_tree_timeout_supported() -> bool {
+    cfg!(unix)
+}
+
+#[cfg(unix)]
+fn terminate_process_tree(child_id: u32) -> (bool, &'static str) {
+    const SIGKILL: i32 = 9;
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+
+    let pgid = child_id as i32;
+    let signaled = unsafe { kill(-pgid, SIGKILL) == 0 };
+    if signaled {
+        (true, "process_tree_kill_signaled")
+    } else {
+        (false, "process_tree_kill_failed")
+    }
+}
+
+#[cfg(not(unix))]
+fn terminate_process_tree(_child_id: u32) -> (bool, &'static str) {
+    (false, "process_tree_timeout_unsupported")
 }
 
 fn verification_result(
@@ -614,11 +704,32 @@ fn verification_result(
     if let Some(target_dir_isolated) = safety.target_dir_isolated {
         output["target_dir_isolated"] = json!(target_dir_isolated);
     }
-    if let Some(network_disabled) = safety.network_disabled {
-        output["network_disabled"] = json!(network_disabled);
-    }
     if let Some(cleanup_succeeded) = safety.cleanup_succeeded {
         output["cleanup_succeeded"] = json!(cleanup_succeeded);
+    }
+    if let Some(cargo_dependency_fetch_offline) = safety.cargo_dependency_fetch_offline {
+        output["cargo_dependency_fetch_offline"] = json!(cargo_dependency_fetch_offline);
+    }
+    if let Some(os_network_isolated) = safety.os_network_isolated {
+        output["os_network_isolated"] = json!(os_network_isolated);
+    }
+    if let Some(compile_time_code_sandboxed) = safety.compile_time_code_sandboxed {
+        output["compile_time_code_sandboxed"] = json!(compile_time_code_sandboxed);
+    }
+    if let Some(trusted_workspace_required) = safety.trusted_workspace_required {
+        output["trusted_workspace_required"] = json!(trusted_workspace_required);
+    }
+    if let Some(process_tree_timeout_supported) = safety.process_tree_timeout_supported {
+        output["process_tree_timeout_supported"] = json!(process_tree_timeout_supported);
+    }
+    if let Some(process_tree_kill_attempted) = safety.process_tree_kill_attempted {
+        output["process_tree_kill_attempted"] = json!(process_tree_kill_attempted);
+    }
+    if let Some(process_tree_kill_succeeded) = safety.process_tree_kill_succeeded {
+        output["process_tree_kill_succeeded"] = json!(process_tree_kill_succeeded);
+    }
+    if let Some(process_tree_kill_reason) = safety.process_tree_kill_reason {
+        output["process_tree_kill_reason"] = json!(process_tree_kill_reason);
     }
     ToolExecutionResult {
         tool_id: tool_id.to_string(),
@@ -631,8 +742,12 @@ fn verification_safety_metadata(check_id: &str) -> VerificationSafetyMetadata {
     match check_id {
         "cargo_check" => VerificationSafetyMetadata {
             target_dir_isolated: Some(true),
-            network_disabled: Some(true),
             cleanup_succeeded: None,
+            cargo_dependency_fetch_offline: Some(true),
+            os_network_isolated: Some(false),
+            compile_time_code_sandboxed: Some(false),
+            trusted_workspace_required: Some(true),
+            ..VerificationSafetyMetadata::default()
         },
         _ => VerificationSafetyMetadata::default(),
     }
@@ -2047,8 +2162,24 @@ mod tests {
         std::fs::write(root.join("src/lib.rs"), source).expect("src");
     }
 
+    fn assert_cargo_check_honest_safety_metadata(output: &Value) {
+        assert_eq!(output["target_dir_isolated"], true);
+        assert_eq!(output["cargo_dependency_fetch_offline"], true);
+        assert_eq!(output["os_network_isolated"], false);
+        assert_eq!(output["compile_time_code_sandboxed"], false);
+        assert_eq!(output["trusted_workspace_required"], true);
+        assert!(output.get("network_disabled").is_none());
+    }
+
+    fn assert_process_tree_timeout_not_attempted(output: &Value) {
+        assert_eq!(output["process_tree_timeout_supported"], cfg!(unix));
+        assert_eq!(output["process_tree_kill_attempted"], false);
+        assert_eq!(output["process_tree_kill_succeeded"], false);
+        assert_eq!(output["process_tree_kill_reason"], "not_timed_out");
+    }
+
     #[test]
-    fn verification_executor_reports_cargo_check_pass_with_isolated_target_dir() {
+    fn verification_executor_reports_cargo_check_honest_safety_metadata() {
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(temp.path(), "check_pass", "pub fn ok() -> i32 { 1 }\n");
 
@@ -2061,8 +2192,8 @@ mod tests {
         assert_eq!(result.output["verification_status"], "Passed");
         assert_eq!(result.output["process_launched"], true);
         assert_eq!(result.output["output_redacted"], true);
-        assert_eq!(result.output["target_dir_isolated"], true);
-        assert_eq!(result.output["network_disabled"], true);
+        assert_cargo_check_honest_safety_metadata(&result.output);
+        assert_process_tree_timeout_not_attempted(&result.output);
         assert_eq!(result.output["cleanup_succeeded"], true);
         assert!(!temp.path().join("target").exists());
         let serialized = result.output.to_string();
@@ -2088,8 +2219,8 @@ mod tests {
         assert_eq!(result.output["verification_status"], "Failed");
         assert_eq!(result.output["process_launched"], true);
         assert_eq!(result.output["output_redacted"], true);
-        assert_eq!(result.output["target_dir_isolated"], true);
-        assert_eq!(result.output["network_disabled"], true);
+        assert_cargo_check_honest_safety_metadata(&result.output);
+        assert_process_tree_timeout_not_attempted(&result.output);
         assert!(!temp.path().join("target").exists());
         let serialized = result.output.to_string();
         assert!(!serialized.contains("MissingType"));
@@ -2155,6 +2286,56 @@ mod tests {
         assert_eq!(timed_out.status, ToolExecutionStatus::Failed);
         assert_eq!(timed_out.output["verification_status"], "TimedOut");
         assert_eq!(timed_out.output["timed_out"], true);
+        assert_eq!(
+            timed_out.output["process_tree_timeout_supported"],
+            cfg!(unix)
+        );
+        assert_eq!(timed_out.output["process_tree_kill_attempted"], true);
+        assert_eq!(timed_out.output["process_tree_kill_succeeded"], cfg!(unix));
+        if cfg!(unix) {
+            assert_eq!(
+                timed_out.output["process_tree_kill_reason"],
+                "process_tree_kill_signaled"
+            );
+        } else {
+            assert_eq!(
+                timed_out.output["process_tree_kill_reason"],
+                "process_tree_timeout_unsupported"
+            );
+        }
         assert_eq!(timed_out.output["output_redacted"], true);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn verification_executor_timeout_attempts_process_tree_termination() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let start = Instant::now();
+        let timed_out = VerificationCommandExecutor::run_fixed(
+            temp.path(),
+            VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
+            "cargo_fmt_check",
+            "sh",
+            &["-c", "sleep 2 & wait"],
+            Duration::from_millis(20),
+            None,
+        )
+        .expect("timeout result");
+
+        assert!(start.elapsed() < Duration::from_millis(1_500));
+        assert_eq!(timed_out.status, ToolExecutionStatus::Failed);
+        assert_eq!(timed_out.output["verification_status"], "TimedOut");
+        assert_eq!(timed_out.output["process_tree_timeout_supported"], true);
+        assert_eq!(timed_out.output["process_tree_kill_attempted"], true);
+        assert_eq!(timed_out.output["process_tree_kill_succeeded"], true);
+        assert_eq!(
+            timed_out.output["process_tree_kill_reason"],
+            "process_tree_kill_signaled"
+        );
+        let serialized = timed_out.output.to_string();
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+        assert!(!serialized.contains("sh"));
+        assert!(!serialized.contains("sleep"));
     }
 }
