@@ -14153,8 +14153,15 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "standard_error_truncated",
         "output_redacted",
         "target_dir_isolated",
-        "network_disabled",
         "cleanup_succeeded",
+        "cargo_dependency_fetch_offline",
+        "os_network_isolated",
+        "compile_time_code_sandboxed",
+        "trusted_workspace_required",
+        "process_tree_timeout_supported",
+        "process_tree_kill_attempted",
+        "process_tree_kill_succeeded",
+        "process_tree_kill_reason",
         "verification_completion_gate_status",
         "required_verifier_count",
         "passed_verifier_count",
@@ -18387,8 +18394,15 @@ fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) ->
         "standard_error_truncated",
         "output_redacted",
         "target_dir_isolated",
-        "network_disabled",
         "cleanup_succeeded",
+        "cargo_dependency_fetch_offline",
+        "os_network_isolated",
+        "compile_time_code_sandboxed",
+        "trusted_workspace_required",
+        "process_tree_timeout_supported",
+        "process_tree_kill_attempted",
+        "process_tree_kill_succeeded",
+        "process_tree_kill_reason",
     ] {
         if let Some(value) = result.output.get(key) {
             payload.insert(key.to_string(), value.clone());
@@ -18885,8 +18899,21 @@ mod tests {
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
+    fn assert_cargo_check_honest_safety_metadata(output: &Value) {
+        assert_eq!(output["target_dir_isolated"], true);
+        assert_eq!(output["cargo_dependency_fetch_offline"], true);
+        assert_eq!(output["os_network_isolated"], false);
+        assert_eq!(output["compile_time_code_sandboxed"], false);
+        assert_eq!(output["trusted_workspace_required"], true);
+        assert_eq!(output["process_tree_timeout_supported"], cfg!(unix));
+        assert_eq!(output["process_tree_kill_attempted"], false);
+        assert_eq!(output["process_tree_kill_succeeded"], false);
+        assert_eq!(output["process_tree_kill_reason"], "not_timed_out");
+        assert!(output.get("network_disabled").is_none());
+    }
+
     #[test]
-    fn tool_execute_controlled_cargo_check_returns_completed_with_isolated_target_metadata() {
+    fn tool_execute_controlled_cargo_check_returns_honest_safety_metadata() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         write_cargo_check_fixture(
@@ -18908,14 +18935,19 @@ mod tests {
         assert_eq!(result["output"]["verification_status"], "Passed");
         assert_eq!(result["output"]["process_launched"], true);
         assert_eq!(result["output"]["output_redacted"], true);
-        assert_eq!(result["output"]["target_dir_isolated"], true);
-        assert_eq!(result["output"]["network_disabled"], true);
+        assert_cargo_check_honest_safety_metadata(&result["output"]);
         assert_eq!(result["output"]["cleanup_succeeded"], true);
         assert!(!temp.path().join("target").exists());
         let serialized = result.to_string();
         assert!(serialized.contains("standard_output_bytes"));
         assert!(serialized.contains("standard_error_bytes"));
         assert!(serialized.contains("target_dir_isolated"));
+        assert!(serialized.contains("cargo_dependency_fetch_offline"));
+        assert!(serialized.contains("os_network_isolated"));
+        assert!(serialized.contains("compile_time_code_sandboxed"));
+        assert!(serialized.contains("trusted_workspace_required"));
+        assert!(serialized.contains("process_tree_timeout_supported"));
+        assert!(!serialized.contains("network_disabled"));
         assert!(!serialized.contains("pub fn ok"));
         assert!(!serialized.contains("stdout"));
         assert!(!serialized.contains("stderr"));
@@ -19283,8 +19315,7 @@ mod tests {
         assert_eq!(payload["verification_status"], "Passed");
         assert_eq!(payload["process_launched"], true);
         assert_eq!(payload["output_redacted"], true);
-        assert_eq!(payload["target_dir_isolated"], true);
-        assert_eq!(payload["network_disabled"], true);
+        assert_cargo_check_honest_safety_metadata(payload);
         assert_eq!(payload["cleanup_succeeded"], true);
         assert!(payload.get("standard_output_bytes").is_some());
         assert!(payload.get("standard_error_bytes").is_some());
@@ -19312,7 +19343,12 @@ mod tests {
         assert!(sanitized.contains("verification_completion_gate_status"));
         assert!(sanitized.contains("verification.cargo_check"));
         assert!(sanitized.contains("target_dir_isolated"));
-        assert!(sanitized.contains("network_disabled"));
+        assert!(sanitized.contains("cargo_dependency_fetch_offline"));
+        assert!(sanitized.contains("os_network_isolated"));
+        assert!(sanitized.contains("compile_time_code_sandboxed"));
+        assert!(sanitized.contains("trusted_workspace_required"));
+        assert!(sanitized.contains("process_tree_timeout_supported"));
+        assert!(!sanitized.contains("network_disabled"));
         assert!(sanitized.contains("cleanup_succeeded"));
         assert!(!sanitized.contains("pub fn ok"));
         assert!(!sanitized.contains("stdout"));
@@ -20839,8 +20875,15 @@ mod tests {
             "standard_error_truncated": false,
             "output_redacted": true,
             "target_dir_isolated": true,
-            "network_disabled": true,
             "cleanup_succeeded": true,
+            "cargo_dependency_fetch_offline": true,
+            "os_network_isolated": false,
+            "compile_time_code_sandboxed": false,
+            "trusted_workspace_required": true,
+            "process_tree_timeout_supported": true,
+            "process_tree_kill_attempted": false,
+            "process_tree_kill_succeeded": false,
+            "process_tree_kill_reason": "not_timed_out",
             "reason": "ok",
             "content": "secret",
             "full_content": "secret",
@@ -20938,8 +20981,15 @@ mod tests {
         assert_eq!(sanitized["standard_error_truncated"], false);
         assert_eq!(sanitized["output_redacted"], true);
         assert_eq!(sanitized["target_dir_isolated"], true);
-        assert_eq!(sanitized["network_disabled"], true);
         assert_eq!(sanitized["cleanup_succeeded"], true);
+        assert_eq!(sanitized["cargo_dependency_fetch_offline"], true);
+        assert_eq!(sanitized["os_network_isolated"], false);
+        assert_eq!(sanitized["compile_time_code_sandboxed"], false);
+        assert_eq!(sanitized["trusted_workspace_required"], true);
+        assert_eq!(sanitized["process_tree_timeout_supported"], true);
+        assert_eq!(sanitized["process_tree_kill_attempted"], false);
+        assert_eq!(sanitized["process_tree_kill_succeeded"], false);
+        assert_eq!(sanitized["process_tree_kill_reason"], "not_timed_out");
         assert_eq!(sanitized["reason"], "ok");
         assert_eq!(sanitized["subtask_id"], "subtask_run_1_1");
         assert_eq!(sanitized["queue_position"], 1);

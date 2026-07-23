@@ -448,6 +448,63 @@ describe('protocol validation', () => {
       timestamp: '2026-06-26T00:00:00Z',
       payload: { output_preview: 'safe', bytes_read: 4, truncated: false },
     })).toBe(true);
+    const verifierPayload = {
+      tool_id: 'verification.cargo_check',
+      status: 'Completed',
+      check_id: 'cargo_check',
+      verification_status: 'Passed',
+      process_launched: true,
+      exit_code: 0,
+      timed_out: false,
+      duration_ms: 12,
+      standard_output_bytes: 0,
+      standard_error_bytes: 0,
+      standard_output_truncated: false,
+      standard_error_truncated: false,
+      output_redacted: true,
+      target_dir_isolated: true,
+      cleanup_succeeded: true,
+      cargo_dependency_fetch_offline: true,
+      os_network_isolated: false,
+      compile_time_code_sandboxed: false,
+      trusted_workspace_required: true,
+      process_tree_timeout_supported: true,
+      process_tree_kill_attempted: false,
+      process_tree_kill_succeeded: false,
+      process_tree_kill_reason: 'not_timed_out',
+    };
+    expect(isLedgerEventSummary({
+      event_id: 'event_2',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: verifierPayload,
+    })).toBe(true);
+    expect(isLedgerEventSummary({
+      event_id: 'event_3',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: { ...verifierPayload, network_disabled: true },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_4',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: { ...verifierPayload, command: 'cargo check' },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_5',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: { ...verifierPayload, process_tree_kill_attempted: 'false' },
+    })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {
