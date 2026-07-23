@@ -16,19 +16,20 @@ use brownie_llm::{
 };
 use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
-    ChildInspectConsumedParentJoinRecoverySummary, ChildInspectParentJoinReadinessSummary,
-    ChildTaskInspectSummary, ChildTaskSourceIntentSummary, DiagnosticSeverity, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
+    ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
+    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
+    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
+    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    ProposalReviewBundleParams, ProposalReviewBundleResult,
+    ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -199,8 +200,9 @@ use brownie_tools::{
     ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
     ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
     DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS, DEFAULT_PROPOSAL_PREVIEW_CHARS,
-    MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID,
-    VERIFICATION_CARGO_FMT_CHECK_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, SUBTASK_SPAWN_TOOL_ID,
+    VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID, WORKSPACE_READ_TOOL_ID,
+    WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -208,6 +210,9 @@ use std::{
     io::Write,
     path::{Component, Path, PathBuf},
 };
+
+const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
+const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
@@ -14835,6 +14840,7 @@ fn verification_completion_gate_for_run_with_requirement(
     let mut failed_verifier_tool_ids = Vec::new();
     let mut missing_verifier_tool_ids = Vec::new();
     let mut failure_reasons = Vec::new();
+    let mut bounded_cargo_diagnostics = Vec::new();
 
     for intent in &required {
         if intent.rejected {
@@ -14864,6 +14870,10 @@ fn verification_completion_gate_for_run_with_requirement(
                 if verification_status == Some(VERIFICATION_COMPLETION_GATE_STATUS_PASSED) {
                     passed_verifier_tool_ids.push(intent.tool_id.clone());
                 } else {
+                    push_bounded_cargo_diagnostics(
+                        &mut bounded_cargo_diagnostics,
+                        bounded_cargo_diagnostics_from_event(event),
+                    );
                     failed_verifier_tool_ids.push(intent.tool_id.clone());
                     failure_reasons.push(format!(
                         "{}:{}",
@@ -14883,6 +14893,10 @@ fn verification_completion_gate_for_run_with_requirement(
                     .and_then(|payload| payload.get("verification_status"))
                     .and_then(Value::as_str)
                     .unwrap_or("Failed");
+                push_bounded_cargo_diagnostics(
+                    &mut bounded_cargo_diagnostics,
+                    bounded_cargo_diagnostics_from_event(event),
+                );
                 failed_verifier_tool_ids.push(intent.tool_id.clone());
                 failure_reasons.push(format!("{}:{verification_status}", intent.tool_id));
             }
@@ -14939,6 +14953,7 @@ fn verification_completion_gate_for_run_with_requirement(
         failed_verifier_tool_ids,
         missing_verifier_tool_ids,
         failure_reasons,
+        bounded_cargo_diagnostics,
         next_action: next_action.to_string(),
     })
 }
@@ -15052,6 +15067,149 @@ fn is_verification_tool_id(tool_id: &str) -> bool {
     )
 }
 
+fn push_bounded_cargo_diagnostics(
+    destination: &mut Vec<BoundedCargoDiagnostic>,
+    diagnostics: Vec<BoundedCargoDiagnostic>,
+) {
+    for diagnostic in diagnostics {
+        if destination.len() >= MAX_BOUNDED_CARGO_DIAGNOSTICS {
+            break;
+        }
+        if !destination.contains(&diagnostic) {
+            destination.push(diagnostic);
+        }
+    }
+}
+
+fn bounded_cargo_diagnostics_from_event(event: &LedgerEvent) -> Vec<BoundedCargoDiagnostic> {
+    event
+        .payload
+        .as_ref()
+        .and_then(|payload| payload.get("bounded_cargo_diagnostics"))
+        .map(bounded_cargo_diagnostics_from_value)
+        .unwrap_or_default()
+}
+
+fn bounded_cargo_diagnostics_from_value(value: &Value) -> Vec<BoundedCargoDiagnostic> {
+    let Some(items) = value.as_array() else {
+        return Vec::new();
+    };
+    let mut diagnostics = Vec::new();
+    for item in items.iter().take(MAX_BOUNDED_CARGO_DIAGNOSTICS) {
+        if let Some(diagnostic) = sanitized_bounded_cargo_diagnostic(item) {
+            if diagnostics.len() >= MAX_BOUNDED_CARGO_DIAGNOSTICS {
+                break;
+            }
+            if !diagnostics.contains(&diagnostic) {
+                diagnostics.push(diagnostic);
+            }
+        }
+    }
+    diagnostics
+}
+
+fn sanitized_bounded_cargo_diagnostic(item: &Value) -> Option<BoundedCargoDiagnostic> {
+    let tool_id = item.get("tool_id")?.as_str()?;
+    if tool_id != VERIFICATION_CARGO_CHECK_TOOL_ID {
+        return None;
+    }
+    let check_id = item.get("check_id")?.as_str()?;
+    if check_id != "cargo_check" {
+        return None;
+    }
+    let diagnostic_kind = item.get("diagnostic_kind")?.as_str()?;
+    if !matches!(diagnostic_kind, "compile_error" | "compile_warning") {
+        return None;
+    }
+    let severity = item.get("severity")?.as_str()?;
+    if !matches!(severity, "error" | "warning") {
+        return None;
+    }
+    let workspace_relative_path = item
+        .get("workspace_relative_path")
+        .and_then(Value::as_str)
+        .and_then(sanitize_bounded_cargo_diagnostic_path)?;
+    let line = item.get("line").and_then(positive_usize)?;
+    let column = item.get("column").and_then(positive_usize)?;
+    let code = item
+        .get("code")
+        .and_then(Value::as_str)
+        .and_then(sanitize_bounded_cargo_diagnostic_code);
+    let truncated = item.get("truncated")?.as_bool()?;
+    Some(BoundedCargoDiagnostic {
+        tool_id: tool_id.to_string(),
+        check_id: check_id.to_string(),
+        diagnostic_kind: diagnostic_kind.to_string(),
+        severity: severity.to_string(),
+        code,
+        workspace_relative_path: Some(workspace_relative_path),
+        line: Some(line),
+        column: Some(column),
+        truncated,
+    })
+}
+
+fn positive_usize(value: &Value) -> Option<usize> {
+    let raw = value.as_u64()?;
+    if raw == 0 {
+        return None;
+    }
+    usize::try_from(raw).ok()
+}
+
+fn sanitize_bounded_cargo_diagnostic_code(code: &str) -> Option<String> {
+    if code.is_empty() || code.len() > MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS {
+        return None;
+    }
+    if !code
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(code.to_string())
+}
+
+fn sanitize_bounded_cargo_diagnostic_path(path: &str) -> Option<String> {
+    if path.is_empty()
+        || path.len() > MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS
+        || path.contains('\0')
+        || path.contains('\\')
+    {
+        return None;
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+                if name.is_empty()
+                    || name == "."
+                    || name == ".."
+                    || is_bounded_cargo_diagnostic_protected_component(&name)
+                {
+                    return None;
+                }
+                components.push(name.to_string());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    if components.is_empty() {
+        return None;
+    }
+    Some(components.join("/"))
+}
+
+fn is_bounded_cargo_diagnostic_protected_component(component: &str) -> bool {
+    matches!(component, ".git" | ".brownie" | "node_modules" | "target")
+}
+
 fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate) -> Value {
     let mut payload = json!({
         "verification_completion_gate_status": gate.status,
@@ -15066,6 +15224,12 @@ fn verification_completion_gate_payload(gate: &TaskRunVerificationCompletionGate
         "next_action": gate.next_action.clone(),
     });
     if let Some(object) = payload.as_object_mut() {
+        if !gate.bounded_cargo_diagnostics.is_empty() {
+            object.insert(
+                "bounded_cargo_diagnostics".to_string(),
+                json!(gate.bounded_cargo_diagnostics.clone()),
+            );
+        }
         if let Some(requirement_id) = gate.requirement_id.as_ref() {
             object.insert(
                 "verification_requirement_id".to_string(),
@@ -15431,6 +15595,7 @@ fn verification_recovery_provenance_for_source(
         failed_verifier_count: gate.failed_verifier_count,
         failed_verifier_tool_ids: gate.failed_verifier_tool_ids,
         failure_reasons: gate.failure_reasons,
+        bounded_cargo_diagnostics: gate.bounded_cargo_diagnostics,
     })
 }
 
@@ -16092,6 +16257,7 @@ fn verification_recovery_failure_fingerprint(
         "passed_verifier_tool_ids": gate.passed_verifier_tool_ids,
         "failed_verifier_tool_ids": gate.failed_verifier_tool_ids,
         "failure_reasons": gate.failure_reasons,
+        "bounded_cargo_diagnostics": gate.bounded_cargo_diagnostics,
         "next_action": gate.next_action,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
@@ -18794,6 +18960,12 @@ fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) ->
             payload.insert(key.to_string(), value.clone());
         }
     }
+    if let Some(value) = result.output.get("bounded_cargo_diagnostics") {
+        let diagnostics = bounded_cargo_diagnostics_from_value(value);
+        if !diagnostics.is_empty() {
+            payload.insert("bounded_cargo_diagnostics".to_string(), json!(diagnostics));
+        }
+    }
     if let Some(reason) = result.output.get("reason") {
         payload.insert("reason".to_string(), reason.clone());
     }
@@ -19859,6 +20031,18 @@ mod tests {
             run_result["verification_completion_gate"]["failed_verifier_tool_ids"][0],
             "verification.cargo_check"
         );
+        let gate_diagnostics = run_result["verification_completion_gate"]
+            ["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("gate diagnostics");
+        assert!(!gate_diagnostics.is_empty());
+        assert_eq!(
+            gate_diagnostics[0]["tool_id"],
+            VERIFICATION_CARGO_CHECK_TOOL_ID
+        );
+        assert_eq!(gate_diagnostics[0]["check_id"], "cargo_check");
+        assert_eq!(gate_diagnostics[0]["workspace_relative_path"], "src/lib.rs");
+        assert_eq!(gate_diagnostics[0]["line"], 1);
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -19880,6 +20064,29 @@ mod tests {
                     .and_then(Value::as_str)
                     == Some("verification.cargo_check")
         }));
+        let verifier_event = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionFailed
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("verification.cargo_check")
+            })
+            .expect("verification failed event");
+        let verifier_payload = verifier_event.payload.as_ref().expect("verifier payload");
+        let ledger_diagnostics = verifier_payload["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("ledger diagnostics");
+        assert_eq!(ledger_diagnostics[0]["severity"], "error");
+        assert_eq!(
+            ledger_diagnostics[0]["workspace_relative_path"],
+            "src/lib.rs"
+        );
+        assert!(ledger_diagnostics[0].get("message").is_none());
+        assert!(ledger_diagnostics[0].get("rendered").is_none());
         let task_failed = events
             .iter()
             .find(|event| event.kind == LedgerEventKind::TaskFailed)
@@ -19888,6 +20095,10 @@ mod tests {
         assert_eq!(
             failed_payload["verification_completion_gate_status"],
             "Failed"
+        );
+        assert_eq!(
+            failed_payload["bounded_cargo_diagnostics"][0]["workspace_relative_path"],
+            "src/lib.rs"
         );
         assert!(!ledger.contains("MissingType"));
         assert!(!ledger.contains("stdout"));
@@ -20343,6 +20554,14 @@ mod tests {
         assert_eq!(provenance.failure_fingerprint, fingerprint);
         assert_eq!(provenance.source_task_id, source_task_id);
         assert_eq!(provenance.source_run_id, source_run_id);
+        assert_eq!(provenance.bounded_cargo_diagnostics.len(), 1);
+        let diagnostic = &provenance.bounded_cargo_diagnostics[0];
+        assert_eq!(
+            diagnostic.workspace_relative_path.as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(diagnostic.line, Some(1));
+        assert_eq!(diagnostic.severity, "error");
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

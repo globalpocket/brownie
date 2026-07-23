@@ -89,6 +89,14 @@ M8.2/R3.2 extends `task.run` responses for admitted verification recovery tasks 
 
 The runtime returns this field after revalidating the recovery task's stored provenance against the latest source verifier-gate failure. Exactly one valid recovery-scoped `WorkspacePatchProposed` event through the existing `workspace.write` proposal path passes the gate. Missing, ambiguous, invalid-provenance, or not-applicable recovery repair proposals return `gate_status:"Failed"` with bounded `failure_reason` and force terminal `TaskFailed`; a failed repair-gate attempt may be followed by a fresh recovery task for the same failure fingerprint instead of replaying the unusable attempt forever. This is not an apply result and does not mutate files, retry verification, expose raw verifier output, or add a new RPC.
 
+R3.3 adds optional `bounded_cargo_diagnostics` to failed `verification.cargo_check` terminal tool evidence, failed `verification_completion_gate` payloads, and `verification_recovery_provenance`. Each array is capped at five entries:
+
+```json
+{"bounded_cargo_diagnostics":[{"tool_id":"verification.cargo_check","check_id":"cargo_check","diagnostic_kind":"compile_error","severity":"error","code":"E0412","workspace_relative_path":"src/lib.rs","line":7,"column":12,"truncated":false}]}
+```
+
+The runtime and VSIX validators must reject raw nested stdout/stderr/rendered messages/source snippets, absolute paths, parent traversal, protected path components, non-positive line or column values, and arrays above the bound. This extends existing results only; it does not add a new RPC, report, digest, history, readiness wrapper, or inspection surface.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

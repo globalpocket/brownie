@@ -729,6 +729,23 @@ pub struct TaskRunAgentLoopSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BoundedCargoDiagnostic {
+    pub tool_id: String,
+    pub check_id: String,
+    pub diagnostic_kind: String,
+    pub severity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_relative_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunVerificationCompletionGate {
     pub status: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -748,6 +765,8 @@ pub struct TaskRunVerificationCompletionGate {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub missing_verifier_tool_ids: Vec<String>,
     pub failure_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bounded_cargo_diagnostics: Vec<BoundedCargoDiagnostic>,
     pub next_action: String,
 }
 
@@ -2680,6 +2699,8 @@ pub struct VerificationRecoveryProvenance {
     pub failed_verifier_count: usize,
     pub failed_verifier_tool_ids: Vec<String>,
     pub failure_reasons: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bounded_cargo_diagnostics: Vec<BoundedCargoDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
