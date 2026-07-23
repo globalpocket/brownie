@@ -1053,6 +1053,112 @@ describe('RuntimeClient', () => {
     }]);
   });
 
+  it('accepts bounded cargo diagnostics and rejects unsafe diagnostic payloads', () => {
+    const fingerprint = `sha256:${'a'.repeat(64)}`;
+    const diagnostic = {
+      tool_id: 'verification.cargo_check',
+      check_id: 'cargo_check',
+      diagnostic_kind: 'compile_error',
+      severity: 'error',
+      code: 'E0412',
+      workspace_relative_path: 'src/lib.rs',
+      line: 7,
+      column: 12,
+      truncated: false,
+    };
+    const gate = {
+      status: 'Failed',
+      required_verifier_count: 1,
+      passed_verifier_count: 0,
+      failed_verifier_count: 1,
+      required_verifier_tool_ids: ['verification.cargo_check'],
+      passed_verifier_tool_ids: [],
+      failed_verifier_tool_ids: ['verification.cargo_check'],
+      failure_reasons: ['verification.cargo_check:Failed'],
+      bounded_cargo_diagnostics: [diagnostic],
+      next_action: 'inspect_verification_failure_and_retry_task',
+    };
+    const provenance = {
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      failure_fingerprint: fingerprint,
+      required_verifier_count: 1,
+      passed_verifier_count: 0,
+      failed_verifier_count: 1,
+      failed_verifier_tool_ids: ['verification.cargo_check'],
+      failure_reasons: ['verification.cargo_check:Failed'],
+      bounded_cargo_diagnostics: [diagnostic],
+    };
+
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Failed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'verification failed' },
+      verification_completion_gate: gate,
+    })).toBe(true);
+    expect(isLedgerEventSummary({
+      event_id: 'event_1',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:00Z',
+      payload: {
+        tool_id: 'verification.cargo_check',
+        status: 'Failed',
+        check_id: 'cargo_check',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [diagnostic],
+      },
+    })).toBe(true);
+    expect(isTaskRecord({
+      task_id: 'task_recovery',
+      run_id: 'run_recovery',
+      goal: 'recover cargo check failure',
+      status: 'Running',
+      verification_recovery_provenance: provenance,
+      created_at: '2026-07-23T18:00:00Z',
+      updated_at: '2026-07-23T18:00:01Z',
+    })).toBe(true);
+
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Failed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'verification failed' },
+      verification_completion_gate: {
+        ...gate,
+        bounded_cargo_diagnostics: [{ ...diagnostic, workspace_relative_path: '/tmp/src/lib.rs' }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_2',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:02Z',
+      payload: {
+        tool_id: 'verification.cargo_check',
+        status: 'Failed',
+        check_id: 'cargo_check',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...diagnostic, stdout: 'raw compiler text' }],
+      },
+    })).toBe(false);
+    expect(isTaskRecord({
+      task_id: 'task_recovery',
+      run_id: 'run_recovery',
+      goal: 'recover cargo check failure',
+      status: 'Running',
+      verification_recovery_provenance: {
+        ...provenance,
+        bounded_cargo_diagnostics: Array(6).fill(diagnostic),
+      },
+      created_at: '2026-07-23T18:00:00Z',
+      updated_at: '2026-07-23T18:00:01Z',
+    })).toBe(false);
+  });
+
   it('accepts bounded task.run verification recovery repair outcomes and rejects raw fields', () => {
     const fingerprint = `sha256:${'a'.repeat(64)}`;
     const outcome = {

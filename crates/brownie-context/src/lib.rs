@@ -67,6 +67,7 @@ pub struct PromptBuildInput {
     pub tool_intent_summary: Vec<String>,
     pub tool_execution_summary: Vec<String>,
     pub subtask_orchestration_summary: Vec<String>,
+    pub verification_recovery_diagnostics_summary: Vec<String>,
     pub context_window: ContextWindowSummary,
     pub ledger_summary: Vec<String>,
 }
@@ -102,6 +103,8 @@ impl ContextMaterializer {
         let mut subtask_orchestration_summary = input.child_completion_summaries;
         subtask_orchestration_summary
             .extend(format_subtask_orchestration_summary(&input.ledger_events));
+        let verification_recovery_diagnostics_summary =
+            format_verification_recovery_diagnostics_summary(&input.task);
         let (ledger_summary, context_window) = format_ledger_context_window(&input.ledger_events);
 
         PromptBuildInput {
@@ -115,6 +118,7 @@ impl ContextMaterializer {
             tool_intent_summary,
             tool_execution_summary,
             subtask_orchestration_summary,
+            verification_recovery_diagnostics_summary,
             context_window,
             ledger_summary,
         }
@@ -723,6 +727,40 @@ fn format_subtask_orchestration_summary(events: &[LedgerEvent]) -> Vec<String> {
         .collect()
 }
 
+fn format_verification_recovery_diagnostics_summary(task: &TaskRecord) -> Vec<String> {
+    let Some(provenance) = task.verification_recovery_provenance.as_ref() else {
+        return Vec::new();
+    };
+    provenance
+        .bounded_cargo_diagnostics
+        .iter()
+        .map(|diagnostic| {
+            let path = diagnostic
+                .workspace_relative_path
+                .as_deref()
+                .unwrap_or("<unknown>");
+            let line = diagnostic
+                .line
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let column = diagnostic
+                .column
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "<unknown>".to_string());
+            let code = diagnostic.code.as_deref().unwrap_or("<none>");
+            format!(
+                "{path}:{line}:{column} tool_id={} check_id={} kind={} severity={} code={} truncated={}",
+                diagnostic.tool_id,
+                diagnostic.check_id,
+                diagnostic.diagnostic_kind,
+                diagnostic.severity,
+                code,
+                diagnostic.truncated
+            )
+        })
+        .collect()
+}
+
 fn format_context_window_summary(summary: &ContextWindowSummary) -> String {
     format!(
         "total_events: {}\nincluded_events: {}\nomitted_events: {}\nmax_events: {}\nfirst_included_event: {}\nlast_included_event: {}",
@@ -802,6 +840,17 @@ impl PromptBuilder {
                 .collect::<Vec<_>>()
                 .join("\n")
         };
+        let verification_recovery_diagnostics =
+            if input.verification_recovery_diagnostics_summary.is_empty() {
+                "- <none>".to_string()
+            } else {
+                input
+                    .verification_recovery_diagnostics_summary
+                    .iter()
+                    .map(|entry| format!("- {entry}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            };
         let context_window = format_context_window_summary(&input.context_window);
 
         let ledger = if input.ledger_summary.is_empty() {
@@ -824,8 +873,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nSubtask Orchestration:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, subtask_orchestration, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -904,6 +953,7 @@ mod tests {
             tool_intent_summary: vec![],
             tool_execution_summary: vec![],
             subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
             context_window: ContextWindowSummary {
                 total_events: 2,
                 included_events: 2,
@@ -952,6 +1002,51 @@ mod tests {
             materialized.mode_policy_summary,
             Some("Mode Policy:\n<unresolved>".into())
         );
+    }
+
+    #[test]
+    fn context_materializer_includes_bounded_verification_recovery_diagnostics() {
+        let mut task = task_record();
+        task.verification_recovery_provenance =
+            Some(brownie_protocol::VerificationRecoveryProvenance {
+                source_task_id: "task_source".into(),
+                source_run_id: "run_source".into(),
+                failure_fingerprint: "sha256:abc".into(),
+                required_verifier_count: 1,
+                passed_verifier_count: 0,
+                failed_verifier_count: 1,
+                failed_verifier_tool_ids: vec!["verification.cargo_check".into()],
+                failure_reasons: vec!["verification.cargo_check:Failed".into()],
+                bounded_cargo_diagnostics: vec![brownie_protocol::BoundedCargoDiagnostic {
+                    tool_id: "verification.cargo_check".into(),
+                    check_id: "cargo_check".into(),
+                    diagnostic_kind: "compile_error".into(),
+                    severity: "error".into(),
+                    code: Some("E0412".into()),
+                    workspace_relative_path: Some("src/lib.rs".into()),
+                    line: Some(7),
+                    column: Some(12),
+                    truncated: false,
+                }],
+            });
+        let materialized = ContextMaterializer::materialize(ContextMaterializerInput {
+            task,
+            ledger_events: vec![],
+            child_completion_summaries: vec![],
+        });
+
+        assert_eq!(
+            materialized.verification_recovery_diagnostics_summary,
+            vec![
+                "src/lib.rs:7:12 tool_id=verification.cargo_check check_id=cargo_check kind=compile_error severity=error code=E0412 truncated=false"
+            ]
+        );
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt.messages[1]
+            .content
+            .contains("Verification Recovery Diagnostics:"));
+        assert!(prompt.messages[1].content.contains("src/lib.rs:7:12"));
+        assert!(!prompt.messages[1].content.contains("MissingType"));
     }
 
     #[test]

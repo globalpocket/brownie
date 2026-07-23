@@ -189,6 +189,18 @@ export interface RecoveryCycleChildProvenance {
   parent_join_recovery_cycle_depth: number;
 }
 
+export interface BoundedCargoDiagnostic {
+  tool_id: string;
+  check_id: string;
+  diagnostic_kind: string;
+  severity: string;
+  code?: string | null;
+  workspace_relative_path?: string | null;
+  line?: number | null;
+  column?: number | null;
+  truncated: boolean;
+}
+
 export interface VerificationRecoveryProvenance {
   source_task_id: string;
   source_run_id: string;
@@ -198,6 +210,7 @@ export interface VerificationRecoveryProvenance {
   failed_verifier_count: number;
   failed_verifier_tool_ids: string[];
   failure_reasons: string[];
+  bounded_cargo_diagnostics?: BoundedCargoDiagnostic[];
 }
 
 export interface VerificationRecoveryRetryProvenance {
@@ -320,6 +333,7 @@ export interface TaskRunVerificationCompletionGate {
   failed_verifier_tool_ids: string[];
   missing_verifier_tool_ids?: string[];
   failure_reasons: string[];
+  bounded_cargo_diagnostics?: BoundedCargoDiagnostic[];
   next_action: 'complete_task' | 'inspect_verification_failure_and_retry_task';
 }
 
@@ -2816,6 +2830,21 @@ const VERIFICATION_RECOVERY_PROVENANCE_KEYS = new Set([
   'failed_verifier_count',
   'failed_verifier_tool_ids',
   'failure_reasons',
+  'bounded_cargo_diagnostics',
+]);
+
+const MAX_BOUNDED_CARGO_DIAGNOSTICS = 5;
+
+const BOUNDED_CARGO_DIAGNOSTIC_KEYS = new Set([
+  'tool_id',
+  'check_id',
+  'diagnostic_kind',
+  'severity',
+  'code',
+  'workspace_relative_path',
+  'line',
+  'column',
+  'truncated',
 ]);
 
 const VERIFICATION_RECOVERY_RETRY_PROVENANCE_KEYS = new Set([
@@ -3017,6 +3046,44 @@ export function isRecoveryCycleChildProvenance(value: unknown): value is Recover
   );
 }
 
+function isBoundedCargoDiagnosticArray(value: unknown): value is BoundedCargoDiagnostic[] {
+  return Array.isArray(value) && value.length <= MAX_BOUNDED_CARGO_DIAGNOSTICS && value.every(isBoundedCargoDiagnostic);
+}
+
+function isBoundedCargoDiagnostic(value: unknown): value is BoundedCargoDiagnostic {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, BOUNDED_CARGO_DIAGNOSTIC_KEYS) &&
+    hasNoForbiddenRawFields(value) &&
+    value.tool_id === 'verification.cargo_check' &&
+    value.check_id === 'cargo_check' &&
+    (value.diagnostic_kind === 'compile_error' || value.diagnostic_kind === 'compile_warning') &&
+    (value.severity === 'error' || value.severity === 'warning') &&
+    (value.code === undefined || value.code === null || isBoundedCargoDiagnosticCode(value.code)) &&
+    typeof value.workspace_relative_path === 'string' &&
+    isBoundedCargoDiagnosticPath(value.workspace_relative_path) &&
+    isPositiveInteger(value.line) &&
+    isPositiveInteger(value.column) &&
+    typeof value.truncated === 'boolean'
+  );
+}
+
+function isBoundedCargoDiagnosticCode(value: unknown): boolean {
+  return typeof value === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(value);
+}
+
+function isBoundedCargoDiagnosticPath(value: string): boolean {
+  if (value.length === 0 || value.length > 240 || value.startsWith('/') || value.includes('\\') || value.includes('\0')) {
+    return false;
+  }
+  const segments = value.split('/');
+  return segments.every((segment) => segment.length > 0 && segment !== '.' && segment !== '..' && segment !== '.git' && segment !== '.brownie' && segment !== 'node_modules' && segment !== 'target');
+}
+
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === 'number' && Number.isInteger(value) && value > 0;
+}
+
 export function isVerificationRecoveryProvenance(value: unknown): value is VerificationRecoveryProvenance {
   return (
     isRecord(value) &&
@@ -3033,7 +3100,8 @@ export function isVerificationRecoveryProvenance(value: unknown): value is Verif
     value.passed_verifier_count + value.failed_verifier_count === value.required_verifier_count &&
     isStringArray(value.failed_verifier_tool_ids) &&
     value.failed_verifier_tool_ids.length === value.failed_verifier_count &&
-    isStringArray(value.failure_reasons)
+    isStringArray(value.failure_reasons) &&
+    (value.bounded_cargo_diagnostics === undefined || isBoundedCargoDiagnosticArray(value.bounded_cargo_diagnostics))
   );
 }
 
@@ -3560,6 +3628,7 @@ export function isTaskRunVerificationCompletionGate(value: unknown): value is Ta
     isStringArray(value.failed_verifier_tool_ids) &&
     (value.missing_verifier_tool_ids === undefined || isStringArray(value.missing_verifier_tool_ids)) &&
     isStringArray(value.failure_reasons) &&
+    (value.bounded_cargo_diagnostics === undefined || isBoundedCargoDiagnosticArray(value.bounded_cargo_diagnostics)) &&
     (value.next_action === 'complete_task' || value.next_action === 'inspect_verification_failure_and_retry_task')
   );
 }
@@ -3674,6 +3743,12 @@ function isSanitizedLedgerPayload(value: unknown): boolean {
     if (Object.prototype.hasOwnProperty.call(value, key) && typeof value[key] !== 'string') {
       return false;
     }
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, 'bounded_cargo_diagnostics') &&
+    !isBoundedCargoDiagnosticArray(value.bounded_cargo_diagnostics)
+  ) {
+    return false;
   }
   return true;
 }

@@ -24,7 +24,10 @@ pub const VERIFICATION_CARGO_CHECK_TOOL_ID: &str = "verification.cargo_check";
 pub const MAX_WORKSPACE_READ_BYTES: usize = 65_536;
 pub const DEFAULT_VERIFICATION_TIMEOUT_MS: u64 = 30_000;
 pub const MAX_VERIFICATION_CAPTURE_BYTES: usize = 65_536;
+pub const MAX_BOUNDED_CARGO_DIAGNOSTICS: usize = 5;
 const VERIFICATION_CAPTURE_JOIN_TIMEOUT_MS: u64 = 1_000;
+const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
+const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
 pub const DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 20_000;
 pub const MIN_WORKSPACE_WRITE_CONTENT_CHARS: usize = 100;
 pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
@@ -277,10 +280,11 @@ impl ToolExecutor {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProcessCapture {
     bytes: usize,
     truncated: bool,
+    content: Vec<u8>,
 }
 
 impl ProcessCapture {
@@ -288,6 +292,7 @@ impl ProcessCapture {
         Self {
             bytes: 0,
             truncated: false,
+            content: Vec::new(),
         }
     }
 }
@@ -439,6 +444,7 @@ impl VerificationCommandExecutor {
                 "--all-targets",
                 "--locked",
                 "--offline",
+                "--message-format=json",
             ],
             Duration::from_millis(DEFAULT_VERIFICATION_TIMEOUT_MS),
             Some(env_vars),
@@ -608,6 +614,7 @@ where
 fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     let mut total = 0usize;
     let mut truncated = false;
+    let mut content = Vec::new();
     let mut buffer = [0u8; 8192];
     loop {
         let Ok(read) = reader.read(&mut buffer) else {
@@ -615,6 +622,16 @@ fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
         };
         if read == 0 {
             break;
+        }
+        let remaining = MAX_VERIFICATION_CAPTURE_BYTES.saturating_sub(content.len());
+        if remaining > 0 {
+            let retained = remaining.min(read);
+            content.extend_from_slice(&buffer[..retained]);
+            if retained < read {
+                truncated = true;
+            }
+        } else {
+            truncated = true;
         }
         total = total.saturating_add(read);
         if total > MAX_VERIFICATION_CAPTURE_BYTES {
@@ -624,6 +641,7 @@ fn capture_pipe<R: Read>(mut reader: R) -> ProcessCapture {
     ProcessCapture {
         bytes: total.min(MAX_VERIFICATION_CAPTURE_BYTES),
         truncated,
+        content,
     }
 }
 
@@ -685,6 +703,12 @@ fn verification_result(
     reason: Option<&str>,
     safety: VerificationSafetyMetadata,
 ) -> ToolExecutionResult {
+    let bounded_diagnostics = bounded_cargo_diagnostics(
+        check_id,
+        verification_status,
+        stdout.truncated,
+        &stdout.content,
+    );
     let mut output = json!({
         "check_id": check_id,
         "verification_status": verification_status,
@@ -698,6 +722,9 @@ fn verification_result(
         "standard_error_truncated": stderr.truncated,
         "output_redacted": true,
     });
+    if !bounded_diagnostics.is_empty() {
+        output["bounded_cargo_diagnostics"] = json!(bounded_diagnostics);
+    }
     if let Some(reason) = reason {
         output["reason"] = json!(reason);
     }
@@ -736,6 +763,130 @@ fn verification_result(
         status,
         output,
     }
+}
+
+fn bounded_cargo_diagnostics(
+    check_id: &str,
+    verification_status: &str,
+    output_truncated: bool,
+    stdout: &[u8],
+) -> Vec<Value> {
+    if check_id != "cargo_check" || verification_status != "Failed" {
+        return Vec::new();
+    }
+    let stdout = String::from_utf8_lossy(stdout);
+    let mut diagnostics = Vec::new();
+    for line in stdout.lines() {
+        if diagnostics.len() >= MAX_BOUNDED_CARGO_DIAGNOSTICS {
+            break;
+        }
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if record.get("reason").and_then(Value::as_str) != Some("compiler-message") {
+            continue;
+        }
+        let Some(message) = record.get("message") else {
+            continue;
+        };
+        let Some((path, line, column)) = primary_cargo_diagnostic_location(message) else {
+            continue;
+        };
+        let Some(severity) = sanitized_cargo_diagnostic_severity(message) else {
+            continue;
+        };
+        let diagnostic_kind = match severity {
+            "error" => "compile_error",
+            "warning" => "compile_warning",
+            _ => continue,
+        };
+        let mut diagnostic = json!({
+            "tool_id": VERIFICATION_CARGO_CHECK_TOOL_ID,
+            "check_id": "cargo_check",
+            "diagnostic_kind": diagnostic_kind,
+            "severity": severity,
+            "workspace_relative_path": path,
+            "line": line,
+            "column": column,
+            "truncated": output_truncated,
+        });
+        if let Some(code) = sanitized_cargo_diagnostic_code(message) {
+            diagnostic["code"] = json!(code);
+        }
+        diagnostics.push(diagnostic);
+    }
+    diagnostics
+}
+
+fn primary_cargo_diagnostic_location(message: &Value) -> Option<(String, u64, u64)> {
+    let spans = message.get("spans")?.as_array()?;
+    let primary = spans
+        .iter()
+        .find(|span| span.get("is_primary").and_then(Value::as_bool) == Some(true))?;
+    let path = primary
+        .get("file_name")
+        .and_then(Value::as_str)
+        .and_then(sanitize_cargo_diagnostic_path)?;
+    let line = primary.get("line_start").and_then(Value::as_u64)?;
+    let column = primary.get("column_start").and_then(Value::as_u64)?;
+    if line == 0 || column == 0 {
+        return None;
+    }
+    Some((path, line, column))
+}
+
+fn sanitized_cargo_diagnostic_severity(message: &Value) -> Option<&'static str> {
+    match message.get("level").and_then(Value::as_str)? {
+        "error" => Some("error"),
+        "warning" => Some("warning"),
+        _ => None,
+    }
+}
+
+fn sanitized_cargo_diagnostic_code(message: &Value) -> Option<String> {
+    let code = message.get("code")?.get("code")?.as_str()?;
+    if code.is_empty() || code.len() > MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS {
+        return None;
+    }
+    if !code
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        return None;
+    }
+    Some(code.to_string())
+}
+
+fn sanitize_cargo_diagnostic_path(path: &str) -> Option<String> {
+    if path.is_empty()
+        || path.len() > MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS
+        || path.contains('\0')
+        || path.contains('\\')
+    {
+        return None;
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(name) => {
+                let name = name.to_string_lossy();
+                if name.is_empty() || name == "." || name == ".." || is_blocked_component(&name) {
+                    return None;
+                }
+                components.push(name.to_string());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    if components.is_empty() {
+        return None;
+    }
+    Some(components.join("/"))
 }
 
 fn verification_safety_metadata(check_id: &str) -> VerificationSafetyMetadata {
@@ -890,7 +1041,7 @@ fn verification_cargo_check_tool() -> ToolDefinition {
     ToolDefinition {
         tool_id: VERIFICATION_CARGO_CHECK_TOOL_ID.to_string(),
         display_name: "Cargo Check".to_string(),
-        description: "Controlled fixed verification command: cargo check --workspace --all-targets --locked --offline with an isolated target directory. Callers cannot supply argv, cwd, environment, stdin, shell, or timeout.".to_string(),
+        description: "Controlled fixed verification command: cargo check --workspace --all-targets --locked --offline --message-format=json with an isolated target directory. Callers cannot supply argv, cwd, environment, stdin, shell, or timeout.".to_string(),
         required_action: RuntimeAction::ExecuteProcess,
         input_schema: ToolInputSchema {
             fields: vec![ToolInputField {
@@ -2219,6 +2370,22 @@ mod tests {
         assert_eq!(result.output["verification_status"], "Failed");
         assert_eq!(result.output["process_launched"], true);
         assert_eq!(result.output["output_redacted"], true);
+        let diagnostics = result.output["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("bounded cargo diagnostics");
+        assert!(!diagnostics.is_empty());
+        assert!(diagnostics.len() <= MAX_BOUNDED_CARGO_DIAGNOSTICS);
+        assert_eq!(
+            diagnostics[0]["tool_id"],
+            json!(VERIFICATION_CARGO_CHECK_TOOL_ID)
+        );
+        assert_eq!(diagnostics[0]["check_id"], "cargo_check");
+        assert_eq!(diagnostics[0]["severity"], "error");
+        assert_eq!(diagnostics[0]["workspace_relative_path"], "src/lib.rs");
+        assert_eq!(diagnostics[0]["line"], 1);
+        assert!(diagnostics[0]["column"].as_u64().unwrap_or(0) > 0);
+        assert!(diagnostics[0].get("message").is_none());
+        assert!(diagnostics[0].get("rendered").is_none());
         assert_cargo_check_honest_safety_metadata(&result.output);
         assert_process_tree_timeout_not_attempted(&result.output);
         assert!(!temp.path().join("target").exists());
