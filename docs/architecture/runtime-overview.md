@@ -86,6 +86,24 @@ M8.3 lets the caller continue after an approved recovery proposal has been appli
 
 R3.3 makes failed `verification.cargo_check` recovery actionable without raw log exposure. The controlled verifier runs Cargo with structured JSON output, keeps captured stdout/stderr internal to the verifier, and emits at most five `bounded_cargo_diagnostics` entries with tool ID, check ID, diagnostic kind, severity, optional code, normalized workspace-relative path, line, column, and truncation state. The runtime sanitizes those entries before ledger insertion, includes them on failed verification completion gates and `VerificationRecoveryProvenance`, and materializes them into recovery prompts. It must not persist raw stdout/stderr, rendered compiler diagnostics, source snippets, commands, environment values, absolute or canonical paths, file content, provider responses, or raw prompt text.
 
+## Runtime Codebase Indexing Boundary
+
+M9.1 introduces `codebase.index.build`, the first runtime-owned codebase
+indexing execution path. The Rust runtime calls `brownie-indexer` to scan an
+optional workspace-relative root, reject unsafe roots, skip protected or
+generated directories, reject symlinks without following them, classify regular
+files, compute bounded metadata, persist a sorted snapshot manifest under
+`.brownie/codebase-index`, append a `CodebaseIndexSnapshotBuilt` ledger event,
+and return a compact snapshot handle and counts for headless callers.
+
+The VSIX remains a protocol client and does not own indexing policy. M9.1 does
+not implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
+reranking, LLM calls, shell/git/network execution, service control, or
+workspace mutation. Snapshot manifests, ledger events, and RPC responses must
+not expose raw file content, snippets, diffs, absolute paths, canonical paths,
+raw prompts, provider responses, stdout/stderr, environment values, commands,
+or secrets.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

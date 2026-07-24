@@ -383,6 +383,83 @@ pub struct RunInspectParams {
     pub run_id: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(deny_unknown_fields)]
+pub struct CodebaseIndexBuildParams {
+    #[serde(default)]
+    pub root: Option<String>,
+    #[serde(default)]
+    pub force_refresh: Option<bool>,
+    #[serde(default)]
+    pub max_files: Option<usize>,
+    #[serde(default)]
+    pub max_directories: Option<usize>,
+    #[serde(default)]
+    pub max_path_chars: Option<usize>,
+    #[serde(default)]
+    pub max_file_bytes: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexBuildResult {
+    pub snapshot: CodebaseIndexSnapshotSummary,
+    pub persisted: bool,
+    pub ledger_event_id: String,
+    pub ledger_event_kind: String,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexSnapshotManifest {
+    pub snapshot: CodebaseIndexSnapshotSummary,
+    pub entries: Vec<CodebaseIndexFileEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexSnapshotSummary {
+    pub index_id: String,
+    pub root: String,
+    pub workspace_fingerprint: String,
+    pub snapshot_fingerprint: String,
+    pub built_at: String,
+    pub counts: CodebaseIndexCountsSummary,
+    pub limits: CodebaseIndexLimitsSummary,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexCountsSummary {
+    pub indexed_files: usize,
+    pub walked_directories: usize,
+    pub skipped_protected: usize,
+    pub skipped_symlink: usize,
+    pub skipped_too_large: usize,
+    pub skipped_binary_like: usize,
+    pub skipped_unreadable: usize,
+    pub skipped_unsafe_path: usize,
+    pub skipped_other: usize,
+    pub truncated_entries: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexLimitsSummary {
+    pub max_files: usize,
+    pub max_directories: usize,
+    pub max_path_chars: usize,
+    pub max_file_bytes: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexFileEntry {
+    pub path: String,
+    pub file_kind: String,
+    pub byte_length: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_sha256: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalListParams {
     pub run_id: String,

@@ -8,6 +8,9 @@ use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
 };
 use brownie_context::{ContextMaterializer, ContextMaterializerInput, ContextWindowSummary};
+use brownie_indexer::{
+    build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexSnapshot,
+};
 use brownie_llm::{
     redact_secret, scan_prompt_for_sensitive_content, validate_llm_request_budget, FakeLlmProvider,
     LlmMessage, LlmProvider, LlmProviderKind, LlmProviderStatus, LlmRequestBudget,
@@ -18,18 +21,20 @@ use brownie_modepack::load_workspace_modepack;
 use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
     ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
-    DiagnosticSeverity, JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary,
-    LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
-    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    ProposalReviewBundleParams, ProposalReviewBundleResult,
-    ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    CodebaseIndexBuildParams, CodebaseIndexBuildResult, CodebaseIndexCountsSummary,
+    CodebaseIndexFileEntry, CodebaseIndexLimitsSummary, CodebaseIndexSnapshotManifest,
+    CodebaseIndexSnapshotSummary, DiagnosticSeverity, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
+    PermissionCheckParams, PermissionCheckResult, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -234,6 +239,7 @@ const METHOD_TOOL_INTENT_PARSE: &str = "tool.intent.parse";
 const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
+const METHOD_CODEBASE_INDEX_BUILD: &str = "codebase.index.build";
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
@@ -384,6 +390,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TOOL_EXECUTE => handle_tool_execute(request.id, request.params),
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
+        METHOD_CODEBASE_INDEX_BUILD => handle_codebase_index_build(request.id, request.params),
         METHOD_PROPOSAL_LIST => handle_proposal_list(request.id, request.params),
         METHOD_PROPOSAL_INSPECT => handle_proposal_inspect(request.id, request.params),
         METHOD_PROPOSAL_APPROVE => handle_proposal_approve(request.id, request.params),
@@ -3653,6 +3660,150 @@ fn handle_run_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Value
         Ok(run) => result_response(id, json!(RunInspectResult { run })),
         Err(message) => error_response(id, -32602, &message),
     }
+}
+
+fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params = match params {
+        Some(value) => match serde_json::from_value::<CodebaseIndexBuildParams>(value) {
+            Ok(params) => params,
+            Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+        },
+        None => CodebaseIndexBuildParams::default(),
+    };
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let built_at = match codebase_index_timestamp() {
+        Ok(timestamp) => timestamp,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let snapshot = match build_workspace_file_inventory(
+        store.workspace_root(),
+        CodebaseIndexBuildOptions {
+            root: params.root.clone(),
+            max_files: params.max_files,
+            max_directories: params.max_directories,
+            max_path_chars: params.max_path_chars,
+            max_file_bytes: params.max_file_bytes,
+        },
+    ) {
+        Ok(snapshot) => snapshot,
+        Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+    };
+
+    let manifest = codebase_index_manifest(snapshot, built_at);
+    if let Err(error) = store.codebase_index().write_current_snapshot(&manifest) {
+        return error_response(
+            id,
+            -32603,
+            &format!("internal error: failed to persist codebase index snapshot: {error}"),
+        );
+    }
+
+    let event_payload = serde_json::json!({
+        "index_id": manifest.snapshot.index_id.clone(),
+        "root": manifest.snapshot.root.clone(),
+        "workspace_fingerprint": manifest.snapshot.workspace_fingerprint.clone(),
+        "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint.clone(),
+        "built_at": manifest.snapshot.built_at.clone(),
+        "indexed_files": manifest.snapshot.counts.indexed_files,
+        "walked_directories": manifest.snapshot.counts.walked_directories,
+        "skipped_protected": manifest.snapshot.counts.skipped_protected,
+        "skipped_symlink": manifest.snapshot.counts.skipped_symlink,
+        "skipped_too_large": manifest.snapshot.counts.skipped_too_large,
+        "skipped_binary_like": manifest.snapshot.counts.skipped_binary_like,
+        "skipped_unreadable": manifest.snapshot.counts.skipped_unreadable,
+        "skipped_unsafe_path": manifest.snapshot.counts.skipped_unsafe_path,
+        "skipped_other": manifest.snapshot.counts.skipped_other,
+        "truncated_entries": manifest.snapshot.counts.truncated_entries,
+        "truncated": manifest.snapshot.truncated,
+        "max_files": manifest.snapshot.limits.max_files,
+        "max_directories": manifest.snapshot.limits.max_directories,
+        "max_path_chars": manifest.snapshot.limits.max_path_chars,
+        "max_file_bytes": manifest.snapshot.limits.max_file_bytes,
+        "force_refresh": params.force_refresh.unwrap_or(false),
+        "next_action": "use_codebase_index_for_context_planning"
+    });
+
+    let event = match store
+        .codebase_index()
+        .append_event(LedgerEventKind::CodebaseIndexSnapshotBuilt, event_payload)
+    {
+        Ok(event) => event,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: failed to append codebase index ledger event: {error}"),
+            )
+        }
+    };
+
+    result_response(
+        id,
+        json!(CodebaseIndexBuildResult {
+            snapshot: manifest.snapshot,
+            persisted: true,
+            ledger_event_id: event.event_id,
+            ledger_event_kind: format!("{:?}", event.kind),
+            next_action: "use_codebase_index_for_context_planning".to_string(),
+        }),
+    )
+}
+
+fn codebase_index_manifest(
+    snapshot: CodebaseIndexSnapshot,
+    built_at: String,
+) -> CodebaseIndexSnapshotManifest {
+    CodebaseIndexSnapshotManifest {
+        snapshot: CodebaseIndexSnapshotSummary {
+            index_id: snapshot.index_id,
+            root: snapshot.root,
+            workspace_fingerprint: snapshot.workspace_fingerprint,
+            snapshot_fingerprint: snapshot.snapshot_fingerprint,
+            built_at,
+            counts: CodebaseIndexCountsSummary {
+                indexed_files: snapshot.counts.indexed_files,
+                walked_directories: snapshot.counts.walked_directories,
+                skipped_protected: snapshot.counts.skipped_protected,
+                skipped_symlink: snapshot.counts.skipped_symlink,
+                skipped_too_large: snapshot.counts.skipped_too_large,
+                skipped_binary_like: snapshot.counts.skipped_binary_like,
+                skipped_unreadable: snapshot.counts.skipped_unreadable,
+                skipped_unsafe_path: snapshot.counts.skipped_unsafe_path,
+                skipped_other: snapshot.counts.skipped_other,
+                truncated_entries: snapshot.counts.truncated_entries,
+            },
+            limits: CodebaseIndexLimitsSummary {
+                max_files: snapshot.limits.max_files,
+                max_directories: snapshot.limits.max_directories,
+                max_path_chars: snapshot.limits.max_path_chars,
+                max_file_bytes: snapshot.limits.max_file_bytes,
+            },
+            truncated: snapshot.truncated,
+        },
+        entries: snapshot
+            .entries
+            .into_iter()
+            .map(|entry| CodebaseIndexFileEntry {
+                path: entry.path,
+                file_kind: format!("{:?}", entry.file_kind),
+                byte_length: entry.byte_length,
+                line_count: entry.line_count,
+                content_sha256: entry.content_sha256,
+            })
+            .collect(),
+    }
+}
+
+fn codebase_index_timestamp() -> anyhow::Result<String> {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(anyhow::Error::from)
 }
 
 fn handle_proposal_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
@@ -19206,6 +19357,133 @@ mod tests {
     pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
             .expect("valid response")
+    }
+
+    #[test]
+    fn codebase_index_build_persists_snapshot_and_bounded_ledger_event() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join(".brownie")).expect("brownie dir");
+        std::fs::create_dir(temp.path().join("src")).expect("src dir");
+        std::fs::write(
+            temp.path().join("src/lib.rs"),
+            "pub fn ok() -> u8 {\n    1\n}\n",
+        )
+        .expect("src");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"idx\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("README.md"), "# Index\n").expect("readme");
+        std::fs::create_dir_all(temp.path().join("node_modules/pkg")).expect("node_modules");
+        std::fs::write(
+            temp.path().join("node_modules/pkg/index.js"),
+            "module.exports = 1;",
+        )
+        .expect("dependency");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let first =
+            parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{}}"#);
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let result = first.result.expect("index build result");
+        assert_eq!(result["persisted"], true);
+        assert_eq!(result["ledger_event_kind"], "CodebaseIndexSnapshotBuilt");
+        assert_eq!(
+            result["next_action"],
+            "use_codebase_index_for_context_planning"
+        );
+        assert_eq!(result["snapshot"]["root"], ".");
+        assert_eq!(result["snapshot"]["counts"]["indexed_files"], 3);
+        assert_eq!(result["snapshot"]["counts"]["skipped_protected"], 2);
+        assert!(result["snapshot"]["snapshot_fingerprint"]
+            .as_str()
+            .expect("snapshot fingerprint")
+            .starts_with("sha256:"));
+
+        let store = BrownieStore::new(temp.path());
+        let current = store
+            .codebase_index()
+            .read_current_snapshot()
+            .expect("read current")
+            .expect("current snapshot");
+        assert_eq!(current.entries.len(), 3);
+        assert!(current.entries.iter().all(|entry| {
+            !entry.path.contains(".brownie")
+                && !entry.path.contains("node_modules")
+                && !entry.path.starts_with('/')
+        }));
+        assert!(current
+            .entries
+            .iter()
+            .any(|entry| entry.path == "src/lib.rs" && entry.file_kind == "Rust"));
+
+        let events = store.codebase_index().read_events().expect("index events");
+        assert_eq!(events.len(), 1);
+        let payload = &events[0].payload;
+        for forbidden in [
+            "content",
+            "file_content",
+            "full_content",
+            "absolute_path",
+            "canonical_path",
+            "stdout",
+            "stderr",
+            "env",
+            "raw_input",
+        ] {
+            assert!(
+                payload.get(forbidden).is_none(),
+                "forbidden payload field {forbidden}"
+            );
+        }
+
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let second =
+            parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{}}"#);
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let second_result = second.result.expect("second result");
+        assert_eq!(
+            result["snapshot"]["snapshot_fingerprint"],
+            second_result["snapshot"]["snapshot_fingerprint"]
+        );
+
+        std::fs::write(
+            temp.path().join("src/lib.rs"),
+            "pub fn ok() -> u8 {\n    2\n}\n",
+        )
+        .expect("change src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let changed =
+            parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"codebase.index.build","params":{}}"#);
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let changed_result = changed.result.expect("changed result");
+        assert_ne!(
+            result["snapshot"]["snapshot_fingerprint"],
+            changed_result["snapshot"]["snapshot_fingerprint"]
+        );
+    }
+
+    #[test]
+    fn codebase_index_build_rejects_unsafe_and_unknown_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let unsafe_root = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{"root":"../outside"}}"#,
+        );
+        assert_eq!(unsafe_root.error.expect("unsafe error").code, -32602);
+
+        let unknown_field = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{"root":".","raw_input":"nope"}}"#,
+        );
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert_eq!(
+            unknown_field.error.expect("unknown field error").code,
+            -32602
+        );
     }
 
     fn write_cargo_check_fixture(workspace_root: &Path, package_name: &str, source: &str) {

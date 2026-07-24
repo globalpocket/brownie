@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
+import { isCodebaseIndexBuildResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -505,6 +506,58 @@ describe('protocol validation', () => {
       timestamp: '2026-06-26T00:00:00Z',
       payload: { ...verifierPayload, process_tree_kill_attempted: 'false' },
     })).toBe(false);
+  });
+
+  it('validates codebase index build results and rejects raw or unsafe fields', () => {
+    const snapshot = {
+      index_id: 'idx_abcdef1234567890',
+      root: '.',
+      workspace_fingerprint: `sha256:${'a'.repeat(64)}`,
+      snapshot_fingerprint: `sha256:${'b'.repeat(64)}`,
+      built_at: '2026-07-24T00:00:00Z',
+      counts: {
+        indexed_files: 1,
+        walked_directories: 2,
+        skipped_protected: 1,
+        skipped_symlink: 0,
+        skipped_too_large: 0,
+        skipped_binary_like: 0,
+        skipped_unreadable: 0,
+        skipped_unsafe_path: 0,
+        skipped_other: 0,
+        truncated_entries: 0,
+      },
+      limits: {
+        max_files: 100,
+        max_directories: 100,
+        max_path_chars: 512,
+        max_file_bytes: 1048576,
+      },
+      truncated: false,
+    };
+    const entry = {
+      path: 'src/lib.rs',
+      file_kind: 'Rust',
+      byte_length: 12,
+      line_count: 1,
+      content_sha256: `sha256:${'c'.repeat(64)}`,
+    };
+    const result = {
+      snapshot,
+      persisted: true,
+      ledger_event_id: 'event_1',
+      ledger_event_kind: 'CodebaseIndexSnapshotBuilt',
+      next_action: 'use_codebase_index_for_context_planning',
+    };
+    const manifest = { snapshot, entries: [entry] };
+
+    expect(isCodebaseIndexBuildResult(result)).toBe(true);
+    expect(isCodebaseIndexSnapshotManifest(manifest)).toBe(true);
+    expect(isCodebaseIndexBuildResult({ ...result, snapshot: { ...snapshot, root: '/tmp/repo' } })).toBe(false);
+    expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, path: '../secret.rs' }] })).toBe(false);
+    expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, path: '.brownie/current.json' }] })).toBe(false);
+    expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, content: 'raw source' }] })).toBe(false);
+    expect(isCodebaseIndexBuildResult({ ...result, absolute_path: '/tmp/repo' })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {
