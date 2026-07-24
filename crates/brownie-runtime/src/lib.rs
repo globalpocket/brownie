@@ -4556,6 +4556,12 @@ fn validate_codebase_index_selection_read_params(
     let Some(selected_entry) = selected_entry else {
         return Err("invalid input: read_path is not present in entries".to_string());
     };
+    if usize::try_from(selected_entry.byte_length)
+        .map(|byte_length| byte_length > MAX_WORKSPACE_READ_BYTES)
+        .unwrap_or(true)
+    {
+        return Err("invalid input: selected entry exceeds bounded read limit".to_string());
+    }
     let expected_content_sha256 = selected_entry
         .content_sha256
         .clone()
@@ -4604,12 +4610,6 @@ fn validate_codebase_index_selection_read_entry(
     }
     if !is_supported_codebase_index_file_kind(&entry.file_kind) {
         return Err("invalid input: selected entry file_kind is unsupported".to_string());
-    }
-    if usize::try_from(entry.byte_length)
-        .map(|byte_length| byte_length > MAX_WORKSPACE_READ_BYTES)
-        .unwrap_or(true)
-    {
-        return Err("invalid input: selected entry exceeds bounded read limit".to_string());
     }
     let Some(content_sha256) = entry.content_sha256.as_deref() else {
         return Err("invalid input: selected entry requires content_sha256".to_string());
@@ -6759,10 +6759,6 @@ fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    let policy = match BuiltinModeRegistry::get(&params.mode_id) {
-        Some(policy) => policy,
-        None => return error_response(id, -32602, "invalid params: unknown mode_id"),
-    };
     let Some(definition) = BuiltinToolRegistry::get(&params.tool_id) else {
         return result_response(
             id,
@@ -6772,6 +6768,15 @@ fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
                 output: json!({ "reason": "Unknown tool id." }),
             }),
         );
+    };
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let policy = match resolve_workspace_mode_policy(&store, &params.mode_id) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => return error_response(id, -32602, "invalid params: unknown mode_id"),
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
     let decision = RuntimePermissionGate::check(&policy, definition.required_action);
     if !decision.allowed {
@@ -6785,10 +6790,6 @@ fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
         );
     }
 
-    let store = match BrownieStore::from_env_or_cwd() {
-        Ok(store) => store,
-        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
-    };
     if definition.tool_id == CODEBASE_INDEX_SELECTION_READ_TOOL_ID {
         return match execute_codebase_index_selection_read(
             &store,
@@ -21229,6 +21230,116 @@ mod tests {
     }
 
     #[test]
+    fn codebase_index_selection_read_allows_large_unrequested_selected_entries() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join("src/runtime")).expect("src dir");
+        let selected_content = "pub fn selected() {}\n";
+        let oversized_content = "x".repeat(MAX_WORKSPACE_READ_BYTES + 1);
+        std::fs::write(temp.path().join("src/runtime/query.rs"), selected_content)
+            .expect("selected file");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![
+                selected_read_test_entry("src/runtime/large.rs", "Rust", &oversized_content),
+                selected_read_test_entry("src/runtime/query.rs", "Rust", selected_content),
+            ]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let query = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime","max_results":2,"file_kind":"Rust"}}"#,
+        )
+        .result
+        .expect("query result");
+        assert_eq!(
+            query["entries"].as_array().expect("selected entries").len(),
+            2
+        );
+        let selected_read = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "mode_id": "orchestrator",
+                "tool_id": CODEBASE_INDEX_SELECTION_READ_TOOL_ID,
+                "input": selected_read_input_from_query(&query, "src/runtime/query.rs", Some("Rust")),
+            })),
+        );
+        let oversized_read = handle_tool_execute(
+            json!(3),
+            Some(json!({
+                "mode_id": "orchestrator",
+                "tool_id": CODEBASE_INDEX_SELECTION_READ_TOOL_ID,
+                "input": selected_read_input_from_query(&query, "src/runtime/large.rs", Some("Rust")),
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert!(selected_read.error.is_none());
+        assert_eq!(
+            selected_read.result.expect("selected read result")["status"],
+            "Completed"
+        );
+        assert!(oversized_read.error.is_none());
+        let oversized_result = oversized_read.result.expect("oversized read result");
+        assert_eq!(oversized_result["status"], "Failed");
+        assert!(oversized_result["output"]["reason"]
+            .as_str()
+            .expect("reason")
+            .contains("bounded read limit"));
+    }
+
+    #[test]
+    fn codebase_index_selection_read_resolves_workspace_modepack_modes() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_index_modepack(temp.path());
+        std::fs::create_dir_all(temp.path().join("src/runtime")).expect("src dir");
+        let selected_content = "pub fn selected() {}\n";
+        std::fs::write(temp.path().join("src/runtime/query.rs"), selected_content)
+            .expect("selected file");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![selected_read_test_entry(
+                "src/runtime/query.rs",
+                "Rust",
+                selected_content,
+            )]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let query = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"index-reader","query":"runtime","max_results":1,"file_kind":"Rust"}}"#,
+        )
+        .result
+        .expect("query result");
+        let selected_read = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "mode_id": "index-reader",
+                "tool_id": CODEBASE_INDEX_SELECTION_READ_TOOL_ID,
+                "input": selected_read_input_from_query(&query, "src/runtime/query.rs", Some("Rust")),
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert!(selected_read.error.is_none());
+        let result = selected_read.result.expect("selected read result");
+        assert_eq!(result["status"], "Completed");
+        assert_eq!(result["output"]["content"], selected_content);
+        let events = store.codebase_index().read_events().expect("events");
+        assert!(events.iter().any(|event| event.kind
+            == LedgerEventKind::CodebaseIndexPermissionChecked
+            && event.payload["request_kind"] == "selection_read"
+            && event.payload["mode_id"] == "index-reader"
+            && event.payload["allowed"] == true));
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::CodebaseIndexSelectionReadCompleted));
+    }
+
+    #[test]
     fn codebase_index_selection_read_requires_index_permission_before_snapshot_or_file_read() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -21613,6 +21724,37 @@ mod tests {
                     "can_spawn_subtasks": false
                   },
                   "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
+    fn write_test_index_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "local-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "index-reader",
+                  "display_name": "Index Reader",
+                  "role_definition": "Read selected index context without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false,
+                    "codebase_index": true
+                  },
+                  "completion_rules": ["Stop after reading selected index context."]
                 }
               ]
             }"#,
