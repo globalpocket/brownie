@@ -73,6 +73,17 @@ impl CodebaseIndexStore {
     }
 
     pub fn write_current_snapshot(&self, manifest: &CodebaseIndexSnapshotManifest) -> Result<()> {
+        let _lock = self.begin_build()?;
+        self.write_snapshot_and_current(manifest)
+    }
+
+    pub fn begin_build(&self) -> Result<CodebaseIndexBuildLock> {
+        let lock = self.acquire_build_lock()?;
+        self.cleanup_temporary_files()?;
+        Ok(lock)
+    }
+
+    fn write_snapshot_and_current(&self, manifest: &CodebaseIndexSnapshotManifest) -> Result<()> {
         let root = self.index_dir();
         let snapshots_dir = root.join("snapshots");
         fs::create_dir_all(&snapshots_dir)
@@ -81,28 +92,49 @@ impl CodebaseIndexStore {
         let body =
             serde_json::to_string_pretty(manifest).context("failed to serialize index snapshot")?;
         let snapshot_path = snapshots_dir.join(format!("{}.json", manifest.snapshot.index_id));
-        let snapshot_tmp = snapshots_dir.join(format!(
-            "{}.json.tmp-{}",
-            manifest.snapshot.index_id,
-            Uuid::new_v4().simple()
-        ));
-        fs::write(&snapshot_tmp, &body).context("failed to write temporary index snapshot")?;
-        fs::rename(&snapshot_tmp, &snapshot_path).with_context(|| {
-            format!(
-                "failed to atomically replace index snapshot {}",
-                snapshot_path.display()
-            )
-        })?;
+        write_file_atomically(&snapshot_path, body.as_bytes())
+            .context("failed to write index snapshot archive")?;
+        let current_path = root.join("current.json");
+        write_file_atomically(&current_path, body.as_bytes())
+            .context("failed to write current index")
+    }
+
+    pub fn commit_current_snapshot(
+        &self,
+        manifest: &CodebaseIndexSnapshotManifest,
+        kind: LedgerEventKind,
+        payload: serde_json::Value,
+    ) -> Result<CodebaseIndexLedgerEvent> {
+        let lock = self.begin_build()?;
+        self.commit_current_snapshot_with_lock(&lock, manifest, kind, payload)
+    }
+
+    pub fn commit_current_snapshot_with_lock(
+        &self,
+        _lock: &CodebaseIndexBuildLock,
+        manifest: &CodebaseIndexSnapshotManifest,
+        kind: LedgerEventKind,
+        payload: serde_json::Value,
+    ) -> Result<CodebaseIndexLedgerEvent> {
+        let root = self.index_dir();
+        let snapshots_dir = root.join("snapshots");
+        fs::create_dir_all(&snapshots_dir)
+            .with_context(|| format!("failed to create {}", snapshots_dir.display()))?;
+
+        let body =
+            serde_json::to_string_pretty(manifest).context("failed to serialize index snapshot")?;
+        let snapshot_path = snapshots_dir.join(format!("{}.json", manifest.snapshot.index_id));
+        write_file_atomically(&snapshot_path, body.as_bytes())
+            .context("failed to write index snapshot archive")?;
+
+        let event = self.append_event(kind, payload)?;
 
         let current_path = root.join("current.json");
-        let current_tmp = root.join(format!("current.json.tmp-{}", Uuid::new_v4().simple()));
-        fs::write(&current_tmp, body).context("failed to write temporary current index")?;
-        fs::rename(&current_tmp, &current_path).with_context(|| {
-            format!(
-                "failed to atomically replace current index {}",
-                current_path.display()
-            )
-        })
+        write_file_atomically(&current_path, body.as_bytes())
+            .context("failed to write current index")?;
+        self.write_commit_marker(manifest, &event)
+            .context("failed to write codebase index commit marker")?;
+        Ok(event)
     }
 
     pub fn read_current_snapshot(&self) -> Result<Option<CodebaseIndexSnapshotManifest>> {
@@ -141,6 +173,9 @@ impl CodebaseIndexStore {
             .context("failed to open codebase index ledger")?;
         file.write_all(&buffer)
             .context("failed to append codebase index ledger event")?;
+        file.sync_all()
+            .context("failed to sync codebase index ledger event")?;
+        sync_dir(&self.index_dir());
         Ok(event)
     }
 
@@ -170,6 +205,131 @@ impl CodebaseIndexStore {
         self.workspace_root
             .join(WORKSPACE_STATE_DIR)
             .join(CODEBASE_INDEX_DIR)
+    }
+
+    fn acquire_build_lock(&self) -> Result<CodebaseIndexBuildLock> {
+        let root = self.index_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let lock_path = root.join("build.lock");
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+            .with_context(|| {
+                format!(
+                    "codebase index build lock is held at {}",
+                    lock_path.display()
+                )
+            })?;
+        writeln!(file, "pid={}", std::process::id()).context("failed to write index build lock")?;
+        writeln!(file, "created_at={}", timestamp()?)
+            .context("failed to write index build lock")?;
+        file.sync_all().context("failed to sync index build lock")?;
+        sync_dir(&root);
+        Ok(CodebaseIndexBuildLock { path: lock_path })
+    }
+
+    fn cleanup_temporary_files(&self) -> Result<()> {
+        for dir in [self.index_dir(), self.index_dir().join("snapshots")] {
+            if !dir.exists() {
+                continue;
+            }
+            for entry in fs::read_dir(&dir)
+                .with_context(|| format!("failed to list temporary files in {}", dir.display()))?
+            {
+                let entry = entry.context("failed to read temporary index entry")?;
+                let file_type = entry
+                    .file_type()
+                    .context("failed to read temporary index entry type")?;
+                if !file_type.is_file() {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.contains(".tmp-") {
+                    fs::remove_file(entry.path()).with_context(|| {
+                        format!("failed to remove stale temporary index file {name}")
+                    })?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn write_commit_marker(
+        &self,
+        manifest: &CodebaseIndexSnapshotManifest,
+        event: &CodebaseIndexLedgerEvent,
+    ) -> Result<()> {
+        let marker = serde_json::json!({
+            "index_id": manifest.snapshot.index_id,
+            "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
+            "ledger_event_id": event.event_id,
+            "ledger_event_kind": format!("{:?}", event.kind),
+            "committed_at": event.timestamp,
+        });
+        let body = serde_json::to_string_pretty(&marker)
+            .context("failed to serialize codebase index commit marker")?;
+        write_file_atomically(&self.index_dir().join("commit.json"), body.as_bytes())
+    }
+}
+
+#[derive(Debug)]
+pub struct CodebaseIndexBuildLock {
+    path: PathBuf,
+}
+
+impl Drop for CodebaseIndexBuildLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+        if let Some(parent) = self.path.parent() {
+            sync_dir(parent);
+        }
+    }
+}
+
+fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("target path has no parent: {}", path.display()))?;
+    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow::anyhow!("target path has invalid file name: {}", path.display()))?;
+    let tmp_path = parent.join(format!("{file_name}.tmp-{}", Uuid::new_v4().simple()));
+
+    let write_result = (|| -> Result<()> {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp_path)
+            .with_context(|| format!("failed to create temporary file {}", tmp_path.display()))?;
+        file.write_all(body)
+            .with_context(|| format!("failed to write temporary file {}", tmp_path.display()))?;
+        file.sync_all()
+            .with_context(|| format!("failed to sync temporary file {}", tmp_path.display()))?;
+        drop(file);
+        fs::rename(&tmp_path, path).with_context(|| {
+            format!(
+                "failed to atomically replace {} from {}",
+                path.display(),
+                tmp_path.display()
+            )
+        })?;
+        sync_dir(parent);
+        Ok(())
+    })();
+
+    if write_result.is_err() {
+        let _ = fs::remove_file(&tmp_path);
+    }
+    write_result
+}
+
+fn sync_dir(path: &std::path::Path) {
+    if let Ok(file) = fs::File::open(path) {
+        let _ = file.sync_all();
     }
 }
 
@@ -1002,6 +1162,7 @@ pub struct CodebaseIndexLedgerEvent {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LedgerEventKind {
+    CodebaseIndexPermissionChecked,
     CodebaseIndexSnapshotBuilt,
     TaskStarted,
     ModeResolved,
@@ -1093,12 +1254,16 @@ mod tests {
                     skipped_unsafe_path: 0,
                     skipped_other: 0,
                     truncated_entries: 0,
+                    visited_entries: 1,
+                    truncated_directories: 0,
                 },
                 limits: brownie_protocol::CodebaseIndexLimitsSummary {
                     max_files: 10,
                     max_directories: 10,
                     max_path_chars: 512,
                     max_file_bytes: 1024,
+                    max_visited_entries: 100,
+                    max_directory_entries: 100,
                 },
                 truncated: false,
             },
@@ -1131,7 +1296,7 @@ mod tests {
                     "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
                     "indexed_files": 1,
                     "truncated": false,
-                    "next_action": "use_codebase_index_for_context_planning"
+                    "next_action": "build_ignore_aware_sensitive_filtering"
                 }),
             )
             .expect("append event");
@@ -1140,6 +1305,99 @@ mod tests {
             store.codebase_index().read_events().expect("read events")[0],
             event
         );
+    }
+
+    #[test]
+    fn codebase_index_commit_preserves_current_when_lock_or_ledger_fails() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let previous = test_index_manifest("idx_previous", "a");
+        let next = test_index_manifest("idx_next", "b");
+
+        store
+            .codebase_index()
+            .write_current_snapshot(&previous)
+            .expect("previous current");
+        let index_dir = temp.path().join(".brownie/codebase-index");
+        fs::write(index_dir.join("build.lock"), "held").expect("manual lock");
+
+        let locked = store.codebase_index().commit_current_snapshot(
+            &next,
+            LedgerEventKind::CodebaseIndexSnapshotBuilt,
+            serde_json::json!({"index_id": "idx_next"}),
+        );
+        assert!(locked.is_err());
+        assert_eq!(
+            store
+                .codebase_index()
+                .read_current_snapshot()
+                .expect("read current")
+                .expect("current"),
+            previous
+        );
+
+        fs::remove_file(index_dir.join("build.lock")).expect("remove lock");
+        fs::remove_file(index_dir.join("ledger.jsonl")).ok();
+        fs::create_dir(index_dir.join("ledger.jsonl")).expect("ledger dir");
+        let ledger_failed = store.codebase_index().commit_current_snapshot(
+            &next,
+            LedgerEventKind::CodebaseIndexSnapshotBuilt,
+            serde_json::json!({"index_id": "idx_next"}),
+        );
+        assert!(ledger_failed.is_err());
+        assert_eq!(
+            store
+                .codebase_index()
+                .read_current_snapshot()
+                .expect("read current")
+                .expect("current"),
+            previous
+        );
+    }
+
+    fn test_index_manifest(
+        index_id: &str,
+        fingerprint_seed: &str,
+    ) -> CodebaseIndexSnapshotManifest {
+        CodebaseIndexSnapshotManifest {
+            snapshot: brownie_protocol::CodebaseIndexSnapshotSummary {
+                index_id: index_id.to_string(),
+                root: ".".to_string(),
+                workspace_fingerprint: format!("sha256:{}", fingerprint_seed.repeat(64)),
+                snapshot_fingerprint: format!("sha256:{}", fingerprint_seed.repeat(64)),
+                built_at: "2026-07-24T00:00:00Z".to_string(),
+                counts: brownie_protocol::CodebaseIndexCountsSummary {
+                    indexed_files: 1,
+                    walked_directories: 1,
+                    skipped_protected: 0,
+                    skipped_symlink: 0,
+                    skipped_too_large: 0,
+                    skipped_binary_like: 0,
+                    skipped_unreadable: 0,
+                    skipped_unsafe_path: 0,
+                    skipped_other: 0,
+                    truncated_entries: 0,
+                    visited_entries: 1,
+                    truncated_directories: 0,
+                },
+                limits: brownie_protocol::CodebaseIndexLimitsSummary {
+                    max_files: 10,
+                    max_directories: 10,
+                    max_path_chars: 512,
+                    max_file_bytes: 1024,
+                    max_visited_entries: 100,
+                    max_directory_entries: 100,
+                },
+                truncated: false,
+            },
+            entries: vec![brownie_protocol::CodebaseIndexFileEntry {
+                path: "src/lib.rs".to_string(),
+                file_kind: "Rust".to_string(),
+                byte_length: 12,
+                line_count: Some(1),
+                content_sha256: Some(format!("sha256:{}", fingerprint_seed.repeat(64))),
+            }],
+        }
     }
 
     #[test]

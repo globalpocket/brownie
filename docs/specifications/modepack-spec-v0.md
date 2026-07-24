@@ -62,7 +62,8 @@ The M2 JSON schema is intentionally minimal:
         "network_access": false,
         "service_control": false,
         "destructive": false,
-        "can_spawn_subtasks": false
+        "can_spawn_subtasks": false,
+        "codebase_index": false
       },
       "completion_rules": ["Stop after reporting local review findings."]
     }
@@ -70,7 +71,7 @@ The M2 JSON schema is intentionally minimal:
 }
 ```
 
-M2 does not fetch remote Mode Packs. It rejects Mode Pack modes that request workspace writes, process execution, network access, service control, destructive operations, or non-read-only permissions. `task.start` stores the resolved policy summary in `ModeResolved`, and `task.run` reconstructs the policy from that ledger snapshot so later Mode Pack edits do not change already-started tasks.
+M2 does not fetch remote Mode Packs. It rejects Mode Pack modes that request workspace writes, process execution, network access, service control, destructive operations, or non-read-only permissions. M9.2 permits Mode Packs to opt into metadata-only codebase indexing with `codebase_index`; omitted fields default to `false` for compatibility. `task.start` stores the resolved policy summary in `ModeResolved`, and `task.run` reconstructs the policy from that ledger snapshot so later Mode Pack edits do not change already-started tasks.
 
 ## Non-goals for v0
 

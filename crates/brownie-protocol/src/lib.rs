@@ -149,6 +149,7 @@ pub struct ModePermissionsSummary {
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
+    pub codebase_index: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,6 +185,7 @@ pub enum RuntimeActionName {
     ControlService,
     DestructiveOperation,
     SpawnSubtask,
+    IndexCodebase,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -387,6 +389,8 @@ pub struct RunInspectParams {
 #[serde(deny_unknown_fields)]
 pub struct CodebaseIndexBuildParams {
     #[serde(default)]
+    pub mode_id: Option<String>,
+    #[serde(default)]
     pub root: Option<String>,
     #[serde(default)]
     pub force_refresh: Option<bool>,
@@ -398,6 +402,10 @@ pub struct CodebaseIndexBuildParams {
     pub max_path_chars: Option<usize>,
     #[serde(default)]
     pub max_file_bytes: Option<u64>,
+    #[serde(default)]
+    pub max_visited_entries: Option<usize>,
+    #[serde(default)]
+    pub max_directory_entries: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -439,6 +447,8 @@ pub struct CodebaseIndexCountsSummary {
     pub skipped_unsafe_path: usize,
     pub skipped_other: usize,
     pub truncated_entries: usize,
+    pub visited_entries: usize,
+    pub truncated_directories: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -447,6 +457,8 @@ pub struct CodebaseIndexLimitsSummary {
     pub max_directories: usize,
     pub max_path_chars: usize,
     pub max_file_bytes: u64,
+    pub max_visited_entries: usize,
+    pub max_directory_entries: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

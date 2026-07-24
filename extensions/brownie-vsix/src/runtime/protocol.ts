@@ -109,7 +109,8 @@ export type RuntimeActionName =
   | 'AccessNetwork'
   | 'ControlService'
   | 'DestructiveOperation'
-  | 'SpawnSubtask';
+  | 'SpawnSubtask'
+  | 'IndexCodebase';
 
 
 export interface ModePermissionsSummary {
@@ -120,6 +121,7 @@ export interface ModePermissionsSummary {
   service_control: boolean;
   destructive: boolean;
   can_spawn_subtasks: boolean;
+  codebase_index: boolean;
 }
 
 export interface ModeSummary {
@@ -573,7 +575,7 @@ export interface CodebaseIndexBuildResult {
   persisted: boolean;
   ledger_event_id: string;
   ledger_event_kind: 'CodebaseIndexSnapshotBuilt';
-  next_action: 'use_codebase_index_for_context_planning';
+  next_action: 'build_ignore_aware_sensitive_filtering';
 }
 
 export interface CodebaseIndexSnapshotManifest {
@@ -603,6 +605,8 @@ export interface CodebaseIndexCountsSummary {
   skipped_unsafe_path: number;
   skipped_other: number;
   truncated_entries: number;
+  visited_entries: number;
+  truncated_directories: number;
 }
 
 export interface CodebaseIndexLimitsSummary {
@@ -610,6 +614,8 @@ export interface CodebaseIndexLimitsSummary {
   max_directories: number;
   max_path_chars: number;
   max_file_bytes: number;
+  max_visited_entries: number;
+  max_directory_entries: number;
 }
 
 export interface CodebaseIndexFileEntry {
@@ -3817,7 +3823,7 @@ export function isCodebaseIndexBuildResult(value: unknown): value is CodebaseInd
     value.persisted === true &&
     typeof value.ledger_event_id === 'string' &&
     value.ledger_event_kind === 'CodebaseIndexSnapshotBuilt' &&
-    value.next_action === 'use_codebase_index_for_context_planning'
+    value.next_action === 'build_ignore_aware_sensitive_filtering'
   );
 }
 
@@ -3865,7 +3871,9 @@ function isCodebaseIndexCountsSummary(value: unknown): value is CodebaseIndexCou
     isNonNegativeInteger(value.skipped_unreadable) &&
     isNonNegativeInteger(value.skipped_unsafe_path) &&
     isNonNegativeInteger(value.skipped_other) &&
-    isNonNegativeInteger(value.truncated_entries)
+    isNonNegativeInteger(value.truncated_entries) &&
+    isNonNegativeInteger(value.visited_entries) &&
+    isNonNegativeInteger(value.truncated_directories)
   );
 }
 
@@ -3883,7 +3891,13 @@ function isCodebaseIndexLimitsSummary(value: unknown): value is CodebaseIndexLim
     value.max_path_chars <= 1024 &&
     isNonNegativeInteger(value.max_file_bytes) &&
     value.max_file_bytes > 0 &&
-    value.max_file_bytes <= 2097152
+    value.max_file_bytes <= 2097152 &&
+    isNonNegativeInteger(value.max_visited_entries) &&
+    value.max_visited_entries > 0 &&
+    value.max_visited_entries <= 200000 &&
+    isNonNegativeInteger(value.max_directory_entries) &&
+    value.max_directory_entries > 0 &&
+    value.max_directory_entries <= 20000
   );
 }
 
@@ -4036,7 +4050,8 @@ function isModePermissionsSummary(value: unknown): value is ModePermissionsSumma
     typeof value.network_access === 'boolean' &&
     typeof value.service_control === 'boolean' &&
     typeof value.destructive === 'boolean' &&
-    typeof value.can_spawn_subtasks === 'boolean'
+    typeof value.can_spawn_subtasks === 'boolean' &&
+    typeof value.codebase_index === 'boolean'
   );
 }
 
@@ -4048,7 +4063,8 @@ function isRuntimeActionName(value: unknown): value is RuntimeActionName {
     value === 'AccessNetwork' ||
     value === 'ControlService' ||
     value === 'DestructiveOperation' ||
-    value === 'SpawnSubtask'
+    value === 'SpawnSubtask' ||
+    value === 'IndexCodebase'
   );
 }
 

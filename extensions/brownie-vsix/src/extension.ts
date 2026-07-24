@@ -180,6 +180,7 @@ export function activate(context: vscode.ExtensionContext): void {
       'ControlService',
       'DestructiveOperation',
       'SpawnSubtask',
+      'IndexCodebase',
     ];
     const action = await vscode.window.showQuickPick(actions, {
       placeHolder: 'Select a runtime action to check',
