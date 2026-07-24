@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
+pub const CODEBASE_INDEX_SELECTION_READ_TOOL_ID: &str = "codebase.index.selection.read";
 pub const WORKSPACE_WRITE_TOOL_ID: &str = "workspace.write";
 pub const SUBTASK_SPAWN_TOOL_ID: &str = "subtask.spawn";
 pub const VERIFICATION_CARGO_FMT_CHECK_TOOL_ID: &str = "verification.cargo_fmt_check";
@@ -84,6 +85,7 @@ impl BuiltinToolRegistry {
     pub fn list() -> Vec<ToolDefinition> {
         vec![
             tool("workspace.read", "Workspace Read", "Dry-run definition for workspace read requests.", RuntimeAction::ReadWorkspace),
+            tool("codebase.index.selection.read", "Codebase Index Selection Read", "Controlled workspace read for one runtime-validated codebase index selection handle.", RuntimeAction::ReadWorkspace),
             tool("workspace.write", "Workspace Write", "Dry-run definition for workspace write requests; no writes are executed in Phase 1.6.", RuntimeAction::WriteWorkspace),
             verification_cargo_fmt_check_tool(),
             verification_cargo_check_tool(),
@@ -173,6 +175,11 @@ impl WorkspaceReadExecutor {
             )
         })?;
         let target = root.join(requested_path);
+        let target_metadata = fs::symlink_metadata(&target)
+            .with_context(|| format!("failed to inspect {}", relative_path))?;
+        if target_metadata.file_type().is_symlink() {
+            bail!("symlink reads are not supported");
+        }
         let canonical_target = target
             .canonicalize()
             .with_context(|| format!("failed to canonicalize {}", relative_path))?;
@@ -233,6 +240,13 @@ impl ToolExecutor {
                 };
                 WorkspaceReadExecutor::read(workspace_root, path, MAX_WORKSPACE_READ_BYTES)
             }
+            CODEBASE_INDEX_SELECTION_READ_TOOL_ID => Ok(ToolExecutionResult {
+                tool_id: request.tool_id,
+                status: ToolExecutionStatus::Denied,
+                output: json!({
+                    "reason": "codebase.index.selection.read is executed by the Brownie runtime after index provenance validation."
+                }),
+            }),
             VERIFICATION_CARGO_FMT_CHECK_TOOL_ID => {
                 VerificationCommandExecutor::cargo_fmt_check(workspace_root, &request.input)
             }
@@ -1819,6 +1833,7 @@ mod tests {
             ids,
             vec![
                 "workspace.read",
+                "codebase.index.selection.read",
                 "workspace.write",
                 "verification.cargo_fmt_check",
                 "verification.cargo_check",
@@ -2194,6 +2209,20 @@ mod tests {
         let result =
             WorkspaceReadExecutor::read(temp.path(), "binary.bin", MAX_WORKSPACE_READ_BYTES)
                 .expect("read result");
+        assert_eq!(result.status, ToolExecutionStatus::Failed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_read_executor_rejects_symlink_targets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "hello").expect("write");
+        std::os::unix::fs::symlink(temp.path().join("README.md"), temp.path().join("link.md"))
+            .expect("symlink");
+
+        let result = WorkspaceReadExecutor::read(temp.path(), "link.md", MAX_WORKSPACE_READ_BYTES)
+            .expect("read result");
+
         assert_eq!(result.status, ToolExecutionStatus::Failed);
     }
 

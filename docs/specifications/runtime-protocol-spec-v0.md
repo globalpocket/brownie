@@ -273,6 +273,106 @@ they store query/selection ids and fingerprints, snapshot fingerprints, bounded
 counts, match-reason counts, optional file-kind filter, and `next_action`; they
 do not store raw query text or selected paths.
 
+## `tool.execute` with `codebase.index.selection.read`
+
+M9.5 turns a bounded M9.4 file-selection handle into one controlled workspace
+read without adding a new JSON-RPC method. Callers use the existing
+`tool.execute` method with `tool_id = "codebase.index.selection.read"`.
+
+Example request:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 12,
+  "method": "tool.execute",
+  "params": {
+    "mode_id": "orchestrator",
+    "tool_id": "codebase.index.selection.read",
+    "input": {
+      "query_id": "query_<16 lowercase hex>",
+      "selection_id": "selection_<16 lowercase hex>",
+      "query_fingerprint": "sha256:<64 lowercase hex>",
+      "snapshot": {
+        "index_id": "idx_<16 lowercase hex>",
+        "root": ".",
+        "workspace_fingerprint": "sha256:<64 lowercase hex>",
+        "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+        "built_at": "2026-07-24T00:00:00Z",
+        "truncated": false
+      },
+      "max_results": 5,
+      "file_kind_filter": "Rust",
+      "entries": [
+        {
+          "path": "src/runtime/query.rs",
+          "file_kind": "Rust",
+          "byte_length": 120,
+          "line_count": 8,
+          "content_sha256": "sha256:<64 lowercase hex>",
+          "score": 175,
+          "match_reasons": ["path_token", "extension"]
+        }
+      ],
+      "read_path": "src/runtime/query.rs"
+    }
+  }
+}
+```
+
+The built-in tool registry requires `ReadWorkspace`; after that primary tool
+permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it
+reads `.brownie/codebase-index/current.json`, query ledger evidence, or file
+content. Denied secondary index permission returns a `Denied` tool result and
+does not read current snapshot or file content.
+
+Successful output:
+
+```json
+{
+  "tool_id": "codebase.index.selection.read",
+  "status": "Completed",
+  "output": {
+    "query_id": "query_<16 lowercase hex>",
+    "selection_id": "selection_<16 lowercase hex>",
+    "query_fingerprint": "sha256:<64 lowercase hex>",
+    "selection_fingerprint": "sha256:<64 lowercase hex>",
+    "snapshot": {
+      "index_id": "idx_<16 lowercase hex>",
+      "root": ".",
+      "workspace_fingerprint": "sha256:<64 lowercase hex>",
+      "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+      "built_at": "2026-07-24T00:00:00Z",
+      "truncated": false
+    },
+    "path": "src/runtime/query.rs",
+    "file_kind": "Rust",
+    "content": "...bounded UTF-8 file content...",
+    "truncated": false,
+    "bytes_read": 120,
+    "content_sha256": "sha256:<64 lowercase hex>",
+    "content_hash_verified": true,
+    "ledger_event_id": "event_<uuid>",
+    "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
+    "next_action": "use_selected_file_context_for_prompt_materialization"
+  }
+}
+```
+
+Failures return `status = "Failed"` with a bounded reason and do not append
+`CodebaseIndexSelectionReadCompleted`. Failure conditions include malformed
+input, unknown fields, unsafe/protected paths, parent traversal, absolute paths,
+unsupported file kinds, missing content hashes, stale current snapshots, missing
+`CodebaseIndexQueryCompleted` evidence, selected entry metadata mismatch,
+directories, symlinks, invalid UTF-8, truncation, and post-read SHA-256
+mismatch.
+
+The explicit tool result may return bounded UTF-8 content. The codebase-index
+ledger event remains summary-only and stores path fingerprints rather than raw
+selected paths; it never stores raw query text, raw file content, snippets,
+diffs, chunks, embeddings, stdout/stderr, environment values, commands, prompts,
+provider responses, absolute paths, canonical paths, or secrets.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

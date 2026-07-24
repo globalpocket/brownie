@@ -136,6 +136,23 @@ hashes, scores, and bounded match reasons. Successful queries append summary-onl
 paths and return
 `next_action = "read_selected_files_with_controlled_workspace_read"`.
 
+M9.5 adds the executable follow-up step for those selection handles without
+adding a new JSON-RPC method. Callers invoke `tool.execute` with
+`tool_id = "codebase.index.selection.read"` and one selected path plus the
+bounded query/selection/snapshot evidence from M9.4. The built-in tool registry
+checks `ReadWorkspace`, then the Rust runtime checks
+`RuntimeAction::IndexCodebase` before reading current index state or file
+content. The runtime recomputes the selection fingerprint, requires matching
+`CodebaseIndexQueryCompleted` evidence, validates the latest current snapshot
+and selected entry metadata, delegates to the controlled workspace read
+boundary, and verifies the post-read SHA-256 before returning bounded UTF-8
+content. Successful reads append summary-only
+`CodebaseIndexSelectionReadCompleted` events with ids, fingerprints, counts,
+byte counts, file kind, content hash, verification status, and read-path
+fingerprint; the ledger does not store raw query text, raw selected paths, raw
+file content, snippets, diffs, commands, stdout/stderr, environment values,
+absolute paths, canonical paths, prompts, provider responses, or secrets.
+
 The VSIX remains a protocol client and does not own indexing policy. M9 does not
 yet implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
 reranking, LLM calls, shell/git/network execution, service control, or workspace

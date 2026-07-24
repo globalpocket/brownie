@@ -236,3 +236,42 @@ commands, prompts, provider responses, or secrets.
 M9.4 does not add file reads, chunking, embeddings, Qdrant writes, semantic
 symbols, LLM calls, shell/git/network/service execution, workspace mutation, or
 new report/digest/history/readiness wrappers.
+
+## M9.5 Controlled Workspace Read From Index Selection Handles
+
+M9.5 consumes M9.4 file-selection handles through the existing `tool.execute`
+method using the built-in tool id `codebase.index.selection.read`. It does not
+add a new JSON-RPC method.
+
+The selected-read tool performs one runtime-owned, index-bound workspace read:
+
+- checks the tool's `ReadWorkspace` permission through the existing tool
+  registry;
+- checks `RuntimeAction::IndexCodebase` before reading current index state or
+  file content;
+- accepts one `read_path` plus bounded query/selection/snapshot evidence from a
+  prior `codebase.index.query` response;
+- rejects unknown input fields, malformed ids or fingerprints, oversized entry
+  arrays, unsafe or protected paths, parent traversal, absolute paths,
+  unsupported file kinds, missing content hashes, stale snapshots, missing query
+  evidence, stale selected metadata, stale file hashes, directories, symlinks,
+  invalid UTF-8, and targets exceeding the bounded read cap;
+- recomputes the selection fingerprint from the supplied entries and requires it
+  to match both `selection_id` and the prior `CodebaseIndexQueryCompleted`
+  evidence;
+- revalidates the latest `current.json` snapshot identity and selected entry
+  metadata before delegating to the controlled workspace read boundary;
+- returns bounded UTF-8 content only in the explicit `tool.execute` result.
+
+Successful selected reads append `CodebaseIndexSelectionReadCompleted` to the
+codebase-index ledger. The event is summary-only: ids, fingerprints, counts,
+byte counts, file kind, content SHA-256, hash-verification status, truncation
+status, and read-path fingerprint. It does not store raw query text, selected
+raw paths, raw file content, snippets, diffs, chunks, embeddings,
+stdout/stderr, environment values, commands, prompts, provider responses,
+absolute paths, canonical paths, or secrets.
+
+M9.5 does not add batch reads, arbitrary workspace reads outside a validated
+selection handle, prompt materialization, task automation, chunking, embeddings,
+Qdrant writes, semantic symbols, LLM calls, shell/git/network/service execution,
+workspace mutation, or report/digest/history/readiness wrappers.
