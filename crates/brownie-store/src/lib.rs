@@ -1,7 +1,7 @@
 //! Brownie persistence crate.
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, ErrorKind, Write};
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
@@ -247,22 +247,58 @@ impl CodebaseIndexStore {
         bail!("codebase index build lock is held")
     }
 
+    #[cfg(unix)]
     fn reclaim_stale_build_lock(&self, lock_path: &Path) -> Result<bool> {
-        let before = match fs::read_to_string(lock_path) {
-            Ok(content) => content,
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+        let mut file = match OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(lock_path)
+        {
+            Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(false),
             Err(error) => return Err(error).context("failed to inspect codebase index lock"),
         };
+        let lock_result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_result != 0 {
+            let error = std::io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
+            ) {
+                return Ok(false);
+            }
+            return Err(error).context("failed to claim stale codebase index lock");
+        }
+        let _claim = FlockGuard {
+            fd: file.as_raw_fd(),
+        };
+
+        let lock_metadata = file
+            .metadata()
+            .context("failed to inspect claimed codebase index lock")?;
+        if !lock_metadata.is_file() {
+            return Ok(false);
+        }
+        let mut before = String::new();
+        file.read_to_string(&mut before)
+            .context("failed to read claimed codebase index lock")?;
         let owner = BuildLockOwner::parse(&before);
         if !owner.is_reclaimable_stale() {
             return Ok(false);
         }
-        let after = match fs::read_to_string(lock_path) {
-            Ok(content) => content,
+
+        let path_metadata = match fs::symlink_metadata(lock_path) {
+            Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
             Err(error) => return Err(error).context("failed to reinspect codebase index lock"),
         };
-        if before != after {
+        if path_metadata.dev() != lock_metadata.dev() || path_metadata.ino() != lock_metadata.ino()
+        {
             return Ok(false);
         }
         fs::remove_file(lock_path).context("failed to reclaim stale codebase index lock")?;
@@ -270,6 +306,17 @@ impl CodebaseIndexStore {
             sync_dir(parent);
         }
         Ok(true)
+    }
+
+    #[cfg(not(unix))]
+    fn reclaim_stale_build_lock(&self, lock_path: &Path) -> Result<bool> {
+        let before = match fs::read_to_string(lock_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error).context("failed to inspect codebase index lock"),
+        };
+        let owner = BuildLockOwner::parse(&before);
+        Ok(owner.is_reclaimable_stale())
     }
 
     fn cleanup_temporary_files(&self) -> Result<()> {
@@ -326,6 +373,20 @@ impl Drop for CodebaseIndexBuildLock {
         let _ = fs::remove_file(&self.path);
         if let Some(parent) = self.path.parent() {
             sync_dir(parent);
+        }
+    }
+}
+
+#[cfg(unix)]
+struct FlockGuard {
+    fd: std::os::fd::RawFd,
+}
+
+#[cfg(unix)]
+impl Drop for FlockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.fd, libc::LOCK_UN);
         }
     }
 }
