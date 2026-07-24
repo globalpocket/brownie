@@ -25,7 +25,17 @@ Core rules:
 9. Retrieval must not be vector-only.
 10. Do not automatically apply Mode Pack updates to running tasks.
 
-## Phase 0 constraints
+## Current phase authority
+
+Phase 0 is complete. Current implementation authority comes from the external
+Brownie phase-loop controller state, `docs/architecture/product-charter.md`, and
+`docs/architecture/phase-value-manifest.json`.
+
+The Phase 0 constraints below are historical bootstrap constraints. Do not apply
+them as current blockers to accepted M/R phases such as M9 runtime codebase
+indexing work.
+
+## Historical Phase 0 constraints
 
 Phase 0 is limited to repository bootstrap:
 

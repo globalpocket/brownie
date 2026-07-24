@@ -148,3 +148,25 @@ previous `current.json` remains authoritative.
 `requested_force_refresh`; no cache reuse exists yet. Successful build results
 return `next_action = "build_ignore_aware_sensitive_filtering"` so callers do
 not infer query or context-planning support before later M9 phases.
+
+## M9.2.1 Cross-Platform And Crash-Recovery Integrity
+
+M9.2.1 corrects unresolved M9.2 review findings before ignore filtering or
+query work. If the runtime platform lacks safe no-follow file reads, the index
+build fails closed and does not commit a successful empty snapshot. The first
+supported platform remains Unix; Windows indexing support requires a later
+safe-handle implementation.
+
+Directory traversal revalidates each queued directory immediately before
+reading entries. A directory replaced by a symlink is skipped as a symlink, and a
+queued directory whose canonical path no longer resolves inside the canonical
+workspace root is skipped as unsafe before file reads.
+
+Per-directory truncation remains memory-bounded and deterministic. The scanner
+keeps the lexicographically smallest bounded entry set and traverses that sorted
+set, instead of accepting whichever entries the filesystem enumerates first.
+
+Index build locks include owner PID, creation time, nonce, and lock-file marker.
+Active locks continue to serialize concurrent builds. A stale lock is reclaimable
+only when the owner metadata is old enough, the owner process is not alive on
+supported platforms, and the lock content is unchanged before removal.

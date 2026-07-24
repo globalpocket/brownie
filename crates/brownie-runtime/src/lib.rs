@@ -9,7 +9,8 @@ use brownie_config::{
 };
 use brownie_context::{ContextMaterializer, ContextMaterializerInput, ContextWindowSummary};
 use brownie_indexer::{
-    build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexSnapshot,
+    build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexError,
+    CodebaseIndexSnapshot,
 };
 use brownie_llm::{
     redact_secret, scan_prompt_for_sensitive_content, validate_llm_request_budget, FakeLlmProvider,
@@ -3759,6 +3760,13 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
         },
     ) {
         Ok(snapshot) => snapshot,
+        Err(CodebaseIndexError::UnsupportedPlatform(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "unsupported platform: codebase index build requires safe no-follow file reads",
+            )
+        }
         Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
     };
 
@@ -19495,6 +19503,7 @@ mod tests {
             .expect("valid response")
     }
 
+    #[cfg(unix)]
     #[test]
     fn codebase_index_build_persists_snapshot_and_bounded_ledger_event() {
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -19689,6 +19698,29 @@ mod tests {
         assert!(events.iter().any(|event| event.kind
             == LedgerEventKind::CodebaseIndexPermissionChecked
             && event.payload["allowed"] == false));
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn codebase_index_build_fails_closed_on_unsupported_platforms() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "# Index\n").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{"mode_id":"orchestrator"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let error = response.error.expect("unsupported platform error");
+        assert_eq!(error.code, -32603);
+        assert!(error.message.contains("unsupported platform"));
+        assert!(BrownieStore::new(temp.path())
+            .codebase_index()
+            .read_current_snapshot()
+            .expect("read current")
+            .is_none());
     }
 
     fn write_cargo_check_fixture(workspace_root: &Path, package_name: &str, source: &str) {

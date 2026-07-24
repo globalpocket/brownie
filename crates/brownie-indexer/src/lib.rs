@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{BinaryHeap, VecDeque};
+use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -112,6 +113,8 @@ pub enum CodebaseIndexError {
     UnsafeRoot(String),
     #[error("workspace root is unreadable")]
     WorkspaceRootUnreadable,
+    #[error("unsupported platform: {0}")]
+    UnsupportedPlatform(String),
 }
 
 pub fn build_workspace_file_inventory(
@@ -121,6 +124,11 @@ pub fn build_workspace_file_inventory(
     let workspace_root = workspace_root.as_ref();
     let limits = limits_from_options(&options);
     let root = resolve_safe_root(options.root.as_deref(), &limits)?;
+    if !platform_supports_no_follow_reads() {
+        return Err(CodebaseIndexError::UnsupportedPlatform(
+            "safe no-follow file reads are unavailable for codebase indexing".to_string(),
+        ));
+    }
     let canonical_workspace_root = workspace_root
         .canonicalize()
         .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
@@ -160,6 +168,26 @@ pub fn build_workspace_file_inventory(
             break;
         }
         counts.walked_directories += 1;
+
+        match revalidate_queued_directory(&canonical_workspace_root, &directory) {
+            Ok(()) => {}
+            Err(QueuedDirectoryError::Unreadable) => {
+                counts.skipped_unreadable += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::Symlink) => {
+                counts.skipped_symlink += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::NotDirectory) => {
+                counts.skipped_other += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::UnsafePath) => {
+                counts.skipped_unsafe_path += 1;
+                continue;
+            }
+        }
 
         let (children, directory_truncated) =
             match sorted_directory_entries(&directory, limits.max_directory_entries) {
@@ -433,21 +461,118 @@ fn validate_requested_root_components(
     Ok(())
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueuedDirectoryError {
+    Unreadable,
+    Symlink,
+    NotDirectory,
+    UnsafePath,
+}
+
+fn revalidate_queued_directory(
+    canonical_workspace_root: &Path,
+    directory: &Path,
+) -> Result<(), QueuedDirectoryError> {
+    let metadata = fs::symlink_metadata(directory).map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if metadata.file_type().is_symlink() {
+        return Err(QueuedDirectoryError::Symlink);
+    }
+    if !metadata.is_dir() {
+        return Err(QueuedDirectoryError::NotDirectory);
+    }
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if !canonical_directory.starts_with(canonical_workspace_root) {
+        return Err(QueuedDirectoryError::UnsafePath);
+    }
+    Ok(())
+}
+
 fn sorted_directory_entries(
     directory: &Path,
     max_directory_entries: usize,
 ) -> std::io::Result<(Vec<fs::DirEntry>, bool)> {
-    let mut entries = Vec::new();
+    let mut entries = BinaryHeap::new();
     let mut truncated = false;
     for entry in fs::read_dir(directory)? {
-        if entries.len() >= max_directory_entries {
-            truncated = true;
-            break;
+        let entry = entry?;
+        let candidate = DirectoryEntryCandidate {
+            name: entry.file_name(),
+            entry,
+        };
+        if entries.len() < max_directory_entries {
+            entries.push(candidate);
+            continue;
         }
-        entries.push(entry?);
+
+        truncated = true;
+        let should_keep = entries
+            .peek()
+            .is_some_and(|largest| compare_os_names(&candidate.name, &largest.name).is_lt());
+        if should_keep {
+            entries.pop();
+            entries.push(candidate);
+        }
     }
+    let mut entries = entries
+        .into_iter()
+        .map(|candidate| candidate.entry)
+        .collect::<Vec<_>>();
     entries.sort_by(|a, b| compare_os_names(&a.file_name(), &b.file_name()));
     Ok((entries, truncated))
+}
+
+struct DirectoryEntryCandidate {
+    name: OsString,
+    entry: fs::DirEntry,
+}
+
+impl PartialEq for DirectoryEntryCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        compare_os_names(&self.name, &other.name).is_eq()
+    }
+}
+
+impl Eq for DirectoryEntryCandidate {}
+
+impl PartialOrd for DirectoryEntryCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DirectoryEntryCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_os_names(&self.name, &other.name)
+    }
+}
+
+fn platform_supports_no_follow_reads() -> bool {
+    cfg!(unix)
+}
+
+#[cfg(test)]
+fn sorted_directory_names(
+    directory: &Path,
+    max_directory_entries: usize,
+) -> std::io::Result<(Vec<String>, bool)> {
+    let (entries, truncated) = sorted_directory_entries(directory, max_directory_entries)?;
+    Ok((
+        entries
+            .into_iter()
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect(),
+        truncated,
+    ))
+}
+
+#[cfg(test)]
+fn directory_revalidation_result(
+    canonical_workspace_root: &Path,
+    directory: &Path,
+) -> Result<(), QueuedDirectoryError> {
+    revalidate_queued_directory(canonical_workspace_root, directory)
 }
 
 #[derive(Debug)]
@@ -681,6 +806,7 @@ mod tests {
             .expect("entry")
     }
 
+    #[cfg(unix)]
     #[test]
     fn builds_sorted_metadata_only_file_inventory() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -739,6 +865,7 @@ mod tests {
         assert!(snapshot.workspace_fingerprint.starts_with("sha256:"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn skips_protected_directories_and_oversized_or_binary_files() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -770,6 +897,7 @@ mod tests {
             .any(|entry| entry.path.contains(".git") || entry.path.contains("node_modules")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_absolute_and_parent_traversal_roots() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -814,6 +942,7 @@ mod tests {
         assert!(matches!(result, Err(CodebaseIndexError::UnsafeRoot(_))));
     }
 
+    #[cfg(unix)]
     #[test]
     fn repeated_builds_are_deterministic_and_changed_files_change_fingerprint() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -830,6 +959,7 @@ mod tests {
         assert_ne!(first.snapshot_fingerprint, changed.snapshot_fingerprint);
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncates_when_file_limit_is_reached() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -850,6 +980,7 @@ mod tests {
         assert_eq!(snapshot.counts.truncated_entries, 1);
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncates_directory_and_total_visited_entries_with_bounded_evidence() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -884,6 +1015,75 @@ mod tests {
         assert!(visited_truncated.truncated);
         assert_eq!(visited_truncated.counts.visited_entries, 1);
         assert!(visited_truncated.entries.len() <= 1);
+    }
+
+    #[test]
+    fn directory_limit_selects_lexicographically_smallest_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "z.txt", b"z");
+        write_file(temp.path(), "m.txt", b"m");
+        write_file(temp.path(), "a.txt", b"a");
+        write_file(temp.path(), "b.txt", b"b");
+
+        let (names, truncated) = sorted_directory_names(temp.path(), 2).expect("directory names");
+
+        assert!(truncated);
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_directory_revalidation_rejects_symlink_replacements() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        let queued = temp.path().join("queued");
+        fs::create_dir(&queued).expect("queued dir");
+        fs::remove_dir(&queued).expect("remove queued dir");
+        symlink(outside.path(), &queued).expect("replace queued dir with symlink");
+        let canonical_workspace_root = temp.path().canonicalize().expect("canonical root");
+
+        assert_eq!(
+            directory_revalidation_result(&canonical_workspace_root, &queued),
+            Err(QueuedDirectoryError::Symlink)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_directory_revalidation_rejects_parent_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir(temp.path().join("parent")).expect("parent");
+        fs::create_dir(temp.path().join("parent/child")).expect("child");
+        fs::create_dir(outside.path().join("child")).expect("outside child");
+        let queued = temp.path().join("parent/child");
+        fs::remove_dir(temp.path().join("parent/child")).expect("remove child");
+        fs::remove_dir(temp.path().join("parent")).expect("remove parent");
+        symlink(outside.path(), temp.path().join("parent")).expect("replace parent");
+        let canonical_workspace_root = temp.path().canonicalize().expect("canonical root");
+
+        assert_eq!(
+            directory_revalidation_result(&canonical_workspace_root, &queued),
+            Err(QueuedDirectoryError::UnsafePath)
+        );
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn unsupported_platform_fails_closed_before_snapshot() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "src/lib.rs", b"pub fn ok() {}\n");
+
+        let result = build_workspace_file_inventory(temp.path(), Default::default());
+
+        assert!(matches!(
+            result,
+            Err(CodebaseIndexError::UnsupportedPlatform(_))
+        ));
     }
 
     #[cfg(unix)]
