@@ -105,7 +105,7 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M9.1 updates the deterministic current phase manifest and archives the M9.1 value gate. Review must confirm this describes real runtime index build behavior and does not weaken generic diagnostics or phase-value enforcement.",
+    "review_intent": "M9.1 archives the behavior-backed value gate. Review must confirm this describes real runtime index build behavior and does not weaken generic diagnostics or phase-value enforcement.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/phase-value-manifest.m9.1.json",

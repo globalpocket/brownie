@@ -8,8 +8,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
-    ChildTaskSourceIntentSummary, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, RecoveryCycleChildProvenance,
+    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -17,6 +18,7 @@ use uuid::Uuid;
 
 pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
+pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 
@@ -44,6 +46,10 @@ impl BrownieStore {
         &self.task_store
     }
 
+    pub fn codebase_index(&self) -> CodebaseIndexStore {
+        CodebaseIndexStore::new(self.workspace_root().to_path_buf())
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -52,6 +58,119 @@ impl BrownieStore {
 #[derive(Debug, Clone)]
 pub struct TaskStore {
     workspace_root: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct CodebaseIndexStore {
+    workspace_root: PathBuf,
+}
+
+impl CodebaseIndexStore {
+    pub fn new(workspace_root: impl Into<PathBuf>) -> Self {
+        Self {
+            workspace_root: workspace_root.into(),
+        }
+    }
+
+    pub fn write_current_snapshot(&self, manifest: &CodebaseIndexSnapshotManifest) -> Result<()> {
+        let root = self.index_dir();
+        let snapshots_dir = root.join("snapshots");
+        fs::create_dir_all(&snapshots_dir)
+            .with_context(|| format!("failed to create {}", snapshots_dir.display()))?;
+
+        let body =
+            serde_json::to_string_pretty(manifest).context("failed to serialize index snapshot")?;
+        let snapshot_path = snapshots_dir.join(format!("{}.json", manifest.snapshot.index_id));
+        let snapshot_tmp = snapshots_dir.join(format!(
+            "{}.json.tmp-{}",
+            manifest.snapshot.index_id,
+            Uuid::new_v4().simple()
+        ));
+        fs::write(&snapshot_tmp, &body).context("failed to write temporary index snapshot")?;
+        fs::rename(&snapshot_tmp, &snapshot_path).with_context(|| {
+            format!(
+                "failed to atomically replace index snapshot {}",
+                snapshot_path.display()
+            )
+        })?;
+
+        let current_path = root.join("current.json");
+        let current_tmp = root.join(format!("current.json.tmp-{}", Uuid::new_v4().simple()));
+        fs::write(&current_tmp, body).context("failed to write temporary current index")?;
+        fs::rename(&current_tmp, &current_path).with_context(|| {
+            format!(
+                "failed to atomically replace current index {}",
+                current_path.display()
+            )
+        })
+    }
+
+    pub fn read_current_snapshot(&self) -> Result<Option<CodebaseIndexSnapshotManifest>> {
+        let current_path = self.index_dir().join("current.json");
+        if !current_path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&current_path)
+            .with_context(|| format!("failed to read {}", current_path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", current_path.display())
+        })?))
+    }
+
+    pub fn append_event(
+        &self,
+        kind: LedgerEventKind,
+        payload: serde_json::Value,
+    ) -> Result<CodebaseIndexLedgerEvent> {
+        let event = CodebaseIndexLedgerEvent {
+            event_id: format!("event_{}", Uuid::new_v4()),
+            kind,
+            timestamp: timestamp()?,
+            payload,
+        };
+        fs::create_dir_all(self.index_dir())
+            .with_context(|| format!("failed to create {}", self.index_dir().display()))?;
+        let mut buffer = Vec::new();
+        serde_json::to_writer(&mut buffer, &event)
+            .context("failed to serialize codebase index ledger event")?;
+        writeln!(&mut buffer).context("failed to write index ledger newline")?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.index_dir().join("ledger.jsonl"))
+            .context("failed to open codebase index ledger")?;
+        file.write_all(&buffer)
+            .context("failed to append codebase index ledger event")?;
+        Ok(event)
+    }
+
+    pub fn read_events(&self) -> Result<Vec<CodebaseIndexLedgerEvent>> {
+        let ledger_path = self.index_dir().join("ledger.jsonl");
+        if !ledger_path.exists() {
+            return Ok(Vec::new());
+        }
+        let file = fs::File::open(&ledger_path)
+            .with_context(|| format!("failed to open {}", ledger_path.display()))?;
+        let reader = BufReader::new(file);
+        let mut events = Vec::new();
+        for line in reader.lines() {
+            let line = line.context("failed to read codebase index ledger line")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            events.push(
+                serde_json::from_str(&line)
+                    .with_context(|| format!("failed to parse {}", ledger_path.display()))?,
+            );
+        }
+        Ok(events)
+    }
+
+    fn index_dir(&self) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(CODEBASE_INDEX_DIR)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -874,7 +993,16 @@ pub struct LedgerEvent {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexLedgerEvent {
+    pub event_id: String,
+    pub kind: LedgerEventKind,
+    pub timestamp: String,
+    pub payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum LedgerEventKind {
+    CodebaseIndexSnapshotBuilt,
     TaskStarted,
     ModeResolved,
     PermissionChecked,
@@ -942,6 +1070,77 @@ fn timestamp() -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codebase_index_store_writes_current_snapshot_and_bounded_event() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let manifest = CodebaseIndexSnapshotManifest {
+            snapshot: brownie_protocol::CodebaseIndexSnapshotSummary {
+                index_id: "idx_abc".to_string(),
+                root: ".".to_string(),
+                workspace_fingerprint: format!("sha256:{}", "a".repeat(64)),
+                snapshot_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                built_at: "2026-07-24T00:00:00Z".to_string(),
+                counts: brownie_protocol::CodebaseIndexCountsSummary {
+                    indexed_files: 1,
+                    walked_directories: 1,
+                    skipped_protected: 0,
+                    skipped_symlink: 0,
+                    skipped_too_large: 0,
+                    skipped_binary_like: 0,
+                    skipped_unreadable: 0,
+                    skipped_unsafe_path: 0,
+                    skipped_other: 0,
+                    truncated_entries: 0,
+                },
+                limits: brownie_protocol::CodebaseIndexLimitsSummary {
+                    max_files: 10,
+                    max_directories: 10,
+                    max_path_chars: 512,
+                    max_file_bytes: 1024,
+                },
+                truncated: false,
+            },
+            entries: vec![brownie_protocol::CodebaseIndexFileEntry {
+                path: "src/lib.rs".to_string(),
+                file_kind: "Rust".to_string(),
+                byte_length: 12,
+                line_count: Some(1),
+                content_sha256: Some(format!("sha256:{}", "c".repeat(64))),
+            }],
+        };
+
+        store
+            .codebase_index()
+            .write_current_snapshot(&manifest)
+            .expect("write snapshot");
+        let current = store
+            .codebase_index()
+            .read_current_snapshot()
+            .expect("read current")
+            .expect("current snapshot");
+        assert_eq!(current, manifest);
+
+        let event = store
+            .codebase_index()
+            .append_event(
+                LedgerEventKind::CodebaseIndexSnapshotBuilt,
+                serde_json::json!({
+                    "index_id": "idx_abc",
+                    "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
+                    "indexed_files": 1,
+                    "truncated": false,
+                    "next_action": "use_codebase_index_for_context_planning"
+                }),
+            )
+            .expect("append event");
+        assert_eq!(event.kind, LedgerEventKind::CodebaseIndexSnapshotBuilt);
+        assert_eq!(
+            store.codebase_index().read_events().expect("read events")[0],
+            event
+        );
+    }
 
     #[test]
     fn task_start_creates_state_and_ledger() {

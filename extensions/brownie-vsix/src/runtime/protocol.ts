@@ -568,6 +568,58 @@ export interface RunInspectResult {
   run: RunInspectSummary;
 }
 
+export interface CodebaseIndexBuildResult {
+  snapshot: CodebaseIndexSnapshotSummary;
+  persisted: boolean;
+  ledger_event_id: string;
+  ledger_event_kind: 'CodebaseIndexSnapshotBuilt';
+  next_action: 'use_codebase_index_for_context_planning';
+}
+
+export interface CodebaseIndexSnapshotManifest {
+  snapshot: CodebaseIndexSnapshotSummary;
+  entries: CodebaseIndexFileEntry[];
+}
+
+export interface CodebaseIndexSnapshotSummary {
+  index_id: string;
+  root: string;
+  workspace_fingerprint: string;
+  snapshot_fingerprint: string;
+  built_at: string;
+  counts: CodebaseIndexCountsSummary;
+  limits: CodebaseIndexLimitsSummary;
+  truncated: boolean;
+}
+
+export interface CodebaseIndexCountsSummary {
+  indexed_files: number;
+  walked_directories: number;
+  skipped_protected: number;
+  skipped_symlink: number;
+  skipped_too_large: number;
+  skipped_binary_like: number;
+  skipped_unreadable: number;
+  skipped_unsafe_path: number;
+  skipped_other: number;
+  truncated_entries: number;
+}
+
+export interface CodebaseIndexLimitsSummary {
+  max_files: number;
+  max_directories: number;
+  max_path_chars: number;
+  max_file_bytes: number;
+}
+
+export interface CodebaseIndexFileEntry {
+  path: string;
+  file_kind: 'Rust' | 'TypeScript' | 'JavaScript' | 'Json' | 'Toml' | 'Markdown' | 'Yaml' | 'Shell' | 'Text' | 'Other';
+  byte_length: number;
+  line_count?: number | null;
+  content_sha256?: string | null;
+}
+
 export interface TaskInspectResult {
   task: TaskRecord;
   run: RunInspectSummary;
@@ -3755,6 +3807,113 @@ function isSanitizedLedgerPayload(value: unknown): boolean {
 
 export function isRunEventsResult(value: unknown): value is RunEventsResult {
   return isRecord(value) && typeof value.run_id === 'string' && Array.isArray(value.events) && value.events.every(isLedgerEventSummary);
+}
+
+export function isCodebaseIndexBuildResult(value: unknown): value is CodebaseIndexBuildResult {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    isCodebaseIndexSnapshotSummary(value.snapshot) &&
+    value.persisted === true &&
+    typeof value.ledger_event_id === 'string' &&
+    value.ledger_event_kind === 'CodebaseIndexSnapshotBuilt' &&
+    value.next_action === 'use_codebase_index_for_context_planning'
+  );
+}
+
+export function isCodebaseIndexSnapshotManifest(value: unknown): value is CodebaseIndexSnapshotManifest {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    isCodebaseIndexSnapshotSummary(value.snapshot) &&
+    Array.isArray(value.entries) &&
+    value.entries.length <= 20000 &&
+    value.entries.every(isCodebaseIndexFileEntry) &&
+    value.entries.length === value.snapshot.counts.indexed_files
+  );
+}
+
+export function isCodebaseIndexSnapshotSummary(value: unknown): value is CodebaseIndexSnapshotSummary {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    typeof value.index_id === 'string' &&
+    /^idx_[a-f0-9]{16}$/.test(value.index_id) &&
+    typeof value.root === 'string' &&
+    isSafeIndexRoot(value.root) &&
+    typeof value.workspace_fingerprint === 'string' &&
+    isSha256Fingerprint(value.workspace_fingerprint) &&
+    typeof value.snapshot_fingerprint === 'string' &&
+    isSha256Fingerprint(value.snapshot_fingerprint) &&
+    typeof value.built_at === 'string' &&
+    isCodebaseIndexCountsSummary(value.counts) &&
+    isCodebaseIndexLimitsSummary(value.limits) &&
+    typeof value.truncated === 'boolean'
+  );
+}
+
+function isCodebaseIndexCountsSummary(value: unknown): value is CodebaseIndexCountsSummary {
+  return (
+    isRecord(value) &&
+    Object.values(value).every(isNonNegativeInteger) &&
+    isNonNegativeInteger(value.indexed_files) &&
+    isNonNegativeInteger(value.walked_directories) &&
+    isNonNegativeInteger(value.skipped_protected) &&
+    isNonNegativeInteger(value.skipped_symlink) &&
+    isNonNegativeInteger(value.skipped_too_large) &&
+    isNonNegativeInteger(value.skipped_binary_like) &&
+    isNonNegativeInteger(value.skipped_unreadable) &&
+    isNonNegativeInteger(value.skipped_unsafe_path) &&
+    isNonNegativeInteger(value.skipped_other) &&
+    isNonNegativeInteger(value.truncated_entries)
+  );
+}
+
+function isCodebaseIndexLimitsSummary(value: unknown): value is CodebaseIndexLimitsSummary {
+  return (
+    isRecord(value) &&
+    isNonNegativeInteger(value.max_files) &&
+    value.max_files > 0 &&
+    value.max_files <= 20000 &&
+    isNonNegativeInteger(value.max_directories) &&
+    value.max_directories > 0 &&
+    value.max_directories <= 5000 &&
+    isNonNegativeInteger(value.max_path_chars) &&
+    value.max_path_chars > 0 &&
+    value.max_path_chars <= 1024 &&
+    isNonNegativeInteger(value.max_file_bytes) &&
+    value.max_file_bytes > 0 &&
+    value.max_file_bytes <= 2097152
+  );
+}
+
+function isCodebaseIndexFileEntry(value: unknown): value is CodebaseIndexFileEntry {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    typeof value.path === 'string' &&
+    isSafeIndexEntryPath(value.path) &&
+    isCodebaseIndexFileKind(value.file_kind) &&
+    isNonNegativeInteger(value.byte_length) &&
+    (value.line_count === undefined || value.line_count === null || isNonNegativeInteger(value.line_count)) &&
+    (value.content_sha256 === undefined || value.content_sha256 === null || (typeof value.content_sha256 === 'string' && isSha256Fingerprint(value.content_sha256)))
+  );
+}
+
+function isCodebaseIndexFileKind(value: unknown): value is CodebaseIndexFileEntry['file_kind'] {
+  return value === 'Rust' || value === 'TypeScript' || value === 'JavaScript' || value === 'Json' || value === 'Toml' || value === 'Markdown' || value === 'Yaml' || value === 'Shell' || value === 'Text' || value === 'Other';
+}
+
+function isSafeIndexRoot(value: string): boolean {
+  return value === '.' || isSafeIndexEntryPath(value);
+}
+
+function isSafeIndexEntryPath(value: string): boolean {
+  if (value.length === 0 || value.length > 1024 || value.startsWith('/') || value.startsWith('~') || value.includes('\\')) {
+    return false;
+  }
+  const parts = value.split('/');
+  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..' && !['.git', '.brownie', 'node_modules', 'target'].includes(part));
 }
 
 export function isChildTaskInspectSummary(value: unknown): value is ChildTaskInspectSummary {

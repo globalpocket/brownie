@@ -83,6 +83,12 @@ version = "0.1.0"
 [[package]]
 name = "brownie-indexer"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+]
 
 [[package]]
 name = "brownie-llama"
@@ -130,6 +136,7 @@ dependencies = [
  "brownie-agentmodes",
  "brownie-config",
  "brownie-context",
+ "brownie-indexer",
  "brownie-llm",
  "brownie-modepack",
  "brownie-protocol",

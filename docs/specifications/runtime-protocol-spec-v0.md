@@ -39,6 +39,21 @@ Task run data is stored under:
 
 `state.json` contains the persisted `TaskRecord`. `ledger.jsonl` contains append-only RunLedger events, one JSON object per line.
 
+Codebase index snapshots are stored separately from task runs:
+
+```text
+.brownie/
+└─ codebase-index/
+   ├─ current.json
+   ├─ ledger.jsonl
+   └─ snapshots/
+      └─ <index_id>.json
+```
+
+`current.json` and `snapshots/<index_id>.json` contain metadata-only
+`CodebaseIndexSnapshotManifest` documents. `ledger.jsonl` contains
+append-only `CodebaseIndexSnapshotBuilt` evidence events without task/run IDs.
+
 ## `runtime.status`
 
 Request line:
@@ -96,6 +111,72 @@ R3.3 adds optional `bounded_cargo_diagnostics` to failed `verification.cargo_che
 ```
 
 The runtime and VSIX validators must reject raw nested stdout/stderr/rendered messages/source snippets, absolute paths, parent traversal, protected path components, non-positive line or column values, and arrays above the bound. This extends existing results only; it does not add a new RPC, report, digest, history, readiness wrapper, or inspection surface.
+
+## `codebase.index.build`
+
+M9.1 adds the first runtime-owned codebase indexing execution method. The
+method builds or refreshes a bounded metadata-only workspace file inventory
+snapshot and persists it under `.brownie/codebase-index`.
+
+Request line with default workspace root:
+
+```json
+{"jsonrpc":"2.0","id":10,"method":"codebase.index.build","params":{}}
+```
+
+Optional params:
+
+```json
+{"root":"crates","force_refresh":true,"max_files":2000,"max_directories":500,"max_path_chars":512,"max_file_bytes":1048576}
+```
+
+The runtime rejects unknown fields, absolute roots, parent traversal, protected
+root components, non-directory roots, and symlink roots with `-32602`. Caller
+limits are clamped to runtime maxima.
+
+Successful response:
+
+```json
+{
+  "snapshot": {
+    "index_id": "idx_<16 lowercase hex>",
+    "root": ".",
+    "workspace_fingerprint": "sha256:<64 lowercase hex>",
+    "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+    "built_at": "2026-07-24T00:00:00Z",
+    "counts": {
+      "indexed_files": 123,
+      "walked_directories": 20,
+      "skipped_protected": 4,
+      "skipped_symlink": 0,
+      "skipped_too_large": 1,
+      "skipped_binary_like": 0,
+      "skipped_unreadable": 0,
+      "skipped_unsafe_path": 0,
+      "skipped_other": 0,
+      "truncated_entries": 0
+    },
+    "limits": {
+      "max_files": 10000,
+      "max_directories": 2000,
+      "max_path_chars": 512,
+      "max_file_bytes": 1048576
+    },
+    "truncated": false
+  },
+  "persisted": true,
+  "ledger_event_id": "event_<uuid>",
+  "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
+  "next_action": "use_codebase_index_for_context_planning"
+}
+```
+
+The RPC result is compact; full metadata entries are persisted in the snapshot
+manifest. Snapshot entries contain workspace-relative path, file kind,
+byte-length, optional line count, and optional content SHA-256. They must not
+contain raw file content, snippets, diffs, absolute paths, canonical paths,
+prompts, provider responses, stdout/stderr, environment values, commands, or
+secrets.
 
 ## `task.get`
 

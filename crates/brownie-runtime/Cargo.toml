@@ -12,6 +12,7 @@ brownie-agentmodes = { path = "../brownie-agentmodes" }
 brownie-agent-loop = { path = "../brownie-agent-loop" }
 brownie-context = { path = "../brownie-context" }
 brownie-config = { path = "../brownie-config" }
+brownie-indexer = { path = "../brownie-indexer" }
 brownie-llm = { path = "../brownie-llm" }
 brownie-modepack = { path = "../brownie-modepack" }
 brownie-protocol = { path = "../brownie-protocol" }
