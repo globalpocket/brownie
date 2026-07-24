@@ -592,6 +592,24 @@ export interface CodebaseIndexQueryResult {
   next_action: 'read_selected_files_with_controlled_workspace_read';
 }
 
+export interface CodebaseIndexSelectionReadResult {
+  query_id: string;
+  selection_id: string;
+  query_fingerprint: string;
+  selection_fingerprint: string;
+  snapshot: CodebaseIndexQuerySnapshotSummary;
+  path: string;
+  file_kind: CodebaseIndexFileEntry['file_kind'];
+  content: string;
+  truncated: boolean;
+  bytes_read: number;
+  content_sha256: string;
+  content_hash_verified: boolean;
+  ledger_event_id: string;
+  ledger_event_kind: 'CodebaseIndexSelectionReadCompleted';
+  next_action: 'use_selected_file_context_for_prompt_materialization';
+}
+
 export interface CodebaseIndexQuerySnapshotSummary {
   index_id: string;
   root: string;
@@ -3893,6 +3911,45 @@ export function isCodebaseIndexQueryResult(value: unknown): value is CodebaseInd
     value.ledger_event_kind === 'CodebaseIndexQueryCompleted' &&
     value.next_action === 'read_selected_files_with_controlled_workspace_read'
   );
+}
+
+export function isCodebaseIndexSelectionReadResult(value: unknown): value is CodebaseIndexSelectionReadResult {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenSelectedReadFields(value) &&
+    typeof value.query_id === 'string' &&
+    /^query_[a-f0-9]{16}$/.test(value.query_id) &&
+    typeof value.selection_id === 'string' &&
+    /^selection_[a-f0-9]{16}$/.test(value.selection_id) &&
+    typeof value.query_fingerprint === 'string' &&
+    isSha256Fingerprint(value.query_fingerprint) &&
+    typeof value.selection_fingerprint === 'string' &&
+    isSha256Fingerprint(value.selection_fingerprint) &&
+    isCodebaseIndexQuerySnapshotSummary(value.snapshot) &&
+    typeof value.path === 'string' &&
+    isSafeIndexEntryPath(value.path) &&
+    isCodebaseIndexFileKind(value.file_kind) &&
+    typeof value.content === 'string' &&
+    value.content.length <= 65536 &&
+    value.truncated === false &&
+    isNonNegativeInteger(value.bytes_read) &&
+    value.bytes_read <= 65536 &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    value.content_hash_verified === true &&
+    typeof value.ledger_event_id === 'string' &&
+    value.ledger_event_kind === 'CodebaseIndexSelectionReadCompleted' &&
+    value.next_action === 'use_selected_file_context_for_prompt_materialization'
+  );
+}
+
+function hasNoForbiddenSelectedReadFields(value: Record<string, unknown>): boolean {
+  for (const field of ['query', 'raw_query', 'raw_content', 'full_content', 'diff', 'raw_input', 'absolute_path', 'canonical_path', 'file_content', 'stdout', 'stderr', 'env', 'command']) {
+    if (Object.prototype.hasOwnProperty.call(value, field)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function isCodebaseIndexQuerySnapshotSummary(value: unknown): value is CodebaseIndexQuerySnapshotSummary {

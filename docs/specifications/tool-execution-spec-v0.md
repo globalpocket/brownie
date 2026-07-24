@@ -2,7 +2,7 @@
 
 ## Phase 1.7 scope
 
-Phase 1.7 introduces the minimum read-only execution foundation. The only executable tool is `workspace.read`.
+Phase 1.7 introduces the minimum read-only execution foundation. The only executable tool in that slice is `workspace.read`. Later phases add fixed controlled verifier tools and M9.5 adds `codebase.index.selection.read` as an index-bound read path under the same `tool.execute` RPC.
 
 All write, patch, process, subtask, network, service-control, and destructive tools remain non-executable. `task.run` continues to parse and dry-run evaluate assistant tool intents, but it does not automatically execute tools.
 
@@ -50,11 +50,41 @@ Large files are capped at 65536 bytes and return `truncated: true`.
 
 ## Workspace boundary and protected paths
 
-`workspace.read` treats `path` as workspace-root relative. Absolute paths and `..` path traversal are rejected. The runtime canonicalizes both workspace root and target path, then rejects any target outside the workspace root.
+`workspace.read` treats `path` as workspace-root relative. Absolute paths, `..` path traversal, and symlink targets are rejected. The runtime canonicalizes both workspace root and target path, then rejects any target outside the workspace root.
 
 Phase 1.7 does not list directories. It rejects protected workspace paths under `.git`, `.brownie`, `node_modules`, and `target`. `.brownie` is protected because run ledgers and internal runtime state require explicit future diagnostics rather than broad tool access.
 
 Binary or invalid UTF-8 files fail safely instead of returning raw bytes.
+
+## M9.5 codebase index selection read
+
+M9.5 adds one controlled built-in read tool, `codebase.index.selection.read`.
+It does not add a JSON-RPC method; callers invoke it through `tool.execute`.
+The tool requires the normal `ReadWorkspace` permission through the built-in
+tool registry, then the Rust runtime performs a secondary
+`RuntimeAction::IndexCodebase` check before reading current index state or file
+content.
+
+The input binds one requested `read_path` to a prior `codebase.index.query`
+selection handle: query id, selection id, query fingerprint, snapshot identity
+and fingerprints, bounded selected entries, max result bound, and optional file
+kind filter. The runtime recomputes the selection fingerprint from the supplied
+entries, requires a matching `CodebaseIndexQueryCompleted` ledger event, then
+re-reads the current snapshot and verifies the selected entry metadata and
+content SHA-256 before returning content.
+
+Successful output returns bounded UTF-8 content for exactly one selected file,
+read byte counts, query/selection/snapshot fingerprints, content-hash
+verification status, `ledger_event_kind =
+"CodebaseIndexSelectionReadCompleted"`, and
+`next_action = "use_selected_file_context_for_prompt_materialization"`.
+
+Successful index-read ledger payloads are summary-only. They may contain ids,
+fingerprints, counts, byte counts, file kind, content SHA-256, hash-verification
+status, truncation status, and a read-path fingerprint. They must not contain
+raw query text, selected raw paths, raw file content, snippets, diffs,
+stdout/stderr, environment values, commands, prompts, provider responses,
+absolute paths, canonical paths, or secrets.
 
 ## Ledger behavior
 
