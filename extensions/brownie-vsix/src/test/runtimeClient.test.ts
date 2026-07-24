@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
-import { isCodebaseIndexBuildResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
+import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -572,6 +572,59 @@ describe('protocol validation', () => {
     expect(isCodebaseIndexBuildResult({ ...result, next_action: 'build_ignore_aware_sensitive_filtering' })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, next_action: 'use_codebase_index_for_context_planning' })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, snapshot: { ...snapshot, limits: { ...snapshot.limits, max_visited_entries: 200001 } } })).toBe(false);
+  });
+
+  it('validates codebase index query results and rejects raw query or unsafe handles', () => {
+    const snapshot = {
+      index_id: 'idx_abcdef1234567890',
+      root: '.',
+      workspace_fingerprint: `sha256:${'a'.repeat(64)}`,
+      snapshot_fingerprint: `sha256:${'b'.repeat(64)}`,
+      built_at: '2026-07-24T00:00:00Z',
+      truncated: false,
+    };
+    const selected = {
+      path: 'src/runtime/query.rs',
+      file_kind: 'Rust',
+      byte_length: 120,
+      line_count: 8,
+      content_sha256: `sha256:${'c'.repeat(64)}`,
+      score: 175,
+      match_reasons: ['path_token', 'extension'],
+    };
+    const result = {
+      query_id: 'query_abcdef1234567890',
+      selection_id: 'selection_0123456789abcdef',
+      query_fingerprint: `sha256:${'d'.repeat(64)}`,
+      snapshot,
+      matched_entry_count: 1,
+      returned_entry_count: 1,
+      max_results: 3,
+      entries: [selected],
+      ledger_event_id: 'event_2',
+      ledger_event_kind: 'CodebaseIndexQueryCompleted',
+      next_action: 'read_selected_files_with_controlled_workspace_read',
+    };
+
+    expect(isCodebaseIndexQueryResult(result)).toBe(true);
+    for (const rawField of ['query', 'raw_query', 'content', 'raw_content', 'full_content', 'diff', 'raw_input', 'absolute_path', 'canonical_path', 'file_content', 'stdout', 'stderr', 'env']) {
+      expect(isCodebaseIndexQueryResult({ ...result, [rawField]: 'raw' })).toBe(false);
+      expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, [rawField]: 'raw' }] })).toBe(false);
+    }
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, path: '../secret.rs' }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, path: '.brownie/current.json' }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, path: 'target/debug/build.rs' }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, file_kind: 'Binary' }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, content_sha256: 'sha256:not-hex' }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, score: 0 }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, match_reasons: [] }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, entries: [{ ...selected, match_reasons: ['snippet'] }] })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, ledger_event_kind: 'CodebaseIndexSnapshotBuilt' })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, next_action: 'build_bounded_index_query_file_selection' })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, max_results: 51 })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, returned_entry_count: 2 })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, matched_entry_count: 0 })).toBe(false);
+    expect(isCodebaseIndexQueryResult({ ...result, snapshot: { ...snapshot, root: '/tmp/repo' } })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {

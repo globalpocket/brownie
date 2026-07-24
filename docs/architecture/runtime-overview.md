@@ -124,6 +124,18 @@ content, absolute paths, and canonical paths remain outside RPC responses,
 snapshot manifests, and ledger payloads. Successful builds now report
 `next_action = "build_bounded_index_query_file_selection"`.
 
+M9.4 adds `codebase.index.query`, the first bounded consumption surface for the
+latest persisted index snapshot. The Rust runtime requires `mode_id`, checks
+`RuntimeAction::IndexCodebase`, reads `.brownie/codebase-index/current.json`
+only after authorization, rejects missing or malformed current snapshots, and
+returns deterministic file-selection handles instead of file content. The query
+result contains only snapshot identity, query/selection fingerprints,
+workspace-relative paths, file kinds, byte/line metadata, optional content
+hashes, scores, and bounded match reasons. Successful queries append summary-only
+`CodebaseIndexQueryCompleted` ledger events without raw query text or selected
+paths and return
+`next_action = "read_selected_files_with_controlled_workspace_read"`.
+
 The VSIX remains a protocol client and does not own indexing policy. M9 does not
 yet implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
 reranking, LLM calls, shell/git/network execution, service control, or workspace

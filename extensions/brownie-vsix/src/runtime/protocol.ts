@@ -578,6 +578,41 @@ export interface CodebaseIndexBuildResult {
   next_action: 'build_bounded_index_query_file_selection';
 }
 
+export interface CodebaseIndexQueryResult {
+  query_id: string;
+  selection_id: string;
+  query_fingerprint: string;
+  snapshot: CodebaseIndexQuerySnapshotSummary;
+  matched_entry_count: number;
+  returned_entry_count: number;
+  max_results: number;
+  entries: CodebaseIndexSelectedEntry[];
+  ledger_event_id: string;
+  ledger_event_kind: 'CodebaseIndexQueryCompleted';
+  next_action: 'read_selected_files_with_controlled_workspace_read';
+}
+
+export interface CodebaseIndexQuerySnapshotSummary {
+  index_id: string;
+  root: string;
+  workspace_fingerprint: string;
+  snapshot_fingerprint: string;
+  built_at: string;
+  truncated: boolean;
+}
+
+export interface CodebaseIndexSelectedEntry {
+  path: string;
+  file_kind: CodebaseIndexFileEntry['file_kind'];
+  byte_length: number;
+  line_count?: number | null;
+  content_sha256?: string | null;
+  score: number;
+  match_reasons: CodebaseIndexMatchReason[];
+}
+
+export type CodebaseIndexMatchReason = 'path_exact' | 'path_token' | 'file_name' | 'extension' | 'kind';
+
 export interface CodebaseIndexSnapshotManifest {
   snapshot: CodebaseIndexSnapshotSummary;
   entries: CodebaseIndexFileEntry[];
@@ -2219,7 +2254,7 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
 }
 
 export function hasNoForbiddenRawFields(value: object): boolean {
-  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content') && !Object.prototype.hasOwnProperty.call(value, 'command') && !Object.prototype.hasOwnProperty.call(value, 'stdout') && !Object.prototype.hasOwnProperty.call(value, 'stderr') && !Object.prototype.hasOwnProperty.call(value, 'env') && !Object.prototype.hasOwnProperty.call(value, 'request_body') && !Object.prototype.hasOwnProperty.call(value, 'serialized_request_body');
+  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'raw_query') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content') && !Object.prototype.hasOwnProperty.call(value, 'command') && !Object.prototype.hasOwnProperty.call(value, 'stdout') && !Object.prototype.hasOwnProperty.call(value, 'stderr') && !Object.prototype.hasOwnProperty.call(value, 'env') && !Object.prototype.hasOwnProperty.call(value, 'request_body') && !Object.prototype.hasOwnProperty.call(value, 'serialized_request_body');
 }
 
 export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
@@ -3832,6 +3867,52 @@ export function isCodebaseIndexBuildResult(value: unknown): value is CodebaseInd
   );
 }
 
+export function isCodebaseIndexQueryResult(value: unknown): value is CodebaseIndexQueryResult {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'query') &&
+    typeof value.query_id === 'string' &&
+    /^query_[a-f0-9]{16}$/.test(value.query_id) &&
+    typeof value.selection_id === 'string' &&
+    /^selection_[a-f0-9]{16}$/.test(value.selection_id) &&
+    typeof value.query_fingerprint === 'string' &&
+    isSha256Fingerprint(value.query_fingerprint) &&
+    isCodebaseIndexQuerySnapshotSummary(value.snapshot) &&
+    isNonNegativeInteger(value.matched_entry_count) &&
+    isNonNegativeInteger(value.returned_entry_count) &&
+    isNonNegativeInteger(value.max_results) &&
+    value.max_results > 0 &&
+    value.max_results <= 50 &&
+    value.returned_entry_count <= value.max_results &&
+    value.matched_entry_count >= value.returned_entry_count &&
+    Array.isArray(value.entries) &&
+    value.entries.length === value.returned_entry_count &&
+    value.entries.every(isCodebaseIndexSelectedEntry) &&
+    typeof value.ledger_event_id === 'string' &&
+    value.ledger_event_kind === 'CodebaseIndexQueryCompleted' &&
+    value.next_action === 'read_selected_files_with_controlled_workspace_read'
+  );
+}
+
+function isCodebaseIndexQuerySnapshotSummary(value: unknown): value is CodebaseIndexQuerySnapshotSummary {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'query') &&
+    typeof value.index_id === 'string' &&
+    /^idx_[a-f0-9]{16}$/.test(value.index_id) &&
+    typeof value.root === 'string' &&
+    isSafeIndexRoot(value.root) &&
+    typeof value.workspace_fingerprint === 'string' &&
+    isSha256Fingerprint(value.workspace_fingerprint) &&
+    typeof value.snapshot_fingerprint === 'string' &&
+    isSha256Fingerprint(value.snapshot_fingerprint) &&
+    typeof value.built_at === 'string' &&
+    typeof value.truncated === 'boolean'
+  );
+}
+
 export function isCodebaseIndexSnapshotManifest(value: unknown): value is CodebaseIndexSnapshotManifest {
   return (
     isRecord(value) &&
@@ -3924,8 +4005,32 @@ function isCodebaseIndexFileEntry(value: unknown): value is CodebaseIndexFileEnt
   );
 }
 
+function isCodebaseIndexSelectedEntry(value: unknown): value is CodebaseIndexSelectedEntry {
+  return (
+    isRecord(value) &&
+    hasNoForbiddenRawFields(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'query') &&
+    typeof value.path === 'string' &&
+    isSafeIndexEntryPath(value.path) &&
+    isCodebaseIndexFileKind(value.file_kind) &&
+    isNonNegativeInteger(value.byte_length) &&
+    (value.line_count === undefined || value.line_count === null || isNonNegativeInteger(value.line_count)) &&
+    (value.content_sha256 === undefined || value.content_sha256 === null || (typeof value.content_sha256 === 'string' && isSha256Fingerprint(value.content_sha256))) &&
+    isNonNegativeInteger(value.score) &&
+    value.score > 0 &&
+    Array.isArray(value.match_reasons) &&
+    value.match_reasons.length > 0 &&
+    value.match_reasons.length <= 5 &&
+    value.match_reasons.every(isCodebaseIndexMatchReason)
+  );
+}
+
 function isCodebaseIndexFileKind(value: unknown): value is CodebaseIndexFileEntry['file_kind'] {
   return value === 'Rust' || value === 'TypeScript' || value === 'JavaScript' || value === 'Json' || value === 'Toml' || value === 'Markdown' || value === 'Yaml' || value === 'Shell' || value === 'Text' || value === 'Other';
+}
+
+function isCodebaseIndexMatchReason(value: unknown): value is CodebaseIndexMatchReason {
+  return value === 'path_exact' || value === 'path_token' || value === 'file_name' || value === 'extension' || value === 'kind';
 }
 
 function isSafeIndexRoot(value: string): boolean {
@@ -3937,7 +4042,7 @@ function isSafeIndexEntryPath(value: string): boolean {
     return false;
   }
   const parts = value.split('/');
-  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..' && !['.git', '.brownie', 'node_modules', 'target'].includes(part));
+  return parts.every((part) => part.length > 0 && part !== '.' && part !== '..' && !['.git', '.brownie', 'node_modules', 'target', 'dist', 'build', 'coverage', '.next', 'out', 'vendor'].includes(part));
 }
 
 export function isChildTaskInspectSummary(value: unknown): value is ChildTaskInspectSummary {

@@ -1333,6 +1333,7 @@ pub struct CodebaseIndexLedgerEvent {
 pub enum LedgerEventKind {
     CodebaseIndexPermissionChecked,
     CodebaseIndexSnapshotBuilt,
+    CodebaseIndexQueryCompleted,
     TaskStarted,
     ModeResolved,
     PermissionChecked,
