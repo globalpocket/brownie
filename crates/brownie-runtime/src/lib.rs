@@ -23,12 +23,13 @@ use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
     ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
     CodebaseIndexBuildParams, CodebaseIndexBuildResult, CodebaseIndexCountsSummary,
-    CodebaseIndexFileEntry, CodebaseIndexLimitsSummary, CodebaseIndexSnapshotManifest,
-    CodebaseIndexSnapshotSummary, DiagnosticSeverity, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PermissionCheckParams, PermissionCheckResult, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    CodebaseIndexFileEntry, CodebaseIndexLimitsSummary, CodebaseIndexQueryParams,
+    CodebaseIndexQueryResult, CodebaseIndexQuerySnapshotSummary, CodebaseIndexSelectedEntry,
+    CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -213,6 +214,7 @@ use brownie_tools::{
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{BTreeMap, BTreeSet},
     io::Write,
     path::{Component, Path, PathBuf},
 };
@@ -242,6 +244,11 @@ const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_CODEBASE_INDEX_BUILD: &str = "codebase.index.build";
 const CODEBASE_INDEX_NEXT_ACTION: &str = "build_bounded_index_query_file_selection";
+const METHOD_CODEBASE_INDEX_QUERY: &str = "codebase.index.query";
+const CODEBASE_INDEX_QUERY_NEXT_ACTION: &str = "read_selected_files_with_controlled_workspace_read";
+const CODEBASE_INDEX_QUERY_DEFAULT_MAX_RESULTS: usize = 10;
+const CODEBASE_INDEX_QUERY_MAX_RESULTS: usize = 50;
+const CODEBASE_INDEX_QUERY_MAX_CHARS: usize = 256;
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
@@ -393,6 +400,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_RUN_EVENTS => handle_run_events(request.id, request.params),
         METHOD_RUN_INSPECT => handle_run_inspect(request.id, request.params),
         METHOD_CODEBASE_INDEX_BUILD => handle_codebase_index_build(request.id, request.params),
+        METHOD_CODEBASE_INDEX_QUERY => handle_codebase_index_query(request.id, request.params),
         METHOD_PROPOSAL_LIST => handle_proposal_list(request.id, request.params),
         METHOD_PROPOSAL_INSPECT => handle_proposal_inspect(request.id, request.params),
         METHOD_PROPOSAL_APPROVE => handle_proposal_approve(request.id, request.params),
@@ -3813,6 +3821,564 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
             next_action: CODEBASE_INDEX_NEXT_ACTION.to_string(),
         }),
     )
+}
+
+#[derive(Debug, Clone)]
+struct CodebaseIndexQueryCandidate {
+    entry: CodebaseIndexSelectedEntry,
+}
+
+fn handle_codebase_index_query(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: CodebaseIndexQueryParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let mode_id = match normalize_mode_id(Some(&params.mode_id)) {
+        Ok(mode_id) => mode_id,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let (normalized_query, query_tokens, max_results, file_kind_filter) =
+        match validate_codebase_index_query_params(&params) {
+            Ok(validated) => validated,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    let query_fingerprint = codebase_index_query_fingerprint(
+        &normalized_query,
+        max_results,
+        file_kind_filter.as_deref(),
+    );
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let policy = match resolve_workspace_mode_policy(&store, &mode_id) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => {
+            let payload = codebase_index_query_permission_payload(
+                &mode_id,
+                false,
+                "unknown mode_id for codebase index query",
+                &query_fingerprint,
+                normalized_query.chars().count(),
+                query_tokens.len(),
+                max_results,
+                file_kind_filter.as_deref(),
+            );
+            if let Err(error) = store
+                .codebase_index()
+                .append_event(LedgerEventKind::CodebaseIndexPermissionChecked, payload)
+            {
+                return error_response(
+                    id,
+                    -32603,
+                    &format!("internal error: failed to record codebase index permission decision: {error}"),
+                );
+            }
+            return error_response(id, -32602, "invalid params: unknown mode_id");
+        }
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let decision = RuntimePermissionGate::check(&policy, RuntimeAction::IndexCodebase);
+    let permission_payload = codebase_index_query_permission_payload(
+        &mode_id,
+        decision.allowed,
+        &decision.reason,
+        &query_fingerprint,
+        normalized_query.chars().count(),
+        query_tokens.len(),
+        max_results,
+        file_kind_filter.as_deref(),
+    );
+    if let Err(error) = store.codebase_index().append_event(
+        LedgerEventKind::CodebaseIndexPermissionChecked,
+        permission_payload,
+    ) {
+        return error_response(
+            id,
+            -32603,
+            &format!(
+                "internal error: failed to record codebase index permission decision: {error}"
+            ),
+        );
+    }
+    if !decision.allowed {
+        return error_response(
+            id,
+            -32602,
+            &format!("permission denied: {}", decision.reason),
+        );
+    }
+
+    let index_store = store.codebase_index();
+    let manifest = match index_store.read_current_snapshot() {
+        Ok(Some(manifest)) => manifest,
+        Ok(None) => {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: current codebase index snapshot is missing",
+            )
+        }
+        Err(_) => {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: current codebase index snapshot is malformed or unreadable",
+            )
+        }
+    };
+    if let Err(message) = validate_codebase_index_current_snapshot(&manifest) {
+        return error_response(id, -32602, &message);
+    }
+
+    let (selected_entries, matched_entry_count, skipped_entry_count) =
+        codebase_index_select_entries(
+            &manifest.entries,
+            &query_tokens,
+            &normalized_query,
+            file_kind_filter.as_deref(),
+            max_results,
+        );
+    let selection_fingerprint = codebase_index_selection_fingerprint(
+        &query_fingerprint,
+        &manifest.snapshot.snapshot_fingerprint,
+        file_kind_filter.as_deref(),
+        max_results,
+        &selected_entries,
+    );
+    let query_id = format!(
+        "query_{}",
+        fingerprint_short_suffix(&query_fingerprint).expect("query fingerprint is sha256")
+    );
+    let selection_id = format!(
+        "selection_{}",
+        fingerprint_short_suffix(&selection_fingerprint).expect("selection fingerprint is sha256")
+    );
+
+    let event_payload = codebase_index_query_event_payload(
+        &manifest,
+        &mode_id,
+        &query_id,
+        &selection_id,
+        &query_fingerprint,
+        &selection_fingerprint,
+        matched_entry_count,
+        selected_entries.len(),
+        skipped_entry_count,
+        max_results,
+        file_kind_filter.as_deref(),
+        &selected_entries,
+    );
+    let event = match index_store
+        .append_event(LedgerEventKind::CodebaseIndexQueryCompleted, event_payload)
+    {
+        Ok(event) => event,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: failed to record codebase index query result: {error}"),
+            )
+        }
+    };
+
+    result_response(
+        id,
+        json!(CodebaseIndexQueryResult {
+            query_id,
+            selection_id,
+            query_fingerprint,
+            snapshot: CodebaseIndexQuerySnapshotSummary {
+                index_id: manifest.snapshot.index_id,
+                root: manifest.snapshot.root,
+                workspace_fingerprint: manifest.snapshot.workspace_fingerprint,
+                snapshot_fingerprint: manifest.snapshot.snapshot_fingerprint,
+                built_at: manifest.snapshot.built_at,
+                truncated: manifest.snapshot.truncated,
+            },
+            matched_entry_count,
+            returned_entry_count: selected_entries.len(),
+            max_results,
+            entries: selected_entries,
+            ledger_event_id: event.event_id,
+            ledger_event_kind: format!("{:?}", event.kind),
+            next_action: CODEBASE_INDEX_QUERY_NEXT_ACTION.to_string(),
+        }),
+    )
+}
+
+fn validate_codebase_index_query_params(
+    params: &CodebaseIndexQueryParams,
+) -> Result<(String, Vec<String>, usize, Option<String>), String> {
+    let normalized_query = params
+        .query
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_lowercase();
+    if normalized_query.is_empty() {
+        return Err("invalid params: query must not be empty".to_string());
+    }
+    if params.query.chars().count() > CODEBASE_INDEX_QUERY_MAX_CHARS {
+        return Err("invalid params: query is too long".to_string());
+    }
+    let query_tokens = codebase_index_query_tokens(&normalized_query);
+    if query_tokens.is_empty() {
+        return Err("invalid params: query must include searchable characters".to_string());
+    }
+    let max_results = params
+        .max_results
+        .unwrap_or(CODEBASE_INDEX_QUERY_DEFAULT_MAX_RESULTS);
+    if max_results == 0 || max_results > CODEBASE_INDEX_QUERY_MAX_RESULTS {
+        return Err(format!(
+            "invalid params: max_results must be between 1 and {CODEBASE_INDEX_QUERY_MAX_RESULTS}"
+        ));
+    }
+    let file_kind_filter = match params.file_kind.as_deref() {
+        Some(value) => {
+            let trimmed = value.trim();
+            if !is_supported_codebase_index_file_kind(trimmed) {
+                return Err("invalid params: file_kind is unsupported".to_string());
+            }
+            Some(trimmed.to_string())
+        }
+        None => None,
+    };
+    Ok((
+        normalized_query,
+        query_tokens,
+        max_results,
+        file_kind_filter,
+    ))
+}
+
+fn codebase_index_query_tokens(query: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut seen = BTreeSet::new();
+    let mut current = String::new();
+    for ch in query.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-') {
+            current.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        push_codebase_index_query_token(&mut current, &mut seen, &mut tokens);
+    }
+    push_codebase_index_query_token(&mut current, &mut seen, &mut tokens);
+    tokens.truncate(16);
+    tokens
+}
+
+fn push_codebase_index_query_token(
+    current: &mut String,
+    seen: &mut BTreeSet<String>,
+    tokens: &mut Vec<String>,
+) {
+    let token = current
+        .trim_matches(|ch: char| matches!(ch, '.' | '_' | '-'))
+        .to_string();
+    current.clear();
+    if token.is_empty() || !token.chars().any(|ch| ch.is_ascii_alphanumeric()) {
+        return;
+    }
+    if seen.insert(token.clone()) {
+        tokens.push(token);
+    }
+}
+
+fn validate_codebase_index_current_snapshot(
+    manifest: &CodebaseIndexSnapshotManifest,
+) -> Result<(), String> {
+    if !manifest.snapshot.index_id.starts_with("idx_")
+        || manifest.snapshot.index_id.len() != "idx_".len() + 16
+        || !manifest.snapshot.index_id["idx_".len()..]
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+    {
+        return Err("invalid params: current codebase index snapshot is malformed".to_string());
+    }
+    if !is_safe_codebase_index_path(&manifest.snapshot.root, true) {
+        return Err("invalid params: current codebase index snapshot is malformed".to_string());
+    }
+    if !is_sha256_fingerprint(&manifest.snapshot.workspace_fingerprint)
+        || !is_sha256_fingerprint(&manifest.snapshot.snapshot_fingerprint)
+    {
+        return Err("invalid params: current codebase index snapshot is malformed".to_string());
+    }
+    if manifest.entries.len() > manifest.snapshot.limits.max_files {
+        return Err("invalid params: current codebase index snapshot is malformed".to_string());
+    }
+    Ok(())
+}
+
+fn codebase_index_select_entries(
+    entries: &[CodebaseIndexFileEntry],
+    query_tokens: &[String],
+    normalized_query: &str,
+    file_kind_filter: Option<&str>,
+    max_results: usize,
+) -> (Vec<CodebaseIndexSelectedEntry>, usize, usize) {
+    let mut candidates = Vec::new();
+    let mut skipped_entry_count = 0usize;
+    for entry in entries {
+        if !is_safe_codebase_index_path(&entry.path, false)
+            || !is_supported_codebase_index_file_kind(&entry.file_kind)
+            || entry
+                .content_sha256
+                .as_deref()
+                .is_some_and(|fingerprint| !is_sha256_fingerprint(fingerprint))
+        {
+            skipped_entry_count += 1;
+            continue;
+        }
+        if file_kind_filter.is_some_and(|kind| entry.file_kind != kind) {
+            continue;
+        }
+        if let Some(candidate) =
+            codebase_index_match_entry(entry, query_tokens, normalized_query, file_kind_filter)
+        {
+            candidates.push(candidate);
+        }
+    }
+    candidates.sort_by(|left, right| {
+        right
+            .entry
+            .score
+            .cmp(&left.entry.score)
+            .then_with(|| left.entry.path.cmp(&right.entry.path))
+    });
+    let matched_entry_count = candidates.len();
+    let selected_entries = candidates
+        .into_iter()
+        .take(max_results)
+        .map(|candidate| candidate.entry)
+        .collect();
+    (selected_entries, matched_entry_count, skipped_entry_count)
+}
+
+fn codebase_index_match_entry(
+    entry: &CodebaseIndexFileEntry,
+    query_tokens: &[String],
+    normalized_query: &str,
+    _file_kind_filter: Option<&str>,
+) -> Option<CodebaseIndexQueryCandidate> {
+    let path = entry.path.to_ascii_lowercase();
+    let file_name = path.rsplit('/').next().unwrap_or(path.as_str());
+    let extension = file_name.rsplit_once('.').map(|(_, extension)| extension);
+    let file_kind = entry.file_kind.to_ascii_lowercase();
+    let mut score = 0usize;
+    let mut reasons = Vec::new();
+
+    if path == normalized_query {
+        score += 1000;
+        push_match_reason(&mut reasons, "path_exact");
+    }
+    if file_name == normalized_query || file_name.contains(normalized_query) {
+        score += 250;
+        push_match_reason(&mut reasons, "file_name");
+    }
+    for token in query_tokens {
+        if path.contains(token) {
+            score += 50;
+            push_match_reason(&mut reasons, "path_token");
+        }
+        if extension.is_some_and(|extension| {
+            extension == token.as_str() || format!(".{extension}") == token.as_str()
+        }) {
+            score += 75;
+            push_match_reason(&mut reasons, "extension");
+        }
+        if file_kind == *token {
+            score += 40;
+            push_match_reason(&mut reasons, "kind");
+        }
+    }
+    reasons.truncate(5);
+    (score > 0).then(|| CodebaseIndexQueryCandidate {
+        entry: CodebaseIndexSelectedEntry {
+            path: entry.path.clone(),
+            file_kind: entry.file_kind.clone(),
+            byte_length: entry.byte_length,
+            line_count: entry.line_count,
+            content_sha256: entry.content_sha256.clone(),
+            score,
+            match_reasons: reasons,
+        },
+    })
+}
+
+fn push_match_reason(reasons: &mut Vec<String>, reason: &str) {
+    if !reasons.iter().any(|existing| existing == reason) {
+        reasons.push(reason.to_string());
+    }
+}
+
+fn codebase_index_query_fingerprint(
+    normalized_query: &str,
+    max_results: usize,
+    file_kind_filter: Option<&str>,
+) -> String {
+    let body = format!(
+        "version=codebase_index_query_v1\nquery={normalized_query}\nmax_results={max_results}\nfile_kind={}",
+        file_kind_filter.unwrap_or("")
+    );
+    format!("sha256:{}", hex_sha256(body.as_bytes()))
+}
+
+fn codebase_index_selection_fingerprint(
+    query_fingerprint: &str,
+    snapshot_fingerprint: &str,
+    file_kind_filter: Option<&str>,
+    max_results: usize,
+    entries: &[CodebaseIndexSelectedEntry],
+) -> String {
+    let mut parts = vec![
+        "version=codebase_index_selection_v1".to_string(),
+        format!("query_fingerprint={query_fingerprint}"),
+        format!("snapshot_fingerprint={snapshot_fingerprint}"),
+        format!("file_kind={}", file_kind_filter.unwrap_or("")),
+        format!("max_results={max_results}"),
+    ];
+    for entry in entries {
+        parts.push(format!(
+            "{}|{}|{}|{}|{}|{}",
+            entry.path,
+            entry.file_kind,
+            entry.byte_length,
+            entry.content_sha256.as_deref().unwrap_or(""),
+            entry.score,
+            entry.match_reasons.join(",")
+        ));
+    }
+    format!("sha256:{}", hex_sha256(parts.join("\n").as_bytes()))
+}
+
+fn codebase_index_query_permission_payload(
+    mode_id: &str,
+    allowed: bool,
+    reason: &str,
+    query_fingerprint: &str,
+    query_length_chars: usize,
+    query_token_count: usize,
+    max_results: usize,
+    file_kind_filter: Option<&str>,
+) -> Value {
+    json!({
+        "mode_id": mode_id,
+        "action": RuntimeActionName::IndexCodebase,
+        "request_kind": "query",
+        "allowed": allowed,
+        "reason": preview_with_limit(reason, 160),
+        "query_fingerprint": query_fingerprint,
+        "query_length_chars": query_length_chars,
+        "query_token_count": query_token_count,
+        "max_results": max_results,
+        "file_kind_filter": file_kind_filter.unwrap_or(""),
+    })
+}
+
+fn codebase_index_query_event_payload(
+    manifest: &CodebaseIndexSnapshotManifest,
+    mode_id: &str,
+    query_id: &str,
+    selection_id: &str,
+    query_fingerprint: &str,
+    selection_fingerprint: &str,
+    matched_entry_count: usize,
+    returned_entry_count: usize,
+    skipped_entry_count: usize,
+    max_results: usize,
+    file_kind_filter: Option<&str>,
+    entries: &[CodebaseIndexSelectedEntry],
+) -> Value {
+    json!({
+        "mode_id": mode_id,
+        "query_id": query_id,
+        "selection_id": selection_id,
+        "query_fingerprint": query_fingerprint,
+        "selection_fingerprint": selection_fingerprint,
+        "index_id": manifest.snapshot.index_id.clone(),
+        "workspace_fingerprint": manifest.snapshot.workspace_fingerprint.clone(),
+        "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint.clone(),
+        "snapshot_truncated": manifest.snapshot.truncated,
+        "matched_entry_count": matched_entry_count,
+        "returned_entry_count": returned_entry_count,
+        "skipped_entry_count": skipped_entry_count,
+        "max_results": max_results,
+        "file_kind_filter": file_kind_filter.unwrap_or(""),
+        "match_reason_counts": codebase_index_match_reason_counts(entries),
+        "next_action": CODEBASE_INDEX_QUERY_NEXT_ACTION,
+    })
+}
+
+fn codebase_index_match_reason_counts(
+    entries: &[CodebaseIndexSelectedEntry],
+) -> BTreeMap<String, usize> {
+    let mut counts = BTreeMap::new();
+    for entry in entries {
+        for reason in &entry.match_reasons {
+            *counts.entry(reason.clone()).or_insert(0) += 1;
+        }
+    }
+    counts
+}
+
+fn fingerprint_short_suffix(fingerprint: &str) -> Option<&str> {
+    fingerprint
+        .strip_prefix("sha256:")
+        .and_then(|hex| hex.get(..16))
+}
+
+fn is_supported_codebase_index_file_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "Rust"
+            | "TypeScript"
+            | "JavaScript"
+            | "Json"
+            | "Toml"
+            | "Markdown"
+            | "Yaml"
+            | "Shell"
+            | "Text"
+            | "Other"
+    )
+}
+
+fn is_safe_codebase_index_path(value: &str, allow_root: bool) -> bool {
+    if allow_root && value == "." {
+        return true;
+    }
+    if value.is_empty()
+        || value.len() > 1024
+        || value.starts_with('/')
+        || value.starts_with('~')
+        || value.contains('\\')
+    {
+        return false;
+    }
+    value.split('/').all(|part| {
+        !part.is_empty()
+            && part != "."
+            && part != ".."
+            && !matches!(
+                part,
+                ".git"
+                    | ".brownie"
+                    | "node_modules"
+                    | "target"
+                    | "dist"
+                    | "build"
+                    | "coverage"
+                    | ".next"
+                    | "out"
+                    | "vendor"
+            )
+    })
 }
 
 fn normalize_mode_id(mode_id: Option<&str>) -> Result<String, String> {
@@ -19770,6 +20336,370 @@ mod tests {
             .read_current_snapshot()
             .expect("read current")
             .is_none());
+    }
+
+    #[test]
+    fn codebase_index_query_requires_authorized_index_mode_before_snapshot_read() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".brownie/codebase-index")).expect("index dir");
+        std::fs::write(
+            temp.path().join(".brownie/codebase-index/current.json"),
+            "{not valid json",
+        )
+        .expect("invalid current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"verifier","query":"runtime","max_results":3}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let error = denied.error.expect("denied error");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("permission denied"));
+        let store = BrownieStore::new(temp.path());
+        let events = store.codebase_index().read_events().expect("events");
+        assert!(events.iter().any(|event| event.kind
+            == LedgerEventKind::CodebaseIndexPermissionChecked
+            && event.payload["allowed"] == false));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::CodebaseIndexQueryCompleted));
+    }
+
+    #[test]
+    fn codebase_index_query_returns_bounded_selection_from_current_filtered_snapshot() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![
+                query_test_entry("src/lib.rs", "Rust", "a"),
+                query_test_entry("src/runtime/query.rs", "Rust", "b"),
+                query_test_entry("docs/indexing.md", "Markdown", "c"),
+            ]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime rs","max_results":2,"file_kind":"Rust"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let result = response.result.expect("query result");
+        assert_eq!(result["ledger_event_kind"], "CodebaseIndexQueryCompleted");
+        assert_eq!(
+            result["next_action"],
+            "read_selected_files_with_controlled_workspace_read"
+        );
+        assert!(result["query_id"]
+            .as_str()
+            .expect("query id")
+            .starts_with("query_"));
+        assert!(result["selection_id"]
+            .as_str()
+            .expect("selection id")
+            .starts_with("selection_"));
+        assert!(result["query_fingerprint"]
+            .as_str()
+            .expect("query fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(result["max_results"], 2);
+        assert_eq!(result["returned_entry_count"], 2);
+        assert_eq!(result["entries"][0]["path"], "src/runtime/query.rs");
+        assert_eq!(result["entries"][0]["file_kind"], "Rust");
+        assert!(result["entries"][0]["match_reasons"]
+            .as_array()
+            .expect("match reasons")
+            .iter()
+            .any(|reason| reason == "path_token"));
+
+        let events = store.codebase_index().read_events().expect("events");
+        let query_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::CodebaseIndexQueryCompleted)
+            .expect("query event");
+        assert_eq!(query_event.payload["returned_entry_count"], 2);
+        assert_eq!(query_event.payload["file_kind_filter"], "Rust");
+        assert!(query_event.payload.get("match_reason_counts").is_some());
+    }
+
+    #[test]
+    fn codebase_index_query_is_deterministic_and_path_sorted_for_ties() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![
+                query_test_entry("src/b.rs", "Rust", "b"),
+                query_test_entry("src/a.rs", "Rust", "a"),
+            ]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let first = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"rust","max_results":2}}"#,
+        )
+        .result
+        .expect("first result");
+        let second = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"rust","max_results":2}}"#,
+        )
+        .result
+        .expect("second result");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert_eq!(first["entries"][0]["path"], "src/a.rs");
+        assert_eq!(first["entries"][1]["path"], "src/b.rs");
+        assert_eq!(first["selection_id"], second["selection_id"]);
+        assert_eq!(first["entries"], second["entries"]);
+    }
+
+    #[test]
+    fn codebase_index_query_rejects_missing_current_snapshot_without_success_event() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let error = response.error.expect("missing snapshot error");
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("current codebase index snapshot is missing"));
+        let store = BrownieStore::new(temp.path());
+        let events = store.codebase_index().read_events().expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::CodebaseIndexQueryCompleted));
+    }
+
+    #[test]
+    fn codebase_index_query_rejects_unknown_fields_and_unbounded_params() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let unknown = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime","raw_input":"nope"}}"#,
+        );
+        let unbounded = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime","max_results":51}}"#,
+        );
+        let unsupported_kind = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime","file_kind":"Binary"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert_eq!(unknown.error.expect("unknown field").code, -32602);
+        assert_eq!(unbounded.error.expect("unbounded").code, -32602);
+        assert_eq!(
+            unsupported_kind.error.expect("unsupported kind").code,
+            -32602
+        );
+        let store = BrownieStore::new(temp.path());
+        let events = store.codebase_index().read_events().expect("events");
+        assert!(events.is_empty());
+    }
+
+    #[test]
+    fn codebase_index_query_does_not_return_or_ledger_raw_query_or_raw_content() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![query_test_entry(
+                "src/lib.rs",
+                "Rust",
+                "a",
+            )]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"supersecretphrase"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let result_string =
+            serde_json::to_string(&response.result.expect("query result")).expect("result json");
+        assert!(!result_string.contains("supersecretphrase"));
+        for forbidden in [
+            "\"query\"",
+            "raw_query",
+            "content",
+            "file_content",
+            "full_content",
+            "raw_input",
+            "stdout",
+            "stderr",
+            "env",
+        ] {
+            assert!(
+                !result_string.contains(forbidden),
+                "forbidden result token {forbidden}"
+            );
+        }
+        let ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/codebase-index/ledger.jsonl"))
+                .expect("ledger");
+        assert!(!ledger.contains("supersecretphrase"));
+        assert!(!ledger.contains("\"path\""));
+        assert!(!ledger.contains("\"content\""));
+        assert!(!ledger.contains("raw_query"));
+    }
+
+    #[test]
+    fn codebase_index_query_skips_unsafe_entries_from_current_snapshot() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![
+                query_test_entry("src/secret.rs", "Rust", "a"),
+                query_test_entry("../secret.rs", "Rust", "b"),
+                query_test_entry(".brownie/current.json", "Json", "c"),
+            ]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"secret rust","max_results":5}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let result = response.result.expect("query result");
+        assert_eq!(result["returned_entry_count"], 1);
+        assert_eq!(result["entries"][0]["path"], "src/secret.rs");
+        let events = store.codebase_index().read_events().expect("events");
+        let query_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::CodebaseIndexQueryCompleted)
+            .expect("query event");
+        assert_eq!(query_event.payload["skipped_entry_count"], 2);
+    }
+
+    #[test]
+    fn codebase_index_query_appends_summary_only_query_event() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![query_test_entry(
+                "src/lib.rs",
+                "Rust",
+                "a",
+            )]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"rust"}}"#,
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert!(response.error.is_none());
+        let events = store.codebase_index().read_events().expect("events");
+        let query_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::CodebaseIndexQueryCompleted)
+            .expect("query event");
+        let payload = &query_event.payload;
+        assert_eq!(
+            payload["next_action"],
+            "read_selected_files_with_controlled_workspace_read"
+        );
+        assert!(payload["query_fingerprint"]
+            .as_str()
+            .expect("query fingerprint")
+            .starts_with("sha256:"));
+        assert!(payload["selection_fingerprint"]
+            .as_str()
+            .expect("selection fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(payload["returned_entry_count"], 1);
+        for forbidden in [
+            "query",
+            "path",
+            "content",
+            "file_content",
+            "full_content",
+            "raw_query",
+            "raw_input",
+            "stdout",
+            "stderr",
+            "env",
+        ] {
+            assert!(
+                payload.get(forbidden).is_none(),
+                "forbidden event field {forbidden}"
+            );
+        }
+    }
+
+    fn query_test_manifest(entries: Vec<CodebaseIndexFileEntry>) -> CodebaseIndexSnapshotManifest {
+        CodebaseIndexSnapshotManifest {
+            snapshot: CodebaseIndexSnapshotSummary {
+                index_id: "idx_abcdef1234567890".to_string(),
+                root: ".".to_string(),
+                workspace_fingerprint: format!("sha256:{}", "d".repeat(64)),
+                snapshot_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                built_at: "2026-07-24T00:00:00Z".to_string(),
+                counts: CodebaseIndexCountsSummary {
+                    indexed_files: entries.len(),
+                    walked_directories: 1,
+                    skipped_protected: 0,
+                    skipped_ignored: 0,
+                    skipped_sensitive: 0,
+                    skipped_symlink: 0,
+                    skipped_too_large: 0,
+                    skipped_binary_like: 0,
+                    skipped_unreadable: 0,
+                    skipped_unsafe_path: 0,
+                    skipped_other: 0,
+                    truncated_entries: 0,
+                    visited_entries: entries.len(),
+                    truncated_directories: 0,
+                    ignore_rule_files_loaded: 0,
+                    ignore_rule_count: 0,
+                    sensitive_finding_count: 0,
+                },
+                limits: CodebaseIndexLimitsSummary {
+                    max_files: 100,
+                    max_directories: 100,
+                    max_path_chars: 512,
+                    max_file_bytes: 1024,
+                    max_visited_entries: 1000,
+                    max_directory_entries: 100,
+                },
+                truncated: false,
+            },
+            entries,
+        }
+    }
+
+    fn query_test_entry(
+        path: &str,
+        file_kind: &str,
+        fingerprint_seed: &str,
+    ) -> CodebaseIndexFileEntry {
+        CodebaseIndexFileEntry {
+            path: path.to_string(),
+            file_kind: file_kind.to_string(),
+            byte_length: 42,
+            line_count: Some(3),
+            content_sha256: Some(format!("sha256:{}", fingerprint_seed.repeat(64))),
+        }
     }
 
     fn write_cargo_check_fixture(workspace_root: &Path, package_name: &str, source: &str) {

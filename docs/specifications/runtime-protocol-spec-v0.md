@@ -202,6 +202,77 @@ payloads record `requested_force_refresh`; denied permission decisions use the
 bounded `CodebaseIndexPermissionChecked` event and do not create successful
 build evidence.
 
+## `codebase.index.query`
+
+M9.4 adds bounded metadata-only consumption of the latest persisted codebase
+index. The runtime requires `mode_id`, checks `RuntimeAction::IndexCodebase`,
+and only then reads `.brownie/codebase-index/current.json` through the
+runtime-owned store abstraction.
+
+Request line:
+
+```json
+{"jsonrpc":"2.0","id":11,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime rs","max_results":5,"file_kind":"Rust"}}
+```
+
+Parameters:
+
+- `mode_id` is required.
+- `query` is required, non-empty after whitespace normalization, and capped at
+  256 characters.
+- `max_results` defaults to 10 and is capped at 50.
+- `file_kind` is optional and must be one of the snapshot file-kind names.
+
+The runtime rejects missing or unknown modes, modes without `IndexCodebase`,
+unknown fields, empty or unsearchable queries, unbounded `max_results`, and
+unsupported file kinds with `-32602`. Missing current snapshots return a bounded
+missing-snapshot error. Malformed or unreadable current snapshots return a
+bounded malformed-snapshot error. These failure paths do not append
+`CodebaseIndexQueryCompleted`.
+
+Successful response:
+
+```json
+{
+  "query_id": "query_<16 lowercase hex>",
+  "selection_id": "selection_<16 lowercase hex>",
+  "query_fingerprint": "sha256:<64 lowercase hex>",
+  "snapshot": {
+    "index_id": "idx_<16 lowercase hex>",
+    "root": ".",
+    "workspace_fingerprint": "sha256:<64 lowercase hex>",
+    "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+    "built_at": "2026-07-24T00:00:00Z",
+    "truncated": false
+  },
+  "matched_entry_count": 2,
+  "returned_entry_count": 2,
+  "max_results": 5,
+  "entries": [
+    {
+      "path": "src/runtime/query.rs",
+      "file_kind": "Rust",
+      "byte_length": 120,
+      "line_count": 8,
+      "content_sha256": "sha256:<64 lowercase hex>",
+      "score": 175,
+      "match_reasons": ["path_token", "extension"]
+    }
+  ],
+  "ledger_event_id": "event_<uuid>",
+  "ledger_event_kind": "CodebaseIndexQueryCompleted",
+  "next_action": "read_selected_files_with_controlled_workspace_read"
+}
+```
+
+The result is a file-selection handle, not a file read. It must not contain raw
+file content, snippets, diffs, chunks, embeddings, absolute paths, canonical
+paths, raw query text, prompts, provider responses, stdout/stderr, environment
+values, commands, or secrets. Successful ledger payloads are even narrower:
+they store query/selection ids and fingerprints, snapshot fingerprints, bounded
+counts, match-reason counts, optional file-kind filter, and `next_action`; they
+do not store raw query text or selected paths.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

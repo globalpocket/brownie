@@ -418,6 +418,55 @@ pub struct CodebaseIndexBuildResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct CodebaseIndexQueryParams {
+    pub mode_id: String,
+    pub query: String,
+    #[serde(default)]
+    pub max_results: Option<usize>,
+    #[serde(default)]
+    pub file_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexQueryResult {
+    pub query_id: String,
+    pub selection_id: String,
+    pub query_fingerprint: String,
+    pub snapshot: CodebaseIndexQuerySnapshotSummary,
+    pub matched_entry_count: usize,
+    pub returned_entry_count: usize,
+    pub max_results: usize,
+    pub entries: Vec<CodebaseIndexSelectedEntry>,
+    pub ledger_event_id: String,
+    pub ledger_event_kind: String,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexQuerySnapshotSummary {
+    pub index_id: String,
+    pub root: String,
+    pub workspace_fingerprint: String,
+    pub snapshot_fingerprint: String,
+    pub built_at: String,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CodebaseIndexSelectedEntry {
+    pub path: String,
+    pub file_kind: String,
+    pub byte_length: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_sha256: Option<String>,
+    pub score: usize,
+    pub match_reasons: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CodebaseIndexSnapshotManifest {
     pub snapshot: CodebaseIndexSnapshotSummary,
     pub entries: Vec<CodebaseIndexFileEntry>,

@@ -201,3 +201,38 @@ that retrieval already exists.
 M9.3 does not add a new RPC, readiness report, query API, chunking, embeddings,
 Qdrant writes, retrieval, LLM provider execution, shell/git/network execution,
 service control, or workspace mutation.
+
+## M9.4 Bounded Index Query And File Selection
+
+M9.4 adds the first executable consumption surface for persisted index state:
+`codebase.index.query`. The method requires `mode_id`, checks
+`RuntimeAction::IndexCodebase`, and only then reads the latest
+`.brownie/codebase-index/current.json` through the runtime store abstraction.
+Missing, malformed, or unreadable current snapshots fail with bounded errors and
+do not append `CodebaseIndexQueryCompleted`.
+
+Queries are metadata-only. The runtime accepts a bounded query string, optional
+`max_results`, and optional file-kind filter. It tokenizes deterministically,
+scores matching entries by path, file name, extension, and file kind, sorts ties
+by workspace-relative path, and returns at most the bounded result count. Unsafe
+paths, protected components, unsupported file kinds, and malformed content
+fingerprints in a current snapshot are not returned.
+
+Successful responses return file-selection handles only:
+
+- query id, selection id, and query fingerprint;
+- snapshot identity and fingerprints;
+- workspace-relative path, file kind, byte length, optional line count, optional
+  content SHA-256, deterministic score, and bounded match reasons;
+- `next_action = "read_selected_files_with_controlled_workspace_read"`.
+
+The success ledger event is `CodebaseIndexQueryCompleted`. Its payload contains
+query/selection ids and fingerprints, snapshot fingerprints, bounded counts,
+match-reason counts, optional file-kind filter, and `next_action`. It must not
+store raw query text, selected paths, raw file content, snippets, diffs, chunks,
+embeddings, absolute paths, canonical paths, stdout/stderr, environment values,
+commands, prompts, provider responses, or secrets.
+
+M9.4 does not add file reads, chunking, embeddings, Qdrant writes, semantic
+symbols, LLM calls, shell/git/network/service execution, workspace mutation, or
+new report/digest/history/readiness wrappers.
