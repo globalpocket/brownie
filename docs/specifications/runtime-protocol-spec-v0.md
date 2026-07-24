@@ -114,25 +114,29 @@ The runtime and VSIX validators must reject raw nested stdout/stderr/rendered me
 
 ## `codebase.index.build`
 
-M9.1 adds the first runtime-owned codebase indexing execution method. The
+M9.1 adds the first runtime-owned codebase indexing execution method. M9.2
+hardens that method with explicit mode permission, canonical containment,
+bounded traversal, no-follow file reads, and locked persistence. The
 method builds or refreshes a bounded metadata-only workspace file inventory
 snapshot and persists it under `.brownie/codebase-index`.
 
 Request line with default workspace root:
 
 ```json
-{"jsonrpc":"2.0","id":10,"method":"codebase.index.build","params":{}}
+{"jsonrpc":"2.0","id":10,"method":"codebase.index.build","params":{"mode_id":"orchestrator"}}
 ```
 
 Optional params:
 
 ```json
-{"root":"crates","force_refresh":true,"max_files":2000,"max_directories":500,"max_path_chars":512,"max_file_bytes":1048576}
+{"mode_id":"orchestrator","root":"crates","force_refresh":true,"max_files":2000,"max_directories":500,"max_path_chars":512,"max_file_bytes":1048576,"max_visited_entries":50000,"max_directory_entries":5000}
 ```
 
-The runtime rejects unknown fields, absolute roots, parent traversal, protected
-root components, non-directory roots, and symlink roots with `-32602`. Caller
-limits are clamped to runtime maxima.
+The runtime rejects missing or unknown `mode_id`, modes without
+`IndexCodebase`, unknown fields, absolute roots, parent traversal, protected
+root components, non-directory roots, intermediate symlink roots, final symlink
+roots, and canonical roots outside the workspace with `-32602`. Caller limits
+are clamped to runtime maxima.
 
 Successful response:
 
@@ -154,20 +158,24 @@ Successful response:
       "skipped_unreadable": 0,
       "skipped_unsafe_path": 0,
       "skipped_other": 0,
-      "truncated_entries": 0
+      "truncated_entries": 0,
+      "visited_entries": 130,
+      "truncated_directories": 0
     },
     "limits": {
       "max_files": 10000,
       "max_directories": 2000,
       "max_path_chars": 512,
-      "max_file_bytes": 1048576
+      "max_file_bytes": 1048576,
+      "max_visited_entries": 100000,
+      "max_directory_entries": 10000
     },
     "truncated": false
   },
   "persisted": true,
   "ledger_event_id": "event_<uuid>",
   "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
-  "next_action": "use_codebase_index_for_context_planning"
+  "next_action": "build_ignore_aware_sensitive_filtering"
 }
 ```
 
@@ -177,6 +185,11 @@ byte-length, optional line count, and optional content SHA-256. They must not
 contain raw file content, snippets, diffs, absolute paths, canonical paths,
 prompts, provider responses, stdout/stderr, environment values, commands, or
 secrets.
+
+`force_refresh` is requested-only until cache reuse exists. Successful ledger
+payloads record `requested_force_refresh`; denied permission decisions use the
+bounded `CodebaseIndexPermissionChecked` event and do not create successful
+build evidence.
 
 ## `task.get`
 
@@ -295,7 +308,7 @@ Invalid Mode Pack files fail these mode-resolution paths with an internal runtim
 
 Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.
 
-Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, and `SpawnSubtask`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
+Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, `SpawnSubtask`, and `IndexCodebase`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
 
 The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.
 

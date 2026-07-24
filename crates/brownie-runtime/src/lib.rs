@@ -240,6 +240,7 @@ const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_CODEBASE_INDEX_BUILD: &str = "codebase.index.build";
+const CODEBASE_INDEX_NEXT_ACTION: &str = "build_ignore_aware_sensitive_filtering";
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
@@ -3671,9 +3672,73 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
         None => CodebaseIndexBuildParams::default(),
     };
 
+    let mode_id = match normalize_mode_id(params.mode_id.as_deref()) {
+        Ok(mode_id) => mode_id,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let policy = match resolve_workspace_mode_policy(&store, &mode_id) {
+        Ok(Some(policy)) => policy,
+        Ok(None) => {
+            let payload = codebase_index_permission_payload(
+                &mode_id,
+                false,
+                "unknown mode_id for codebase indexing",
+                &params,
+            );
+            if let Err(error) = store
+                .codebase_index()
+                .append_event(LedgerEventKind::CodebaseIndexPermissionChecked, payload)
+            {
+                return error_response(
+                    id,
+                    -32603,
+                    &format!("internal error: failed to record codebase index permission decision: {error}"),
+                );
+            }
+            return error_response(id, -32602, "invalid params: unknown mode_id");
+        }
+        Err(message) => return error_response(id, -32602, &message),
+    };
+
+    let decision = RuntimePermissionGate::check(&policy, RuntimeAction::IndexCodebase);
+    if !decision.allowed {
+        let permission_payload =
+            codebase_index_permission_payload(&mode_id, false, &decision.reason, &params);
+        if let Err(error) = store.codebase_index().append_event(
+            LedgerEventKind::CodebaseIndexPermissionChecked,
+            permission_payload,
+        ) {
+            return error_response(
+                id,
+                -32603,
+                &format!(
+                    "internal error: failed to record codebase index permission decision: {error}"
+                ),
+            );
+        }
+        return error_response(
+            id,
+            -32602,
+            &format!("permission denied: {}", decision.reason),
+        );
+    }
+
+    let index_store = store.codebase_index();
+    let build_lock = match index_store.begin_build() {
+        Ok(lock) => lock,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: failed to acquire codebase index build lock: {error}"),
+            )
+        }
     };
 
     let built_at = match codebase_index_timestamp() {
@@ -3689,6 +3754,8 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
             max_directories: params.max_directories,
             max_path_chars: params.max_path_chars,
             max_file_bytes: params.max_file_bytes,
+            max_visited_entries: params.max_visited_entries,
+            max_directory_entries: params.max_directory_entries,
         },
     ) {
         Ok(snapshot) => snapshot,
@@ -3696,16 +3763,94 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
     };
 
     let manifest = codebase_index_manifest(snapshot, built_at);
-    if let Err(error) = store.codebase_index().write_current_snapshot(&manifest) {
+    let permission_payload =
+        codebase_index_permission_payload(&mode_id, true, &decision.reason, &params);
+    if let Err(error) = index_store.append_event(
+        LedgerEventKind::CodebaseIndexPermissionChecked,
+        permission_payload,
+    ) {
         return error_response(
             id,
             -32603,
-            &format!("internal error: failed to persist codebase index snapshot: {error}"),
+            &format!(
+                "internal error: failed to record codebase index permission decision: {error}"
+            ),
         );
     }
+    let event_payload = codebase_index_build_event_payload(&manifest, &mode_id, &params);
 
-    let event_payload = serde_json::json!({
+    let event = match index_store.commit_current_snapshot_with_lock(
+        &build_lock,
+        &manifest,
+        LedgerEventKind::CodebaseIndexSnapshotBuilt,
+        event_payload,
+    ) {
+        Ok(event) => event,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: failed to persist codebase index snapshot: {error}"),
+            )
+        }
+    };
+
+    result_response(
+        id,
+        json!(CodebaseIndexBuildResult {
+            snapshot: manifest.snapshot,
+            persisted: true,
+            ledger_event_id: event.event_id,
+            ledger_event_kind: format!("{:?}", event.kind),
+            next_action: CODEBASE_INDEX_NEXT_ACTION.to_string(),
+        }),
+    )
+}
+
+fn normalize_mode_id(mode_id: Option<&str>) -> Result<String, String> {
+    let Some(mode_id) = mode_id else {
+        return Err("invalid params: mode_id is required".to_string());
+    };
+    let trimmed = mode_id.trim();
+    if trimmed.is_empty() {
+        return Err("invalid params: mode_id must not be empty".to_string());
+    }
+    if trimmed.chars().count() > 80 {
+        return Err("invalid params: mode_id is too long".to_string());
+    }
+    if !trimmed
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        return Err("invalid params: mode_id contains unsupported characters".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn codebase_index_permission_payload(
+    mode_id: &str,
+    allowed: bool,
+    reason: &str,
+    params: &CodebaseIndexBuildParams,
+) -> Value {
+    json!({
+        "mode_id": mode_id,
+        "action": RuntimeActionName::IndexCodebase,
+        "allowed": allowed,
+        "reason": preview_with_limit(reason, 160),
+        "requested_root_present": params.root.as_ref().is_some_and(|root| !root.trim().is_empty()),
+        "requested_force_refresh": params.force_refresh.unwrap_or(false),
+    })
+}
+
+fn codebase_index_build_event_payload(
+    manifest: &CodebaseIndexSnapshotManifest,
+    mode_id: &str,
+    params: &CodebaseIndexBuildParams,
+) -> Value {
+    serde_json::json!({
         "index_id": manifest.snapshot.index_id.clone(),
+        "mode_id": mode_id,
         "root": manifest.snapshot.root.clone(),
         "workspace_fingerprint": manifest.snapshot.workspace_fingerprint.clone(),
         "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint.clone(),
@@ -3720,39 +3865,18 @@ fn handle_codebase_index_build(id: Value, params: Option<Value>) -> JsonRpcRespo
         "skipped_unsafe_path": manifest.snapshot.counts.skipped_unsafe_path,
         "skipped_other": manifest.snapshot.counts.skipped_other,
         "truncated_entries": manifest.snapshot.counts.truncated_entries,
+        "visited_entries": manifest.snapshot.counts.visited_entries,
+        "truncated_directories": manifest.snapshot.counts.truncated_directories,
         "truncated": manifest.snapshot.truncated,
         "max_files": manifest.snapshot.limits.max_files,
         "max_directories": manifest.snapshot.limits.max_directories,
         "max_path_chars": manifest.snapshot.limits.max_path_chars,
         "max_file_bytes": manifest.snapshot.limits.max_file_bytes,
-        "force_refresh": params.force_refresh.unwrap_or(false),
-        "next_action": "use_codebase_index_for_context_planning"
-    });
-
-    let event = match store
-        .codebase_index()
-        .append_event(LedgerEventKind::CodebaseIndexSnapshotBuilt, event_payload)
-    {
-        Ok(event) => event,
-        Err(error) => {
-            return error_response(
-                id,
-                -32603,
-                &format!("internal error: failed to append codebase index ledger event: {error}"),
-            )
-        }
-    };
-
-    result_response(
-        id,
-        json!(CodebaseIndexBuildResult {
-            snapshot: manifest.snapshot,
-            persisted: true,
-            ledger_event_id: event.event_id,
-            ledger_event_kind: format!("{:?}", event.kind),
-            next_action: "use_codebase_index_for_context_planning".to_string(),
-        }),
-    )
+        "max_visited_entries": manifest.snapshot.limits.max_visited_entries,
+        "max_directory_entries": manifest.snapshot.limits.max_directory_entries,
+        "requested_force_refresh": params.force_refresh.unwrap_or(false),
+        "next_action": CODEBASE_INDEX_NEXT_ACTION
+    })
 }
 
 fn codebase_index_manifest(
@@ -3777,12 +3901,16 @@ fn codebase_index_manifest(
                 skipped_unsafe_path: snapshot.counts.skipped_unsafe_path,
                 skipped_other: snapshot.counts.skipped_other,
                 truncated_entries: snapshot.counts.truncated_entries,
+                visited_entries: snapshot.counts.visited_entries,
+                truncated_directories: snapshot.counts.truncated_directories,
             },
             limits: CodebaseIndexLimitsSummary {
                 max_files: snapshot.limits.max_files,
                 max_directories: snapshot.limits.max_directories,
                 max_path_chars: snapshot.limits.max_path_chars,
                 max_file_bytes: snapshot.limits.max_file_bytes,
+                max_visited_entries: snapshot.limits.max_visited_entries,
+                max_directory_entries: snapshot.limits.max_directory_entries,
             },
             truncated: snapshot.truncated,
         },
@@ -14709,6 +14837,7 @@ fn mode_summary(policy: CompiledModePolicy) -> ModeSummary {
             service_control: policy.permissions.service_control,
             destructive: policy.permissions.destructive,
             can_spawn_subtasks: policy.permissions.can_spawn_subtasks,
+            codebase_index: policy.permissions.codebase_index,
         },
     }
 }
@@ -14727,6 +14856,7 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
             "service_control": policy.permissions.service_control,
             "destructive": policy.permissions.destructive,
             "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+            "codebase_index": policy.permissions.codebase_index,
         }
     })
 }
@@ -14790,6 +14920,10 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
             service_control: permissions.get("service_control")?.as_bool()?,
             destructive: permissions.get("destructive")?.as_bool()?,
             can_spawn_subtasks: permissions.get("can_spawn_subtasks")?.as_bool()?,
+            codebase_index: permissions
+                .get("codebase_index")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         },
         completion_rules,
     })
@@ -19222,6 +19356,7 @@ fn runtime_action_from_name(action: &RuntimeActionName) -> RuntimeAction {
         RuntimeActionName::ControlService => RuntimeAction::ControlService,
         RuntimeActionName::DestructiveOperation => RuntimeAction::DestructiveOperation,
         RuntimeActionName::SpawnSubtask => RuntimeAction::SpawnSubtask,
+        RuntimeActionName::IndexCodebase => RuntimeAction::IndexCodebase,
     }
 }
 
@@ -19234,6 +19369,7 @@ fn runtime_action_name(action: &RuntimeAction) -> RuntimeActionName {
         RuntimeAction::ControlService => RuntimeActionName::ControlService,
         RuntimeAction::DestructiveOperation => RuntimeActionName::DestructiveOperation,
         RuntimeAction::SpawnSubtask => RuntimeActionName::SpawnSubtask,
+        RuntimeAction::IndexCodebase => RuntimeActionName::IndexCodebase,
     }
 }
 
@@ -19384,19 +19520,32 @@ mod tests {
         .expect("dependency");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
-        let first =
-            parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{}}"#);
+        let first = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{"mode_id":"orchestrator"}}"#,
+        );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         let result = first.result.expect("index build result");
         assert_eq!(result["persisted"], true);
         assert_eq!(result["ledger_event_kind"], "CodebaseIndexSnapshotBuilt");
         assert_eq!(
             result["next_action"],
-            "use_codebase_index_for_context_planning"
+            "build_ignore_aware_sensitive_filtering"
         );
         assert_eq!(result["snapshot"]["root"], ".");
         assert_eq!(result["snapshot"]["counts"]["indexed_files"], 3);
         assert_eq!(result["snapshot"]["counts"]["skipped_protected"], 2);
+        assert!(
+            result["snapshot"]["counts"]["visited_entries"]
+                .as_u64()
+                .expect("visited entries")
+                > 0
+        );
+        assert!(
+            result["snapshot"]["limits"]["max_visited_entries"]
+                .as_u64()
+                .expect("max visited")
+                > 0
+        );
         assert!(result["snapshot"]["snapshot_fingerprint"]
             .as_str()
             .expect("snapshot fingerprint")
@@ -19420,8 +19569,20 @@ mod tests {
             .any(|entry| entry.path == "src/lib.rs" && entry.file_kind == "Rust"));
 
         let events = store.codebase_index().read_events().expect("index events");
-        assert_eq!(events.len(), 1);
-        let payload = &events[0].payload;
+        assert_eq!(events.len(), 2);
+        assert_eq!(
+            events[0].kind,
+            LedgerEventKind::CodebaseIndexPermissionChecked
+        );
+        assert_eq!(events[0].payload["action"], "IndexCodebase");
+        assert_eq!(events[0].payload["allowed"], true);
+        assert_eq!(events[1].kind, LedgerEventKind::CodebaseIndexSnapshotBuilt);
+        let payload = &events[1].payload;
+        assert_eq!(payload["requested_force_refresh"], false);
+        assert_eq!(
+            payload["next_action"],
+            "build_ignore_aware_sensitive_filtering"
+        );
         for forbidden in [
             "content",
             "file_content",
@@ -19440,8 +19601,9 @@ mod tests {
         }
 
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
-        let second =
-            parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{}}"#);
+        let second = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{"mode_id":"orchestrator"}}"#,
+        );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         let second_result = second.result.expect("second result");
         assert_eq!(
@@ -19455,8 +19617,9 @@ mod tests {
         )
         .expect("change src");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
-        let changed =
-            parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"codebase.index.build","params":{}}"#);
+        let changed = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"codebase.index.build","params":{"mode_id":"orchestrator"}}"#,
+        );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         let changed_result = changed.result.expect("changed result");
         assert_ne!(
@@ -19472,18 +19635,60 @@ mod tests {
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
         let unsafe_root = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{"root":"../outside"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{"mode_id":"orchestrator","root":"../outside"}}"#,
         );
         assert_eq!(unsafe_root.error.expect("unsafe error").code, -32602);
 
         let unknown_field = parse_line(
-            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{"root":".","raw_input":"nope"}}"#,
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{"mode_id":"orchestrator","root":".","raw_input":"nope"}}"#,
         );
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         assert_eq!(
             unknown_field.error.expect("unknown field error").code,
             -32602
         );
+    }
+
+    #[test]
+    fn codebase_index_build_requires_authorized_index_mode_before_scanning() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "# Index\n").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let missing_mode =
+            parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.build","params":{}}"#);
+        assert_eq!(missing_mode.error.expect("missing mode error").code, -32602);
+        assert!(BrownieStore::new(temp.path())
+            .codebase_index()
+            .read_current_snapshot()
+            .expect("read current")
+            .is_none());
+
+        let unknown_mode = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"codebase.index.build","params":{"mode_id":"unknown-mode"}}"#,
+        );
+        assert_eq!(unknown_mode.error.expect("unknown mode error").code, -32602);
+
+        let denied_mode = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"codebase.index.build","params":{"mode_id":"verifier"}}"#,
+        );
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert_eq!(denied_mode.error.expect("denied mode error").code, -32602);
+
+        let store = BrownieStore::new(temp.path());
+        assert!(store
+            .codebase_index()
+            .read_current_snapshot()
+            .expect("read current")
+            .is_none());
+        let events = store.codebase_index().read_events().expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::CodebaseIndexSnapshotBuilt));
+        assert!(events.iter().any(|event| event.kind
+            == LedgerEventKind::CodebaseIndexPermissionChecked
+            && event.payload["allowed"] == false));
     }
 
     fn write_cargo_check_fixture(workspace_root: &Path, package_name: &str, source: &str) {

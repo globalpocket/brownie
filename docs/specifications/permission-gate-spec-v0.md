@@ -13,6 +13,7 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `ControlService` — controlled by `service_control`.
 - `DestructiveOperation` — controlled by `destructive`.
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.
+- `IndexCodebase` — controlled by `codebase_index`.
 
 The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions.
 
@@ -25,6 +26,12 @@ The `read_only` field is informational for summaries. Individual capabilities ar
 `task.run` records `PermissionChecked` events for minimum Phase 1.4 checks: `ReadWorkspace`, `SpawnSubtask`, `WriteWorkspace`, and `ExecuteProcess`. Denied checks also append a `PermissionDenied` event with the same payload.
 
 Phase 1.4 does not execute real tools, apply file edits, execute processes, call real LLM APIs, fetch Mode Packs, parse AgentModes YAML, or implement Qdrant/llama-server/indexer wrappers.
+
+M9.2 adds `IndexCodebase` as the runtime action for `codebase.index.build`.
+The check is performed in Rust before scanning. The action allows bounded
+metadata-only index construction and does not imply workspace writes, process
+execution, network access, service control, destructive operations, query,
+retrieval, chunks, embeddings, or Qdrant writes.
 
 ## Phase 1.5 tool planning update
 

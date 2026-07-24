@@ -89,20 +89,26 @@ R3.3 makes failed `verification.cargo_check` recovery actionable without raw log
 ## Runtime Codebase Indexing Boundary
 
 M9.1 introduces `codebase.index.build`, the first runtime-owned codebase
-indexing execution path. The Rust runtime calls `brownie-indexer` to scan an
-optional workspace-relative root, reject unsafe roots, skip protected or
-generated directories, reject symlinks without following them, classify regular
-files, compute bounded metadata, persist a sorted snapshot manifest under
-`.brownie/codebase-index`, append a `CodebaseIndexSnapshotBuilt` ledger event,
-and return a compact snapshot handle and counts for headless callers.
+indexing execution path. M9.2 hardens that path before query exposure: the Rust
+runtime now requires `mode_id`, checks `RuntimeAction::IndexCodebase`, validates
+canonical root containment including intermediate symlink rejection, opens files
+through a bounded no-follow handle path where supported, enforces total
+visited-entry and per-directory entry limits, and commits snapshot/current/ledger
+state through a locked index store with temporary sibling files and a compact
+commit marker.
 
-The VSIX remains a protocol client and does not own indexing policy. M9.1 does
-not implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
-reranking, LLM calls, shell/git/network execution, service control, or
-workspace mutation. Snapshot manifests, ledger events, and RPC responses must
-not expose raw file content, snippets, diffs, absolute paths, canonical paths,
-raw prompts, provider responses, stdout/stderr, environment values, commands,
-or secrets.
+Successful builds append `CodebaseIndexSnapshotBuilt`; denied indexing modes may
+append bounded `CodebaseIndexPermissionChecked` evidence and never append a
+successful build event. `force_refresh` is recorded only as
+`requested_force_refresh` until cache reuse exists, and the next action is
+`build_ignore_aware_sensitive_filtering`.
+
+The VSIX remains a protocol client and does not own indexing policy. M9 does not
+yet implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
+reranking, LLM calls, shell/git/network execution, service control, or workspace
+mutation. Snapshot manifests, ledger events, and RPC responses must not expose
+raw file content, snippets, diffs, absolute paths, canonical paths, raw prompts,
+provider responses, stdout/stderr, environment values, commands, or secrets.
 
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 

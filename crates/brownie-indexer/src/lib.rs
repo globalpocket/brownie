@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::collections::VecDeque;
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
@@ -12,10 +13,14 @@ pub const DEFAULT_MAX_INDEXED_FILES: usize = 10_000;
 pub const DEFAULT_MAX_WALKED_DIRECTORIES: usize = 2_000;
 pub const DEFAULT_MAX_PATH_CHARS: usize = 512;
 pub const DEFAULT_MAX_FILE_BYTES: u64 = 1_048_576;
+pub const DEFAULT_MAX_VISITED_ENTRIES: usize = 100_000;
+pub const DEFAULT_MAX_DIRECTORY_ENTRIES: usize = 10_000;
 pub const HARD_MAX_INDEXED_FILES: usize = 20_000;
 pub const HARD_MAX_WALKED_DIRECTORIES: usize = 5_000;
 pub const HARD_MAX_PATH_CHARS: usize = 1_024;
 pub const HARD_MAX_FILE_BYTES: u64 = 2_097_152;
+pub const HARD_MAX_VISITED_ENTRIES: usize = 200_000;
+pub const HARD_MAX_DIRECTORY_ENTRIES: usize = 20_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexStage {
@@ -34,6 +39,8 @@ pub struct CodebaseIndexBuildOptions {
     pub max_directories: Option<usize>,
     pub max_path_chars: Option<usize>,
     pub max_file_bytes: Option<u64>,
+    pub max_visited_entries: Option<usize>,
+    pub max_directory_entries: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -60,6 +67,8 @@ pub struct CodebaseIndexCounts {
     pub skipped_unsafe_path: usize,
     pub skipped_other: usize,
     pub truncated_entries: usize,
+    pub visited_entries: usize,
+    pub truncated_directories: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -68,6 +77,8 @@ pub struct CodebaseIndexLimits {
     pub max_directories: usize,
     pub max_path_chars: usize,
     pub max_file_bytes: u64,
+    pub max_visited_entries: usize,
+    pub max_directory_entries: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -110,9 +121,21 @@ pub fn build_workspace_file_inventory(
     let workspace_root = workspace_root.as_ref();
     let limits = limits_from_options(&options);
     let root = resolve_safe_root(options.root.as_deref(), &limits)?;
-    let scan_root = workspace_root.join(root.as_path());
+    let canonical_workspace_root = workspace_root
+        .canonicalize()
+        .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
+    validate_requested_root_components(&canonical_workspace_root, &root)?;
+    let scan_root = canonical_workspace_root.join(root.as_path());
+    let canonical_scan_root = scan_root
+        .canonicalize()
+        .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
+    if !canonical_scan_root.starts_with(&canonical_workspace_root) {
+        return Err(CodebaseIndexError::UnsafeRoot(
+            "canonical root escapes workspace".to_string(),
+        ));
+    }
 
-    let root_metadata = fs::symlink_metadata(&scan_root)
+    let root_metadata = fs::symlink_metadata(&canonical_scan_root)
         .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
     if root_metadata.file_type().is_symlink() {
         return Err(CodebaseIndexError::UnsafeRoot(
@@ -127,10 +150,10 @@ pub fn build_workspace_file_inventory(
 
     let mut counts = CodebaseIndexCounts::default();
     let mut entries = Vec::new();
-    let mut queue = VecDeque::from([(scan_root, root.clone())]);
+    let mut queue = VecDeque::from([(canonical_scan_root, root.clone())]);
     let mut truncated = false;
 
-    while let Some((directory, relative_directory)) = queue.pop_front() {
+    'walk: while let Some((directory, relative_directory)) = queue.pop_front() {
         if counts.walked_directories >= limits.max_directories {
             truncated = true;
             counts.truncated_entries += 1;
@@ -138,15 +161,34 @@ pub fn build_workspace_file_inventory(
         }
         counts.walked_directories += 1;
 
-        let children = match sorted_directory_entries(&directory) {
-            Ok(children) => children,
-            Err(_) => {
-                counts.skipped_unreadable += 1;
-                continue;
-            }
-        };
+        let (children, directory_truncated) =
+            match sorted_directory_entries(&directory, limits.max_directory_entries) {
+                Ok(children) => children,
+                Err(_) => {
+                    counts.skipped_unreadable += 1;
+                    continue;
+                }
+            };
+        if directory_truncated {
+            truncated = true;
+            counts.truncated_directories += 1;
+            counts.truncated_entries += 1;
+        }
 
         for child in children {
+            if counts.visited_entries >= limits.max_visited_entries {
+                truncated = true;
+                counts.truncated_entries += 1;
+                break 'walk;
+            }
+            counts.visited_entries += 1;
+
+            let child_path = child.path();
+            if !child_path.starts_with(&canonical_workspace_root) {
+                counts.skipped_unsafe_path += 1;
+                continue;
+            }
+
             let name = child.file_name();
             let child_relative = relative_directory.join(&name);
             let Some(relative_path) = workspace_relative_path(&child_relative) else {
@@ -159,7 +201,7 @@ pub fn build_workspace_file_inventory(
                 continue;
             }
 
-            let metadata = match fs::symlink_metadata(child.path()) {
+            let metadata = match fs::symlink_metadata(&child_path) {
                 Ok(metadata) => metadata,
                 Err(_) => {
                     counts.skipped_unreadable += 1;
@@ -178,17 +220,12 @@ pub fn build_workspace_file_inventory(
                     counts.skipped_protected += 1;
                     continue;
                 }
-                queue.push_back((child.path(), child_relative));
+                queue.push_back((child_path, child_relative));
                 continue;
             }
 
             if !file_type.is_file() {
                 counts.skipped_other += 1;
-                continue;
-            }
-
-            if metadata.len() > limits.max_file_bytes {
-                counts.skipped_too_large += 1;
                 continue;
             }
 
@@ -198,13 +235,32 @@ pub fn build_workspace_file_inventory(
                 continue;
             }
 
-            let bytes = match fs::read(child.path()) {
-                Ok(bytes) => bytes,
-                Err(_) => {
+            let file_read = match read_regular_file_no_follow(&child_path, limits.max_file_bytes) {
+                Ok(read) => read,
+                Err(FileReadError::Symlink) => {
+                    counts.skipped_symlink += 1;
+                    continue;
+                }
+                Err(FileReadError::NotRegularFile) => {
+                    counts.skipped_other += 1;
+                    continue;
+                }
+                Err(FileReadError::TooLarge) => {
+                    counts.skipped_too_large += 1;
+                    continue;
+                }
+                Err(FileReadError::Unreadable) => {
+                    counts.skipped_unreadable += 1;
+                    continue;
+                }
+                #[cfg(not(unix))]
+                Err(FileReadError::UnsupportedNoFollow) => {
                     counts.skipped_unreadable += 1;
                     continue;
                 }
             };
+
+            let bytes = file_read.bytes;
 
             if bytes.contains(&0) {
                 counts.skipped_binary_like += 1;
@@ -218,7 +274,7 @@ pub fn build_workspace_file_inventory(
             entries.push(CodebaseIndexFileEntry {
                 file_kind: classify_file(&relative_path),
                 path: relative_path,
-                byte_length: metadata.len(),
+                byte_length: file_read.byte_length,
                 line_count,
                 content_sha256: Some(sha256_fingerprint(&bytes)),
             });
@@ -283,6 +339,18 @@ fn limits_from_options(options: &CodebaseIndexBuildOptions) -> CodebaseIndexLimi
             1,
             HARD_MAX_FILE_BYTES,
         ),
+        max_visited_entries: clamp_usize(
+            options.max_visited_entries,
+            DEFAULT_MAX_VISITED_ENTRIES,
+            1,
+            HARD_MAX_VISITED_ENTRIES,
+        ),
+        max_directory_entries: clamp_usize(
+            options.max_directory_entries,
+            DEFAULT_MAX_DIRECTORY_ENTRIES,
+            1,
+            HARD_MAX_DIRECTORY_ENTRIES,
+        ),
     }
 }
 
@@ -344,10 +412,114 @@ fn resolve_safe_root(
     Ok(normalized)
 }
 
-fn sorted_directory_entries(directory: &Path) -> std::io::Result<Vec<fs::DirEntry>> {
-    let mut entries = fs::read_dir(directory)?.collect::<Result<Vec<_>, _>>()?;
+fn validate_requested_root_components(
+    canonical_workspace_root: &Path,
+    root: &Path,
+) -> Result<(), CodebaseIndexError> {
+    let mut current = canonical_workspace_root.to_path_buf();
+    for component in root.components() {
+        let Component::Normal(part) = component else {
+            continue;
+        };
+        current.push(part);
+        let metadata = fs::symlink_metadata(&current)
+            .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
+        if metadata.file_type().is_symlink() {
+            return Err(CodebaseIndexError::UnsafeRoot(
+                "root path components must not be symlinks".to_string(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn sorted_directory_entries(
+    directory: &Path,
+    max_directory_entries: usize,
+) -> std::io::Result<(Vec<fs::DirEntry>, bool)> {
+    let mut entries = Vec::new();
+    let mut truncated = false;
+    for entry in fs::read_dir(directory)? {
+        if entries.len() >= max_directory_entries {
+            truncated = true;
+            break;
+        }
+        entries.push(entry?);
+    }
     entries.sort_by(|a, b| compare_os_names(&a.file_name(), &b.file_name()));
-    Ok(entries)
+    Ok((entries, truncated))
+}
+
+#[derive(Debug)]
+struct FileRead {
+    bytes: Vec<u8>,
+    byte_length: u64,
+}
+
+#[derive(Debug)]
+enum FileReadError {
+    Symlink,
+    NotRegularFile,
+    TooLarge,
+    Unreadable,
+    #[cfg(not(unix))]
+    UnsupportedNoFollow,
+}
+
+#[cfg(unix)]
+fn read_regular_file_no_follow(
+    path: &Path,
+    max_file_bytes: u64,
+) -> Result<FileRead, FileReadError> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|error| match error.raw_os_error() {
+            Some(code) if code == libc::ELOOP => FileReadError::Symlink,
+            _ => FileReadError::Unreadable,
+        })?;
+    read_bounded_regular_handle(file, max_file_bytes)
+}
+
+#[cfg(not(unix))]
+fn read_regular_file_no_follow(
+    _path: &Path,
+    _max_file_bytes: u64,
+) -> Result<FileRead, FileReadError> {
+    Err(FileReadError::UnsupportedNoFollow)
+}
+
+fn read_bounded_regular_handle(
+    mut file: File,
+    max_file_bytes: u64,
+) -> Result<FileRead, FileReadError> {
+    let metadata = file.metadata().map_err(|_| FileReadError::Unreadable)?;
+    if !metadata.is_file() {
+        return Err(FileReadError::NotRegularFile);
+    }
+    if metadata.len() > max_file_bytes {
+        return Err(FileReadError::TooLarge);
+    }
+
+    let max_read = max_file_bytes
+        .checked_add(1)
+        .ok_or(FileReadError::TooLarge)?;
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(max_read)
+        .read_to_end(&mut bytes)
+        .map_err(|_| FileReadError::Unreadable)?;
+    if bytes.len() as u64 > max_file_bytes {
+        return Err(FileReadError::TooLarge);
+    }
+
+    Ok(FileRead {
+        byte_length: bytes.len() as u64,
+        bytes,
+    })
 }
 
 fn compare_os_names(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> Ordering {
@@ -441,7 +613,7 @@ fn snapshot_fingerprint(
         ),
         format!("truncated={truncated}"),
         format!(
-            "counts={} {} {} {} {} {} {} {} {} {}",
+            "counts={} {} {} {} {} {} {} {} {} {} {} {}",
             counts.indexed_files,
             counts.walked_directories,
             counts.skipped_protected,
@@ -451,11 +623,18 @@ fn snapshot_fingerprint(
             counts.skipped_unreadable,
             counts.skipped_unsafe_path,
             counts.skipped_other,
-            counts.truncated_entries
+            counts.truncated_entries,
+            counts.visited_entries,
+            counts.truncated_directories
         ),
         format!(
-            "limits={} {} {} {}",
-            limits.max_files, limits.max_directories, limits.max_path_chars, limits.max_file_bytes
+            "limits={} {} {} {} {} {}",
+            limits.max_files,
+            limits.max_directories,
+            limits.max_path_chars,
+            limits.max_file_bytes,
+            limits.max_visited_entries,
+            limits.max_directory_entries
         ),
     ];
     for entry in entries {
@@ -613,6 +792,28 @@ mod tests {
         assert!(matches!(absolute, Err(CodebaseIndexError::UnsafeRoot(_))));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_requested_roots_with_intermediate_symlink_components() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir_all(outside.path().join("src")).expect("outside src");
+        write_file(outside.path(), "src/secret.rs", b"pub fn secret() {}\n");
+        symlink(outside.path(), temp.path().join("linked")).expect("root symlink");
+
+        let result = build_workspace_file_inventory(
+            temp.path(),
+            CodebaseIndexBuildOptions {
+                root: Some("linked/src".to_string()),
+                ..Default::default()
+            },
+        );
+
+        assert!(matches!(result, Err(CodebaseIndexError::UnsafeRoot(_))));
+    }
+
     #[test]
     fn repeated_builds_are_deterministic_and_changed_files_change_fingerprint() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -647,6 +848,65 @@ mod tests {
         assert_eq!(snapshot.entries.len(), 1);
         assert!(snapshot.truncated);
         assert_eq!(snapshot.counts.truncated_entries, 1);
+    }
+
+    #[test]
+    fn truncates_directory_and_total_visited_entries_with_bounded_evidence() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "a.txt", b"a");
+        write_file(temp.path(), "b.txt", b"b");
+        write_file(temp.path(), "c.txt", b"c");
+
+        let directory_truncated = build_workspace_file_inventory(
+            temp.path(),
+            CodebaseIndexBuildOptions {
+                max_directory_entries: Some(2),
+                ..Default::default()
+            },
+        )
+        .expect("directory truncated snapshot");
+
+        assert_eq!(directory_truncated.entries.len(), 2);
+        assert!(directory_truncated.truncated);
+        assert_eq!(directory_truncated.counts.truncated_directories, 1);
+        assert_eq!(directory_truncated.counts.visited_entries, 2);
+
+        let visited_truncated = build_workspace_file_inventory(
+            temp.path(),
+            CodebaseIndexBuildOptions {
+                max_visited_entries: Some(1),
+                max_directory_entries: Some(10),
+                ..Default::default()
+            },
+        )
+        .expect("visited truncated snapshot");
+
+        assert!(visited_truncated.truncated);
+        assert_eq!(visited_truncated.counts.visited_entries, 1);
+        assert!(visited_truncated.entries.len() <= 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_file_handle_rejects_symlinks_and_overflow() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "target.txt", b"secret");
+        symlink(
+            temp.path().join("target.txt"),
+            temp.path().join("linked.txt"),
+        )
+        .expect("file symlink");
+
+        assert!(matches!(
+            read_regular_file_no_follow(&temp.path().join("linked.txt"), 1024),
+            Err(FileReadError::Symlink)
+        ));
+        assert!(matches!(
+            read_regular_file_no_follow(&temp.path().join("target.txt"), 3),
+            Err(FileReadError::TooLarge)
+        ));
     }
 
     #[cfg(unix)]

@@ -23,6 +23,8 @@ pub struct ModePermissions {
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
+    #[serde(default)]
+    pub codebase_index: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +36,7 @@ pub enum RuntimeAction {
     ControlService,
     DestructiveOperation,
     SpawnSubtask,
+    IndexCodebase,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -55,6 +58,7 @@ impl RuntimePermissionGate {
             RuntimeAction::ControlService => policy.permissions.service_control,
             RuntimeAction::DestructiveOperation => policy.permissions.destructive,
             RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
+            RuntimeAction::IndexCodebase => policy.permissions.codebase_index,
         };
         let reason = permission_reason(policy, &action, allowed);
         PermissionDecision {
@@ -74,6 +78,7 @@ fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowe
         RuntimeAction::ControlService => "service control",
         RuntimeAction::DestructiveOperation => "destructive operations",
         RuntimeAction::SpawnSubtask => "subtask spawning",
+        RuntimeAction::IndexCodebase => "codebase indexing",
     };
     if allowed {
         format!("Mode {} allows {capability}.", policy.mode_id)
@@ -104,6 +109,7 @@ fn permissions(
     workspace_write: bool,
     process_exec: bool,
     can_spawn_subtasks: bool,
+    codebase_index: bool,
 ) -> ModePermissions {
     ModePermissions {
         read_only: !workspace_write,
@@ -113,6 +119,7 @@ fn permissions(
         service_control: false,
         destructive: false,
         can_spawn_subtasks,
+        codebase_index,
     }
 }
 
@@ -123,7 +130,7 @@ fn orchestrator() -> CompiledModePolicy {
         role_definition:
             "Coordinate task planning without direct workspace writes or process execution."
                 .to_string(),
-        permissions: permissions(false, false, true),
+        permissions: permissions(false, false, true, true),
         completion_rules: vec![
             "Stop after producing a coordination result for the current task phase.".to_string(),
         ],
@@ -135,7 +142,7 @@ fn implementer() -> CompiledModePolicy {
         mode_id: "implementer".to_string(),
         display_name: "Implementer".to_string(),
         role_definition: "Implement bounded workspace changes for an assigned task.".to_string(),
-        permissions: permissions(true, true, false),
+        permissions: permissions(true, true, false, true),
         completion_rules: vec![
             "Stop after the requested implementation work is complete or blocked.".to_string(),
         ],
@@ -149,7 +156,7 @@ fn verifier() -> CompiledModePolicy {
         role_definition:
             "Run checks and report verification results without modifying workspace files."
                 .to_string(),
-        permissions: permissions(false, true, false),
+        permissions: permissions(false, true, false, false),
         completion_rules: vec![
             "Stop after reporting verification status and relevant failures.".to_string(),
         ],
@@ -176,6 +183,7 @@ mod tests {
         assert!(!policy.permissions.workspace_write);
         assert!(!policy.permissions.process_exec);
         assert!(policy.permissions.can_spawn_subtasks);
+        assert!(policy.permissions.codebase_index);
     }
 
     #[test]
@@ -201,13 +209,16 @@ mod tests {
             !RuntimePermissionGate::check(&orchestrator, RuntimeAction::ExecuteProcess).allowed
         );
         assert!(RuntimePermissionGate::check(&orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert!(RuntimePermissionGate::check(&orchestrator, RuntimeAction::IndexCodebase).allowed);
 
         let implementer = BuiltinModeRegistry::get("implementer").expect("implementer");
         assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::ExecuteProcess).allowed);
+        assert!(RuntimePermissionGate::check(&implementer, RuntimeAction::IndexCodebase).allowed);
 
         let verifier = BuiltinModeRegistry::get("verifier").expect("verifier");
         assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&verifier, RuntimeAction::ExecuteProcess).allowed);
+        assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::IndexCodebase).allowed);
     }
 }

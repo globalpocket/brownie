@@ -41,6 +41,7 @@ const modeSummary = {
     service_control: false,
     destructive: false,
     can_spawn_subtasks: true,
+    codebase_index: true,
   },
 };
 
@@ -526,12 +527,16 @@ describe('protocol validation', () => {
         skipped_unsafe_path: 0,
         skipped_other: 0,
         truncated_entries: 0,
+        visited_entries: 2,
+        truncated_directories: 0,
       },
       limits: {
         max_files: 100,
         max_directories: 100,
         max_path_chars: 512,
         max_file_bytes: 1048576,
+        max_visited_entries: 1000,
+        max_directory_entries: 100,
       },
       truncated: false,
     };
@@ -547,7 +552,7 @@ describe('protocol validation', () => {
       persisted: true,
       ledger_event_id: 'event_1',
       ledger_event_kind: 'CodebaseIndexSnapshotBuilt',
-      next_action: 'use_codebase_index_for_context_planning',
+      next_action: 'build_ignore_aware_sensitive_filtering',
     };
     const manifest = { snapshot, entries: [entry] };
 
@@ -558,6 +563,8 @@ describe('protocol validation', () => {
     expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, path: '.brownie/current.json' }] })).toBe(false);
     expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, content: 'raw source' }] })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, absolute_path: '/tmp/repo' })).toBe(false);
+    expect(isCodebaseIndexBuildResult({ ...result, next_action: 'use_codebase_index_for_context_planning' })).toBe(false);
+    expect(isCodebaseIndexBuildResult({ ...result, snapshot: { ...snapshot, limits: { ...snapshot.limits, max_visited_entries: 200001 } } })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {

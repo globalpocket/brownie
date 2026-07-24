@@ -84,6 +84,7 @@ version = "0.1.0"
 name = "brownie-indexer"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "serde",
  "sha2",
  "tempfile",

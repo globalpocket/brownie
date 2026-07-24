@@ -168,6 +168,7 @@ mode_id: {mode_id}
 workspace_write: {}
 process_exec: {}
 can_spawn_subtasks: {}
+codebase_index: {}
 network_access: {}
 service_control: {}
 destructive: {}
@@ -175,6 +176,7 @@ read_only: {}",
         permission_bool("workspace_write"),
         permission_bool("process_exec"),
         permission_bool("can_spawn_subtasks"),
+        permission_bool("codebase_index"),
         permission_bool("network_access"),
         permission_bool("service_control"),
         permission_bool("destructive"),
@@ -1127,7 +1129,8 @@ mod tests {
                         "network_access": false,
                         "service_control": false,
                         "destructive": false,
-                        "can_spawn_subtasks": true
+                        "can_spawn_subtasks": true,
+                        "codebase_index": true
                     }
                 })),
             }],
@@ -1139,6 +1142,7 @@ mod tests {
         assert!(summary.contains("mode_id: orchestrator"));
         assert!(summary.contains("workspace_write: false"));
         assert!(summary.contains("can_spawn_subtasks: true"));
+        assert!(summary.contains("codebase_index: true"));
     }
 
     #[test]
