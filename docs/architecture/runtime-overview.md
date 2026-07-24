@@ -109,8 +109,20 @@ locks can be reclaimed without removing active locks.
 Successful builds append `CodebaseIndexSnapshotBuilt`; denied indexing modes may
 append bounded `CodebaseIndexPermissionChecked` evidence and never append a
 successful build event. `force_refresh` is recorded only as
-`requested_force_refresh` until cache reuse exists, and the next action is
-`build_ignore_aware_sensitive_filtering`.
+`requested_force_refresh` until cache reuse exists.
+
+M9.3 keeps the same `codebase.index.build` RPC but filters ignored and sensitive
+files before successful snapshot persistence. The indexer loads root
+`.gitignore`, `.brownieignore`, and `.rooignore` files through bounded no-follow
+reads, rejects symlinked or non-UTF-8 ignore policy files, skips ignored paths,
+skips common sensitive path names before file reads, and skips UTF-8 files whose
+content triggers the existing sensitive-content detector before hashing. Runtime
+outputs expose only bounded numeric evidence through `skipped_ignored`,
+`skipped_sensitive`, `ignore_rule_files_loaded`, `ignore_rule_count`, and
+`sensitive_finding_count`. Raw ignore patterns, matched secret values, file
+content, absolute paths, and canonical paths remain outside RPC responses,
+snapshot manifests, and ledger payloads. Successful builds now report
+`next_action = "build_bounded_index_query_file_selection"`.
 
 The VSIX remains a protocol client and does not own indexing policy. M9 does not
 yet implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,

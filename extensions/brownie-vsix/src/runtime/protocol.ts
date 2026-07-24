@@ -575,7 +575,7 @@ export interface CodebaseIndexBuildResult {
   persisted: boolean;
   ledger_event_id: string;
   ledger_event_kind: 'CodebaseIndexSnapshotBuilt';
-  next_action: 'build_ignore_aware_sensitive_filtering';
+  next_action: 'build_bounded_index_query_file_selection';
 }
 
 export interface CodebaseIndexSnapshotManifest {
@@ -598,6 +598,8 @@ export interface CodebaseIndexCountsSummary {
   indexed_files: number;
   walked_directories: number;
   skipped_protected: number;
+  skipped_ignored: number;
+  skipped_sensitive: number;
   skipped_symlink: number;
   skipped_too_large: number;
   skipped_binary_like: number;
@@ -607,6 +609,9 @@ export interface CodebaseIndexCountsSummary {
   truncated_entries: number;
   visited_entries: number;
   truncated_directories: number;
+  ignore_rule_files_loaded: number;
+  ignore_rule_count: number;
+  sensitive_finding_count: number;
 }
 
 export interface CodebaseIndexLimitsSummary {
@@ -3823,7 +3828,7 @@ export function isCodebaseIndexBuildResult(value: unknown): value is CodebaseInd
     value.persisted === true &&
     typeof value.ledger_event_id === 'string' &&
     value.ledger_event_kind === 'CodebaseIndexSnapshotBuilt' &&
-    value.next_action === 'build_ignore_aware_sensitive_filtering'
+    value.next_action === 'build_bounded_index_query_file_selection'
   );
 }
 
@@ -3865,6 +3870,8 @@ function isCodebaseIndexCountsSummary(value: unknown): value is CodebaseIndexCou
     isNonNegativeInteger(value.indexed_files) &&
     isNonNegativeInteger(value.walked_directories) &&
     isNonNegativeInteger(value.skipped_protected) &&
+    isNonNegativeInteger(value.skipped_ignored) &&
+    isNonNegativeInteger(value.skipped_sensitive) &&
     isNonNegativeInteger(value.skipped_symlink) &&
     isNonNegativeInteger(value.skipped_too_large) &&
     isNonNegativeInteger(value.skipped_binary_like) &&
@@ -3873,7 +3880,10 @@ function isCodebaseIndexCountsSummary(value: unknown): value is CodebaseIndexCou
     isNonNegativeInteger(value.skipped_other) &&
     isNonNegativeInteger(value.truncated_entries) &&
     isNonNegativeInteger(value.visited_entries) &&
-    isNonNegativeInteger(value.truncated_directories)
+    isNonNegativeInteger(value.truncated_directories) &&
+    isNonNegativeInteger(value.ignore_rule_files_loaded) &&
+    isNonNegativeInteger(value.ignore_rule_count) &&
+    isNonNegativeInteger(value.sensitive_finding_count)
   );
 }
 

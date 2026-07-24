@@ -440,6 +440,8 @@ pub struct CodebaseIndexCountsSummary {
     pub indexed_files: usize,
     pub walked_directories: usize,
     pub skipped_protected: usize,
+    pub skipped_ignored: usize,
+    pub skipped_sensitive: usize,
     pub skipped_symlink: usize,
     pub skipped_too_large: usize,
     pub skipped_binary_like: usize,
@@ -449,6 +451,9 @@ pub struct CodebaseIndexCountsSummary {
     pub truncated_entries: usize,
     pub visited_entries: usize,
     pub truncated_directories: usize,
+    pub ignore_rule_files_loaded: usize,
+    pub ignore_rule_count: usize,
+    pub sensitive_finding_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1,5 +1,7 @@
 //! Codebase indexing crate.
 
+use brownie_llm::{scan_prompt_for_sensitive_content, LlmMessage};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
@@ -22,6 +24,8 @@ pub const HARD_MAX_PATH_CHARS: usize = 1_024;
 pub const HARD_MAX_FILE_BYTES: u64 = 2_097_152;
 pub const HARD_MAX_VISITED_ENTRIES: usize = 200_000;
 pub const HARD_MAX_DIRECTORY_ENTRIES: usize = 20_000;
+pub const MAX_IGNORE_FILE_BYTES: u64 = 65_536;
+pub const MAX_IGNORE_RULES: usize = 4_096;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IndexStage {
@@ -61,6 +65,8 @@ pub struct CodebaseIndexCounts {
     pub indexed_files: usize,
     pub walked_directories: usize,
     pub skipped_protected: usize,
+    pub skipped_ignored: usize,
+    pub skipped_sensitive: usize,
     pub skipped_symlink: usize,
     pub skipped_too_large: usize,
     pub skipped_binary_like: usize,
@@ -70,6 +76,9 @@ pub struct CodebaseIndexCounts {
     pub truncated_entries: usize,
     pub visited_entries: usize,
     pub truncated_directories: usize,
+    pub ignore_rule_files_loaded: usize,
+    pub ignore_rule_count: usize,
+    pub sensitive_finding_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -115,6 +124,8 @@ pub enum CodebaseIndexError {
     WorkspaceRootUnreadable,
     #[error("unsupported platform: {0}")]
     UnsupportedPlatform(String),
+    #[error("ignore policy is unreadable: {0}")]
+    IgnorePolicyUnreadable(String),
 }
 
 pub fn build_workspace_file_inventory(
@@ -156,7 +167,13 @@ pub fn build_workspace_file_inventory(
         ));
     }
 
+    let workspace_root_handle =
+        open_validated_directory(&canonical_workspace_root, &canonical_workspace_root)
+            .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
+    let ignore_resolver = IgnoreResolver::load(&workspace_root_handle)?;
     let mut counts = CodebaseIndexCounts::default();
+    counts.ignore_rule_files_loaded = ignore_resolver.rule_files_loaded;
+    counts.ignore_rule_count = ignore_resolver.rule_count;
     let mut entries = Vec::new();
     let mut queue = VecDeque::from([(canonical_scan_root, root.clone())]);
     let mut truncated = false;
@@ -243,12 +260,26 @@ pub fn build_workspace_file_inventory(
                     counts.skipped_protected += 1;
                     continue;
                 }
+                if ignore_resolver.is_ignored(&relative_path, true) {
+                    counts.skipped_ignored += 1;
+                    continue;
+                }
                 queue.push_back((child_path, child_relative));
                 continue;
             }
 
             if child_kind != DirectoryChildKind::RegularFile {
                 counts.skipped_other += 1;
+                continue;
+            }
+
+            if is_ignore_policy_file(&name) || ignore_resolver.is_ignored(&relative_path, false) {
+                counts.skipped_ignored += 1;
+                continue;
+            }
+
+            if is_sensitive_path(&relative_path) {
+                counts.skipped_sensitive += 1;
                 continue;
             }
 
@@ -290,6 +321,18 @@ pub fn build_workspace_file_inventory(
             if bytes.contains(&0) {
                 counts.skipped_binary_like += 1;
                 continue;
+            }
+
+            if let Ok(text) = std::str::from_utf8(&bytes) {
+                let sensitive_scan = scan_prompt_for_sensitive_content(&[LlmMessage {
+                    role: "user".to_string(),
+                    content: text.to_string(),
+                }]);
+                if !sensitive_scan.findings.is_empty() {
+                    counts.skipped_sensitive += 1;
+                    counts.sensitive_finding_count += sensitive_scan.findings.len();
+                    continue;
+                }
             }
 
             let line_count = std::str::from_utf8(&bytes)
@@ -456,6 +499,114 @@ fn validate_requested_root_components(
         }
     }
     Ok(())
+}
+
+struct IgnoreResolver {
+    matcher: Gitignore,
+    rule_files_loaded: usize,
+    rule_count: usize,
+}
+
+impl IgnoreResolver {
+    fn load(workspace_root: &ValidatedDirectory) -> Result<Self, CodebaseIndexError> {
+        let mut builder = GitignoreBuilder::new("");
+        let mut rule_files_loaded = 0;
+        let mut rule_count = 0;
+
+        for file_name in [".gitignore", ".brownieignore", ".rooignore"] {
+            let Some(content) = read_optional_ignore_policy_file(workspace_root, file_name)? else {
+                continue;
+            };
+            rule_files_loaded += 1;
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                if rule_count >= MAX_IGNORE_RULES {
+                    return Err(CodebaseIndexError::IgnorePolicyUnreadable(
+                        "ignore rule count exceeds runtime limit".to_string(),
+                    ));
+                }
+                builder.add_line(None, line).map_err(|_| {
+                    CodebaseIndexError::IgnorePolicyUnreadable(
+                        "ignore rule could not be parsed".to_string(),
+                    )
+                })?;
+                rule_count += 1;
+            }
+        }
+
+        let matcher = builder.build().map_err(|_| {
+            CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy could not be built".to_string(),
+            )
+        })?;
+        Ok(Self {
+            matcher,
+            rule_files_loaded,
+            rule_count,
+        })
+    }
+
+    fn is_ignored(&self, relative_path: &str, is_dir: bool) -> bool {
+        self.matcher
+            .matched_path_or_any_parents(Path::new(relative_path), is_dir)
+            .is_ignore()
+    }
+}
+
+fn read_optional_ignore_policy_file(
+    workspace_root: &ValidatedDirectory,
+    file_name: &str,
+) -> Result<Option<String>, CodebaseIndexError> {
+    let name = OsStr::new(file_name);
+    let child_kind = match child_kind_no_follow(workspace_root, name) {
+        Ok(kind) => kind,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(_) => {
+            return Err(CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy metadata is unreadable".to_string(),
+            ))
+        }
+    };
+    match child_kind {
+        DirectoryChildKind::Symlink => {
+            return Err(CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy file must not be a symlink".to_string(),
+            ))
+        }
+        DirectoryChildKind::RegularFile => {}
+        DirectoryChildKind::Directory | DirectoryChildKind::Other => {
+            return Err(CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy path must be a regular file".to_string(),
+            ))
+        }
+    }
+
+    let read = read_regular_child_no_follow(workspace_root, name, MAX_IGNORE_FILE_BYTES).map_err(
+        |error| match error {
+            FileReadError::Symlink => CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy file must not be a symlink".to_string(),
+            ),
+            FileReadError::NotRegularFile => CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy path must be a regular file".to_string(),
+            ),
+            FileReadError::TooLarge => CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy file exceeds runtime byte limit".to_string(),
+            ),
+            FileReadError::Unreadable => CodebaseIndexError::IgnorePolicyUnreadable(
+                "ignore policy file is unreadable".to_string(),
+            ),
+            #[cfg(not(unix))]
+            FileReadError::UnsupportedNoFollow => CodebaseIndexError::IgnorePolicyUnreadable(
+                "safe ignore policy read is unsupported on this platform".to_string(),
+            ),
+        },
+    )?;
+    String::from_utf8(read.bytes).map(Some).map_err(|_| {
+        CodebaseIndexError::IgnorePolicyUnreadable("ignore policy file must be UTF-8".to_string())
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -881,6 +1032,36 @@ fn is_protected_or_generated_component(component: &std::ffi::OsStr) -> bool {
     )
 }
 
+fn is_ignore_policy_file(name: &std::ffi::OsStr) -> bool {
+    matches!(
+        name.to_string_lossy().as_ref(),
+        ".gitignore" | ".brownieignore" | ".rooignore"
+    )
+}
+
+fn is_sensitive_path(path: &str) -> bool {
+    path.split('/').any(|component| {
+        let lower = component.to_ascii_lowercase();
+        lower == ".env"
+            || lower.starts_with(".env.")
+            || lower == ".npmrc"
+            || lower == ".pypirc"
+            || lower == ".netrc"
+            || lower == "id_rsa"
+            || lower == "id_ed25519"
+            || lower == "credentials"
+            || lower == "credentials.json"
+            || lower == "token.json"
+            || lower == "tokens.json"
+            || lower == "service-account.json"
+            || (lower.starts_with("service-account") && lower.ends_with(".json"))
+            || lower.ends_with(".pem")
+            || lower.ends_with(".key")
+            || lower.ends_with(".p12")
+            || lower.ends_with(".pfx")
+    })
+}
+
 fn classify_file(path: &str) -> CodebaseIndexFileKind {
     let lower = path.to_ascii_lowercase();
     let file_name = lower.rsplit('/').next().unwrap_or(lower.as_str());
@@ -929,17 +1110,19 @@ fn snapshot_fingerprint(
     truncated: bool,
 ) -> String {
     let mut inputs = vec![
-        "codebase_index_snapshot_v1".to_string(),
+        "codebase_index_snapshot_v2".to_string(),
         format!(
             "root={}",
             workspace_relative_path(root).unwrap_or_else(|| ".".to_string())
         ),
         format!("truncated={truncated}"),
         format!(
-            "counts={} {} {} {} {} {} {} {} {} {} {} {}",
+            "counts={} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {} {}",
             counts.indexed_files,
             counts.walked_directories,
             counts.skipped_protected,
+            counts.skipped_ignored,
+            counts.skipped_sensitive,
             counts.skipped_symlink,
             counts.skipped_too_large,
             counts.skipped_binary_like,
@@ -948,7 +1131,10 @@ fn snapshot_fingerprint(
             counts.skipped_other,
             counts.truncated_entries,
             counts.visited_entries,
-            counts.truncated_directories
+            counts.truncated_directories,
+            counts.ignore_rule_files_loaded,
+            counts.ignore_rule_count,
+            counts.sensitive_finding_count
         ),
         format!(
             "limits={} {} {} {} {} {}",
@@ -1093,6 +1279,93 @@ mod tests {
             .entries
             .iter()
             .any(|entry| entry.path.contains(".git") || entry.path.contains("node_modules")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn honors_workspace_ignore_policy_files_without_indexing_patterns() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(
+            temp.path(),
+            ".gitignore",
+            b"ignored.log\nignored-dir/\n*.tmp\n",
+        );
+        write_file(temp.path(), ".brownieignore", b"local-only.txt\n");
+        write_file(temp.path(), ".rooignore", b"roo-secret.rs\n");
+        write_file(temp.path(), "kept.rs", b"pub fn kept() {}\n");
+        write_file(temp.path(), "nested/kept.txt", b"kept\n");
+        write_file(temp.path(), "ignored.log", b"ignore me\n");
+        write_file(temp.path(), "ignored-dir/file.rs", b"pub fn hidden() {}\n");
+        write_file(temp.path(), "nested/trace.tmp", b"temporary\n");
+        write_file(temp.path(), "local-only.txt", b"local\n");
+        write_file(temp.path(), "roo-secret.rs", b"pub fn secret() {}\n");
+
+        let snapshot =
+            build_workspace_file_inventory(temp.path(), Default::default()).expect("snapshot");
+        let paths = snapshot
+            .entries
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(paths, vec!["kept.rs", "nested/kept.txt"]);
+        assert_eq!(snapshot.counts.ignore_rule_files_loaded, 3);
+        assert_eq!(snapshot.counts.ignore_rule_count, 5);
+        assert_eq!(snapshot.counts.skipped_ignored, 8);
+        assert!(!snapshot.entries.iter().any(|entry| {
+            entry.path.contains("ignored")
+                || entry.path.contains("local-only")
+                || entry.path.contains("roo-secret")
+                || entry.path.ends_with(".tmp")
+                || entry.path.ends_with("ignore")
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn skips_sensitive_paths_and_sensitive_utf8_content_before_hashing() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "src/lib.rs", b"pub fn ok() {}\n");
+        write_file(temp.path(), ".env", b"TOKEN=secret\n");
+        write_file(temp.path(), "keys/id_rsa", b"private key\n");
+        write_file(temp.path(), "certs/client.pem", b"pem\n");
+        write_file(temp.path(), "config.txt", b"api_key: sk-indexer-test\n");
+
+        let snapshot =
+            build_workspace_file_inventory(temp.path(), Default::default()).expect("snapshot");
+
+        assert_eq!(snapshot.entries.len(), 1);
+        assert_eq!(snapshot.entries[0].path, "src/lib.rs");
+        assert_eq!(snapshot.counts.skipped_sensitive, 4);
+        assert!(snapshot.counts.sensitive_finding_count >= 1);
+        assert!(!snapshot.entries.iter().any(|entry| {
+            entry.path.ends_with(".env")
+                || entry.path.contains("id_rsa")
+                || entry.path.ends_with(".pem")
+                || entry.path == "config.txt"
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_ignore_policy_files() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        write_file(outside.path(), ".gitignore", b"*.rs\n");
+        symlink(
+            outside.path().join(".gitignore"),
+            temp.path().join(".gitignore"),
+        )
+        .expect("ignore symlink");
+
+        let result = build_workspace_file_inventory(temp.path(), Default::default());
+
+        assert!(matches!(
+            result,
+            Err(CodebaseIndexError::IgnorePolicyUnreadable(_))
+        ));
     }
 
     #[cfg(unix)]

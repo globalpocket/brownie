@@ -520,6 +520,8 @@ describe('protocol validation', () => {
         indexed_files: 1,
         walked_directories: 2,
         skipped_protected: 1,
+        skipped_ignored: 2,
+        skipped_sensitive: 1,
         skipped_symlink: 0,
         skipped_too_large: 0,
         skipped_binary_like: 0,
@@ -529,6 +531,9 @@ describe('protocol validation', () => {
         truncated_entries: 0,
         visited_entries: 2,
         truncated_directories: 0,
+        ignore_rule_files_loaded: 2,
+        ignore_rule_count: 3,
+        sensitive_finding_count: 1,
       },
       limits: {
         max_files: 100,
@@ -552,7 +557,7 @@ describe('protocol validation', () => {
       persisted: true,
       ledger_event_id: 'event_1',
       ledger_event_kind: 'CodebaseIndexSnapshotBuilt',
-      next_action: 'build_ignore_aware_sensitive_filtering',
+      next_action: 'build_bounded_index_query_file_selection',
     };
     const manifest = { snapshot, entries: [entry] };
 
@@ -563,6 +568,8 @@ describe('protocol validation', () => {
     expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, path: '.brownie/current.json' }] })).toBe(false);
     expect(isCodebaseIndexSnapshotManifest({ ...manifest, entries: [{ ...entry, content: 'raw source' }] })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, absolute_path: '/tmp/repo' })).toBe(false);
+    expect(isCodebaseIndexBuildResult({ ...result, snapshot: { ...snapshot, counts: { ...snapshot.counts, raw_ignore_patterns: ['*.pem'] } } })).toBe(false);
+    expect(isCodebaseIndexBuildResult({ ...result, next_action: 'build_ignore_aware_sensitive_filtering' })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, next_action: 'use_codebase_index_for_context_planning' })).toBe(false);
     expect(isCodebaseIndexBuildResult({ ...result, snapshot: { ...snapshot, limits: { ...snapshot.limits, max_visited_entries: 200001 } } })).toBe(false);
   });

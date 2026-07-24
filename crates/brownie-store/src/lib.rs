@@ -1416,6 +1416,8 @@ mod tests {
                     indexed_files: 1,
                     walked_directories: 1,
                     skipped_protected: 0,
+                    skipped_ignored: 0,
+                    skipped_sensitive: 0,
                     skipped_symlink: 0,
                     skipped_too_large: 0,
                     skipped_binary_like: 0,
@@ -1425,6 +1427,9 @@ mod tests {
                     truncated_entries: 0,
                     visited_entries: 1,
                     truncated_directories: 0,
+                    ignore_rule_files_loaded: 0,
+                    ignore_rule_count: 0,
+                    sensitive_finding_count: 0,
                 },
                 limits: brownie_protocol::CodebaseIndexLimitsSummary {
                     max_files: 10,
@@ -1465,7 +1470,7 @@ mod tests {
                     "snapshot_fingerprint": manifest.snapshot.snapshot_fingerprint,
                     "indexed_files": 1,
                     "truncated": false,
-                    "next_action": "build_ignore_aware_sensitive_filtering"
+                    "next_action": "build_bounded_index_query_file_selection"
                 }),
             )
             .expect("append event");
@@ -1588,6 +1593,8 @@ mod tests {
                     indexed_files: 1,
                     walked_directories: 1,
                     skipped_protected: 0,
+                    skipped_ignored: 0,
+                    skipped_sensitive: 0,
                     skipped_symlink: 0,
                     skipped_too_large: 0,
                     skipped_binary_like: 0,
@@ -1597,6 +1604,9 @@ mod tests {
                     truncated_entries: 0,
                     visited_entries: 1,
                     truncated_directories: 0,
+                    ignore_rule_files_loaded: 0,
+                    ignore_rule_count: 0,
+                    sensitive_finding_count: 0,
                 },
                 limits: brownie_protocol::CodebaseIndexLimitsSummary {
                     max_files: 10,
