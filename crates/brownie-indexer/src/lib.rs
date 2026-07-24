@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
-use std::collections::VecDeque;
+use std::collections::{BinaryHeap, VecDeque};
+use std::ffi::{OsStr, OsString};
 use std::fs::{self, File, OpenOptions};
-use std::io::Read;
+use std::io::{Error, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
@@ -112,6 +113,8 @@ pub enum CodebaseIndexError {
     UnsafeRoot(String),
     #[error("workspace root is unreadable")]
     WorkspaceRootUnreadable,
+    #[error("unsupported platform: {0}")]
+    UnsupportedPlatform(String),
 }
 
 pub fn build_workspace_file_inventory(
@@ -121,6 +124,11 @@ pub fn build_workspace_file_inventory(
     let workspace_root = workspace_root.as_ref();
     let limits = limits_from_options(&options);
     let root = resolve_safe_root(options.root.as_deref(), &limits)?;
+    if !platform_supports_no_follow_reads() {
+        return Err(CodebaseIndexError::UnsupportedPlatform(
+            "safe no-follow file reads are unavailable for codebase indexing".to_string(),
+        ));
+    }
     let canonical_workspace_root = workspace_root
         .canonicalize()
         .map_err(|_| CodebaseIndexError::WorkspaceRootUnreadable)?;
@@ -161,8 +169,29 @@ pub fn build_workspace_file_inventory(
         }
         counts.walked_directories += 1;
 
+        let directory_handle = match open_validated_directory(&canonical_workspace_root, &directory)
+        {
+            Ok(directory_handle) => directory_handle,
+            Err(QueuedDirectoryError::Unreadable) => {
+                counts.skipped_unreadable += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::Symlink) => {
+                counts.skipped_symlink += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::NotDirectory) => {
+                counts.skipped_other += 1;
+                continue;
+            }
+            Err(QueuedDirectoryError::UnsafePath) => {
+                counts.skipped_unsafe_path += 1;
+                continue;
+            }
+        };
+
         let (children, directory_truncated) =
-            match sorted_directory_entries(&directory, limits.max_directory_entries) {
+            match sorted_directory_entries(&directory_handle, limits.max_directory_entries) {
                 Ok(children) => children,
                 Err(_) => {
                     counts.skipped_unreadable += 1;
@@ -183,13 +212,8 @@ pub fn build_workspace_file_inventory(
             }
             counts.visited_entries += 1;
 
-            let child_path = child.path();
-            if !child_path.starts_with(&canonical_workspace_root) {
-                counts.skipped_unsafe_path += 1;
-                continue;
-            }
-
-            let name = child.file_name();
+            let name = child;
+            let child_path = directory.join(&name);
             let child_relative = relative_directory.join(&name);
             let Some(relative_path) = workspace_relative_path(&child_relative) else {
                 counts.skipped_unsafe_path += 1;
@@ -201,21 +225,20 @@ pub fn build_workspace_file_inventory(
                 continue;
             }
 
-            let metadata = match fs::symlink_metadata(&child_path) {
-                Ok(metadata) => metadata,
+            let child_kind = match child_kind_no_follow(&directory_handle, &name) {
+                Ok(kind) => kind,
                 Err(_) => {
                     counts.skipped_unreadable += 1;
                     continue;
                 }
             };
-            let file_type = metadata.file_type();
 
-            if file_type.is_symlink() {
+            if child_kind == DirectoryChildKind::Symlink {
                 counts.skipped_symlink += 1;
                 continue;
             }
 
-            if file_type.is_dir() {
+            if child_kind == DirectoryChildKind::Directory {
                 if is_protected_or_generated_component(&name) {
                     counts.skipped_protected += 1;
                     continue;
@@ -224,7 +247,7 @@ pub fn build_workspace_file_inventory(
                 continue;
             }
 
-            if !file_type.is_file() {
+            if child_kind != DirectoryChildKind::RegularFile {
                 counts.skipped_other += 1;
                 continue;
             }
@@ -235,30 +258,32 @@ pub fn build_workspace_file_inventory(
                 continue;
             }
 
-            let file_read = match read_regular_file_no_follow(&child_path, limits.max_file_bytes) {
-                Ok(read) => read,
-                Err(FileReadError::Symlink) => {
-                    counts.skipped_symlink += 1;
-                    continue;
-                }
-                Err(FileReadError::NotRegularFile) => {
-                    counts.skipped_other += 1;
-                    continue;
-                }
-                Err(FileReadError::TooLarge) => {
-                    counts.skipped_too_large += 1;
-                    continue;
-                }
-                Err(FileReadError::Unreadable) => {
-                    counts.skipped_unreadable += 1;
-                    continue;
-                }
-                #[cfg(not(unix))]
-                Err(FileReadError::UnsupportedNoFollow) => {
-                    counts.skipped_unreadable += 1;
-                    continue;
-                }
-            };
+            let file_read =
+                match read_regular_child_no_follow(&directory_handle, &name, limits.max_file_bytes)
+                {
+                    Ok(read) => read,
+                    Err(FileReadError::Symlink) => {
+                        counts.skipped_symlink += 1;
+                        continue;
+                    }
+                    Err(FileReadError::NotRegularFile) => {
+                        counts.skipped_other += 1;
+                        continue;
+                    }
+                    Err(FileReadError::TooLarge) => {
+                        counts.skipped_too_large += 1;
+                        continue;
+                    }
+                    Err(FileReadError::Unreadable) => {
+                        counts.skipped_unreadable += 1;
+                        continue;
+                    }
+                    #[cfg(not(unix))]
+                    Err(FileReadError::UnsupportedNoFollow) => {
+                        counts.skipped_unreadable += 1;
+                        continue;
+                    }
+                };
 
             let bytes = file_read.bytes;
 
@@ -433,21 +458,264 @@ fn validate_requested_root_components(
     Ok(())
 }
 
-fn sorted_directory_entries(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum QueuedDirectoryError {
+    Unreadable,
+    Symlink,
+    NotDirectory,
+    UnsafePath,
+}
+
+#[cfg(unix)]
+struct ValidatedDirectory {
+    file: File,
+}
+
+#[cfg(not(unix))]
+struct ValidatedDirectory;
+
+#[cfg(unix)]
+fn open_validated_directory(
+    canonical_workspace_root: &Path,
     directory: &Path,
+) -> Result<ValidatedDirectory, QueuedDirectoryError> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+    let metadata = fs::symlink_metadata(directory).map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if metadata.file_type().is_symlink() {
+        return Err(QueuedDirectoryError::Symlink);
+    }
+    if !metadata.is_dir() {
+        return Err(QueuedDirectoryError::NotDirectory);
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(directory)
+        .map_err(directory_open_error)?;
+    let handle_metadata = file
+        .metadata()
+        .map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if !handle_metadata.is_dir() {
+        return Err(QueuedDirectoryError::NotDirectory);
+    }
+    let canonical_directory = directory
+        .canonicalize()
+        .map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if !canonical_directory.starts_with(canonical_workspace_root) {
+        return Err(QueuedDirectoryError::UnsafePath);
+    }
+    let canonical_metadata =
+        fs::symlink_metadata(&canonical_directory).map_err(|_| QueuedDirectoryError::Unreadable)?;
+    if canonical_metadata.dev() != handle_metadata.dev()
+        || canonical_metadata.ino() != handle_metadata.ino()
+    {
+        return Err(QueuedDirectoryError::UnsafePath);
+    }
+    Ok(ValidatedDirectory { file })
+}
+
+#[cfg(not(unix))]
+fn open_validated_directory(
+    _canonical_workspace_root: &Path,
+    _directory: &Path,
+) -> Result<ValidatedDirectory, QueuedDirectoryError> {
+    Err(QueuedDirectoryError::Unreadable)
+}
+
+#[cfg(unix)]
+fn directory_open_error(error: std::io::Error) -> QueuedDirectoryError {
+    match error.raw_os_error() {
+        Some(code) if code == libc::ELOOP => QueuedDirectoryError::Symlink,
+        Some(code) if code == libc::ENOTDIR => QueuedDirectoryError::NotDirectory,
+        _ => QueuedDirectoryError::Unreadable,
+    }
+}
+
+fn sorted_directory_entries(
+    directory: &ValidatedDirectory,
     max_directory_entries: usize,
-) -> std::io::Result<(Vec<fs::DirEntry>, bool)> {
-    let mut entries = Vec::new();
+) -> std::io::Result<(Vec<OsString>, bool)> {
+    let mut entries = BinaryHeap::new();
     let mut truncated = false;
-    for entry in fs::read_dir(directory)? {
-        if entries.len() >= max_directory_entries {
-            truncated = true;
+    for name in read_directory_entry_names(directory)? {
+        let candidate = DirectoryEntryCandidate { name };
+        if entries.len() < max_directory_entries {
+            entries.push(candidate);
+            continue;
+        }
+
+        truncated = true;
+        let should_keep = entries
+            .peek()
+            .is_some_and(|largest| compare_os_names(&candidate.name, &largest.name).is_lt());
+        if should_keep {
+            entries.pop();
+            entries.push(candidate);
+        }
+    }
+    let mut entries = entries
+        .into_iter()
+        .map(|candidate| candidate.name)
+        .collect::<Vec<_>>();
+    entries.sort_by(|a, b| compare_os_names(a, b));
+    Ok((entries, truncated))
+}
+
+struct DirectoryEntryCandidate {
+    name: OsString,
+}
+
+impl PartialEq for DirectoryEntryCandidate {
+    fn eq(&self, other: &Self) -> bool {
+        compare_os_names(&self.name, &other.name).is_eq()
+    }
+}
+
+impl Eq for DirectoryEntryCandidate {}
+
+impl PartialOrd for DirectoryEntryCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for DirectoryEntryCandidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        compare_os_names(&self.name, &other.name)
+    }
+}
+
+#[cfg(unix)]
+fn read_directory_entry_names(directory: &ValidatedDirectory) -> std::io::Result<Vec<OsString>> {
+    use std::ffi::CStr;
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStringExt;
+
+    let dup_fd = unsafe { libc::dup(directory.file.as_raw_fd()) };
+    if dup_fd < 0 {
+        return Err(Error::last_os_error());
+    }
+    let dir = unsafe { libc::fdopendir(dup_fd) };
+    if dir.is_null() {
+        let error = Error::last_os_error();
+        unsafe {
+            libc::close(dup_fd);
+        }
+        return Err(error);
+    }
+
+    struct DirectoryStream(*mut libc::DIR);
+    impl Drop for DirectoryStream {
+        fn drop(&mut self) {
+            unsafe {
+                libc::closedir(self.0);
+            }
+        }
+    }
+
+    let _stream = DirectoryStream(dir);
+    let mut names = Vec::new();
+    loop {
+        let entry = unsafe { libc::readdir(dir) };
+        if entry.is_null() {
             break;
         }
-        entries.push(entry?);
+        let name = unsafe { CStr::from_ptr((*entry).d_name.as_ptr()) };
+        let bytes = name.to_bytes();
+        if bytes == b"." || bytes == b".." {
+            continue;
+        }
+        names.push(OsString::from_vec(bytes.to_vec()));
     }
-    entries.sort_by(|a, b| compare_os_names(&a.file_name(), &b.file_name()));
-    Ok((entries, truncated))
+    Ok(names)
+}
+
+#[cfg(not(unix))]
+fn read_directory_entry_names(_directory: &ValidatedDirectory) -> std::io::Result<Vec<OsString>> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "directory descriptor reads are unsupported on this platform",
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectoryChildKind {
+    Symlink,
+    Directory,
+    RegularFile,
+    Other,
+}
+
+#[cfg(unix)]
+fn child_kind_no_follow(
+    directory: &ValidatedDirectory,
+    name: &OsStr,
+) -> std::io::Result<DirectoryChildKind> {
+    use std::mem::MaybeUninit;
+    use std::os::fd::AsRawFd;
+
+    let name = c_name_from_os_str(name)?;
+    let mut stat = MaybeUninit::<libc::stat>::uninit();
+    let result = unsafe {
+        libc::fstatat(
+            directory.file.as_raw_fd(),
+            name.as_ptr(),
+            stat.as_mut_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+        )
+    };
+    if result != 0 {
+        return Err(Error::last_os_error());
+    }
+    let mode = unsafe { stat.assume_init().st_mode };
+    Ok(match mode & libc::S_IFMT {
+        libc::S_IFLNK => DirectoryChildKind::Symlink,
+        libc::S_IFDIR => DirectoryChildKind::Directory,
+        libc::S_IFREG => DirectoryChildKind::RegularFile,
+        _ => DirectoryChildKind::Other,
+    })
+}
+
+#[cfg(not(unix))]
+fn child_kind_no_follow(
+    _directory: &ValidatedDirectory,
+    _name: &OsStr,
+) -> std::io::Result<DirectoryChildKind> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "no-follow child metadata is unsupported on this platform",
+    ))
+}
+
+fn platform_supports_no_follow_reads() -> bool {
+    cfg!(unix)
+}
+
+#[cfg(test)]
+fn sorted_directory_names(
+    directory: &Path,
+    max_directory_entries: usize,
+) -> std::io::Result<(Vec<String>, bool)> {
+    let canonical_workspace_root = directory.canonicalize()?;
+    let directory = open_validated_directory(&canonical_workspace_root, directory)
+        .map_err(|error| Error::other(format!("directory validation failed: {error:?}")))?;
+    let (entries, truncated) = sorted_directory_entries(&directory, max_directory_entries)?;
+    Ok((
+        entries
+            .into_iter()
+            .map(|name| name.to_string_lossy().to_string())
+            .collect(),
+        truncated,
+    ))
+}
+
+#[cfg(test)]
+fn directory_revalidation_result(
+    canonical_workspace_root: &Path,
+    directory: &Path,
+) -> Result<(), QueuedDirectoryError> {
+    open_validated_directory(canonical_workspace_root, directory).map(|_| ())
 }
 
 #[derive(Debug)]
@@ -467,6 +735,41 @@ enum FileReadError {
 }
 
 #[cfg(unix)]
+fn read_regular_child_no_follow(
+    directory: &ValidatedDirectory,
+    name: &OsStr,
+    max_file_bytes: u64,
+) -> Result<FileRead, FileReadError> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+
+    let name = c_name_from_os_str(name).map_err(|_| FileReadError::Unreadable)?;
+    let fd = unsafe {
+        libc::openat(
+            directory.file.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_RDONLY | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(match Error::last_os_error().raw_os_error() {
+            Some(code) if code == libc::ELOOP => FileReadError::Symlink,
+            _ => FileReadError::Unreadable,
+        });
+    }
+    let file = unsafe { File::from_raw_fd(fd) };
+    read_bounded_regular_handle(file, max_file_bytes)
+}
+
+#[cfg(not(unix))]
+fn read_regular_child_no_follow(
+    _directory: &ValidatedDirectory,
+    _name: &OsStr,
+    _max_file_bytes: u64,
+) -> Result<FileRead, FileReadError> {
+    Err(FileReadError::UnsupportedNoFollow)
+}
+
+#[cfg(all(test, unix))]
 fn read_regular_file_no_follow(
     path: &Path,
     max_file_bytes: u64,
@@ -482,14 +785,6 @@ fn read_regular_file_no_follow(
             _ => FileReadError::Unreadable,
         })?;
     read_bounded_regular_handle(file, max_file_bytes)
-}
-
-#[cfg(not(unix))]
-fn read_regular_file_no_follow(
-    _path: &Path,
-    _max_file_bytes: u64,
-) -> Result<FileRead, FileReadError> {
-    Err(FileReadError::UnsupportedNoFollow)
 }
 
 fn read_bounded_regular_handle(
@@ -523,7 +818,35 @@ fn read_bounded_regular_handle(
 }
 
 fn compare_os_names(a: &std::ffi::OsStr, b: &std::ffi::OsStr) -> Ordering {
-    a.to_string_lossy().cmp(&b.to_string_lossy())
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        return a.as_bytes().cmp(b.as_bytes());
+    }
+    #[cfg(not(unix))]
+    {
+        return a.to_string_lossy().cmp(&b.to_string_lossy());
+    }
+}
+
+#[cfg(unix)]
+fn c_name_from_os_str(name: &OsStr) -> std::io::Result<std::ffi::CString> {
+    use std::os::unix::ffi::OsStrExt;
+
+    std::ffi::CString::new(name.as_bytes()).map_err(|_| {
+        Error::new(
+            ErrorKind::InvalidInput,
+            "directory entry name contains an interior NUL",
+        )
+    })
+}
+
+#[cfg(not(unix))]
+fn c_name_from_os_str(_name: &OsStr) -> std::io::Result<std::ffi::CString> {
+    Err(Error::new(
+        ErrorKind::Unsupported,
+        "C string conversion is unsupported on this platform",
+    ))
 }
 
 fn workspace_relative_path(path: &Path) -> Option<String> {
@@ -681,6 +1004,7 @@ mod tests {
             .expect("entry")
     }
 
+    #[cfg(unix)]
     #[test]
     fn builds_sorted_metadata_only_file_inventory() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -739,6 +1063,7 @@ mod tests {
         assert!(snapshot.workspace_fingerprint.starts_with("sha256:"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn skips_protected_directories_and_oversized_or_binary_files() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -770,6 +1095,7 @@ mod tests {
             .any(|entry| entry.path.contains(".git") || entry.path.contains("node_modules")));
     }
 
+    #[cfg(unix)]
     #[test]
     fn rejects_absolute_and_parent_traversal_roots() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -814,6 +1140,7 @@ mod tests {
         assert!(matches!(result, Err(CodebaseIndexError::UnsafeRoot(_))));
     }
 
+    #[cfg(unix)]
     #[test]
     fn repeated_builds_are_deterministic_and_changed_files_change_fingerprint() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -830,6 +1157,7 @@ mod tests {
         assert_ne!(first.snapshot_fingerprint, changed.snapshot_fingerprint);
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncates_when_file_limit_is_reached() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -850,6 +1178,7 @@ mod tests {
         assert_eq!(snapshot.counts.truncated_entries, 1);
     }
 
+    #[cfg(unix)]
     #[test]
     fn truncates_directory_and_total_visited_entries_with_bounded_evidence() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -884,6 +1213,99 @@ mod tests {
         assert!(visited_truncated.truncated);
         assert_eq!(visited_truncated.counts.visited_entries, 1);
         assert!(visited_truncated.entries.len() <= 1);
+    }
+
+    #[test]
+    fn directory_limit_selects_lexicographically_smallest_entries() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "z.txt", b"z");
+        write_file(temp.path(), "m.txt", b"m");
+        write_file(temp.path(), "a.txt", b"a");
+        write_file(temp.path(), "b.txt", b"b");
+
+        let (names, truncated) = sorted_directory_names(temp.path(), 2).expect("directory names");
+
+        assert!(truncated);
+        assert_eq!(names, vec!["a.txt", "b.txt"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bounded_directory_order_uses_original_unix_bytes_for_lossy_equivalent_names() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let low = OsString::from_vec(vec![b'n', b'a', 0x80]);
+        let high = OsString::from_vec(vec![b'n', b'a', 0x81]);
+        assert_eq!(low.to_string_lossy(), high.to_string_lossy());
+
+        let mut entries = BinaryHeap::new();
+        entries.push(DirectoryEntryCandidate { name: high });
+        let candidate = DirectoryEntryCandidate { name: low.clone() };
+        if entries
+            .peek()
+            .is_some_and(|largest| compare_os_names(&candidate.name, &largest.name).is_lt())
+        {
+            entries.pop();
+            entries.push(candidate);
+        }
+
+        let selected = entries.pop().expect("selected").name;
+        assert_eq!(selected.into_vec(), low.into_vec());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_directory_revalidation_rejects_symlink_replacements() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        let queued = temp.path().join("queued");
+        fs::create_dir(&queued).expect("queued dir");
+        fs::remove_dir(&queued).expect("remove queued dir");
+        symlink(outside.path(), &queued).expect("replace queued dir with symlink");
+        let canonical_workspace_root = temp.path().canonicalize().expect("canonical root");
+
+        assert_eq!(
+            directory_revalidation_result(&canonical_workspace_root, &queued),
+            Err(QueuedDirectoryError::Symlink)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn queued_directory_revalidation_rejects_parent_symlink_escape() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let outside = tempfile::tempdir().expect("outside");
+        fs::create_dir(temp.path().join("parent")).expect("parent");
+        fs::create_dir(temp.path().join("parent/child")).expect("child");
+        fs::create_dir(outside.path().join("child")).expect("outside child");
+        let queued = temp.path().join("parent/child");
+        fs::remove_dir(temp.path().join("parent/child")).expect("remove child");
+        fs::remove_dir(temp.path().join("parent")).expect("remove parent");
+        symlink(outside.path(), temp.path().join("parent")).expect("replace parent");
+        let canonical_workspace_root = temp.path().canonicalize().expect("canonical root");
+
+        assert_eq!(
+            directory_revalidation_result(&canonical_workspace_root, &queued),
+            Err(QueuedDirectoryError::UnsafePath)
+        );
+    }
+
+    #[cfg(not(unix))]
+    #[test]
+    fn unsupported_platform_fails_closed_before_snapshot() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_file(temp.path(), "src/lib.rs", b"pub fn ok() {}\n");
+
+        let result = build_workspace_file_inventory(temp.path(), Default::default());
+
+        assert!(matches!(
+            result,
+            Err(CodebaseIndexError::UnsupportedPlatform(_))
+        ));
     }
 
     #[cfg(unix)]

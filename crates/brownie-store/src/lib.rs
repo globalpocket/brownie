@@ -1,8 +1,8 @@
 //! Brownie persistence crate.
 
 use std::fs::{self, OpenOptions};
-use std::io::{BufRead, BufReader, ErrorKind, Write};
-use std::path::PathBuf;
+use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
@@ -21,6 +21,7 @@ pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
+const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
 
 #[derive(Debug, Clone)]
 pub struct BrownieStore {
@@ -212,22 +213,110 @@ impl CodebaseIndexStore {
         fs::create_dir_all(&root)
             .with_context(|| format!("failed to create {}", root.display()))?;
         let lock_path = root.join("build.lock");
-        let mut file = OpenOptions::new()
+        for attempt in 0..2 {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    let nonce = Uuid::new_v4();
+                    writeln!(file, "pid={}", std::process::id())
+                        .context("failed to write index build lock")?;
+                    writeln!(file, "created_at={}", timestamp()?)
+                        .context("failed to write index build lock")?;
+                    writeln!(file, "nonce={nonce}").context("failed to write index build lock")?;
+                    writeln!(file, "lock_file=build.lock")
+                        .context("failed to write index build lock")?;
+                    file.sync_all().context("failed to sync index build lock")?;
+                    sync_dir(&root);
+                    return Ok(CodebaseIndexBuildLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists && attempt == 0 => {
+                    if self.reclaim_stale_build_lock(&lock_path)? {
+                        continue;
+                    }
+                    bail!("codebase index build lock is held");
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    bail!("codebase index build lock is held");
+                }
+                Err(error) => return Err(error).context("failed to create codebase index lock"),
+            }
+        }
+        bail!("codebase index build lock is held")
+    }
+
+    #[cfg(unix)]
+    fn reclaim_stale_build_lock(&self, lock_path: &Path) -> Result<bool> {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+
+        let mut file = match OpenOptions::new()
+            .read(true)
             .write(true)
-            .create_new(true)
-            .open(&lock_path)
-            .with_context(|| {
-                format!(
-                    "codebase index build lock is held at {}",
-                    lock_path.display()
-                )
-            })?;
-        writeln!(file, "pid={}", std::process::id()).context("failed to write index build lock")?;
-        writeln!(file, "created_at={}", timestamp()?)
-            .context("failed to write index build lock")?;
-        file.sync_all().context("failed to sync index build lock")?;
-        sync_dir(&root);
-        Ok(CodebaseIndexBuildLock { path: lock_path })
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(lock_path)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) if error.raw_os_error() == Some(libc::ELOOP) => return Ok(false),
+            Err(error) => return Err(error).context("failed to inspect codebase index lock"),
+        };
+        let lock_result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+        if lock_result != 0 {
+            let error = std::io::Error::last_os_error();
+            if matches!(
+                error.raw_os_error(),
+                Some(code) if code == libc::EWOULDBLOCK || code == libc::EAGAIN
+            ) {
+                return Ok(false);
+            }
+            return Err(error).context("failed to claim stale codebase index lock");
+        }
+        let _claim = FlockGuard {
+            fd: file.as_raw_fd(),
+        };
+
+        let lock_metadata = file
+            .metadata()
+            .context("failed to inspect claimed codebase index lock")?;
+        if !lock_metadata.is_file() {
+            return Ok(false);
+        }
+        let mut before = String::new();
+        file.read_to_string(&mut before)
+            .context("failed to read claimed codebase index lock")?;
+        let owner = BuildLockOwner::parse(&before);
+        if !owner.is_reclaimable_stale() {
+            return Ok(false);
+        }
+
+        let path_metadata = match fs::symlink_metadata(lock_path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error).context("failed to reinspect codebase index lock"),
+        };
+        if path_metadata.dev() != lock_metadata.dev() || path_metadata.ino() != lock_metadata.ino()
+        {
+            return Ok(false);
+        }
+        fs::remove_file(lock_path).context("failed to reclaim stale codebase index lock")?;
+        if let Some(parent) = lock_path.parent() {
+            sync_dir(parent);
+        }
+        Ok(true)
+    }
+
+    #[cfg(not(unix))]
+    fn reclaim_stale_build_lock(&self, lock_path: &Path) -> Result<bool> {
+        let before = match fs::read_to_string(lock_path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error).context("failed to inspect codebase index lock"),
+        };
+        let owner = BuildLockOwner::parse(&before);
+        Ok(owner.is_reclaimable_stale())
     }
 
     fn cleanup_temporary_files(&self) -> Result<()> {
@@ -286,6 +375,86 @@ impl Drop for CodebaseIndexBuildLock {
             sync_dir(parent);
         }
     }
+}
+
+#[cfg(unix)]
+struct FlockGuard {
+    fd: std::os::fd::RawFd,
+}
+
+#[cfg(unix)]
+impl Drop for FlockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            libc::flock(self.fd, libc::LOCK_UN);
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct BuildLockOwner {
+    pid: Option<u32>,
+    created_at: Option<OffsetDateTime>,
+    nonce: Option<String>,
+    lock_file: Option<String>,
+}
+
+impl BuildLockOwner {
+    fn parse(content: &str) -> Self {
+        let mut owner = Self::default();
+        for line in content.lines() {
+            let Some((key, value)) = line.split_once('=') else {
+                continue;
+            };
+            match key {
+                "pid" => owner.pid = value.parse::<u32>().ok(),
+                "created_at" => owner.created_at = OffsetDateTime::parse(value, &Rfc3339).ok(),
+                "nonce" => {
+                    if !value.trim().is_empty() {
+                        owner.nonce = Some(value.trim().to_string());
+                    }
+                }
+                "lock_file" => {
+                    if !value.trim().is_empty() {
+                        owner.lock_file = Some(value.trim().to_string());
+                    }
+                }
+                _ => {}
+            }
+        }
+        owner
+    }
+
+    fn is_reclaimable_stale(&self) -> bool {
+        let Some(pid) = self.pid else {
+            return false;
+        };
+        let Some(created_at) = self.created_at else {
+            return false;
+        };
+        let Some(nonce) = self.nonce.as_deref() else {
+            return false;
+        };
+        if nonce.len() < 16 || self.lock_file.as_deref() != Some("build.lock") {
+            return false;
+        }
+        let age = OffsetDateTime::now_utc() - created_at;
+        age.whole_seconds() >= CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS && !process_is_alive(pid)
+    }
+}
+
+#[cfg(unix)]
+fn process_is_alive(pid: u32) -> bool {
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+#[cfg(not(unix))]
+fn process_is_alive(_pid: u32) -> bool {
+    true
 }
 
 fn write_file_atomically(path: &std::path::Path, body: &[u8]) -> Result<()> {
@@ -1353,6 +1522,55 @@ mod tests {
                 .expect("current"),
             previous
         );
+    }
+
+    #[test]
+    fn codebase_index_build_lock_serializes_active_builds() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+
+        let first = store.codebase_index().begin_build().expect("first lock");
+        let second = store.codebase_index().begin_build();
+
+        assert!(second.is_err());
+        drop(first);
+        let third = store.codebase_index().begin_build().expect("third lock");
+        drop(third);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codebase_index_reclaims_stale_build_lock_and_commits() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let next = test_index_manifest("idx_next", "c");
+        let index_dir = temp.path().join(".brownie/codebase-index");
+        fs::create_dir_all(&index_dir).expect("index dir");
+        fs::write(
+            index_dir.join("build.lock"),
+            "pid=999999999\ncreated_at=2020-01-01T00:00:00Z\nnonce=1234567890abcdef\nlock_file=build.lock\n",
+        )
+        .expect("stale lock");
+
+        let event = store
+            .codebase_index()
+            .commit_current_snapshot(
+                &next,
+                LedgerEventKind::CodebaseIndexSnapshotBuilt,
+                serde_json::json!({"index_id": "idx_next"}),
+            )
+            .expect("reclaimed commit");
+
+        assert_eq!(event.kind, LedgerEventKind::CodebaseIndexSnapshotBuilt);
+        assert_eq!(
+            store
+                .codebase_index()
+                .read_current_snapshot()
+                .expect("read current")
+                .expect("current"),
+            next
+        );
+        assert!(!index_dir.join("build.lock").exists());
     }
 
     fn test_index_manifest(

@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 anyhow.workspace = true
 brownie-protocol = { path = "../brownie-protocol" }
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 time.workspace = true

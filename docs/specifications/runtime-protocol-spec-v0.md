@@ -116,7 +116,10 @@ The runtime and VSIX validators must reject raw nested stdout/stderr/rendered me
 
 M9.1 adds the first runtime-owned codebase indexing execution method. M9.2
 hardens that method with explicit mode permission, canonical containment,
-bounded traversal, no-follow file reads, and locked persistence. The
+bounded traversal, no-follow file reads, and locked persistence. M9.2.1 makes
+unsupported platforms fail closed when safe no-follow reads are unavailable,
+revalidates queued directory containment before reading, uses deterministic
+bounded directory selection, and reclaims only safely stale index build locks. The
 method builds or refreshes a bounded metadata-only workspace file inventory
 snapshot and persists it under `.brownie/codebase-index`.
 
@@ -135,7 +138,9 @@ Optional params:
 The runtime rejects missing or unknown `mode_id`, modes without
 `IndexCodebase`, unknown fields, absolute roots, parent traversal, protected
 root components, non-directory roots, intermediate symlink roots, final symlink
-roots, and canonical roots outside the workspace with `-32602`. Caller limits
+roots, and canonical roots outside the workspace with `-32602`. Unsupported
+platforms that cannot provide safe no-follow file reads return a bounded
+unsupported-platform error and do not commit a successful snapshot. Caller limits
 are clamped to runtime maxima.
 
 Successful response:

@@ -97,6 +97,15 @@ visited-entry and per-directory entry limits, and commits snapshot/current/ledge
 state through a locked index store with temporary sibling files and a compact
 commit marker.
 
+M9.2.1 closes the remaining M9.2 integrity debt before M9.3 filtering. Platforms
+without safe no-follow file reads fail closed before a successful snapshot is
+committed. Queued directories are revalidated for symlink replacement and
+canonical workspace containment immediately before reading. Per-directory
+truncation keeps a bounded lexicographic selection instead of the first
+filesystem-order entries, so unchanged directory contents produce stable bounded
+snapshots. Index build locks include owner metadata and a nonce; safely stale
+locks can be reclaimed without removing active locks.
+
 Successful builds append `CodebaseIndexSnapshotBuilt`; denied indexing modes may
 append bounded `CodebaseIndexPermissionChecked` evidence and never append a
 successful build event. `force_refresh` is recorded only as

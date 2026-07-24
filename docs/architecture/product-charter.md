@@ -33,5 +33,9 @@ This repository copy mirrors the automation-owned charter used by the phase loop
 5. M4 Context Management
 6. M5 Subtask Orchestration
 7. M6 Controlled Apply Execution
+8. M7 Controlled Verification Execution
+9. M8 Verification Failure Recovery
+10. R3 Verifier Integrity And Recovery Hardening
+11. M9 Runtime Codebase Indexing
 
 The phase loop may refine implementation order, split milestones, or insert safety work, but it may not replace this roadmap with observability-only, reporting-only, or wrapper-only work. Every accepted phase must advance at least one strategic capability or remove a documented blocker to one.
