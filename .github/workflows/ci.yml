@@ -33,6 +33,15 @@ jobs:
       - name: Install pnpm dependencies
         run: pnpm install
 
+      - name: Diagnostics guard
+        run: pnpm guard:diagnostics
+
+      - name: Phase value guard
+        run: pnpm guard:phase-value
+
+      - name: Phase value guard tests
+        run: pnpm guard:phase-value:test
+
       - name: VSIX check
         run: pnpm --filter brownie-vsix check
 
@@ -41,3 +50,15 @@ jobs:
 
       - name: VSIX build
         run: pnpm --filter brownie-vsix build
+
+  index-platform:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Verify unsupported index platform fails closed
+        run: cargo test -p brownie-indexer unsupported_platform_fails_closed
