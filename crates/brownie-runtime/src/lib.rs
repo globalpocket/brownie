@@ -241,7 +241,7 @@ const METHOD_TOOL_EXECUTE: &str = "tool.execute";
 const METHOD_RUN_EVENTS: &str = "run.events";
 const METHOD_RUN_INSPECT: &str = "run.inspect";
 const METHOD_CODEBASE_INDEX_BUILD: &str = "codebase.index.build";
-const CODEBASE_INDEX_NEXT_ACTION: &str = "build_ignore_aware_sensitive_filtering";
+const CODEBASE_INDEX_NEXT_ACTION: &str = "build_bounded_index_query_file_selection";
 const METHOD_PROPOSAL_LIST: &str = "proposal.list";
 const METHOD_PROPOSAL_INSPECT: &str = "proposal.inspect";
 const METHOD_PROPOSAL_APPROVE: &str = "proposal.approve";
@@ -3866,6 +3866,8 @@ fn codebase_index_build_event_payload(
         "indexed_files": manifest.snapshot.counts.indexed_files,
         "walked_directories": manifest.snapshot.counts.walked_directories,
         "skipped_protected": manifest.snapshot.counts.skipped_protected,
+        "skipped_ignored": manifest.snapshot.counts.skipped_ignored,
+        "skipped_sensitive": manifest.snapshot.counts.skipped_sensitive,
         "skipped_symlink": manifest.snapshot.counts.skipped_symlink,
         "skipped_too_large": manifest.snapshot.counts.skipped_too_large,
         "skipped_binary_like": manifest.snapshot.counts.skipped_binary_like,
@@ -3875,6 +3877,9 @@ fn codebase_index_build_event_payload(
         "truncated_entries": manifest.snapshot.counts.truncated_entries,
         "visited_entries": manifest.snapshot.counts.visited_entries,
         "truncated_directories": manifest.snapshot.counts.truncated_directories,
+        "ignore_rule_files_loaded": manifest.snapshot.counts.ignore_rule_files_loaded,
+        "ignore_rule_count": manifest.snapshot.counts.ignore_rule_count,
+        "sensitive_finding_count": manifest.snapshot.counts.sensitive_finding_count,
         "truncated": manifest.snapshot.truncated,
         "max_files": manifest.snapshot.limits.max_files,
         "max_directories": manifest.snapshot.limits.max_directories,
@@ -3902,6 +3907,8 @@ fn codebase_index_manifest(
                 indexed_files: snapshot.counts.indexed_files,
                 walked_directories: snapshot.counts.walked_directories,
                 skipped_protected: snapshot.counts.skipped_protected,
+                skipped_ignored: snapshot.counts.skipped_ignored,
+                skipped_sensitive: snapshot.counts.skipped_sensitive,
                 skipped_symlink: snapshot.counts.skipped_symlink,
                 skipped_too_large: snapshot.counts.skipped_too_large,
                 skipped_binary_like: snapshot.counts.skipped_binary_like,
@@ -3911,6 +3918,9 @@ fn codebase_index_manifest(
                 truncated_entries: snapshot.counts.truncated_entries,
                 visited_entries: snapshot.counts.visited_entries,
                 truncated_directories: snapshot.counts.truncated_directories,
+                ignore_rule_files_loaded: snapshot.counts.ignore_rule_files_loaded,
+                ignore_rule_count: snapshot.counts.ignore_rule_count,
+                sensitive_finding_count: snapshot.counts.sensitive_finding_count,
             },
             limits: CodebaseIndexLimitsSummary {
                 max_files: snapshot.limits.max_files,
@@ -19521,6 +19531,21 @@ mod tests {
         )
         .expect("manifest");
         std::fs::write(temp.path().join("README.md"), "# Index\n").expect("readme");
+        std::fs::write(
+            temp.path().join(".gitignore"),
+            "ignored.log\nignored-dir/\n",
+        )
+        .expect("ignore policy");
+        std::fs::write(temp.path().join("ignored.log"), "ignore me\n").expect("ignored file");
+        std::fs::create_dir(temp.path().join("ignored-dir")).expect("ignored dir");
+        std::fs::write(
+            temp.path().join("ignored-dir/hidden.rs"),
+            "pub fn hidden() {}\n",
+        )
+        .expect("ignored dir file");
+        std::fs::write(temp.path().join(".env"), "TOKEN=secret\n").expect("env");
+        std::fs::write(temp.path().join("notes.txt"), "api_key: sk-runtime-test\n")
+            .expect("sensitive content");
         std::fs::create_dir_all(temp.path().join("node_modules/pkg")).expect("node_modules");
         std::fs::write(
             temp.path().join("node_modules/pkg/index.js"),
@@ -19538,11 +19563,21 @@ mod tests {
         assert_eq!(result["ledger_event_kind"], "CodebaseIndexSnapshotBuilt");
         assert_eq!(
             result["next_action"],
-            "build_ignore_aware_sensitive_filtering"
+            "build_bounded_index_query_file_selection"
         );
         assert_eq!(result["snapshot"]["root"], ".");
         assert_eq!(result["snapshot"]["counts"]["indexed_files"], 3);
         assert_eq!(result["snapshot"]["counts"]["skipped_protected"], 2);
+        assert_eq!(result["snapshot"]["counts"]["skipped_ignored"], 3);
+        assert_eq!(result["snapshot"]["counts"]["skipped_sensitive"], 2);
+        assert_eq!(result["snapshot"]["counts"]["ignore_rule_files_loaded"], 1);
+        assert_eq!(result["snapshot"]["counts"]["ignore_rule_count"], 2);
+        assert!(
+            result["snapshot"]["counts"]["sensitive_finding_count"]
+                .as_u64()
+                .expect("sensitive finding count")
+                >= 1
+        );
         assert!(
             result["snapshot"]["counts"]["visited_entries"]
                 .as_u64()
@@ -19570,6 +19605,8 @@ mod tests {
         assert!(current.entries.iter().all(|entry| {
             !entry.path.contains(".brownie")
                 && !entry.path.contains("node_modules")
+                && !entry.path.contains("ignored")
+                && !entry.path.ends_with(".env")
                 && !entry.path.starts_with('/')
         }));
         assert!(current
@@ -19590,7 +19627,17 @@ mod tests {
         assert_eq!(payload["requested_force_refresh"], false);
         assert_eq!(
             payload["next_action"],
-            "build_ignore_aware_sensitive_filtering"
+            "build_bounded_index_query_file_selection"
+        );
+        assert_eq!(payload["skipped_ignored"], 3);
+        assert_eq!(payload["skipped_sensitive"], 2);
+        assert_eq!(payload["ignore_rule_files_loaded"], 1);
+        assert_eq!(payload["ignore_rule_count"], 2);
+        assert!(
+            payload["sensitive_finding_count"]
+                .as_u64()
+                .expect("payload sensitive finding count")
+                >= 1
         );
         for forbidden in [
             "content",
@@ -19598,6 +19645,8 @@ mod tests {
             "full_content",
             "absolute_path",
             "canonical_path",
+            "raw_ignore_patterns",
+            "raw_sensitive_matches",
             "stdout",
             "stderr",
             "env",

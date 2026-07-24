@@ -10,6 +10,8 @@ rust-version.workspace = true
 path = "src/lib.rs"
 
 [dependencies]
+brownie-llm = { path = "../brownie-llm" }
+ignore.workspace = true
 libc.workspace = true
 serde.workspace = true
 sha2.workspace = true

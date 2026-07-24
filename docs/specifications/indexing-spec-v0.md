@@ -145,9 +145,7 @@ temporary suffix are cleaned before a locked write. If ledger append fails, the
 previous `current.json` remains authoritative.
 
 `force_refresh` is currently a requested-only field. It is recorded as
-`requested_force_refresh`; no cache reuse exists yet. Successful build results
-return `next_action = "build_ignore_aware_sensitive_filtering"` so callers do
-not infer query or context-planning support before later M9 phases.
+`requested_force_refresh`; no cache reuse exists yet.
 
 ## M9.2.1 Cross-Platform And Crash-Recovery Integrity
 
@@ -170,3 +168,36 @@ Index build locks include owner PID, creation time, nonce, and lock-file marker.
 Active locks continue to serialize concurrent builds. A stale lock is reclaimable
 only when the owner metadata is old enough, the owner process is not alive on
 supported platforms, and the lock content is unchanged before removal.
+
+## M9.3 Ignore-Aware Sensitive File Filtering
+
+M9.3 makes `codebase.index.build` apply bounded ignore and sensitive-file
+filtering before snapshot persistence. The runtime-owned indexer loads
+workspace-root `.gitignore`, `.brownieignore`, and `.rooignore` files through the
+same no-follow bounded file handles used for indexed files. Ignore policy files
+must be regular UTF-8 files, are byte and rule-count bounded, and are rejected if
+they are symlinks. Raw ignore patterns are not returned in RPC results or ledger
+payloads.
+
+Traversal checks ignore policy and sensitive path rules before regular-file
+content reads. Sensitive path filtering skips common secret file names and key
+extensions such as `.env`, `.npmrc`, `.pypirc`, `.netrc`, `id_rsa`,
+`id_ed25519`, `credentials.json`, token/service-account JSON files, `.pem`,
+`.key`, `.p12`, and `.pfx`. UTF-8 file content is scanned with the existing
+bounded sensitive-content detector before content hashes are persisted. If
+sensitive content is detected, the file is skipped and only numeric evidence is
+recorded.
+
+Snapshot counts and the `CodebaseIndexSnapshotBuilt` ledger payload include
+`skipped_ignored`, `skipped_sensitive`, `ignore_rule_files_loaded`,
+`ignore_rule_count`, and `sensitive_finding_count`. These counts are bounded
+integers only; they must not include raw file content, raw ignore patterns,
+matched secret values, absolute paths, or canonical paths. Snapshot
+fingerprints include the new counts. Successful build results return
+`next_action = "build_bounded_index_query_file_selection"` so headless callers
+can proceed to the first bounded query/file-selection phase without inferring
+that retrieval already exists.
+
+M9.3 does not add a new RPC, readiness report, query API, chunking, embeddings,
+Qdrant writes, retrieval, LLM provider execution, shell/git/network execution,
+service control, or workspace mutation.

@@ -157,6 +157,8 @@ Successful response:
       "indexed_files": 123,
       "walked_directories": 20,
       "skipped_protected": 4,
+      "skipped_ignored": 8,
+      "skipped_sensitive": 2,
       "skipped_symlink": 0,
       "skipped_too_large": 1,
       "skipped_binary_like": 0,
@@ -165,7 +167,10 @@ Successful response:
       "skipped_other": 0,
       "truncated_entries": 0,
       "visited_entries": 130,
-      "truncated_directories": 0
+      "truncated_directories": 0,
+      "ignore_rule_files_loaded": 3,
+      "ignore_rule_count": 5,
+      "sensitive_finding_count": 1
     },
     "limits": {
       "max_files": 10000,
@@ -180,7 +185,7 @@ Successful response:
   "persisted": true,
   "ledger_event_id": "event_<uuid>",
   "ledger_event_kind": "CodebaseIndexSnapshotBuilt",
-  "next_action": "build_ignore_aware_sensitive_filtering"
+  "next_action": "build_bounded_index_query_file_selection"
 }
 ```
 
@@ -188,6 +193,7 @@ The RPC result is compact; full metadata entries are persisted in the snapshot
 manifest. Snapshot entries contain workspace-relative path, file kind,
 byte-length, optional line count, and optional content SHA-256. They must not
 contain raw file content, snippets, diffs, absolute paths, canonical paths,
+raw ignore patterns, sensitive matched values,
 prompts, provider responses, stdout/stderr, environment values, commands, or
 secrets.
 
