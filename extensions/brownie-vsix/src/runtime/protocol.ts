@@ -249,6 +249,13 @@ export interface TaskStartParams {
   verificationRecoveryRetrySource?: VerificationRecoveryRetrySource | null;
 }
 
+export type TaskRunSelectedIndexContext = CodebaseIndexSelectionReadResult;
+
+export interface TaskRunParams {
+  task_id: string;
+  selected_index_context?: TaskRunSelectedIndexContext | null;
+}
+
 export interface VerificationRecoverySource {
   source_task_id: string;
   source_run_id: string;
@@ -308,12 +315,33 @@ export interface TaskRunResult {
   run_id: string;
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
+  selected_index_prompt_context?: TaskRunSelectedIndexPromptContextSummary | null;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
   verification_recovery_repair?: TaskRunVerificationRecoveryRepairOutcome | null;
   verification_recovery_retry?: TaskRunVerificationRecoveryRetryOutcome | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
+}
+
+export interface TaskRunSelectedIndexPromptContextSummary {
+  prompt_context_id: string;
+  source_event_id: string;
+  source_event_kind: 'CodebaseIndexSelectionReadCompleted';
+  query_id: string;
+  selection_id: string;
+  query_fingerprint: string;
+  selection_fingerprint: string;
+  index_id: string;
+  workspace_fingerprint: string;
+  snapshot_fingerprint: string;
+  read_path_fingerprint: string;
+  file_kind: CodebaseIndexFileEntry['file_kind'];
+  bytes_read: number;
+  content_char_count: number;
+  content_sha256: string;
+  prompt_preview_redacted: true;
+  next_action: 'continue_task_execution_with_materialized_context';
 }
 
 export interface AgentLoopRunSummary {
@@ -3704,6 +3732,16 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
   );
 }
 
+export function isTaskRunParams(value: unknown): value is TaskRunParams {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['task_id', 'selected_index_context']) &&
+    typeof value.task_id === 'string' &&
+    value.task_id.trim().length > 0 &&
+    (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context))
+  );
+}
+
 export function isTaskRunResult(value: unknown): value is TaskRunResult {
   return (
     isRecord(value) &&
@@ -3711,12 +3749,68 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     typeof value.run_id === 'string' &&
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
+    (value.selected_index_prompt_context === undefined || value.selected_index_prompt_context === null || isTaskRunSelectedIndexPromptContextSummary(value.selected_index_prompt_context)) &&
     (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
     (value.verification_recovery_repair === undefined || value.verification_recovery_repair === null || isTaskRunVerificationRecoveryRepairOutcome(value.verification_recovery_repair)) &&
     (value.verification_recovery_retry === undefined || value.verification_recovery_retry === null || isTaskRunVerificationRecoveryRetryOutcome(value.verification_recovery_retry)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))
+  );
+}
+
+export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): value is TaskRunSelectedIndexPromptContextSummary {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'prompt_context_id',
+      'source_event_id',
+      'source_event_kind',
+      'query_id',
+      'selection_id',
+      'query_fingerprint',
+      'selection_fingerprint',
+      'index_id',
+      'workspace_fingerprint',
+      'snapshot_fingerprint',
+      'read_path_fingerprint',
+      'file_kind',
+      'bytes_read',
+      'content_char_count',
+      'content_sha256',
+      'prompt_preview_redacted',
+      'next_action',
+    ]) &&
+    typeof value.prompt_context_id === 'string' &&
+    /^ctx_[a-f0-9]{16}$/.test(value.prompt_context_id) &&
+    typeof value.source_event_id === 'string' &&
+    value.source_event_id.trim().length > 0 &&
+    value.source_event_kind === 'CodebaseIndexSelectionReadCompleted' &&
+    typeof value.query_id === 'string' &&
+    /^query_[a-f0-9]{16}$/.test(value.query_id) &&
+    typeof value.selection_id === 'string' &&
+    /^selection_[a-f0-9]{16}$/.test(value.selection_id) &&
+    typeof value.query_fingerprint === 'string' &&
+    isSha256Fingerprint(value.query_fingerprint) &&
+    typeof value.selection_fingerprint === 'string' &&
+    isSha256Fingerprint(value.selection_fingerprint) &&
+    typeof value.index_id === 'string' &&
+    /^idx_[a-f0-9]{16}$/.test(value.index_id) &&
+    typeof value.workspace_fingerprint === 'string' &&
+    isSha256Fingerprint(value.workspace_fingerprint) &&
+    typeof value.snapshot_fingerprint === 'string' &&
+    isSha256Fingerprint(value.snapshot_fingerprint) &&
+    typeof value.read_path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.read_path_fingerprint) &&
+    isCodebaseIndexFileKind(value.file_kind) &&
+    isNonNegativeInteger(value.bytes_read) &&
+    value.bytes_read <= 65536 &&
+    isNonNegativeInteger(value.content_char_count) &&
+    value.content_char_count <= 65536 &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    value.prompt_preview_redacted === true &&
+    value.next_action === 'continue_task_execution_with_materialized_context'
   );
 }
 
@@ -3916,6 +4010,23 @@ export function isCodebaseIndexQueryResult(value: unknown): value is CodebaseInd
 export function isCodebaseIndexSelectionReadResult(value: unknown): value is CodebaseIndexSelectionReadResult {
   return (
     isRecord(value) &&
+    hasOnlyFields(value, [
+      'query_id',
+      'selection_id',
+      'query_fingerprint',
+      'selection_fingerprint',
+      'snapshot',
+      'path',
+      'file_kind',
+      'content',
+      'truncated',
+      'bytes_read',
+      'content_sha256',
+      'content_hash_verified',
+      'ledger_event_id',
+      'ledger_event_kind',
+      'next_action',
+    ]) &&
     hasNoForbiddenSelectedReadFields(value) &&
     typeof value.query_id === 'string' &&
     /^query_[a-f0-9]{16}$/.test(value.query_id) &&
@@ -3933,6 +4044,7 @@ export function isCodebaseIndexSelectionReadResult(value: unknown): value is Cod
     value.content.length <= 65536 &&
     value.truncated === false &&
     isNonNegativeInteger(value.bytes_read) &&
+    value.bytes_read === utf8ByteLength(value.content) &&
     value.bytes_read <= 65536 &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
@@ -3950,6 +4062,15 @@ function hasNoForbiddenSelectedReadFields(value: Record<string, unknown>): boole
     }
   }
   return true;
+}
+
+function hasOnlyFields(value: Record<string, unknown>, allowedFields: string[]): boolean {
+  const allowed = new Set(allowedFields);
+  return Object.keys(value).every((field) => allowed.has(field));
+}
+
+function utf8ByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
 }
 
 function isCodebaseIndexQuerySnapshotSummary(value: unknown): value is CodebaseIndexQuerySnapshotSummary {

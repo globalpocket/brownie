@@ -275,3 +275,31 @@ M9.5 does not add batch reads, arbitrary workspace reads outside a validated
 selection handle, prompt materialization, task automation, chunking, embeddings,
 Qdrant writes, semantic symbols, LLM calls, shell/git/network/service execution,
 workspace mutation, or report/digest/history/readiness wrappers.
+
+## M9.6 Runtime Prompt Context From Selected Index Reads
+
+M9.6 lets `task.run` consume one prior selected-read result as optional
+`selected_index_context`. This does not add a JSON-RPC method and does not make
+the VSIX responsible for policy. The runtime validates the supplied selected
+context before `TaskRunning` against the existing
+`CodebaseIndexSelectionReadCompleted` codebase-index ledger event: ids,
+fingerprints, snapshot identity, snapshot truncation, read-path fingerprint,
+file kind, byte count, content SHA-256, hash-verification state, source event
+kind, and `next_action` must match. The stored task mode must allow both
+`ReadWorkspace` and `IndexCodebase`.
+
+Successful materialization appends exactly one task ledger event,
+`CodebaseIndexPromptContextMaterialized`. The event is summary-only and may
+contain task/run ids, prompt context id, source event id/kind, query and
+selection ids, fingerprints, byte count, content character count, content
+SHA-256, hash-verification state, prompt-preview redaction state, and
+`next_action = "continue_task_execution_with_materialized_context"`. It must not
+contain raw selected paths, raw file content, snippets, diffs, chunks,
+embeddings, stdout/stderr, environment values, commands, prompts, provider
+responses, absolute paths, canonical paths, or secrets.
+
+The raw selected file content may exist only in the `task.run` request and the
+in-memory `Selected Index Context` prompt section. `PromptBuilt` and
+`SecondPassPromptBuilt` payloads must set `prompt_preview_redacted = true` when
+selected index context is present. `TaskRunResult.selected_index_prompt_context`
+returns only bounded metadata and never raw path or content.

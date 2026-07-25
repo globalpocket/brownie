@@ -371,8 +371,31 @@ pub struct TaskGetParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunParams {
     pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_index_context: Option<TaskRunSelectedIndexContext>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRunSelectedIndexContext {
+    pub query_id: String,
+    pub selection_id: String,
+    pub query_fingerprint: String,
+    pub selection_fingerprint: String,
+    pub snapshot: CodebaseIndexQuerySnapshotSummary,
+    pub path: String,
+    pub file_kind: String,
+    pub content: String,
+    pub truncated: bool,
+    pub bytes_read: usize,
+    pub content_sha256: String,
+    pub content_hash_verified: bool,
+    pub ledger_event_id: String,
+    pub ledger_event_kind: String,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -885,6 +908,8 @@ pub struct TaskRunResult {
     pub status: TaskStatus,
     pub agent_loop: TaskRunAgentLoopSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_completion_gate: Option<TaskRunVerificationCompletionGate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_repair: Option<TaskRunVerificationRecoveryRepairOutcome>,
@@ -896,6 +921,27 @@ pub struct TaskRunResult {
     pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_join_readiness_outcome: Option<TaskRunParentJoinReadinessOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunSelectedIndexPromptContextSummary {
+    pub prompt_context_id: String,
+    pub source_event_id: String,
+    pub source_event_kind: String,
+    pub query_id: String,
+    pub selection_id: String,
+    pub query_fingerprint: String,
+    pub selection_fingerprint: String,
+    pub index_id: String,
+    pub workspace_fingerprint: String,
+    pub snapshot_fingerprint: String,
+    pub read_path_fingerprint: String,
+    pub file_kind: String,
+    pub bytes_read: usize,
+    pub content_char_count: usize,
+    pub content_sha256: String,
+    pub prompt_preview_redacted: bool,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

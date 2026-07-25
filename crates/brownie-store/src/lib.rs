@@ -1335,6 +1335,7 @@ pub enum LedgerEventKind {
     CodebaseIndexSnapshotBuilt,
     CodebaseIndexQueryCompleted,
     CodebaseIndexSelectionReadCompleted,
+    CodebaseIndexPromptContextMaterialized,
     TaskStarted,
     ModeResolved,
     PermissionChecked,

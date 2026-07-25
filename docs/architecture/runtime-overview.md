@@ -153,6 +153,22 @@ fingerprint; the ledger does not store raw query text, raw selected paths, raw
 file content, snippets, diffs, commands, stdout/stderr, environment values,
 absolute paths, canonical paths, prompts, provider responses, or secrets.
 
+M9.6 connects those selected reads to actual agent execution without adding a
+new JSON-RPC method. `task.run` accepts one optional `selected_index_context`
+whose shape matches a prior successful `CodebaseIndexSelectionReadResult`.
+Before `TaskRunning`, the Rust runtime validates the selected-read ids,
+fingerprints, snapshot identity, read-path fingerprint, file kind, byte count,
+truncation state, content SHA-256, source event kind, and `next_action` against
+the summary-only `CodebaseIndexSelectionReadCompleted` codebase-index ledger
+event. The stored task mode must allow both `ReadWorkspace` and
+`IndexCodebase`. Successful validation appends one summary-only
+`CodebaseIndexPromptContextMaterialized` task ledger event, feeds raw selected
+content only into the in-memory `Selected Index Context` prompt section, redacts
+`PromptBuilt` and `SecondPassPromptBuilt` previews, and returns bounded
+`selected_index_prompt_context` metadata. Task ledgers, task-run results,
+diagnostics, and prompt-preview payloads do not store raw selected file content
+or raw selected paths.
+
 The VSIX remains a protocol client and does not own indexing policy. M9 does not
 yet implement semantic symbols, chunks, embeddings, Qdrant writes, retrieval,
 reranking, LLM calls, shell/git/network execution, service control, or workspace
