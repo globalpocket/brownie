@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
+import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -665,9 +666,75 @@ describe('protocol validation', () => {
     expect(isCodebaseIndexSelectionReadResult({ ...result, bytes_read: 65537 })).toBe(false);
     expect(isCodebaseIndexSelectionReadResult({ ...result, content_hash_verified: false })).toBe(false);
     expect(isCodebaseIndexSelectionReadResult({ ...result, content_sha256: 'sha256:not-hex' })).toBe(false);
+    expect(isCodebaseIndexSelectionReadResult({ ...result, bytes_read: 20 })).toBe(false);
     expect(isCodebaseIndexSelectionReadResult({ ...result, ledger_event_kind: 'CodebaseIndexQueryCompleted' })).toBe(false);
     expect(isCodebaseIndexSelectionReadResult({ ...result, next_action: 'read_selected_files_with_controlled_workspace_read' })).toBe(false);
+    expect(isCodebaseIndexSelectionReadResult({ ...result, unexpected: 'field' })).toBe(false);
     expect(isCodebaseIndexSelectionReadResult({ ...result, content: 'x'.repeat(65537) })).toBe(false);
+  });
+
+  it('validates task.run selected index params and bounded prompt-context summaries', () => {
+    const selectedContext = {
+      query_id: 'query_abcdef1234567890',
+      selection_id: 'selection_0123456789abcdef',
+      query_fingerprint: `sha256:${'c'.repeat(64)}`,
+      selection_fingerprint: `sha256:${'d'.repeat(64)}`,
+      snapshot: {
+        index_id: 'idx_abcdef1234567890',
+        root: '.',
+        workspace_fingerprint: `sha256:${'a'.repeat(64)}`,
+        snapshot_fingerprint: `sha256:${'b'.repeat(64)}`,
+        built_at: '2026-07-24T00:00:00Z',
+        truncated: false,
+      },
+      path: 'src/runtime/query.rs',
+      file_kind: 'Rust',
+      content: 'pub fn selected() {}\n',
+      truncated: false,
+      bytes_read: 21,
+      content_sha256: `sha256:${'e'.repeat(64)}`,
+      content_hash_verified: true,
+      ledger_event_id: 'event_3',
+      ledger_event_kind: 'CodebaseIndexSelectionReadCompleted',
+      next_action: 'use_selected_file_context_for_prompt_materialization',
+    };
+    const summary = {
+      prompt_context_id: 'ctx_0123456789abcdef',
+      source_event_id: 'event_3',
+      source_event_kind: 'CodebaseIndexSelectionReadCompleted',
+      query_id: selectedContext.query_id,
+      selection_id: selectedContext.selection_id,
+      query_fingerprint: selectedContext.query_fingerprint,
+      selection_fingerprint: selectedContext.selection_fingerprint,
+      index_id: selectedContext.snapshot.index_id,
+      workspace_fingerprint: selectedContext.snapshot.workspace_fingerprint,
+      snapshot_fingerprint: selectedContext.snapshot.snapshot_fingerprint,
+      read_path_fingerprint: `sha256:${'f'.repeat(64)}`,
+      file_kind: 'Rust',
+      bytes_read: 21,
+      content_char_count: 21,
+      content_sha256: selectedContext.content_sha256,
+      prompt_preview_redacted: true,
+      next_action: 'continue_task_execution_with_materialized_context',
+    };
+
+    expect(isTaskRunParams({ task_id: 'task_1' })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: { ...selectedContext, content: 'changed' } })).toBe(false);
+    expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext, raw_input: 'nope' })).toBe(false);
+    expect(isTaskRunSelectedIndexPromptContextSummary(summary)).toBe(true);
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+      selected_index_prompt_context: summary,
+    })).toBe(true);
+    expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, content: selectedContext.content })).toBe(false);
+    expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, path: selectedContext.path })).toBe(false);
+    expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, prompt_preview_redacted: false })).toBe(false);
+    expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, next_action: 'use_selected_file_context_for_prompt_materialization' })).toBe(false);
+    expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, bytes_read: 65537 })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {
@@ -1416,6 +1483,68 @@ describe('RuntimeClient', () => {
 
     await expect(client.runTask('task_1')).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
+  });
+
+  it('creates a task.run request with selected index context', async () => {
+    const selectedIndexContext = {
+      query_id: 'query_abcdef1234567890',
+      selection_id: 'selection_0123456789abcdef',
+      query_fingerprint: `sha256:${'c'.repeat(64)}`,
+      selection_fingerprint: `sha256:${'d'.repeat(64)}`,
+      snapshot: {
+        index_id: 'idx_abcdef1234567890',
+        root: '.',
+        workspace_fingerprint: `sha256:${'a'.repeat(64)}`,
+        snapshot_fingerprint: `sha256:${'b'.repeat(64)}`,
+        built_at: '2026-07-24T00:00:00Z',
+        truncated: false,
+      },
+      path: 'src/runtime/query.rs',
+      file_kind: 'Rust',
+      content: 'pub fn selected() {}\n',
+      truncated: false,
+      bytes_read: 21,
+      content_sha256: `sha256:${'e'.repeat(64)}`,
+      content_hash_verified: true,
+      ledger_event_id: 'event_3',
+      ledger_event_kind: 'CodebaseIndexSelectionReadCompleted',
+      next_action: 'use_selected_file_context_for_prompt_materialization',
+    } as const;
+    const result = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'LLM agent loop completed for task_1' },
+      selected_index_prompt_context: {
+        prompt_context_id: 'ctx_0123456789abcdef',
+        source_event_id: 'event_3',
+        source_event_kind: 'CodebaseIndexSelectionReadCompleted',
+        query_id: selectedIndexContext.query_id,
+        selection_id: selectedIndexContext.selection_id,
+        query_fingerprint: selectedIndexContext.query_fingerprint,
+        selection_fingerprint: selectedIndexContext.selection_fingerprint,
+        index_id: selectedIndexContext.snapshot.index_id,
+        workspace_fingerprint: selectedIndexContext.snapshot.workspace_fingerprint,
+        snapshot_fingerprint: selectedIndexContext.snapshot.snapshot_fingerprint,
+        read_path_fingerprint: `sha256:${'f'.repeat(64)}`,
+        file_kind: 'Rust',
+        bytes_read: 21,
+        content_char_count: 21,
+        content_sha256: selectedIndexContext.content_sha256,
+        prompt_preview_redacted: true,
+        next_action: 'continue_task_execution_with_materialized_context',
+      },
+    } as const;
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.runTask('task_1', selectedIndexContext)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'task.run',
+      params: { task_id: 'task_1', selected_index_context: selectedIndexContext },
+    }]);
   });
 
   it('rejects invalid task.run results', async () => {

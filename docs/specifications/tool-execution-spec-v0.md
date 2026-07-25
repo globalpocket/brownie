@@ -86,6 +86,21 @@ raw query text, selected raw paths, raw file content, snippets, diffs,
 stdout/stderr, environment values, commands, prompts, provider responses,
 absolute paths, canonical paths, or secrets.
 
+## M9.6 selected index context in task prompts
+
+M9.6 does not add another executable tool. It lets the existing `task.run` path
+consume one optional selected-read result after the selected read has already
+completed through `tool.execute(codebase.index.selection.read)`. The runtime
+revalidates the selected-read result against `CodebaseIndexSelectionReadCompleted`
+evidence before task admission, requires the task mode to allow both
+`ReadWorkspace` and `IndexCodebase`, and fails before `TaskRunning` on missing,
+stale, unsafe, truncated, mismatched, or tampered context.
+
+Successful task runs may place raw selected file content in the in-memory prompt
+only. Task ledger events, prompt-preview payloads, task-run result summaries,
+diagnostics, and VSIX protocol validators must remain summary-only and must not
+persist raw selected paths or raw selected file content.
+
 ## Ledger behavior
 
 The store defines future task-scoped event kinds: `ToolExecutionRequested`, `ToolExecutionPermissionChecked`, `ToolExecutionCompleted`, `ToolExecutionDenied`, and `ToolExecutionFailed`.

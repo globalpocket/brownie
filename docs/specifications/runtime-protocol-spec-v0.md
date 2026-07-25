@@ -373,6 +373,93 @@ selected paths; it never stores raw query text, raw file content, snippets,
 diffs, chunks, embeddings, stdout/stderr, environment values, commands, prompts,
 provider responses, absolute paths, canonical paths, or secrets.
 
+## `task.run` with selected index context
+
+M9.6 extends the existing `task.run` request with one optional
+`selected_index_context` field. The field uses the successful
+`CodebaseIndexSelectionReadResult` shape from
+`tool.execute(codebase.index.selection.read)`.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 13,
+  "method": "task.run",
+  "params": {
+    "task_id": "task_<uuid>",
+    "selected_index_context": {
+      "query_id": "query_<16 lowercase hex>",
+      "selection_id": "selection_<16 lowercase hex>",
+      "query_fingerprint": "sha256:<64 lowercase hex>",
+      "selection_fingerprint": "sha256:<64 lowercase hex>",
+      "snapshot": {
+        "index_id": "idx_<16 lowercase hex>",
+        "root": ".",
+        "workspace_fingerprint": "sha256:<64 lowercase hex>",
+        "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+        "built_at": "2026-07-24T00:00:00Z",
+        "truncated": false
+      },
+      "path": "src/runtime/query.rs",
+      "file_kind": "Rust",
+      "content": "...bounded UTF-8 file content...",
+      "truncated": false,
+      "bytes_read": 120,
+      "content_sha256": "sha256:<64 lowercase hex>",
+      "content_hash_verified": true,
+      "ledger_event_id": "event_<uuid>",
+      "ledger_event_kind": "CodebaseIndexSelectionReadCompleted",
+      "next_action": "use_selected_file_context_for_prompt_materialization"
+    }
+  }
+}
+```
+
+Validation happens before `TaskRunning`, `AgentLoopStarted`, `PromptBuilt`, or
+`CodebaseIndexPromptContextMaterialized` can be appended. The runtime requires a
+matching `CodebaseIndexSelectionReadCompleted` codebase-index ledger event and
+checks ids, fingerprints, snapshot identity, snapshot truncation, read-path
+fingerprint, file kind, byte count, truncation state, content SHA-256,
+`content_hash_verified`, source event kind, and `next_action`. The stored task
+mode must allow both `ReadWorkspace` and `IndexCodebase`.
+
+Successful materialization appends a task ledger event
+`CodebaseIndexPromptContextMaterialized` with summary-only payload. The raw
+selected content is used only inside the in-memory `Selected Index Context`
+prompt section. `PromptBuilt` and `SecondPassPromptBuilt` redact prompt previews
+when selected context is present.
+
+Successful `task.run` responses may include:
+
+```json
+{
+  "selected_index_prompt_context": {
+    "prompt_context_id": "ctx_<16 lowercase hex>",
+    "source_event_id": "event_<uuid>",
+    "source_event_kind": "CodebaseIndexSelectionReadCompleted",
+    "query_id": "query_<16 lowercase hex>",
+    "selection_id": "selection_<16 lowercase hex>",
+    "query_fingerprint": "sha256:<64 lowercase hex>",
+    "selection_fingerprint": "sha256:<64 lowercase hex>",
+    "index_id": "idx_<16 lowercase hex>",
+    "workspace_fingerprint": "sha256:<64 lowercase hex>",
+    "snapshot_fingerprint": "sha256:<64 lowercase hex>",
+    "read_path_fingerprint": "sha256:<64 lowercase hex>",
+    "file_kind": "Rust",
+    "bytes_read": 120,
+    "content_char_count": 120,
+    "content_sha256": "sha256:<64 lowercase hex>",
+    "prompt_preview_redacted": true,
+    "next_action": "continue_task_execution_with_materialized_context"
+  }
+}
+```
+
+The task ledger event and result summary never include raw selected paths, raw
+file content, snippets, diffs, chunks, embeddings, stdout/stderr, environment
+values, commands, prompts, provider responses, absolute paths, canonical paths,
+or secrets.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

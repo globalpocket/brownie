@@ -68,8 +68,25 @@ pub struct PromptBuildInput {
     pub tool_execution_summary: Vec<String>,
     pub subtask_orchestration_summary: Vec<String>,
     pub verification_recovery_diagnostics_summary: Vec<String>,
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub selected_index_context: Option<SelectedIndexPromptContext>,
     pub context_window: ContextWindowSummary,
     pub ledger_summary: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SelectedIndexPromptContext {
+    pub prompt_context_id: String,
+    pub source_event_id: String,
+    pub query_id: String,
+    pub selection_id: String,
+    pub selection_fingerprint: String,
+    pub snapshot_fingerprint: String,
+    pub path: String,
+    pub file_kind: String,
+    pub bytes_read: usize,
+    pub content_sha256: String,
+    pub content: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -77,6 +94,7 @@ pub struct ContextMaterializerInput {
     pub task: TaskRecord,
     pub ledger_events: Vec<LedgerEvent>,
     pub child_completion_summaries: Vec<String>,
+    pub selected_index_context: Option<SelectedIndexPromptContext>,
 }
 
 pub struct ContextMaterializer;
@@ -119,6 +137,7 @@ impl ContextMaterializer {
             tool_execution_summary,
             subtask_orchestration_summary,
             verification_recovery_diagnostics_summary,
+            selected_index_context: input.selected_index_context,
             context_window,
             ledger_summary,
         }
@@ -781,6 +800,23 @@ fn format_context_window_summary(summary: &ContextWindowSummary) -> String {
     )
 }
 
+fn format_selected_index_context(context: &SelectedIndexPromptContext) -> String {
+    format!(
+        "prompt_context_id: {}\nsource_event_id: {}\nquery_id: {}\nselection_id: {}\nselection_fingerprint: {}\nsnapshot_fingerprint: {}\npath: {}\nfile_kind: {}\nbytes_read: {}\ncontent_sha256: {}\ncontent:\n{}",
+        context.prompt_context_id,
+        context.source_event_id,
+        context.query_id,
+        context.selection_id,
+        context.selection_fingerprint,
+        context.snapshot_fingerprint,
+        context.path,
+        context.file_kind,
+        context.bytes_read,
+        context.content_sha256,
+        context.content
+    )
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -854,6 +890,16 @@ impl PromptBuilder {
                     .join("\n")
             };
         let context_window = format_context_window_summary(&input.context_window);
+        let selected_index_context = input
+            .selected_index_context
+            .as_ref()
+            .map(|context| {
+                format!(
+                    "\n\nSelected Index Context:\n{}",
+                    format_selected_index_context(context)
+                )
+            })
+            .unwrap_or_default();
 
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
@@ -875,8 +921,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -956,6 +1002,7 @@ mod tests {
             tool_execution_summary: vec![],
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: None,
             context_window: ContextWindowSummary {
                 total_events: 2,
                 included_events: 2,
@@ -980,6 +1027,56 @@ mod tests {
     }
 
     #[test]
+    fn prompt_builder_includes_selected_index_context_when_provided() {
+        let prompt = PromptBuilder::build(PromptBuildInput {
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            goal: "Use selected code context".into(),
+            mode_id: Some("orchestrator".into()),
+            mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
+            permission_summary: vec![],
+            tool_plan_summary: vec![],
+            tool_intent_summary: vec![],
+            tool_execution_summary: vec![],
+            subtask_orchestration_summary: vec![],
+            verification_recovery_diagnostics_summary: vec![],
+            selected_index_context: Some(SelectedIndexPromptContext {
+                prompt_context_id: "ctx_0123456789abcdef".into(),
+                source_event_id: "event_9".into(),
+                query_id: "query_0123456789abcdef".into(),
+                selection_id: "selection_0123456789abcdef".into(),
+                selection_fingerprint: format!("sha256:{}", "a".repeat(64)),
+                snapshot_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                path: "src/runtime/query.rs".into(),
+                file_kind: "Rust".into(),
+                bytes_read: 25,
+                content_sha256: format!("sha256:{}", "c".repeat(64)),
+                content: "pub fn selected() {}\n".into(),
+            }),
+            context_window: ContextWindowSummary {
+                total_events: 2,
+                included_events: 2,
+                omitted_events: 0,
+                max_events: MAX_LEDGER_CONTEXT_EVENTS,
+                first_included_event: Some("TaskStarted".into()),
+                last_included_event: Some("TaskRunning".into()),
+            },
+            ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
+        });
+
+        assert!(prompt.messages[1]
+            .content
+            .contains("Selected Index Context:"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("source_event_id: event_9"));
+        assert!(prompt.messages[1]
+            .content
+            .contains("path: src/runtime/query.rs"));
+        assert!(prompt.messages[1].content.contains("pub fn selected() {}"));
+    }
+
+    #[test]
     fn context_materializer_includes_task_goal_and_ledger_summary() {
         let input = ContextMaterializerInput {
             task: task_record(),
@@ -992,6 +1089,7 @@ mod tests {
                 payload: None,
             }],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1035,6 +1133,7 @@ mod tests {
             task,
             ledger_events: vec![],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         });
 
         assert_eq!(
@@ -1085,6 +1184,7 @@ mod tests {
                 })
                 .collect(),
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1135,6 +1235,7 @@ mod tests {
                 })),
             }],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1163,6 +1264,7 @@ mod tests {
                 })),
             }],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1202,6 +1304,7 @@ mod tests {
                 },
             ],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1230,6 +1333,7 @@ mod tests {
                 })),
             }],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1432,6 +1536,7 @@ mod tests {
                 },
             ],
             child_completion_summaries: vec![],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1511,6 +1616,7 @@ mod tests {
             child_completion_summaries: vec![
                 "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done".into(),
             ],
+            selected_index_context: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);

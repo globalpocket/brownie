@@ -7,7 +7,9 @@ use brownie_agentmodes::{
 use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
 };
-use brownie_context::{ContextMaterializer, ContextMaterializerInput, ContextWindowSummary};
+use brownie_context::{
+    ContextMaterializer, ContextMaterializerInput, ContextWindowSummary, SelectedIndexPromptContext,
+};
 use brownie_indexer::{
     build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexError,
     CodebaseIndexSnapshot,
@@ -118,14 +120,14 @@ use brownie_protocol::{
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
-    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
-    ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary,
-    ToolIntentInputSummary, ToolIntentParseParams, ToolIntentParseResult,
-    ToolIntentParserConfigSummary, ToolIntentParserSummary, ToolIntentRejectedSummary,
-    ToolListResult, ToolPlanDecisionSummary, ToolPlanParams, ToolPlanResult, ToolSummary,
-    VerificationRecoveryAdmission, VerificationRecoveryProvenance,
+    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
+    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
+    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
+    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryProvenance,
     VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
     VerificationRecoveryRetrySource, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
@@ -250,6 +252,8 @@ const METHOD_CODEBASE_INDEX_QUERY: &str = "codebase.index.query";
 const CODEBASE_INDEX_QUERY_NEXT_ACTION: &str = "read_selected_files_with_controlled_workspace_read";
 const CODEBASE_INDEX_SELECTION_READ_NEXT_ACTION: &str =
     "use_selected_file_context_for_prompt_materialization";
+const CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION: &str =
+    "continue_task_execution_with_materialized_context";
 const CODEBASE_INDEX_QUERY_DEFAULT_MAX_RESULTS: usize = 10;
 const CODEBASE_INDEX_QUERY_MAX_RESULTS: usize = 50;
 const CODEBASE_INDEX_QUERY_MAX_CHARS: usize = 256;
@@ -1934,6 +1938,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
                     verification_recovery_retry: None,
@@ -1956,6 +1961,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    selected_index_prompt_context: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
                     verification_recovery_retry: Some(verification_recovery_retry),
@@ -1970,6 +1976,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     }
 
     if record.verification_recovery_retry_provenance.is_some() {
+        if params.selected_index_context.is_some() {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: selected_index_context is not supported for verification recovery retry tasks",
+            );
+        }
         return handle_verification_recovery_retry_task_run(id, store, record);
     }
 
@@ -1982,6 +1995,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2004,6 +2018,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2026,6 +2041,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2053,6 +2069,31 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 }
             }
         };
+
+    let selected_index_context = match params.selected_index_context.as_ref() {
+        Some(context) => {
+            let policy = match resolve_policy_for_task_run(&record, &store) {
+                Ok(policy) => policy,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+            match validate_task_run_selected_index_context(&store, &record, &policy, context) {
+                Ok(validated) => Some(validated),
+                Err(rejection) => {
+                    return match rejection {
+                        TaskRunAdmissionRejection::InvalidParams(message) => {
+                            error_response(id, -32602, message)
+                        }
+                        TaskRunAdmissionRejection::Internal(message) => {
+                            error_response(id, -32603, &format!("internal error: {message}"))
+                        }
+                    }
+                }
+            }
+        }
+        None => None,
+    };
 
     let admission = match validate_task_run_admission(&record, &store) {
         Ok(admission) => admission,
@@ -2119,6 +2160,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_tool_plan_events(&store, &running, &policy) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    if let Some(selected_context) = selected_index_context.as_ref() {
+        if let Err(error) =
+            append_codebase_index_prompt_context_materialized(&store, &running, selected_context)
+        {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
 
     let ledger_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
@@ -2128,6 +2176,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         task: running.clone(),
         ledger_events,
         child_completion_summaries: child_completion_summaries.clone(),
+        selected_index_context: selected_index_context
+            .as_ref()
+            .map(|context| context.prompt_context.clone()),
     });
     let prompt_context_window = prompt_input.context_window.clone();
     let provider = match llm_provider_from_workspace_for_task_run(store.workspace_root()) {
@@ -2217,6 +2268,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             provider_selection.budget.max_prompt_chars,
             &result.sensitive_scan,
             &prompt_context_window,
+            selected_index_context.is_some(),
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2311,11 +2363,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::LlmResponseReceived,
-        Some(json!({
-            "provider": provider_kind_name(&provider_status.provider),
-            "content_preview": preview_with_limit(&result.llm_response.content, provider_selection.budget.response_preview_chars),
-            "response_preview_chars": provider_selection.budget.response_preview_chars,
-        })),
+        Some(llm_response_received_payload(
+            &provider_status,
+            &result.llm_response.content,
+            provider_selection.budget.response_preview_chars,
+            selected_index_context.is_some(),
+        )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -2332,6 +2385,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             task: running.clone(),
             ledger_events: second_pass_events,
             child_completion_summaries: child_completion_summaries.clone(),
+            selected_index_context: selected_index_context
+                .as_ref()
+                .map(|context| context.prompt_context.clone()),
         });
         let second_pass_context_window = second_pass_prompt_input.context_window.clone();
         let second_pass = match AgentLoop::run_second_pass_with_llm(
@@ -2385,6 +2441,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 provider_selection.budget.max_prompt_chars,
                 &second_pass.sensitive_scan,
                 &second_pass_context_window,
+                selected_index_context.is_some(),
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2405,11 +2462,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassLlmResponseReceived,
-            Some(json!({
-                "provider": provider_kind_name(&provider_status.provider),
-                "content_preview": preview_with_limit(&second_pass.llm_response.content, provider_selection.budget.response_preview_chars),
-                "response_preview_chars": provider_selection.budget.response_preview_chars,
-            })),
+            Some(llm_response_received_payload(
+                &provider_status,
+                &second_pass.llm_response.content,
+                provider_selection.budget.response_preview_chars,
+                selected_index_context.is_some(),
+            )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
@@ -2501,6 +2559,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    selected_index_prompt_context: selected_index_context
+                        .as_ref()
+                        .map(|context| context.summary.clone()),
                     verification_completion_gate,
                     verification_recovery_repair,
                     verification_recovery_retry: None,
@@ -2686,6 +2747,7 @@ fn handle_verification_recovery_retry_task_run(
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    selected_index_prompt_context: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
                     verification_recovery_retry,
@@ -3613,6 +3675,7 @@ fn fail_llm_request(
                         run_id: record.run_id,
                         status: record.status,
                         agent_loop: controlled_child_failed_agent_loop_summary(),
+                        selected_index_prompt_context: None,
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
                         verification_recovery_retry: None,
@@ -4745,6 +4808,256 @@ fn codebase_index_selection_read_event_payload(
         "file_kind_filter": validated.file_kind_filter.as_deref().unwrap_or(""),
         "next_action": CODEBASE_INDEX_SELECTION_READ_NEXT_ACTION,
     })
+}
+
+#[derive(Debug, Clone)]
+struct ValidatedTaskRunSelectedIndexContext {
+    prompt_context: SelectedIndexPromptContext,
+    summary: TaskRunSelectedIndexPromptContextSummary,
+    event_payload: Value,
+}
+
+fn validate_task_run_selected_index_context(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    context: &TaskRunSelectedIndexContext,
+) -> Result<ValidatedTaskRunSelectedIndexContext, TaskRunAdmissionRejection> {
+    validate_selected_index_context_permission(policy, RuntimeAction::ReadWorkspace)?;
+    validate_selected_index_context_permission(policy, RuntimeAction::IndexCodebase)?;
+    if !is_codebase_index_query_id(&context.query_id) {
+        return invalid_selected_index_context("query_id is malformed");
+    }
+    if !is_codebase_index_selection_id(&context.selection_id) {
+        return invalid_selected_index_context("selection_id is malformed");
+    }
+    if !is_sha256_fingerprint(&context.query_fingerprint) {
+        return invalid_selected_index_context("query_fingerprint is malformed");
+    }
+    if !is_sha256_fingerprint(&context.selection_fingerprint) {
+        return invalid_selected_index_context("selection_fingerprint is malformed");
+    }
+    validate_codebase_index_query_snapshot_summary(&context.snapshot)
+        .map_err(|message| selected_index_context_invalid_params(&message))?;
+    if !is_safe_codebase_index_path(&context.path, false) {
+        return invalid_selected_index_context("path is unsafe");
+    }
+    if !is_supported_codebase_index_file_kind(&context.file_kind) {
+        return invalid_selected_index_context("file_kind is unsupported");
+    }
+    if context.truncated {
+        return invalid_selected_index_context("truncated selected content is not allowed");
+    }
+    if context.content.as_bytes().len() > MAX_WORKSPACE_READ_BYTES {
+        return invalid_selected_index_context("content exceeds bounded read limit");
+    }
+    if context.bytes_read != context.content.as_bytes().len() {
+        return invalid_selected_index_context("bytes_read does not match content byte length");
+    }
+    let actual_content_sha256 = format!("sha256:{}", hex_sha256(context.content.as_bytes()));
+    if context.content_sha256 != actual_content_sha256 {
+        return invalid_selected_index_context("content_sha256 does not match content");
+    }
+    if !context.content_hash_verified {
+        return invalid_selected_index_context("content_hash_verified must be true");
+    }
+    if context.ledger_event_id.trim().is_empty() {
+        return invalid_selected_index_context("ledger_event_id is required");
+    }
+    if context.ledger_event_kind != "CodebaseIndexSelectionReadCompleted" {
+        return invalid_selected_index_context(
+            "ledger_event_kind must be CodebaseIndexSelectionReadCompleted",
+        );
+    }
+    if context.next_action != CODEBASE_INDEX_SELECTION_READ_NEXT_ACTION {
+        return invalid_selected_index_context("next_action is stale");
+    }
+
+    let events = store
+        .codebase_index()
+        .read_events()
+        .map_err(|error| selected_index_context_internal(&error.to_string()))?;
+    let Some(source_event) = events
+        .iter()
+        .find(|event| event.event_id == context.ledger_event_id)
+    else {
+        return invalid_selected_index_context("source selected-read ledger event is missing");
+    };
+    if source_event.kind != LedgerEventKind::CodebaseIndexSelectionReadCompleted {
+        return invalid_selected_index_context(
+            "source ledger event kind is not CodebaseIndexSelectionReadCompleted",
+        );
+    }
+    let read_path_fingerprint = format!("sha256:{}", hex_sha256(context.path.as_bytes()));
+    if !selected_index_context_source_payload_matches(
+        &source_event.payload,
+        context,
+        &read_path_fingerprint,
+    ) {
+        return invalid_selected_index_context("source selected-read ledger event does not match");
+    }
+
+    let prompt_context_id = selected_index_prompt_context_id(record, context);
+    let summary = TaskRunSelectedIndexPromptContextSummary {
+        prompt_context_id: prompt_context_id.clone(),
+        source_event_id: context.ledger_event_id.clone(),
+        source_event_kind: context.ledger_event_kind.clone(),
+        query_id: context.query_id.clone(),
+        selection_id: context.selection_id.clone(),
+        query_fingerprint: context.query_fingerprint.clone(),
+        selection_fingerprint: context.selection_fingerprint.clone(),
+        index_id: context.snapshot.index_id.clone(),
+        workspace_fingerprint: context.snapshot.workspace_fingerprint.clone(),
+        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
+        read_path_fingerprint: read_path_fingerprint.clone(),
+        file_kind: context.file_kind.clone(),
+        bytes_read: context.bytes_read,
+        content_char_count: context.content.chars().count(),
+        content_sha256: context.content_sha256.clone(),
+        prompt_preview_redacted: true,
+        next_action: CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION.to_string(),
+    };
+    let prompt_context = SelectedIndexPromptContext {
+        prompt_context_id: prompt_context_id.clone(),
+        source_event_id: context.ledger_event_id.clone(),
+        query_id: context.query_id.clone(),
+        selection_id: context.selection_id.clone(),
+        selection_fingerprint: context.selection_fingerprint.clone(),
+        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
+        path: context.path.clone(),
+        file_kind: context.file_kind.clone(),
+        bytes_read: context.bytes_read,
+        content_sha256: context.content_sha256.clone(),
+        content: context.content.clone(),
+    };
+    let event_payload =
+        codebase_index_prompt_context_materialized_payload(record, policy, &summary);
+    Ok(ValidatedTaskRunSelectedIndexContext {
+        prompt_context,
+        summary,
+        event_payload,
+    })
+}
+
+fn validate_selected_index_context_permission(
+    policy: &CompiledModePolicy,
+    action: RuntimeAction,
+) -> Result<(), TaskRunAdmissionRejection> {
+    let decision = RuntimePermissionGate::check(policy, action);
+    if decision.allowed {
+        return Ok(());
+    }
+    Err(TaskRunAdmissionRejection::InvalidParams(
+        "invalid params: selected_index_context permission is required",
+    ))
+}
+
+fn selected_index_context_source_payload_matches(
+    payload: &Value,
+    context: &TaskRunSelectedIndexContext,
+    read_path_fingerprint: &str,
+) -> bool {
+    event_payload_str(payload, "query_id") == Some(context.query_id.as_str())
+        && event_payload_str(payload, "selection_id") == Some(context.selection_id.as_str())
+        && event_payload_str(payload, "query_fingerprint")
+            == Some(context.query_fingerprint.as_str())
+        && event_payload_str(payload, "selection_fingerprint")
+            == Some(context.selection_fingerprint.as_str())
+        && event_payload_str(payload, "index_id") == Some(context.snapshot.index_id.as_str())
+        && event_payload_str(payload, "workspace_fingerprint")
+            == Some(context.snapshot.workspace_fingerprint.as_str())
+        && event_payload_str(payload, "snapshot_fingerprint")
+            == Some(context.snapshot.snapshot_fingerprint.as_str())
+        && payload.get("snapshot_truncated").and_then(Value::as_bool)
+            == Some(context.snapshot.truncated)
+        && event_payload_str(payload, "read_path_fingerprint") == Some(read_path_fingerprint)
+        && event_payload_str(payload, "file_kind") == Some(context.file_kind.as_str())
+        && event_payload_usize(payload, "byte_length") == Some(context.bytes_read)
+        && event_payload_usize(payload, "bytes_read") == Some(context.bytes_read)
+        && payload.get("truncated").and_then(Value::as_bool) == Some(false)
+        && event_payload_str(payload, "content_sha256") == Some(context.content_sha256.as_str())
+        && payload
+            .get("content_hash_verified")
+            .and_then(Value::as_bool)
+            == Some(true)
+        && event_payload_str(payload, "next_action")
+            == Some(CODEBASE_INDEX_SELECTION_READ_NEXT_ACTION)
+}
+
+fn selected_index_prompt_context_id(
+    record: &brownie_protocol::TaskRecord,
+    context: &TaskRunSelectedIndexContext,
+) -> String {
+    let seed = json!({
+        "version": "selected_index_prompt_context_v1",
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "source_event_id": context.ledger_event_id,
+        "query_id": context.query_id,
+        "selection_id": context.selection_id,
+        "selection_fingerprint": context.selection_fingerprint,
+        "content_sha256": context.content_sha256,
+    });
+    let digest = hex_sha256(seed.to_string().as_bytes());
+    format!("ctx_{}", &digest[..16])
+}
+
+fn codebase_index_prompt_context_materialized_payload(
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    summary: &TaskRunSelectedIndexPromptContextSummary,
+) -> Value {
+    json!({
+        "mode_id": policy.mode_id,
+        "task_id": record.task_id,
+        "run_id": record.run_id,
+        "prompt_context_id": summary.prompt_context_id,
+        "source_event_id": summary.source_event_id,
+        "source_event_kind": summary.source_event_kind,
+        "query_id": summary.query_id,
+        "selection_id": summary.selection_id,
+        "query_fingerprint": summary.query_fingerprint,
+        "selection_fingerprint": summary.selection_fingerprint,
+        "index_id": summary.index_id,
+        "workspace_fingerprint": summary.workspace_fingerprint,
+        "snapshot_fingerprint": summary.snapshot_fingerprint,
+        "read_path_fingerprint": summary.read_path_fingerprint,
+        "file_kind": summary.file_kind,
+        "bytes_read": summary.bytes_read,
+        "content_char_count": summary.content_char_count,
+        "content_sha256": summary.content_sha256,
+        "content_hash_verified": true,
+        "prompt_preview_redacted": true,
+        "next_action": summary.next_action,
+    })
+}
+
+fn append_codebase_index_prompt_context_materialized(
+    store: &BrownieStore,
+    running: &brownie_protocol::TaskRecord,
+    selected_context: &ValidatedTaskRunSelectedIndexContext,
+) -> anyhow::Result<()> {
+    store.tasks().append_task_event_with_payload(
+        running,
+        LedgerEventKind::CodebaseIndexPromptContextMaterialized,
+        Some(selected_context.event_payload.clone()),
+    )?;
+    Ok(())
+}
+
+fn invalid_selected_index_context<T>(
+    message: impl Into<String>,
+) -> Result<T, TaskRunAdmissionRejection> {
+    Err(selected_index_context_invalid_params(&message.into()))
+}
+
+fn selected_index_context_invalid_params(message: &str) -> TaskRunAdmissionRejection {
+    let _ = message;
+    TaskRunAdmissionRejection::InvalidParams("invalid params: selected_index_context is invalid")
+}
+
+fn selected_index_context_internal(message: &str) -> TaskRunAdmissionRejection {
+    TaskRunAdmissionRejection::Internal(format!("selected_index_context {message}"))
 }
 
 fn event_payload_str<'a>(payload: &'a Value, field: &str) -> Option<&'a str> {
@@ -20450,6 +20763,7 @@ fn prompt_built_payload(
     max_prompt_chars: usize,
     sensitive_scan: &PromptSensitiveScanResult,
     context_window: &ContextWindowSummary,
+    selected_index_context_present: bool,
 ) -> Value {
     let mut payload = serde_json::Map::new();
     payload.insert("message_count".to_string(), json!(message_count));
@@ -20480,13 +20794,49 @@ fn prompt_built_payload(
     if let Some(last) = context_window.last_included_event.as_deref() {
         payload.insert("context_last_included_event".to_string(), json!(last));
     }
-    if sensitive_scan.findings.is_empty() {
+    if selected_index_context_present {
+        payload.insert("prompt_preview_redacted".to_string(), json!(true));
+        payload.insert(
+            "prompt_preview_redaction_reason".to_string(),
+            json!("selected_index_context_present"),
+        );
+    } else if sensitive_scan.findings.is_empty() {
         payload.insert(
             "prompt_preview".to_string(),
             json!(preview_prompt(prompt, response_preview_chars)),
         );
     } else {
         payload.insert("prompt_preview_redacted".to_string(), json!(true));
+    }
+    Value::Object(payload)
+}
+
+fn llm_response_received_payload(
+    provider_status: &brownie_llm::LlmProviderStatus,
+    response_content: &str,
+    response_preview_chars: usize,
+    selected_index_context_present: bool,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "provider".to_string(),
+        json!(provider_kind_name(&provider_status.provider)),
+    );
+    payload.insert(
+        "response_preview_chars".to_string(),
+        json!(response_preview_chars),
+    );
+    if selected_index_context_present {
+        payload.insert("content_preview_redacted".to_string(), json!(true));
+        payload.insert(
+            "content_preview_redaction_reason".to_string(),
+            json!("selected_index_context_present"),
+        );
+    } else {
+        payload.insert(
+            "content_preview".to_string(),
+            json!(preview_with_limit(response_content, response_preview_chars)),
+        );
     }
     Value::Object(payload)
 }
@@ -21230,6 +21580,235 @@ mod tests {
     }
 
     #[test]
+    fn task_run_materializes_selected_index_context_from_prior_read() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let selected_content = "pub fn selected_context() {}\n";
+        let (store, selected_context) =
+            prepared_selected_index_context(temp.path(), selected_content);
+        let start = handle_task_start(
+            json!(3),
+            Some(json!({
+                "goal": "Use selected runtime context",
+                "mode_id": "orchestrator"
+            })),
+        )
+        .result
+        .expect("task start result");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = handle_task_run(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "selected_index_context": selected_context.clone(),
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert!(run.error.is_none());
+        let result = run.result.expect("task run result");
+        assert_eq!(result["status"], "Completed");
+        let summary = &result["selected_index_prompt_context"];
+        assert_eq!(
+            summary["source_event_id"],
+            selected_context["ledger_event_id"]
+        );
+        assert_eq!(
+            summary["source_event_kind"],
+            "CodebaseIndexSelectionReadCompleted"
+        );
+        assert_eq!(
+            summary["content_sha256"],
+            selected_context["content_sha256"]
+        );
+        assert_eq!(summary["prompt_preview_redacted"], true);
+        assert_eq!(
+            summary["next_action"],
+            "continue_task_execution_with_materialized_context"
+        );
+        assert!(summary["read_path_fingerprint"]
+            .as_str()
+            .expect("read path fingerprint")
+            .starts_with("sha256:"));
+        let result_json = serde_json::to_string(&result).expect("result json");
+        assert!(!result_json.contains(selected_content));
+        assert!(!result_json.contains("src/runtime/query.rs"));
+
+        let events = store
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("task events");
+        let materialized = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::CodebaseIndexPromptContextMaterialized)
+            .expect("materialized event");
+        let materialized_payload = materialized.payload.as_ref().expect("payload");
+        assert_eq!(
+            materialized_payload["source_event_id"],
+            summary["source_event_id"]
+        );
+        assert_eq!(materialized_payload["prompt_preview_redacted"], true);
+        for forbidden in [
+            "path",
+            "read_path",
+            "content",
+            "file_content",
+            "full_content",
+            "raw_input",
+            "stdout",
+            "stderr",
+            "env",
+            "command",
+            "absolute_path",
+            "canonical_path",
+        ] {
+            assert!(
+                materialized_payload.get(forbidden).is_none(),
+                "forbidden materialized payload field {forbidden}"
+            );
+        }
+        let prompt_built = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .expect("prompt built event");
+        let prompt_payload = prompt_built.payload.as_ref().expect("prompt payload");
+        assert_eq!(prompt_payload["prompt_preview_redacted"], true);
+        assert_eq!(
+            prompt_payload["prompt_preview_redaction_reason"],
+            "selected_index_context_present"
+        );
+        assert!(prompt_payload.get("prompt_preview").is_none());
+        let response_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::LlmResponseReceived)
+            .expect("llm response event");
+        let response_payload = response_event.payload.as_ref().expect("response payload");
+        assert_eq!(response_payload["content_preview_redacted"], true);
+        assert_eq!(
+            response_payload["content_preview_redaction_reason"],
+            "selected_index_context_present"
+        );
+        assert!(response_payload.get("content_preview").is_none());
+        if let Some(second_pass_response_event) = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived)
+        {
+            let second_pass_response_payload = second_pass_response_event
+                .payload
+                .as_ref()
+                .expect("second-pass response payload");
+            assert_eq!(
+                second_pass_response_payload["content_preview_redacted"],
+                true
+            );
+            assert_eq!(
+                second_pass_response_payload["content_preview_redaction_reason"],
+                "selected_index_context_present"
+            );
+            assert!(second_pass_response_payload
+                .get("content_preview")
+                .is_none());
+        }
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains(selected_content));
+        assert!(!ledger_json.contains("src/runtime/query.rs"));
+    }
+
+    #[test]
+    fn task_run_selected_index_context_requires_read_and_index_permissions_before_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (store, selected_context) =
+            prepared_selected_index_context(temp.path(), "pub fn selected_context() {}\n");
+        let start = handle_task_start(
+            json!(3),
+            Some(json!({
+                "goal": "Verifier cannot consume selected index context",
+                "mode_id": "verifier"
+            })),
+        )
+        .result
+        .expect("task start result");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = handle_task_run(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "selected_index_context": selected_context.clone(),
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let error = run.error.expect("permission error");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("selected_index_context"));
+        assert!(error.message.contains("permission is required"));
+        let events = store
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("task events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::AgentLoopStarted));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::CodebaseIndexPromptContextMaterialized));
+    }
+
+    #[test]
+    fn task_run_selected_index_context_rejects_hash_mismatch_before_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (store, mut selected_context) =
+            prepared_selected_index_context(temp.path(), "pub fn selected_context() {}\n");
+        selected_context["content"] = json!("pub fn tampered() {}\n");
+        let start = handle_task_start(
+            json!(3),
+            Some(json!({
+                "goal": "Reject tampered selected context",
+                "mode_id": "orchestrator"
+            })),
+        )
+        .result
+        .expect("task start result");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = handle_task_run(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "selected_index_context": selected_context.clone(),
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        let error = run.error.expect("hash mismatch error");
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("selected_index_context"));
+        let events = store
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("task events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::AgentLoopStarted));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::CodebaseIndexPromptContextMaterialized));
+    }
+
+    #[test]
     fn codebase_index_selection_read_allows_large_unrequested_selected_entries() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -21597,6 +22176,46 @@ mod tests {
             "entries": query["entries"].clone(),
             "read_path": read_path,
         })
+    }
+
+    fn prepared_selected_index_context(
+        workspace_root: &Path,
+        selected_content: &str,
+    ) -> (BrownieStore, Value) {
+        std::fs::create_dir_all(workspace_root.join("src/runtime")).expect("src dir");
+        std::fs::write(
+            workspace_root.join("src/runtime/query.rs"),
+            selected_content,
+        )
+        .expect("selected file");
+        std::fs::write(workspace_root.join("src/lib.rs"), "pub fn other() {}\n").expect("other");
+        let store = BrownieStore::new(workspace_root);
+        store
+            .codebase_index()
+            .write_current_snapshot(&query_test_manifest(vec![
+                selected_read_test_entry("src/runtime/query.rs", "Rust", selected_content),
+                selected_read_test_entry("src/lib.rs", "Rust", "pub fn other() {}\n"),
+            ]))
+            .expect("write current");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", workspace_root);
+
+        let query = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"codebase.index.query","params":{"mode_id":"orchestrator","query":"runtime rs","max_results":2,"file_kind":"Rust"}}"#,
+        )
+        .result
+        .expect("query result");
+        let selected_read = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "mode_id": "orchestrator",
+                "tool_id": CODEBASE_INDEX_SELECTION_READ_TOOL_ID,
+                "input": selected_read_input_from_query(&query, "src/runtime/query.rs", Some("Rust")),
+            })),
+        );
+        assert!(selected_read.error.is_none());
+        let selected_context =
+            selected_read.result.expect("selected read result")["output"].clone();
+        (store, selected_context)
     }
 
     fn selected_read_test_input(
