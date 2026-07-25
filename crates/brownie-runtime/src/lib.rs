@@ -2363,11 +2363,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::LlmResponseReceived,
-        Some(json!({
-            "provider": provider_kind_name(&provider_status.provider),
-            "content_preview": preview_with_limit(&result.llm_response.content, provider_selection.budget.response_preview_chars),
-            "response_preview_chars": provider_selection.budget.response_preview_chars,
-        })),
+        Some(llm_response_received_payload(
+            &provider_status,
+            &result.llm_response.content,
+            provider_selection.budget.response_preview_chars,
+            selected_index_context.is_some(),
+        )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -2461,11 +2462,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         if let Err(error) = store.tasks().append_task_event_with_payload(
             &running,
             LedgerEventKind::SecondPassLlmResponseReceived,
-            Some(json!({
-                "provider": provider_kind_name(&provider_status.provider),
-                "content_preview": preview_with_limit(&second_pass.llm_response.content, provider_selection.budget.response_preview_chars),
-                "response_preview_chars": provider_selection.budget.response_preview_chars,
-            })),
+            Some(llm_response_received_payload(
+                &provider_status,
+                &second_pass.llm_response.content,
+                provider_selection.budget.response_preview_chars,
+                selected_index_context.is_some(),
+            )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
@@ -20809,6 +20811,36 @@ fn prompt_built_payload(
     Value::Object(payload)
 }
 
+fn llm_response_received_payload(
+    provider_status: &brownie_llm::LlmProviderStatus,
+    response_content: &str,
+    response_preview_chars: usize,
+    selected_index_context_present: bool,
+) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "provider".to_string(),
+        json!(provider_kind_name(&provider_status.provider)),
+    );
+    payload.insert(
+        "response_preview_chars".to_string(),
+        json!(response_preview_chars),
+    );
+    if selected_index_context_present {
+        payload.insert("content_preview_redacted".to_string(), json!(true));
+        payload.insert(
+            "content_preview_redaction_reason".to_string(),
+            json!("selected_index_context_present"),
+        );
+    } else {
+        payload.insert(
+            "content_preview".to_string(),
+            json!(preview_with_limit(response_content, response_preview_chars)),
+        );
+    }
+    Value::Object(payload)
+}
+
 fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
     let joined = prompt
         .messages
@@ -21648,6 +21680,37 @@ mod tests {
             "selected_index_context_present"
         );
         assert!(prompt_payload.get("prompt_preview").is_none());
+        let response_event = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::LlmResponseReceived)
+            .expect("llm response event");
+        let response_payload = response_event.payload.as_ref().expect("response payload");
+        assert_eq!(response_payload["content_preview_redacted"], true);
+        assert_eq!(
+            response_payload["content_preview_redaction_reason"],
+            "selected_index_context_present"
+        );
+        assert!(response_payload.get("content_preview").is_none());
+        if let Some(second_pass_response_event) = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassLlmResponseReceived)
+        {
+            let second_pass_response_payload = second_pass_response_event
+                .payload
+                .as_ref()
+                .expect("second-pass response payload");
+            assert_eq!(
+                second_pass_response_payload["content_preview_redacted"],
+                true
+            );
+            assert_eq!(
+                second_pass_response_payload["content_preview_redaction_reason"],
+                "selected_index_context_present"
+            );
+            assert!(second_pass_response_payload
+                .get("content_preview")
+                .is_none());
+        }
         let ledger_json = serde_json::to_string(&events).expect("ledger json");
         assert!(!ledger_json.contains(selected_content));
         assert!(!ledger_json.contains("src/runtime/query.rs"));
