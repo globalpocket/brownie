@@ -1140,6 +1140,81 @@ pub struct RecoveryCycleBudgetOutcome {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListResult {
     pub tasks: Vec<TaskRecord>,
+    pub progress_overview: TaskListProgressOverview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListProgressOverview {
+    pub source_fingerprint: String,
+    pub aggregate_sequence: u64,
+    pub task_count: usize,
+    pub root_task_ids: Vec<String>,
+    pub runnable_task_ids: Vec<String>,
+    pub blocked_task_ids: Vec<String>,
+    pub terminal_task_ids: Vec<String>,
+    pub parent_join_ready_task_ids: Vec<String>,
+    pub status_counts: TaskStatusCounts,
+    pub stage_counts: Vec<TaskListProgressStageCount>,
+    pub next_action_sets: Vec<TaskListProgressNextActionSet>,
+    pub blocked_sets: Vec<TaskListProgressBlockedSet>,
+    pub nodes: Vec<TaskProgressGraphNode>,
+    pub edges: Vec<TaskProgressGraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskStatusCounts {
+    pub created: usize,
+    pub queued: usize,
+    pub running: usize,
+    pub completed: usize,
+    pub failed: usize,
+    pub cancelled: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListProgressStageCount {
+    pub current_stage: ProgressCurrentStage,
+    pub task_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListProgressNextActionSet {
+    pub next_action: ProgressNextAction,
+    pub task_count: usize,
+    pub task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListProgressBlockedSet {
+    pub current_stage: ProgressCurrentStage,
+    pub next_action: ProgressNextAction,
+    pub task_count: usize,
+    pub task_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskProgressGraphNode {
+    pub task_id: String,
+    pub run_id: String,
+    pub status: TaskStatus,
+    pub lifecycle_phase: ProgressLifecyclePhase,
+    pub current_stage: ProgressCurrentStage,
+    pub next_action: ProgressNextAction,
+    pub parent_task_id: Option<String>,
+    pub parent_run_id: Option<String>,
+    pub child_task_count: usize,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskProgressGraphEdge {
+    pub parent_task_id: String,
+    pub parent_run_id: String,
+    pub child_task_id: String,
+    pub child_run_id: String,
+    pub source_candidate_id: String,
+    pub source_handoff_envelope_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

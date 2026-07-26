@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isProgressSnapshot, isProposalApplyResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
+import { isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
@@ -60,6 +60,47 @@ const taskRecord = {
   source_intent_summary: null,
   created_at: '2026-06-26T00:00:00Z',
   updated_at: '2026-06-26T00:00:00Z',
+};
+
+const taskListProgressOverview = {
+  source_fingerprint: `sha256:${'b'.repeat(64)}`,
+  aggregate_sequence: 20260626000000,
+  task_count: 1,
+  root_task_ids: ['task_1'],
+  runnable_task_ids: ['task_1'],
+  blocked_task_ids: [],
+  terminal_task_ids: [],
+  parent_join_ready_task_ids: [],
+  status_counts: {
+    created: 1,
+    queued: 0,
+    running: 0,
+    completed: 0,
+    failed: 0,
+    cancelled: 0,
+  },
+  stage_counts: [{ current_stage: 'created', task_count: 1 }],
+  next_action_sets: [{ next_action: 'run_task_explicitly', task_count: 1, task_ids: ['task_1'] }],
+  blocked_sets: [],
+  nodes: [{
+    task_id: 'task_1',
+    run_id: 'run_1',
+    status: 'Created',
+    lifecycle_phase: 'created',
+    current_stage: 'created',
+    next_action: 'run_task_explicitly',
+    parent_task_id: null,
+    parent_run_id: null,
+    child_task_count: 0,
+    created_at: '2026-06-26T00:00:00Z',
+    updated_at: '2026-06-26T00:00:00Z',
+  }],
+  edges: [],
+};
+
+const taskListResult = {
+  tasks: [taskRecord],
+  progress_overview: taskListProgressOverview,
 };
 
 const childSourceIntentSummary = {
@@ -495,6 +536,25 @@ describe('protocol validation', () => {
     expect(isProgressSnapshot({ ...progressSnapshot, canonical_path: '/tmp/file' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, serialized_request_body: '{}' })).toBe(false);
     expect(isRunInspectSummary({ ...summary, progress_snapshot: { ...progressSnapshot, raw_input: 'nope' } })).toBe(false);
+    expect(isTaskListResult(taskListResult)).toBe(true);
+    expect(isTaskListResult({ tasks: [taskRecord] })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, task_count: 2 } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, source_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, percentage: 50 } })).toBe(false);
+    expect(isTaskListResult({
+      ...taskListResult,
+      progress_overview: {
+        ...taskListProgressOverview,
+        next_action_sets: [{ next_action: 'auto_continue', task_count: 1, task_ids: ['task_1'] }],
+      },
+    })).toBe(false);
+    expect(isTaskListResult({
+      ...taskListResult,
+      progress_overview: {
+        ...taskListProgressOverview,
+        nodes: [{ ...taskListProgressOverview.nodes[0], event_count: 3 }],
+      },
+    })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -2188,11 +2248,26 @@ describe('RuntimeClient', () => {
   });
 
   it('creates a task.list request', async () => {
-    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { tasks: [taskRecord] } });
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: taskListResult });
     const client = new RuntimeClient(transport);
 
     await expect(client.listTasks()).resolves.toEqual([taskRecord]);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.list' }]);
+  });
+
+  it('returns task.list progress overview', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: taskListResult });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.listTasksWithProgress()).resolves.toEqual(taskListResult);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.list' }]);
+  });
+
+  it('rejects task.list results without progress overview', async () => {
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result: { tasks: [taskRecord] } });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.listTasks()).rejects.toThrow('task.list returned an invalid result');
   });
 
   it('converts JSON-RPC error responses into exceptions', async () => {

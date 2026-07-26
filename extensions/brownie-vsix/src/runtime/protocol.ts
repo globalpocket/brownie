@@ -616,6 +616,78 @@ export interface ProgressSnapshot {
   selected_index_context_count: number;
 }
 
+export interface TaskListResult {
+  tasks: TaskRecord[];
+  progress_overview: TaskListProgressOverview;
+}
+
+export interface TaskListProgressOverview {
+  source_fingerprint: string;
+  aggregate_sequence: number;
+  task_count: number;
+  root_task_ids: string[];
+  runnable_task_ids: string[];
+  blocked_task_ids: string[];
+  terminal_task_ids: string[];
+  parent_join_ready_task_ids: string[];
+  status_counts: TaskStatusCounts;
+  stage_counts: TaskListProgressStageCount[];
+  next_action_sets: TaskListProgressNextActionSet[];
+  blocked_sets: TaskListProgressBlockedSet[];
+  nodes: TaskProgressGraphNode[];
+  edges: TaskProgressGraphEdge[];
+}
+
+export interface TaskStatusCounts {
+  created: number;
+  queued: number;
+  running: number;
+  completed: number;
+  failed: number;
+  cancelled: number;
+}
+
+export interface TaskListProgressStageCount {
+  current_stage: ProgressCurrentStage;
+  task_count: number;
+}
+
+export interface TaskListProgressNextActionSet {
+  next_action: ProgressNextAction;
+  task_count: number;
+  task_ids: string[];
+}
+
+export interface TaskListProgressBlockedSet {
+  current_stage: ProgressCurrentStage;
+  next_action: ProgressNextAction;
+  task_count: number;
+  task_ids: string[];
+}
+
+export interface TaskProgressGraphNode {
+  task_id: string;
+  run_id: string;
+  status: TaskStatus;
+  lifecycle_phase: ProgressLifecyclePhase;
+  current_stage: ProgressCurrentStage;
+  next_action: ProgressNextAction;
+  parent_task_id?: string | null;
+  parent_run_id?: string | null;
+  child_task_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TaskProgressGraphEdge {
+  parent_task_id: string;
+  parent_run_id: string;
+  child_task_id: string;
+  child_run_id: string;
+  source_candidate_id: string;
+  source_handoff_envelope_fingerprint: string;
+}
+
 export interface ChildTaskInspectSummary {
   task_id: string;
   run_id: string;
@@ -3910,6 +3982,191 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.verification_recovery_retry_provenance === undefined || value.verification_recovery_retry_provenance === null || isVerificationRecoveryRetryProvenance(value.verification_recovery_retry_provenance)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
+  );
+}
+
+export function isTaskListResult(value: unknown): value is TaskListResult {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['tasks', 'progress_overview']) &&
+    Array.isArray(value.tasks) &&
+    value.tasks.every(isTaskRecord) &&
+    isTaskListProgressOverview(value.progress_overview) &&
+    value.progress_overview.task_count === value.tasks.length
+  );
+}
+
+export function isTaskListProgressOverview(value: unknown): value is TaskListProgressOverview {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, [
+      'source_fingerprint',
+      'aggregate_sequence',
+      'task_count',
+      'root_task_ids',
+      'runnable_task_ids',
+      'blocked_task_ids',
+      'terminal_task_ids',
+      'parent_join_ready_task_ids',
+      'status_counts',
+      'stage_counts',
+      'next_action_sets',
+      'blocked_sets',
+      'nodes',
+      'edges',
+    ]) ||
+    !hasNoForbiddenTaskListProgressFields(value) ||
+    typeof value.source_fingerprint !== 'string' ||
+    !isSha256Fingerprint(value.source_fingerprint) ||
+    !isNonNegativeInteger(value.aggregate_sequence) ||
+    !isNonNegativeInteger(value.task_count) ||
+    !isStringArray(value.root_task_ids) ||
+    !isStringArray(value.runnable_task_ids) ||
+    !isStringArray(value.blocked_task_ids) ||
+    !isStringArray(value.terminal_task_ids) ||
+    !isStringArray(value.parent_join_ready_task_ids) ||
+    !isTaskStatusCounts(value.status_counts) ||
+    !Array.isArray(value.stage_counts) ||
+    !value.stage_counts.every(isTaskListProgressStageCount) ||
+    !Array.isArray(value.next_action_sets) ||
+    !value.next_action_sets.every(isTaskListProgressNextActionSet) ||
+    !Array.isArray(value.blocked_sets) ||
+    !value.blocked_sets.every(isTaskListProgressBlockedSet) ||
+    !Array.isArray(value.nodes) ||
+    !value.nodes.every(isTaskProgressGraphNode) ||
+    !Array.isArray(value.edges) ||
+    !value.edges.every(isTaskProgressGraphEdge)
+  ) {
+    return false;
+  }
+
+  const statusCount =
+    value.status_counts.created +
+    value.status_counts.queued +
+    value.status_counts.running +
+    value.status_counts.completed +
+    value.status_counts.failed +
+    value.status_counts.cancelled;
+  return (
+    statusCount === value.task_count &&
+    value.nodes.length === value.task_count &&
+    value.stage_counts.reduce((sum, entry) => sum + entry.task_count, 0) === value.task_count &&
+    value.next_action_sets.every((entry) => entry.task_count === entry.task_ids.length) &&
+    value.blocked_sets.every((entry) => entry.task_count === entry.task_ids.length)
+  );
+}
+
+function isTaskStatusCounts(value: unknown): value is TaskStatusCounts {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['created', 'queued', 'running', 'completed', 'failed', 'cancelled']) &&
+    isNonNegativeInteger(value.created) &&
+    isNonNegativeInteger(value.queued) &&
+    isNonNegativeInteger(value.running) &&
+    isNonNegativeInteger(value.completed) &&
+    isNonNegativeInteger(value.failed) &&
+    isNonNegativeInteger(value.cancelled)
+  );
+}
+
+function isTaskListProgressStageCount(value: unknown): value is TaskListProgressStageCount {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['current_stage', 'task_count']) &&
+    isProgressCurrentStage(value.current_stage) &&
+    isNonNegativeInteger(value.task_count)
+  );
+}
+
+function isTaskListProgressNextActionSet(value: unknown): value is TaskListProgressNextActionSet {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['next_action', 'task_count', 'task_ids']) &&
+    isProgressNextAction(value.next_action) &&
+    isNonNegativeInteger(value.task_count) &&
+    isStringArray(value.task_ids) &&
+    value.task_count === value.task_ids.length
+  );
+}
+
+function isTaskListProgressBlockedSet(value: unknown): value is TaskListProgressBlockedSet {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['current_stage', 'next_action', 'task_count', 'task_ids']) &&
+    isProgressCurrentStage(value.current_stage) &&
+    isProgressNextAction(value.next_action) &&
+    isNonNegativeInteger(value.task_count) &&
+    isStringArray(value.task_ids) &&
+    value.task_count === value.task_ids.length
+  );
+}
+
+function isTaskProgressGraphNode(value: unknown): value is TaskProgressGraphNode {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'task_id',
+      'run_id',
+      'status',
+      'lifecycle_phase',
+      'current_stage',
+      'next_action',
+      'parent_task_id',
+      'parent_run_id',
+      'child_task_count',
+      'created_at',
+      'updated_at',
+    ]) &&
+    hasNoForbiddenTaskListProgressFields(value) &&
+    typeof value.task_id === 'string' &&
+    typeof value.run_id === 'string' &&
+    isTaskStatus(value.status) &&
+    isProgressLifecyclePhase(value.lifecycle_phase) &&
+    isProgressCurrentStage(value.current_stage) &&
+    isProgressNextAction(value.next_action) &&
+    (value.parent_task_id === undefined || value.parent_task_id === null || typeof value.parent_task_id === 'string') &&
+    (value.parent_run_id === undefined || value.parent_run_id === null || typeof value.parent_run_id === 'string') &&
+    isNonNegativeInteger(value.child_task_count) &&
+    typeof value.created_at === 'string' &&
+    typeof value.updated_at === 'string'
+  );
+}
+
+function isTaskProgressGraphEdge(value: unknown): value is TaskProgressGraphEdge {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'parent_task_id',
+      'parent_run_id',
+      'child_task_id',
+      'child_run_id',
+      'source_candidate_id',
+      'source_handoff_envelope_fingerprint',
+    ]) &&
+    hasNoForbiddenTaskListProgressFields(value) &&
+    typeof value.parent_task_id === 'string' &&
+    typeof value.parent_run_id === 'string' &&
+    typeof value.child_task_id === 'string' &&
+    typeof value.child_run_id === 'string' &&
+    typeof value.source_candidate_id === 'string' &&
+    typeof value.source_handoff_envelope_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_handoff_envelope_fingerprint)
+  );
+}
+
+function hasNoForbiddenTaskListProgressFields(value: Record<string, unknown>): boolean {
+  return (
+    hasNoForbiddenRawFields(value) &&
+    !Object.prototype.hasOwnProperty.call(value, 'goal') &&
+    !Object.prototype.hasOwnProperty.call(value, 'event_count') &&
+    !Object.prototype.hasOwnProperty.call(value, 'events') &&
+    !Object.prototype.hasOwnProperty.call(value, 'payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'timeline') &&
+    !Object.prototype.hasOwnProperty.call(value, 'progress_snapshot') &&
+    !Object.prototype.hasOwnProperty.call(value, 'percentage') &&
+    !Object.prototype.hasOwnProperty.call(value, 'percent_complete') &&
+    !Object.prototype.hasOwnProperty.call(value, 'final_response') &&
+    !Object.prototype.hasOwnProperty.call(value, 'final_response_preview')
   );
 }
 
