@@ -183,7 +183,14 @@ M10.1 adds the first runtime-owned progress visualization model. Existing
 a bounded classifier derived from persisted `TaskRecord` status, controlled child
 task state, and already-recorded run ledger evidence. The classifier reports
 lifecycle phase, current stage, one explicit next action, replay-safe source
-fingerprint, child/verifier/recovery/apply/index-context counts and booleans.
+fingerprint, latest verification state, separated agent-loop/task terminal
+evidence, and child/verifier/recovery/apply/index-context counts and booleans.
+The source fingerprint is computed from bounded derived state such as task
+status, latest verification state, parent-join readiness,
+recovery/apply/index-context signals, child status counts, task terminal event
+kind, and the chosen lifecycle/stage/action.
+Recovery repair `gate_status` values are not treated as verification completion
+gate failures.
 
 This is not a new JSON-RPC method, diagnostics wrapper, report, digest, history,
 readiness check, execution preview, or VSIX policy layer. Inspection remains

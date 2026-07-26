@@ -235,11 +235,13 @@ const progressSnapshot = {
   next_action: 'inspect_terminal_result',
   source_fingerprint: 'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
   event_count: 3,
-  terminal_event_present: true,
+  agent_loop_terminal_evidence_present: true,
+  task_terminal_event_present: true,
   controlled_child_count: 0,
   pending_controlled_child_count: 0,
   terminal_controlled_child_count: 0,
   non_runnable_controlled_child_count: 0,
+  verification_state: 'not_required',
   verifier_required: false,
   verifier_failed: false,
   verifier_passed: false,
@@ -466,11 +468,17 @@ describe('protocol validation', () => {
     expect(isRunInspectSummary({ ...summary, consumed_parent_join_recovery_summary: parentInspectConsumedParentJoinRecoverySummary })).toBe(true);
     expect(isRunInspectSummary({ ...summary, consumed_parent_join_recovery_summary: { ...parentInspectConsumedParentJoinRecoverySummary, inspected_child_task_id: 'task_child_1' } })).toBe(false);
     expect(isProgressSnapshot(progressSnapshot)).toBe(true);
+    expect(isProgressSnapshot({ ...progressSnapshot, lifecycle_phase: 'blocked_for_explicit_action', current_stage: 'parent_join_ready', next_action: 'run_parent_task_explicitly' })).toBe(true);
     expect(isProgressSnapshot({ ...progressSnapshot, lifecycle_phase: 'paused' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'waiting_for_magic' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, next_action: 'auto_continue' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'stale_failed' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'failed', verifier_failed: false })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'passed', verifier_passed: false })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'pending', verifier_required: false })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, source_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, selected_index_context_present: true })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, terminal_event_present: true })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, content: 'raw file content' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, prompt: 'raw prompt' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, provider_response: 'raw provider response' })).toBe(false);

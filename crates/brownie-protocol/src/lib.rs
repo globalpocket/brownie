@@ -2876,11 +2876,13 @@ pub struct ProgressSnapshot {
     pub next_action: ProgressNextAction,
     pub source_fingerprint: String,
     pub event_count: usize,
-    pub terminal_event_present: bool,
+    pub agent_loop_terminal_evidence_present: bool,
+    pub task_terminal_event_present: bool,
     pub controlled_child_count: usize,
     pub pending_controlled_child_count: usize,
     pub terminal_controlled_child_count: usize,
     pub non_runnable_controlled_child_count: usize,
+    pub verification_state: ProgressVerificationState,
     pub verifier_required: bool,
     pub verifier_failed: bool,
     pub verifier_passed: bool,
@@ -2909,6 +2911,8 @@ pub enum ProgressCurrentStage {
     RunningAgentLoop,
     WaitingOnChildTasks,
     InspectNonRunnableChildTasks,
+    CompletedWithPendingChildren,
+    ParentJoinReady,
     VerificationFailed,
     RecoveryAvailable,
     IndexContextMaterialized,
@@ -2922,6 +2926,7 @@ pub enum ProgressCurrentStage {
 #[serde(rename_all = "snake_case")]
 pub enum ProgressNextAction {
     RunTaskExplicitly,
+    RunParentTaskExplicitly,
     RunRemainingChildTasksExplicitly,
     InspectNonRunnableChildTasks,
     StartVerificationRecoveryExplicitly,
@@ -2929,6 +2934,16 @@ pub enum ProgressNextAction {
     InspectTerminalResult,
     InspectTask,
     None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressVerificationState {
+    NotRequired,
+    Pending,
+    Passed,
+    Failed,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

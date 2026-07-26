@@ -577,6 +577,8 @@ export type ProgressCurrentStage =
   | 'running_agent_loop'
   | 'waiting_on_child_tasks'
   | 'inspect_non_runnable_child_tasks'
+  | 'completed_with_pending_children'
+  | 'parent_join_ready'
   | 'verification_failed'
   | 'recovery_available'
   | 'index_context_materialized'
@@ -587,6 +589,7 @@ export type ProgressCurrentStage =
 
 export type ProgressNextAction =
   | 'run_task_explicitly'
+  | 'run_parent_task_explicitly'
   | 'run_remaining_child_tasks_explicitly'
   | 'inspect_non_runnable_child_tasks'
   | 'start_verification_recovery_explicitly'
@@ -595,17 +598,21 @@ export type ProgressNextAction =
   | 'inspect_task'
   | 'none';
 
+export type ProgressVerificationState = 'not_required' | 'pending' | 'passed' | 'failed' | 'unknown';
+
 export interface ProgressSnapshot {
   lifecycle_phase: ProgressLifecyclePhase;
   current_stage: ProgressCurrentStage;
   next_action: ProgressNextAction;
   source_fingerprint: string;
   event_count: number;
-  terminal_event_present: boolean;
+  agent_loop_terminal_evidence_present: boolean;
+  task_terminal_event_present: boolean;
   controlled_child_count: number;
   pending_controlled_child_count: number;
   terminal_controlled_child_count: number;
   non_runnable_controlled_child_count: number;
+  verification_state: ProgressVerificationState;
   verifier_required: boolean;
   verifier_failed: boolean;
   verifier_passed: boolean;
@@ -4305,6 +4312,8 @@ function isProgressCurrentStage(value: unknown): value is ProgressCurrentStage {
     value === 'running_agent_loop' ||
     value === 'waiting_on_child_tasks' ||
     value === 'inspect_non_runnable_child_tasks' ||
+    value === 'completed_with_pending_children' ||
+    value === 'parent_join_ready' ||
     value === 'verification_failed' ||
     value === 'recovery_available' ||
     value === 'index_context_materialized' ||
@@ -4318,6 +4327,7 @@ function isProgressCurrentStage(value: unknown): value is ProgressCurrentStage {
 function isProgressNextAction(value: unknown): value is ProgressNextAction {
   return (
     value === 'run_task_explicitly' ||
+    value === 'run_parent_task_explicitly' ||
     value === 'run_remaining_child_tasks_explicitly' ||
     value === 'inspect_non_runnable_child_tasks' ||
     value === 'start_verification_recovery_explicitly' ||
@@ -4326,6 +4336,10 @@ function isProgressNextAction(value: unknown): value is ProgressNextAction {
     value === 'inspect_task' ||
     value === 'none'
   );
+}
+
+function isProgressVerificationState(value: unknown): value is ProgressVerificationState {
+  return value === 'not_required' || value === 'pending' || value === 'passed' || value === 'failed' || value === 'unknown';
 }
 
 export function isProgressSnapshot(value: unknown): value is ProgressSnapshot {
@@ -4337,11 +4351,13 @@ export function isProgressSnapshot(value: unknown): value is ProgressSnapshot {
       'next_action',
       'source_fingerprint',
       'event_count',
-      'terminal_event_present',
+      'agent_loop_terminal_evidence_present',
+      'task_terminal_event_present',
       'controlled_child_count',
       'pending_controlled_child_count',
       'terminal_controlled_child_count',
       'non_runnable_controlled_child_count',
+      'verification_state',
       'verifier_required',
       'verifier_failed',
       'verifier_passed',
@@ -4357,15 +4373,20 @@ export function isProgressSnapshot(value: unknown): value is ProgressSnapshot {
     typeof value.source_fingerprint === 'string' &&
     isSha256Fingerprint(value.source_fingerprint) &&
     isNonNegativeInteger(value.event_count) &&
-    typeof value.terminal_event_present === 'boolean' &&
+    typeof value.agent_loop_terminal_evidence_present === 'boolean' &&
+    typeof value.task_terminal_event_present === 'boolean' &&
     isNonNegativeInteger(value.controlled_child_count) &&
     isNonNegativeInteger(value.pending_controlled_child_count) &&
     isNonNegativeInteger(value.terminal_controlled_child_count) &&
     isNonNegativeInteger(value.non_runnable_controlled_child_count) &&
     value.pending_controlled_child_count + value.terminal_controlled_child_count + value.non_runnable_controlled_child_count <= value.controlled_child_count &&
+    isProgressVerificationState(value.verification_state) &&
     typeof value.verifier_required === 'boolean' &&
     typeof value.verifier_failed === 'boolean' &&
     typeof value.verifier_passed === 'boolean' &&
+    value.verifier_failed === (value.verification_state === 'failed') &&
+    value.verifier_passed === (value.verification_state === 'passed') &&
+    value.verifier_required === (value.verification_state !== 'not_required') &&
     typeof value.recovery_signal_present === 'boolean' &&
     typeof value.apply_signal_present === 'boolean' &&
     typeof value.selected_index_context_present === 'boolean' &&
