@@ -230,6 +230,26 @@ apply patches, call providers, or start an asynchronous executor. It also avoids
 0-100% progress percentages and keeps aggregate persisted progress separate from
 future live concurrent observation work reserved for M10.3.
 
+M11.1 adds the first bounded headless autonomous development control primitive.
+The new `headless.continue_once` JSON-RPC method accepts `authorize=true`, an
+expected `task.list.progress_overview.source_fingerprint`, and an expected
+`aggregate_sequence`. The Rust runtime recomputes the current aggregate progress
+state, rejects stale callers before any ledger mutation, selects exactly one
+eligible `Created` or controlled `Queued` task whose next action is
+`run_task_explicitly`, records bounded `HeadlessContinuationDecisionRecorded`
+evidence on that selected task, and then delegates to the existing `task.run`
+admission path.
+
+`headless.continue_once` is not an autonomous loop, scheduler, async executor,
+live progress observer, or selected-next-action preview. It executes at most one
+task per request and selects no fallback candidate if selected task admission
+fails. M11.1 excludes parent-join-ready completed parent execution, verification
+retry execution, proposal apply, verifier expansion, shell/git/network/service
+actions, and VSIX-owned task-selection policy. Its result and ledger evidence
+stay summary-only and must not include raw prompts, provider responses, file
+contents, ledger payloads, stdout/stderr, commands, environment values, raw
+request bodies, absolute paths, canonical paths, secrets, or percentages.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

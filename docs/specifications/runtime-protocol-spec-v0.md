@@ -632,6 +632,34 @@ M4 strengthens the existing `task.run` prompt materialization path without addin
 
 M4 does not add patch apply, direct workspace mutation, unrestricted process execution, network fetch, service-control, destructive actions, or new diagnostics wrapper RPCs. It only changes how existing task/run context is selected, summarized, and recorded.
 
+## M11.1 headless continue-once
+
+`headless.continue_once` is a bounded runtime-owned continuation method for
+headless callers. Params include `authorize=true`,
+`expected_progress_fingerprint`, `expected_aggregate_sequence`, and an optional
+bounded `continuation_id`. The runtime recomputes `task.list.progress_overview`
+from persisted task state, rejects stale fingerprint or sequence mismatches with
+bounded `stale_progress` metadata, and appends no task ledger event on stale or
+missing authorization paths.
+
+When the expected aggregate state is current, the runtime selects one stable
+candidate from progress overview nodes whose task status is `Created` or
+controlled `Queued` and whose next action is `run_task_explicitly`. It records a
+bounded `HeadlessContinuationDecisionRecorded` event on the selected task before
+delegating to the existing `task.run` admission and execution path. The response
+reports the selected task/run IDs, decision ID, candidate count, expected and
+current aggregate progress handles, optional post-run aggregate handles, stale
+and replay flags, and the bounded `task_run_result` when execution starts.
+
+The method executes at most one task, selects no fallback candidate, and does not
+run parent-join-ready completed parents, recovery retries, proposal apply,
+verifier expansion, shell/git/network/service actions, a scheduler, an async
+executor, or a live progress observer. VSIX code validates the protocol shape but
+does not infer task-selection policy. Result and decision evidence must not store
+or return raw prompts, provider responses, file contents, ledger payloads,
+stdout/stderr, commands, environment values, raw request bodies, absolute paths,
+canonical paths, secrets, or arbitrary percentages.
+
 ## Phase 1.10 run inspection methods
 
 The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JSON-RPC methods. They return sanitized ledger previews and run summaries only; full file content and raw tool output are not returned through inspection responses. Unknown run or task IDs return `-32602 invalid params`.
