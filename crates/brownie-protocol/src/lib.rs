@@ -1146,6 +1146,7 @@ pub struct TaskListResult {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListProgressOverview {
     pub source_fingerprint: String,
+    pub aggregate_sequence: u64,
     pub task_count: usize,
     pub root_task_ids: Vec<String>,
     pub runnable_task_ids: Vec<String>,

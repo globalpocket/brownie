@@ -7032,13 +7032,21 @@ struct TaskListProgressClassification {
     next_action: ProgressNextAction,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskListParentJoinProjection {
+    Ready,
+    NotReady,
+    Unknown,
+}
+
 fn task_list_progress_overview(
     store: &BrownieStore,
     tasks: &[TaskRecord],
 ) -> Result<TaskListProgressOverview, String> {
     let children_by_parent_run = task_list_children_by_parent_run(tasks);
-    let parent_join_consumed_task_ids =
-        task_list_parent_join_consumed_task_ids(store, tasks, &children_by_parent_run)?;
+    let parent_join_projection_by_task_id =
+        task_list_parent_join_projection_by_task_id(store, tasks, &children_by_parent_run)?;
+    let aggregate_sequence = task_list_aggregate_sequence(tasks);
     let mut status_counts = TaskStatusCounts {
         created: 0,
         queued: 0,
@@ -7085,7 +7093,10 @@ fn task_list_progress_overview(
         let classification = task_list_progress_classification(
             task,
             child_tasks,
-            parent_join_consumed_task_ids.contains(&task.task_id),
+            parent_join_projection_by_task_id
+                .get(&task.task_id)
+                .copied()
+                .unwrap_or(TaskListParentJoinProjection::NotReady),
         );
         if classification.lifecycle_phase == ProgressLifecyclePhase::BlockedForExplicitAction {
             blocked_task_ids.push(task.task_id.clone());
@@ -7116,6 +7127,7 @@ fn task_list_progress_overview(
     let blocked_sets = task_list_progress_blocked_sets(&classifications);
     let source_fingerprint = task_list_progress_overview_fingerprint(
         tasks,
+        aggregate_sequence,
         &nodes,
         &edges,
         &root_task_ids,
@@ -7127,6 +7139,7 @@ fn task_list_progress_overview(
 
     Ok(TaskListProgressOverview {
         source_fingerprint,
+        aggregate_sequence,
         task_count: tasks.len(),
         root_task_ids,
         runnable_task_ids,
@@ -7160,12 +7173,12 @@ fn task_list_children_by_parent_run(
     children_by_parent_run
 }
 
-fn task_list_parent_join_consumed_task_ids(
+fn task_list_parent_join_projection_by_task_id(
     store: &BrownieStore,
     tasks: &[TaskRecord],
     children_by_parent_run: &std::collections::BTreeMap<String, Vec<&TaskRecord>>,
-) -> Result<std::collections::BTreeSet<String>, String> {
-    let mut consumed_task_ids = std::collections::BTreeSet::new();
+) -> Result<std::collections::BTreeMap<String, TaskListParentJoinProjection>, String> {
+    let mut projections = std::collections::BTreeMap::new();
     for task in tasks {
         if task.status != TaskStatus::Completed {
             continue;
@@ -7177,11 +7190,10 @@ fn task_list_parent_join_consumed_task_ids(
         if !task_list_has_terminal_join_candidate_children(child_tasks) {
             continue;
         }
-        if task_list_parent_run_has_consumed_join(store, &task.run_id)? {
-            consumed_task_ids.insert(task.task_id.clone());
-        }
+        let projection = task_list_parent_join_projection(store, task, child_tasks)?;
+        projections.insert(task.task_id.clone(), projection);
     }
-    Ok(consumed_task_ids)
+    Ok(projections)
 }
 
 fn task_list_has_terminal_join_candidate_children(child_tasks: &[&TaskRecord]) -> bool {
@@ -7195,23 +7207,274 @@ fn task_list_has_terminal_join_candidate_children(child_tasks: &[&TaskRecord]) -
             .all(|child| is_parent_join_terminal_child_status(&child.status))
 }
 
-fn task_list_parent_run_has_consumed_join(
+fn task_list_parent_join_projection(
     store: &BrownieStore,
-    parent_run_id: &str,
-) -> Result<bool, String> {
-    let events = store
+    parent: &TaskRecord,
+    child_tasks: &[&TaskRecord],
+) -> Result<TaskListParentJoinProjection, String> {
+    let parent_events = store
         .tasks()
-        .read_ledger_events(parent_run_id)
+        .read_ledger_events(&parent.run_id)
         .map_err(|error| error.to_string())?;
-    Ok(events
+    let mut child_evidence = Vec::new();
+    let mut sorted_child_tasks = child_tasks.to_vec();
+    sorted_child_tasks.sort_by(|left, right| {
+        left.source_candidate_id
+            .cmp(&right.source_candidate_id)
+            .then(left.task_id.cmp(&right.task_id))
+    });
+    for child in sorted_child_tasks {
+        if !task_list_child_controlled_provenance_is_valid(parent, &parent_events, child) {
+            return Ok(TaskListParentJoinProjection::Unknown);
+        }
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .map_err(|error| error.to_string())?;
+        if !task_list_child_has_terminal_parent_join_outcome_from_events(child, &child_events) {
+            return Ok(TaskListParentJoinProjection::Unknown);
+        }
+        child_evidence.push(task_list_parent_join_child_completion_evidence_from_events(
+            child,
+            &child_events,
+        ));
+    }
+    let (child_completion_fingerprint, _) =
+        parent_join_child_completion_fingerprint(&child_evidence);
+    let consumed = task_list_parent_join_child_completion_fingerprint_consumed_from_events(
+        &parent_events,
+        &child_completion_fingerprint,
+    );
+    if consumed {
+        Ok(TaskListParentJoinProjection::NotReady)
+    } else {
+        Ok(TaskListParentJoinProjection::Ready)
+    }
+}
+
+fn task_list_child_controlled_provenance_is_valid(
+    parent: &TaskRecord,
+    parent_events: &[LedgerEvent],
+    child: &TaskRecord,
+) -> bool {
+    if child.parent_task_id.as_deref() != Some(parent.task_id.as_str())
+        || child.parent_run_id.as_deref() != Some(parent.run_id.as_str())
+    {
+        return false;
+    }
+    let Some(source_candidate_id) = non_empty_record_string(child.source_candidate_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(source_handoff_envelope_id) =
+        non_empty_record_string(child.source_handoff_envelope_id.as_deref())
+    else {
+        return false;
+    };
+    let Some(source_handoff_envelope_fingerprint) =
+        non_empty_record_string(child.source_handoff_envelope_fingerprint.as_deref())
+    else {
+        return false;
+    };
+
+    let covered_by_handoff_envelope = parent_events.iter().any(|event| {
+        if event.kind != LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        payload.get("handoff_envelope_id").and_then(Value::as_str)
+            == Some(source_handoff_envelope_id.as_str())
+            && payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                == Some(source_handoff_envelope_fingerprint.as_str())
+            && (payload_string_array(payload, "candidate_ids")
+                .iter()
+                .any(|candidate| candidate == &source_candidate_id)
+                || payload_string_array(payload, "blocked_candidate_ids")
+                    .iter()
+                    .any(|candidate| candidate == &source_candidate_id))
+    });
+    covered_by_handoff_envelope
+        && validate_recovery_cycle_child_run_provenance(
+            child,
+            parent_events,
+            &source_handoff_envelope_id,
+            &source_handoff_envelope_fingerprint,
+        )
+        .is_ok()
+}
+
+fn task_list_child_has_terminal_parent_join_outcome_from_events(
+    child: &TaskRecord,
+    events: &[LedgerEvent],
+) -> bool {
+    match child.status {
+        TaskStatus::Completed => {
+            let has_completed_agent_loop = events.iter().rev().any(|event| {
+                event.kind == LedgerEventKind::AgentLoopCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("final_state"))
+                        .and_then(Value::as_str)
+                        == Some("Completed")
+            });
+            let has_task_completed = events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::TaskCompleted);
+            has_completed_agent_loop && has_task_completed
+        }
+        TaskStatus::Failed => {
+            let has_task_failed = events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::TaskFailed);
+            let has_failed_agent_loop = events.iter().rev().any(|event| {
+                event.kind == LedgerEventKind::AgentLoopCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("final_state"))
+                        .and_then(Value::as_str)
+                        == Some("Failed")
+            });
+            let has_redacted_failure_event = events.iter().any(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+                )
+            });
+            has_task_failed && (has_failed_agent_loop || has_redacted_failure_event)
+        }
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => {
+            false
+        }
+    }
+}
+
+fn task_list_parent_join_child_completion_evidence_from_events(
+    child: &TaskRecord,
+    events: &[LedgerEvent],
+) -> ParentJoinChildCompletionEvidence {
+    let source_candidate_id = child.source_candidate_id.as_deref().unwrap_or("<none>");
+    let source_handoff_envelope_id = child
+        .source_handoff_envelope_id
+        .as_deref()
+        .unwrap_or("<none>");
+    let source_handoff_envelope_fingerprint = child
+        .source_handoff_envelope_fingerprint
+        .as_deref()
+        .unwrap_or("<none>");
+    let parent_task_id = child.parent_task_id.as_deref().unwrap_or("<none>");
+    let parent_run_id = child.parent_run_id.as_deref().unwrap_or("<none>");
+    let status = format!("{:?}", child.status);
+    let completion_event = events
         .iter()
-        .any(|event| event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed))
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::AgentLoopCompleted);
+    let completion_final_state = completion_event
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("final_state"))
+        .and_then(Value::as_str)
+        .map(ToString::to_string);
+    let completion_result_fingerprint =
+        child_completion_result_fingerprint(events, completion_event);
+    let terminal_outcome_kind = match child.status {
+        TaskStatus::Completed => "completed_child",
+        TaskStatus::Failed => "failed_child",
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => {
+            "nonterminal_child"
+        }
+    };
+    let (terminal_final_state, terminal_result_fingerprint) = match child.status {
+        TaskStatus::Completed => (
+            completion_final_state.unwrap_or_else(|| "<none>".to_string()),
+            completion_result_fingerprint.unwrap_or_else(|| "<none>".to_string()),
+        ),
+        TaskStatus::Failed => (
+            completion_final_state
+                .filter(|state| state == "Failed")
+                .unwrap_or_else(|| "Failed".to_string()),
+            child_failure_result_fingerprint(events, completion_result_fingerprint.as_deref()),
+        ),
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled => {
+            ("<none>".to_string(), "<none>".to_string())
+        }
+    };
+
+    ParentJoinChildCompletionEvidence {
+        summary: String::new(),
+        fingerprint_inputs: vec![
+            format!("task_id={}", child.task_id),
+            format!("run_id={}", child.run_id),
+            format!("status={status}"),
+            format!("terminal_outcome_kind={terminal_outcome_kind}"),
+            format!("parent_task_id={parent_task_id}"),
+            format!("parent_run_id={parent_run_id}"),
+            format!("source_candidate_id={source_candidate_id}"),
+            format!("source_handoff_envelope_id={source_handoff_envelope_id}"),
+            format!("source_handoff_envelope_fingerprint={source_handoff_envelope_fingerprint}"),
+            format!("terminal_final_state={terminal_final_state}"),
+            format!("terminal_result_fingerprint={terminal_result_fingerprint}"),
+        ],
+    }
+}
+
+fn task_list_parent_join_child_completion_fingerprint_consumed_from_events(
+    events: &[LedgerEvent],
+    child_completion_fingerprint: &str,
+) -> bool {
+    events.iter().any(|event| {
+        if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+            return false;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            return false;
+        };
+        if payload
+            .get("child_completion_fingerprint")
+            .and_then(Value::as_str)
+            != Some(child_completion_fingerprint)
+        {
+            return false;
+        }
+        let Some(admission_id) = payload.get("admission_id").and_then(Value::as_str) else {
+            return true;
+        };
+        let Some(running_index) = events.iter().position(|candidate| {
+            candidate.kind == LedgerEventKind::TaskRunning
+                && candidate
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("admission_id"))
+                    .and_then(Value::as_str)
+                    == Some(admission_id)
+        }) else {
+            return false;
+        };
+        for candidate in events.iter().skip(running_index + 1) {
+            if candidate.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+                return false;
+            }
+            if matches!(
+                candidate.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            ) {
+                return true;
+            }
+        }
+        false
+    })
 }
 
 fn task_list_progress_classification(
     task: &TaskRecord,
     child_tasks: &[&TaskRecord],
-    parent_join_consumed: bool,
+    parent_join_projection: TaskListParentJoinProjection,
 ) -> TaskListProgressClassification {
     match task.status {
         TaskStatus::Created => TaskListProgressClassification {
@@ -7240,14 +7503,14 @@ fn task_list_progress_classification(
             next_action: ProgressNextAction::InspectTerminalResult,
         },
         TaskStatus::Completed => {
-            task_list_completed_progress_classification(child_tasks, parent_join_consumed)
+            task_list_completed_progress_classification(child_tasks, parent_join_projection)
         }
     }
 }
 
 fn task_list_completed_progress_classification(
     child_tasks: &[&TaskRecord],
-    parent_join_consumed: bool,
+    parent_join_projection: TaskListParentJoinProjection,
 ) -> TaskListProgressClassification {
     let pending_controlled_child_count = child_tasks
         .iter()
@@ -7278,7 +7541,9 @@ fn task_list_completed_progress_classification(
         };
     }
 
-    if terminal_controlled_child_count > 0 && parent_join_consumed {
+    if terminal_controlled_child_count > 0
+        && parent_join_projection == TaskListParentJoinProjection::Unknown
+    {
         return TaskListProgressClassification {
             lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
             current_stage: ProgressCurrentStage::Unknown,
@@ -7286,7 +7551,9 @@ fn task_list_completed_progress_classification(
         };
     }
 
-    if terminal_controlled_child_count > 0 {
+    if terminal_controlled_child_count > 0
+        && parent_join_projection == TaskListParentJoinProjection::Ready
+    {
         return TaskListProgressClassification {
             lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
             current_stage: ProgressCurrentStage::ParentJoinReady,
@@ -7421,6 +7688,7 @@ fn task_list_progress_blocked_sets(
 
 fn task_list_progress_overview_fingerprint(
     tasks: &[TaskRecord],
+    aggregate_sequence: u64,
     nodes: &[TaskProgressGraphNode],
     edges: &[TaskProgressGraphEdge],
     root_task_ids: &[String],
@@ -7431,6 +7699,7 @@ fn task_list_progress_overview_fingerprint(
 ) -> String {
     let mut entries = vec![
         ("version", "task_list_progress_overview_v1".to_string()),
+        ("aggregate_sequence", aggregate_sequence.to_string()),
         ("task_count", tasks.len().to_string()),
         ("root_task_ids", root_task_ids.join(",")),
         ("runnable_task_ids", runnable_task_ids.join(",")),
@@ -7456,6 +7725,23 @@ fn task_list_progress_overview_fingerprint(
     }
 
     progress_snapshot_source_fingerprint(&entries)
+}
+
+fn task_list_aggregate_sequence(tasks: &[TaskRecord]) -> u64 {
+    tasks
+        .iter()
+        .map(|task| task_list_timestamp_sequence(&task.updated_at))
+        .max()
+        .unwrap_or(0)
+}
+
+fn task_list_timestamp_sequence(timestamp: &str) -> u64 {
+    let digits = timestamp
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .take(17)
+        .collect::<String>();
+    digits.parse::<u64>().unwrap_or(0)
 }
 
 fn handle_tool_list(id: Value) -> JsonRpcResponse<Value> {
@@ -26366,6 +26652,19 @@ mod tests {
             })
             .expect("start join parent");
         let join_child = start_progress_test_child(&store, &parent_join, "join_child");
+        append_progress_test_handoff_envelope(&store, &parent_join, &join_child);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &join_child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "join child completed",
+                    "completion_result_fingerprint": format!("sha256:{}", "c".repeat(64))
+                })),
+            )
+            .expect("append join child agent loop completion");
         store
             .tasks()
             .update_task_status(
@@ -26438,6 +26737,12 @@ mod tests {
         );
         assert_eq!(progress["nodes"].as_array().expect("nodes").len(), 5);
         assert_eq!(progress["edges"].as_array().expect("edges").len(), 2);
+        assert!(
+            progress["aggregate_sequence"]
+                .as_u64()
+                .expect("aggregate sequence")
+                > 0
+        );
         assert!(progress["source_fingerprint"]
             .as_str()
             .expect("fingerprint")
@@ -26472,7 +26777,11 @@ mod tests {
                 verification_recovery_retry_source: None,
             })
             .expect("start parent");
-        let child = start_progress_test_child(&store, &parent, "bounded_join_child");
+        let child = start_progress_test_child(&store, &parent, "z_bounded_join_child");
+        let earlier_candidate_child =
+            start_progress_test_child(&store, &parent, "a_bounded_join_child");
+        append_progress_test_handoff_envelope(&store, &parent, &child);
+        append_progress_test_handoff_envelope(&store, &parent, &earlier_candidate_child);
         store
             .tasks()
             .append_task_event_with_payload(
@@ -26494,6 +26803,26 @@ mod tests {
                 LedgerEventKind::TaskCompleted,
             )
             .expect("complete child");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &earlier_candidate_child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "earlier candidate child completed",
+                    "completion_result_fingerprint": format!("sha256:{}", "e".repeat(64))
+                })),
+            )
+            .expect("append earlier candidate terminal child payload");
+        store
+            .tasks()
+            .update_task_status(
+                &earlier_candidate_child.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete earlier candidate child");
         let parent = store
             .tasks()
             .update_task_status(
@@ -26513,6 +26842,11 @@ mod tests {
             .read_ledger_events(&child.run_id)
             .expect("child events before")
             .len();
+        let earlier_candidate_child_events_before = store
+            .tasks()
+            .read_ledger_events(&earlier_candidate_child.run_id)
+            .expect("earlier candidate child events before")
+            .len();
 
         let first = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#);
         let progress_first = first.result.expect("first list")["progress_overview"].clone();
@@ -26528,9 +26862,18 @@ mod tests {
             .read_ledger_events(&child.run_id)
             .expect("child events after")
             .len();
+        let earlier_candidate_child_events_after = store
+            .tasks()
+            .read_ledger_events(&earlier_candidate_child.run_id)
+            .expect("earlier candidate child events after")
+            .len();
 
         assert_eq!(parent_events_before, parent_events_after);
         assert_eq!(child_events_before, child_events_after);
+        assert_eq!(
+            earlier_candidate_child_events_before,
+            earlier_candidate_child_events_after
+        );
         assert_eq!(
             progress_first["source_fingerprint"],
             progress_second["source_fingerprint"]
@@ -26549,27 +26892,39 @@ mod tests {
         assert!(!serialized.contains("final_response"));
         assert!(!serialized.contains("timeline"));
         assert!(!serialized.contains("event_count"));
-        assert_eq!(progress_first["nodes"].as_array().expect("nodes").len(), 2);
-        assert_eq!(progress_first["edges"].as_array().expect("edges").len(), 1);
+        assert_eq!(progress_first["nodes"].as_array().expect("nodes").len(), 3);
+        assert_eq!(progress_first["edges"].as_array().expect("edges").len(), 2);
 
+        let parent_join_admission =
+            validate_completed_parent_join_continuation_admission(&parent, &store)
+                .expect("parent join admission");
         store
             .tasks()
-            .append_task_event_with_payload(
-                &parent,
-                LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
-                Some(json!({
-                    "parent_join_continuation_status": "Consumed",
-                    "admission_id": "parent_join_admission_test",
-                    "child_completion_fingerprint": format!("sha256:{}", "e".repeat(64)),
-                    "child_completion_child_count": 1,
-                    "child_terminal_completed_count": 1,
-                    "child_terminal_failed_count": 0,
-                    "child_recovery_cycle_depth": 0,
-                    "fingerprint_input_count": 1,
-                    "reason": "Synthetic consumed join evidence for task.list aggregate test."
-                })),
+            .admit_parent_join_continuation(
+                &parent.task_id,
+                ParentJoinContinuationRunAdmission {
+                    child_completion_fingerprint: parent_join_admission
+                        .child_completion_fingerprint,
+                    child_completion_fingerprint_input_count: parent_join_admission
+                        .child_completion_fingerprint_input_count,
+                    child_completion_child_count: parent_join_admission
+                        .child_completion_child_count,
+                    child_terminal_completed_count: parent_join_admission
+                        .child_terminal_completed_count,
+                    child_terminal_failed_count: parent_join_admission.child_terminal_failed_count,
+                    child_recovery_cycle_depth: parent_join_admission.child_recovery_cycle_depth,
+                },
             )
-            .expect("append consumed parent join evidence");
+            .expect("admit parent join")
+            .expect("parent join admitted");
+        store
+            .tasks()
+            .update_task_status(
+                &parent.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete consumed parent join");
         let consumed = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#);
         let progress_consumed =
             consumed.result.expect("consumed list")["progress_overview"].clone();
@@ -26577,7 +26932,11 @@ mod tests {
             &progress_consumed["parent_join_ready_task_ids"],
             &parent.task_id,
         );
-        assert_json_next_action_contains(&progress_consumed, "inspect_task", &parent.task_id);
+        assert_json_next_action_contains(
+            &progress_consumed,
+            "inspect_terminal_result",
+            &parent.task_id,
+        );
         assert_ne!(
             progress_first["source_fingerprint"],
             progress_consumed["source_fingerprint"]
@@ -26732,6 +27091,26 @@ mod tests {
             action_set["task_ids"].as_array().expect("task ids").len()
         );
         assert_json_array_contains(&action_set["task_ids"], expected_task_id);
+    }
+
+    fn append_progress_test_handoff_envelope(
+        store: &BrownieStore,
+        parent: &TaskRecord,
+        child: &TaskRecord,
+    ) {
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_id": child.source_handoff_envelope_id,
+                    "handoff_envelope_fingerprint": child.source_handoff_envelope_fingerprint,
+                    "candidate_ids": [child.source_candidate_id],
+                    "blocked_candidate_ids": []
+                })),
+            )
+            .expect("append synthetic handoff envelope");
     }
 
     fn start_progress_test_child(

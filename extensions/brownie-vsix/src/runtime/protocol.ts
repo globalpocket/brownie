@@ -623,6 +623,7 @@ export interface TaskListResult {
 
 export interface TaskListProgressOverview {
   source_fingerprint: string;
+  aggregate_sequence: number;
   task_count: number;
   root_task_ids: string[];
   runnable_task_ids: string[];
@@ -4000,6 +4001,7 @@ export function isTaskListProgressOverview(value: unknown): value is TaskListPro
     !isRecord(value) ||
     !hasOnlyFields(value, [
       'source_fingerprint',
+      'aggregate_sequence',
       'task_count',
       'root_task_ids',
       'runnable_task_ids',
@@ -4016,6 +4018,7 @@ export function isTaskListProgressOverview(value: unknown): value is TaskListPro
     !hasNoForbiddenTaskListProgressFields(value) ||
     typeof value.source_fingerprint !== 'string' ||
     !isSha256Fingerprint(value.source_fingerprint) ||
+    !isNonNegativeInteger(value.aggregate_sequence) ||
     !isNonNegativeInteger(value.task_count) ||
     !isStringArray(value.root_task_ids) ||
     !isStringArray(value.runnable_task_ids) ||

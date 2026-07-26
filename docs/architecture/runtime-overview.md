@@ -216,13 +216,13 @@ M10.2 extends the same milestone through `task.list` by adding
 `progress_overview`, a runtime-owned aggregate over the listed task set. The
 overview returns runnable task IDs, blocked task IDs, terminal task IDs,
 parent-join-ready task IDs, parent/child graph nodes and edges, bounded
-next-action sets, status/stage counts, and a source fingerprint. It is computed
+next-action sets, status/stage counts, an aggregate sequence, and a source fingerprint. It is computed
 from persisted `TaskRecord` state, controlled child provenance already loaded
-for the task listing, and bounded parent-run consumption evidence for completed
-parent-join candidates, so headless callers can choose the next explicit action
+for the task listing, and bounded terminal-outcome plus parent-run consumption
+evidence for completed parent-join candidates, so headless callers can choose the next explicit action
 without wrapping `run.inspect` across every task or teaching the VSIX to infer a
 task graph. Parent-join-ready IDs require terminal controlled children and no
-consumed parent-join continuation fingerprint.
+consumed parent-join continuation fingerprint for the current child result fingerprint.
 
 M10.2 remains read-only. Listing tasks does not execute tasks, consume
 parent-join state, append ledger events, read workspace files, run verifiers,

@@ -64,6 +64,7 @@ const taskRecord = {
 
 const taskListProgressOverview = {
   source_fingerprint: `sha256:${'b'.repeat(64)}`,
+  aggregate_sequence: 20260626000000,
   task_count: 1,
   root_task_ids: ['task_1'],
   runnable_task_ids: ['task_1'],

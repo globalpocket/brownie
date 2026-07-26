@@ -73,12 +73,13 @@ The snapshot must not include raw prompts, provider responses, file content, sni
 The overview is a runtime-owned aggregate graph over the returned task set: root
 task IDs, parent/child edges, runnable task IDs, blocked task IDs, terminal task
 IDs, parent-join-ready task IDs, bounded next-action sets, status/stage counts,
-nodes, and a source fingerprint.
+nodes, an aggregate sequence, and a source fingerprint.
 
 The overview is not produced by repeatedly calling `run.inspect` and is not a
 task-by-task ledger wrapper. It is derived from persisted `TaskRecord` state,
 controlled child provenance already loaded for the listing, and bounded
-parent-run consumption evidence only for completed parent-join candidates. It is
+terminal-outcome plus parent-run consumption evidence only for completed
+parent-join candidates. It is
 read-only and does not execute tasks, consume parent-join state, append ledger
 events, run verifiers, apply patches, call providers, or read workspace files. It
 also does not expose arbitrary 0-100% percentages or raw prompts, provider
