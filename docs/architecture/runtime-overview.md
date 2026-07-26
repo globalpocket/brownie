@@ -185,21 +185,32 @@ task state, and already-recorded run ledger evidence. The classifier reports
 lifecycle phase, current stage, one explicit next action, replay-safe source
 fingerprint, latest verification state, separated agent-loop/task terminal
 evidence, and child/verifier/recovery/apply/index-context counts and booleans.
+Persisted `TaskRecord.status` is authoritative: historical `TaskRunning` and
+`AgentLoopStarted` ledger evidence is only a no-record fallback, and cannot
+override persisted `Created`, `Queued`, `Completed`, `Failed`, or `Cancelled`
+status. Failed or cancelled parent status also outranks controlled child state.
 The source fingerprint is computed from bounded derived state such as task
 status, latest verification state, parent-join readiness,
 recovery/apply/index-context signals, child status counts, task terminal event
 kind, and the chosen lifecycle/stage/action.
-Recovery repair `gate_status` values are not treated as verification completion
-gate failures.
+Verification completion gates are recognized only when a runtime-owned terminal
+task event (`TaskCompleted`, `TaskFailed`, or `TaskCancelled`) carries the bounded
+gate schema. Recovery repair `gate_status` values and gate-shaped payloads on
+non-terminal events are not treated as verification completion gate failures.
 
 This is not a new JSON-RPC method, diagnostics wrapper, report, digest, history,
-readiness check, execution preview, or VSIX policy layer. Inspection remains
-read-only: it appends no ledger event, creates no child task, consumes no parent
-join state, applies no patch, runs no verifier, calls no LLM provider, reads no
-workspace file, and performs no shell/git/network/service action. Snapshot fields
-must not expose raw prompts, provider responses, file content, snippets, diffs,
-stdout/stderr, command strings, environment values, raw request bodies, absolute
-paths, canonical paths, or secrets.
+readiness check, execution preview, live in-flight progress observer,
+same-runtime concurrent inspector, asynchronous runtime executor, or VSIX policy
+layer. M10.1 reports between-step, blocked-state, terminal, recovery, and child
+next-action progress from persisted runtime state; a future `M10.3 Concurrent
+Runtime Progress Observation` phase may add concurrent observation with a
+separate safety design. Inspection remains read-only: it appends no ledger event,
+creates no child task, consumes no parent join state, applies no patch, runs no
+verifier, calls no LLM provider, reads no workspace file, and performs no
+shell/git/network/service action. Snapshot fields must not expose raw prompts,
+provider responses, file content, snippets, diffs, stdout/stderr, command
+strings, environment values, raw request bodies, absolute paths, canonical paths,
+or secrets.
 
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 

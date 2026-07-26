@@ -575,13 +575,9 @@ export type ProgressCurrentStage =
   | 'created'
   | 'queued'
   | 'running_agent_loop'
-  | 'waiting_on_child_tasks'
   | 'inspect_non_runnable_child_tasks'
   | 'completed_with_pending_children'
   | 'parent_join_ready'
-  | 'verification_failed'
-  | 'recovery_available'
-  | 'index_context_materialized'
   | 'completed'
   | 'failed'
   | 'cancelled'
@@ -593,10 +589,8 @@ export type ProgressNextAction =
   | 'run_remaining_child_tasks_explicitly'
   | 'inspect_non_runnable_child_tasks'
   | 'start_verification_recovery_explicitly'
-  | 'inspect_verification_failure'
   | 'inspect_terminal_result'
-  | 'inspect_task'
-  | 'none';
+  | 'inspect_task';
 
 export type ProgressVerificationState = 'not_required' | 'pending' | 'passed' | 'failed' | 'unknown';
 
@@ -4310,13 +4304,9 @@ function isProgressCurrentStage(value: unknown): value is ProgressCurrentStage {
     value === 'created' ||
     value === 'queued' ||
     value === 'running_agent_loop' ||
-    value === 'waiting_on_child_tasks' ||
     value === 'inspect_non_runnable_child_tasks' ||
     value === 'completed_with_pending_children' ||
     value === 'parent_join_ready' ||
-    value === 'verification_failed' ||
-    value === 'recovery_available' ||
-    value === 'index_context_materialized' ||
     value === 'completed' ||
     value === 'failed' ||
     value === 'cancelled' ||
@@ -4331,10 +4321,8 @@ function isProgressNextAction(value: unknown): value is ProgressNextAction {
     value === 'run_remaining_child_tasks_explicitly' ||
     value === 'inspect_non_runnable_child_tasks' ||
     value === 'start_verification_recovery_explicitly' ||
-    value === 'inspect_verification_failure' ||
     value === 'inspect_terminal_result' ||
-    value === 'inspect_task' ||
-    value === 'none'
+    value === 'inspect_task'
   );
 }
 

@@ -2909,13 +2909,9 @@ pub enum ProgressCurrentStage {
     Created,
     Queued,
     RunningAgentLoop,
-    WaitingOnChildTasks,
     InspectNonRunnableChildTasks,
     CompletedWithPendingChildren,
     ParentJoinReady,
-    VerificationFailed,
-    RecoveryAvailable,
-    IndexContextMaterialized,
     Completed,
     Failed,
     Cancelled,
@@ -2930,10 +2926,8 @@ pub enum ProgressNextAction {
     RunRemainingChildTasksExplicitly,
     InspectNonRunnableChildTasks,
     StartVerificationRecoveryExplicitly,
-    InspectVerificationFailure,
     InspectTerminalResult,
     InspectTask,
-    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

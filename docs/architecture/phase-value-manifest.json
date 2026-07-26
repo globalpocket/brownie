@@ -77,7 +77,7 @@
       "non_duplicative": "Yes. M9.4 selected index handles, M9.5 read selected files, and M9.6 materialized selected context into task.run prompts. None classified active task/run progress.",
       "no_new_rpc": "Yes. This phase reuses run.inspect and task.inspect and adds no JSON-RPC method.",
       "no_new_summary": "No. A single bounded progress_snapshot is the capability because the runtime needs to own progress classification; it is not a report/digest/history wrapper.",
-      "runtime_behavior_change": "The Rust runtime computes deterministic progress classification and next action from TaskRecord status, child task records, and sanitized ledger evidence on inspection.",
+      "runtime_behavior_change": "The Rust runtime computes deterministic progress classification and next action from TaskRecord status, child task records, and sanitized ledger evidence on inspection, with persisted TaskRecord status taking precedence over stale running evidence.",
       "headless_autonomous_contribution": "A headless controller can inspect one task or run and receive a stable next action without scanning raw ledger events or reproducing milestone-specific logic.",
       "milestone_progress": "Establishes the M10 foundation for progress visualization by defining the first runtime-owned progress contract."
     }
@@ -92,6 +92,7 @@
       "progress_snapshot_reads_workspace_files_or_executes_tools",
       "progress_snapshot_appends_ledger_events_or_mutates_task_state",
       "raw_prompt_provider_response_file_content_stdout_stderr_command_env_path_or_request_body_in_snapshot",
+      "live_progress_or_async_runtime_executor_in_m10_1",
       "source_file_token_presence_only_acceptance",
       "diagnostics_or_readiness_wrapper_added"
     ]
@@ -115,15 +116,16 @@
     "Existing run.inspect returns run.progress_snapshot",
     "Existing task.inspect returns the same snapshot under run.progress_snapshot",
     "Snapshot lifecycle and stage are derived from runtime task status and ledger evidence, not caller-supplied fields",
-    "Created, queued, running, terminal, failed non-verification, failed-verification, verification recovery success, parent-child priority, read-only inspection, fingerprint stability, and selected-index-context cases have behavior tests",
+    "Persisted Created and Queued TaskRecord status outranks stale historical TaskRunning or AgentLoopStarted evidence",
+    "Created, queued, running, completed, failed non-verification, failed-verification, cancelled, latest-passed verification, malformed-gate, parent-child priority, read-only inspection, fingerprint stability, and selected-index-context cases have behavior tests",
     "Controlled child pending, terminal, and non-runnable counts influence bounded next_action guidance",
-    "Latest failed verification completion gate status produces start_verification_recovery_explicitly guidance when derivable",
-    "Recovery proposal gate_status is not misclassified as verification failure",
+    "Latest failed verification completion gate status on a runtime-owned terminal task event produces start_verification_recovery_explicitly guidance when derivable",
+    "Recovery proposal gate_status and gate-shaped payloads on non-terminal events are not misclassified as verification failures",
     "Failed or cancelled parent status is not hidden by queued or running children",
     "Selected-index prompt context is represented only as bounded signal presence/count and never raw content or path",
     "Snapshot includes a SHA-256 source_fingerprint over bounded derived source state used for classification",
     "VSIX validators accept valid snapshots and reject invalid enum values and raw fields",
-    "No new JSON-RPC method, diagnostics wrapper, report, digest, history, readiness, preview, execution, mutation, shell/git/network/service action, or VSIX policy inference is added"
+    "No new JSON-RPC method, diagnostics wrapper, report, digest, history, readiness, preview, live progress observer, asynchronous executor, mutation, shell/git/network/service action, or VSIX policy inference is added"
   ],
   "source_evidence": {
     "runtime_tokens": [
@@ -137,18 +139,26 @@
     ],
     "test_tokens": [
       "run_inspect_includes_progress_snapshot_for_created_task",
+      "run_inspect_progress_snapshot_created_status_beats_historical_agent_loop_started",
       "run_inspect_includes_progress_snapshot_for_queued_task",
+      "run_inspect_progress_snapshot_queued_status_beats_historical_task_running",
       "run_inspect_includes_progress_snapshot_for_running_or_active_task",
       "run_inspection_methods_return_sanitized_summaries",
       "run_inspect_progress_snapshot_reports_failed_non_verification_task",
+      "run_inspect_progress_snapshot_reports_cancelled_task",
       "run_inspect_progress_snapshot_reports_failed_verification_recovery_next_action",
       "run_inspect_progress_snapshot_uses_latest_verification_gate_state",
+      "run_inspect_progress_snapshot_ignores_recovery_gate_status_for_verification_state",
+      "run_inspect_progress_snapshot_ignores_non_terminal_gate_shaped_payloads",
+      "run_inspect_progress_snapshot_reports_malformed_latest_terminal_gate_as_unknown",
       "run_inspect_progress_snapshot_keeps_failed_parent_above_queued_child",
+      "run_inspect_progress_snapshot_keeps_cancelled_parent_above_running_child",
       "run_inspect_progress_snapshot_reports_completed_parent_with_pending_child",
       "run_inspect_progress_snapshot_reports_completed_parent_with_non_runnable_child",
       "run_inspect_progress_snapshot_reports_parent_join_ready",
       "run_inspect_progress_snapshot_is_read_only_and_fingerprint_is_stable_until_state_changes",
       "run_inspect_progress_snapshot_reports_selected_index_context_signal",
+      "progress_snapshot_without_task_uses_unknown_stage_and_inspect_action",
       "isProgressSnapshot(progressSnapshot)"
     ],
     "forbidden_tokens_in_current_evidence": [
@@ -160,5 +170,6 @@
       "progress.inspect"
     ]
   },
-  "next_phase_after_m10_1": "M10.2 Progress Snapshot For Multi-Task/Parent-Child Sets"
+  "next_phase_after_m10_1": "M10.2 Progress Snapshot For Multi-Task/Parent-Child Sets",
+  "next_phase_candidate_notes": "M10.2 may remain the next planning candidate, but its planning artifact must preserve M10.1 non-goals: no full-ledger-per-task wrapper, arbitrary percentage, task execution during inspect, or VSIX-owned progress policy. Concurrent live observation belongs to a later M10.3-style design."
 }

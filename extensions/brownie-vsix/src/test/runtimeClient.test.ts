@@ -471,7 +471,13 @@ describe('protocol validation', () => {
     expect(isProgressSnapshot({ ...progressSnapshot, lifecycle_phase: 'blocked_for_explicit_action', current_stage: 'parent_join_ready', next_action: 'run_parent_task_explicitly' })).toBe(true);
     expect(isProgressSnapshot({ ...progressSnapshot, lifecycle_phase: 'paused' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'waiting_for_magic' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'waiting_on_child_tasks' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'verification_failed' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'recovery_available' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, current_stage: 'index_context_materialized' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, next_action: 'auto_continue' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, next_action: 'inspect_verification_failure' })).toBe(false);
+    expect(isProgressSnapshot({ ...progressSnapshot, next_action: 'none' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'stale_failed' })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'failed', verifier_failed: false })).toBe(false);
     expect(isProgressSnapshot({ ...progressSnapshot, verification_state: 'passed', verifier_passed: false })).toBe(false);
