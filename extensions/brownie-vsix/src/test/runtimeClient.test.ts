@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
+import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
@@ -555,6 +555,59 @@ describe('protocol validation', () => {
         nodes: [{ ...taskListProgressOverview.nodes[0], event_count: 3 }],
       },
     })).toBe(false);
+    const headlessParams = {
+      authorize: true,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      continuation_id: 'continue.once:1',
+    };
+    const taskRunResult = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+    };
+    const headlessResult = {
+      status: 'task_executed',
+      decision_id: `headless_decision_${'a'.repeat(32)}`,
+      continuation_id: 'continue.once:1',
+      selected_task_id: 'task_1',
+      selected_run_id: 'run_1',
+      candidate_count: 1,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+      post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      stale: false,
+      replayed: false,
+      task_run_result: taskRunResult,
+      next_action: 'inspect_progress_overview',
+    };
+    expect(isHeadlessContinueOnceParams(headlessParams)).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, authorize: false })).toBe(false);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, expected_progress_fingerprint: 'not-a-fingerprint' })).toBe(false);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, command: 'cargo test' })).toBe(false);
+    expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      status: 'stale_progress',
+      decision_id: null,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      stale: true,
+      next_action: 'refresh_progress_overview',
+    })).toBe(true);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, decision_id: 'decision_1' })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, percentage: 42 })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, prompt: 'raw prompt' })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, provider_response: 'raw provider response' })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, stdout: 'raw stdout' })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, command: 'cargo test' })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, env: { TOKEN: 'secret' } })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessResult, absolute_path: '/tmp/file' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -1595,6 +1648,44 @@ describe('RuntimeClient', () => {
 
     await expect(client.runTask('task_1')).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'task.run', params: { task_id: 'task_1' } }]);
+  });
+
+  it('creates a headless.continue_once request without owning selection policy', async () => {
+    const params = {
+      authorize: true as const,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      continuation_id: 'continue.once:client',
+    };
+    const taskRunResult = {
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+    };
+    const result = {
+      status: 'task_executed',
+      decision_id: `headless_decision_${'a'.repeat(32)}`,
+      continuation_id: 'continue.once:client',
+      selected_task_id: 'task_1',
+      selected_run_id: 'run_1',
+      candidate_count: 1,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+      post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      stale: false,
+      replayed: false,
+      task_run_result: taskRunResult,
+      next_action: 'inspect_progress_overview',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.continueOnceHeadless(params)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.continue_once', params }]);
   });
 
   it('creates a task.run request with selected index context', async () => {

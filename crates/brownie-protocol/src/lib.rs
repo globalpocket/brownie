@@ -380,6 +380,16 @@ pub struct TaskRunParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct HeadlessContinueOnceParams {
+    pub authorize: bool,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunSelectedIndexContext {
     pub query_id: String,
     pub selection_id: String,
@@ -921,6 +931,34 @@ pub struct TaskRunResult {
     pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_join_readiness_outcome: Option<TaskRunParentJoinReadinessOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessContinueOnceStatus {
+    StaleProgress,
+    NoEligibleTask,
+    TaskExecuted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessContinueOnceResult {
+    pub status: HeadlessContinueOnceStatus,
+    pub decision_id: Option<String>,
+    pub continuation_id: Option<String>,
+    pub selected_task_id: Option<String>,
+    pub selected_run_id: Option<String>,
+    pub candidate_count: usize,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: Option<String>,
+    pub post_aggregate_sequence: Option<u64>,
+    pub stale: bool,
+    pub replayed: bool,
+    pub task_run_result: Option<TaskRunResult>,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

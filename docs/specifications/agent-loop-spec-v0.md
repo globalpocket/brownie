@@ -85,6 +85,15 @@ R3.3 allows prompt materialization for admitted verification recovery tasks to i
 
 M9.6 allows prompt materialization for ordinary `task.run` requests to include one validated selected index read. The runtime accepts optional `selected_index_context`, validates it before `TaskRunning` against prior `CodebaseIndexSelectionReadCompleted` evidence, and requires the stored task mode to allow both `ReadWorkspace` and `IndexCodebase`. When accepted, `PromptBuilder` adds a `Selected Index Context` section containing the selected file content for the in-memory LLM request only. `CodebaseIndexPromptContextMaterialized`, `PromptBuilt`, `SecondPassPromptBuilt`, and `TaskRunResult.selected_index_prompt_context` remain summary-only: prompt previews are redacted, and no ledger/result/diagnostic payload may store raw selected paths, raw selected file content, snippets, diffs, stdout/stderr, commands, environment values, raw prompts, provider responses, absolute paths, canonical paths, or secrets.
 
+M11.1 allows a headless caller to ask the runtime to continue once from the
+current aggregate task progress state. `headless.continue_once` validates
+`authorize=true` and expected `task.list.progress_overview` fingerprint/sequence
+before selecting one eligible runnable task and invoking the existing `task.run`
+path. The agent loop itself is unchanged: it is still entered only through
+`task.run`, and M11.1 does not add background scheduling, repeated execution,
+parent-join execution, recovery retry execution, proposal apply, or new
+workspace/tool permissions.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

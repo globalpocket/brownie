@@ -256,6 +256,13 @@ export interface TaskRunParams {
   selected_index_context?: TaskRunSelectedIndexContext | null;
 }
 
+export interface HeadlessContinueOnceParams {
+  authorize: true;
+  expected_progress_fingerprint: string;
+  expected_aggregate_sequence: number;
+  continuation_id?: string | null;
+}
+
 export interface VerificationRecoverySource {
   source_task_id: string;
   source_run_id: string;
@@ -322,6 +329,27 @@ export interface TaskRunResult {
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
+}
+
+export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_executed';
+
+export interface HeadlessContinueOnceResult {
+  status: HeadlessContinueOnceStatus;
+  decision_id?: string | null;
+  continuation_id?: string | null;
+  selected_task_id?: string | null;
+  selected_run_id?: string | null;
+  candidate_count: number;
+  expected_progress_fingerprint: string;
+  expected_aggregate_sequence: number;
+  current_progress_fingerprint: string;
+  current_aggregate_sequence: number;
+  post_progress_fingerprint?: string | null;
+  post_aggregate_sequence?: number | null;
+  stale: boolean;
+  replayed: boolean;
+  task_run_result?: TaskRunResult | null;
+  next_action: 'refresh_progress_overview' | 'inspect_progress_overview';
 }
 
 export interface TaskRunSelectedIndexPromptContextSummary {
@@ -3862,6 +3890,18 @@ export function isTaskRunParams(value: unknown): value is TaskRunParams {
   );
 }
 
+export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id']) &&
+    value.authorize === true &&
+    typeof value.expected_progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_progress_fingerprint) &&
+    isNonNegativeInteger(value.expected_aggregate_sequence) &&
+    (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id))
+  );
+}
+
 export function isTaskRunResult(value: unknown): value is TaskRunResult {
   return (
     isRecord(value) &&
@@ -3877,6 +3917,78 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))
   );
+}
+
+export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessContinueOnceResult {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, [
+      'status',
+      'decision_id',
+      'continuation_id',
+      'selected_task_id',
+      'selected_run_id',
+      'candidate_count',
+      'expected_progress_fingerprint',
+      'expected_aggregate_sequence',
+      'current_progress_fingerprint',
+      'current_aggregate_sequence',
+      'post_progress_fingerprint',
+      'post_aggregate_sequence',
+      'stale',
+      'replayed',
+      'task_run_result',
+      'next_action',
+    ]) ||
+    !hasNoForbiddenTaskListProgressFields(value) ||
+    !isHeadlessContinueOnceStatus(value.status) ||
+    (value.decision_id !== undefined && value.decision_id !== null && (typeof value.decision_id !== 'string' || !/^headless_decision_[a-f0-9]{32}$/.test(value.decision_id))) ||
+    (value.continuation_id !== undefined && value.continuation_id !== null && !isHeadlessContinuationId(value.continuation_id)) ||
+    (value.selected_task_id !== undefined && value.selected_task_id !== null && typeof value.selected_task_id !== 'string') ||
+    (value.selected_run_id !== undefined && value.selected_run_id !== null && typeof value.selected_run_id !== 'string') ||
+    !isNonNegativeInteger(value.candidate_count) ||
+    typeof value.expected_progress_fingerprint !== 'string' ||
+    !isSha256Fingerprint(value.expected_progress_fingerprint) ||
+    !isNonNegativeInteger(value.expected_aggregate_sequence) ||
+    typeof value.current_progress_fingerprint !== 'string' ||
+    !isSha256Fingerprint(value.current_progress_fingerprint) ||
+    !isNonNegativeInteger(value.current_aggregate_sequence) ||
+    (value.post_progress_fingerprint !== undefined && value.post_progress_fingerprint !== null && (typeof value.post_progress_fingerprint !== 'string' || !isSha256Fingerprint(value.post_progress_fingerprint))) ||
+    (value.post_aggregate_sequence !== undefined && value.post_aggregate_sequence !== null && !isNonNegativeInteger(value.post_aggregate_sequence)) ||
+    typeof value.stale !== 'boolean' ||
+    typeof value.replayed !== 'boolean' ||
+    (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
+    (value.next_action !== 'refresh_progress_overview' && value.next_action !== 'inspect_progress_overview')
+  ) {
+    return false;
+  }
+
+  if (value.status === 'stale_progress') {
+    return value.stale === true && value.task_run_result == null && value.decision_id == null;
+  }
+  if (value.status === 'no_eligible_task') {
+    return value.stale === false && value.task_run_result == null && value.decision_id == null;
+  }
+  return (
+    value.status === 'task_executed' &&
+    value.stale === false &&
+    value.decision_id !== undefined &&
+    value.decision_id !== null &&
+    value.selected_task_id !== undefined &&
+    value.selected_task_id !== null &&
+    value.selected_run_id !== undefined &&
+    value.selected_run_id !== null &&
+    value.task_run_result !== undefined &&
+    value.task_run_result !== null
+  );
+}
+
+function isHeadlessContinueOnceStatus(value: unknown): value is HeadlessContinueOnceStatus {
+  return value === 'stale_progress' || value === 'no_eligible_task' || value === 'task_executed';
+}
+
+function isHeadlessContinuationId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,96}$/.test(value);
 }
 
 export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): value is TaskRunSelectedIndexPromptContextSummary {

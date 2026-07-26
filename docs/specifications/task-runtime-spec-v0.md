@@ -60,6 +60,22 @@ The persisted ledger is separate from any future prompt window truncation behavi
 
 `task.run` advances a `Created` task to `Running`, calls the no-op AgentLoop skeleton, then persists `Completed`. The runtime updates `state.json` and appends `TaskRunning` and `TaskCompleted` events to `ledger.jsonl`. Running an unknown task or a task that is not `Created` returns invalid params.
 
+## `headless.continue_once`
+
+M11.1 adds `headless.continue_once` as a task-set continuation operation. The
+caller must pass `authorize=true`, the expected aggregate progress fingerprint,
+and the expected aggregate sequence from `task.list.progress_overview`. If either
+progress handle is stale, the runtime returns bounded stale metadata and does not
+append `HeadlessContinuationDecisionRecorded` or `TaskRunning`.
+
+When progress is current, the runtime selects exactly one eligible task from the
+runtime-owned progress overview: `Created` tasks and controlled `Queued` child
+tasks whose next action is `run_task_explicitly`. It records bounded
+`HeadlessContinuationDecisionRecorded` evidence on that selected task and then
+uses the existing `task.run` admission path. This method does not execute
+parent-join-ready completed parents, run recovery retries, apply proposals, loop,
+schedule background work, or let VSIX code own task-selection policy.
+
 ## Phase 1.1 non-goals
 
 - No LLM calls.
