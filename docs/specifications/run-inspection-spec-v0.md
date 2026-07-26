@@ -23,6 +23,7 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - `run_id`
 - optional `task_id`
 - optional task `status`
+- `progress_snapshot`, a runtime-owned bounded progress model derived from the task record, child task records, and sanitized run ledger evidence
 - `event_count`
 - `has_tool_execution_completed`
 - `has_subtask_orchestration_queued`
@@ -46,6 +47,25 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - a compact human-readable `timeline`
 
 The APIs do not call real LLM services, do not execute tools, and do not perform writes.
+
+## M10.1 runtime progress snapshot
+
+`run.inspect` now returns `run.progress_snapshot`, and `task.inspect` exposes the same snapshot through its nested `run.progress_snapshot`. The snapshot is derived inside the Rust runtime from persisted task status, controlled child task status, and already-recorded run ledger event kinds/payload metadata. It does not add a JSON-RPC method and does not append ledger events.
+
+`ProgressSnapshot` contains only bounded scalar fields:
+
+- `lifecycle_phase`: `created`, `queued`, `running`, `blocked_for_explicit_action`, `terminal`, or `unknown`
+- `current_stage`: a deterministic runtime stage: `created`, `queued`, `running_agent_loop`, `inspect_non_runnable_child_tasks`, `completed_with_pending_children`, `parent_join_ready`, `completed`, `failed`, `cancelled`, or `unknown`
+- `next_action`: one bounded automation action: `run_task_explicitly`, `run_parent_task_explicitly`, `run_remaining_child_tasks_explicitly`, `inspect_non_runnable_child_tasks`, `start_verification_recovery_explicitly`, `inspect_terminal_result`, or `inspect_task`
+- `source_fingerprint`: a SHA-256 fingerprint over the bounded derived state used to compute the snapshot: task status, lifecycle/stage/next action, latest verification state, parent-join readiness, recovery/apply/index-context signals, child status counts, event count, and task terminal event kind
+- `verification_state`: `not_required`, `pending`, `passed`, `failed`, or `unknown`, derived from the latest runtime-owned verification completion gate status when present
+- bounded counts and booleans for event count, agent-loop terminal evidence, task terminal events, controlled child states, verifier evidence, recovery evidence, apply evidence, and selected-index prompt-context evidence
+
+The snapshot treats `AgentLoopCompleted` evidence separately from task terminal events (`TaskCompleted`, `TaskFailed`, and `TaskCancelled`) so agent-loop completion cannot masquerade as task termination. Persisted `TaskRecord.status` is authoritative: historical `TaskRunning` or `AgentLoopStarted` evidence is only a fallback when no task record is available, and it cannot override a persisted `Created`, `Queued`, `Completed`, `Failed`, or `Cancelled` status. Failed and cancelled parent status outranks child state. Completed parents whose controlled child result set is ready and unconsumed report `parent_join_ready` with `run_parent_task_explicitly`; completed parents with runnable pending children report `completed_with_pending_children`, and completed parents with non-runnable children report `inspect_non_runnable_child_tasks`.
+
+Verification classification recognizes `verification_completion_gate.status` or the runtime ledger's bounded `verification_completion_gate_status` only on runtime-owned terminal task events (`TaskCompleted`, `TaskFailed`, or `TaskCancelled`). Recovery proposal `gate_status` values and gate-shaped payloads on non-terminal events are not verification failures. M10.1 is a between-step, blocked-state, terminal, recovery, and child-next-action snapshot; it does not observe live in-flight runtime internals, run a same-runtime concurrent inspector, or start asynchronous progress execution. A future `M10.3 Concurrent Runtime Progress Observation` phase may add concurrent observation semantics with a separate safety design.
+
+The snapshot must not include raw prompts, provider responses, file content, snippets, diffs, stdout/stderr, command strings, environment values, raw request bodies, absolute paths, canonical paths, or secrets. If a state cannot be classified safely, the runtime returns `unknown` / `inspect_task` style guidance rather than exposing raw ledger data or guessing.
 
 ## M5.1 subtask orchestration inspection
 

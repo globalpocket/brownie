@@ -2830,6 +2830,7 @@ pub struct RunInspectSummary {
     pub run_id: String,
     pub task_id: Option<String>,
     pub status: Option<TaskStatus>,
+    pub progress_snapshot: ProgressSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2866,6 +2867,77 @@ pub struct RunInspectSummary {
     pub has_second_pass: bool,
     pub final_response_preview: Option<String>,
     pub timeline: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProgressSnapshot {
+    pub lifecycle_phase: ProgressLifecyclePhase,
+    pub current_stage: ProgressCurrentStage,
+    pub next_action: ProgressNextAction,
+    pub source_fingerprint: String,
+    pub event_count: usize,
+    pub agent_loop_terminal_evidence_present: bool,
+    pub task_terminal_event_present: bool,
+    pub controlled_child_count: usize,
+    pub pending_controlled_child_count: usize,
+    pub terminal_controlled_child_count: usize,
+    pub non_runnable_controlled_child_count: usize,
+    pub verification_state: ProgressVerificationState,
+    pub verifier_required: bool,
+    pub verifier_failed: bool,
+    pub verifier_passed: bool,
+    pub recovery_signal_present: bool,
+    pub apply_signal_present: bool,
+    pub selected_index_context_present: bool,
+    pub selected_index_context_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressLifecyclePhase {
+    Created,
+    Queued,
+    Running,
+    BlockedForExplicitAction,
+    Terminal,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressCurrentStage {
+    Created,
+    Queued,
+    RunningAgentLoop,
+    InspectNonRunnableChildTasks,
+    CompletedWithPendingChildren,
+    ParentJoinReady,
+    Completed,
+    Failed,
+    Cancelled,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressNextAction {
+    RunTaskExplicitly,
+    RunParentTaskExplicitly,
+    RunRemainingChildTasksExplicitly,
+    InspectNonRunnableChildTasks,
+    StartVerificationRecoveryExplicitly,
+    InspectTerminalResult,
+    InspectTask,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressVerificationState {
+    NotRequired,
+    Pending,
+    Passed,
+    Failed,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

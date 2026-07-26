@@ -533,6 +533,7 @@ export interface RunInspectSummary {
   run_id: string;
   task_id?: string | null;
   status?: TaskStatus | null;
+  progress_snapshot: ProgressSnapshot;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   parent_join_readiness_summary?: RunInspectParentJoinReadinessSummary | null;
   consumed_parent_join_recovery_summary?: RunInspectConsumedParentJoinRecoverySummary | null;
@@ -566,6 +567,53 @@ export interface RunInspectSummary {
   has_second_pass: boolean;
   final_response_preview?: string | null;
   timeline: string[];
+}
+
+export type ProgressLifecyclePhase = 'created' | 'queued' | 'running' | 'blocked_for_explicit_action' | 'terminal' | 'unknown';
+
+export type ProgressCurrentStage =
+  | 'created'
+  | 'queued'
+  | 'running_agent_loop'
+  | 'inspect_non_runnable_child_tasks'
+  | 'completed_with_pending_children'
+  | 'parent_join_ready'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'unknown';
+
+export type ProgressNextAction =
+  | 'run_task_explicitly'
+  | 'run_parent_task_explicitly'
+  | 'run_remaining_child_tasks_explicitly'
+  | 'inspect_non_runnable_child_tasks'
+  | 'start_verification_recovery_explicitly'
+  | 'inspect_terminal_result'
+  | 'inspect_task';
+
+export type ProgressVerificationState = 'not_required' | 'pending' | 'passed' | 'failed' | 'unknown';
+
+export interface ProgressSnapshot {
+  lifecycle_phase: ProgressLifecyclePhase;
+  current_stage: ProgressCurrentStage;
+  next_action: ProgressNextAction;
+  source_fingerprint: string;
+  event_count: number;
+  agent_loop_terminal_evidence_present: boolean;
+  task_terminal_event_present: boolean;
+  controlled_child_count: number;
+  pending_controlled_child_count: number;
+  terminal_controlled_child_count: number;
+  non_runnable_controlled_child_count: number;
+  verification_state: ProgressVerificationState;
+  verifier_required: boolean;
+  verifier_failed: boolean;
+  verifier_passed: boolean;
+  recovery_signal_present: boolean;
+  apply_signal_present: boolean;
+  selected_index_context_present: boolean;
+  selected_index_context_count: number;
 }
 
 export interface ChildTaskInspectSummary {
@@ -4247,12 +4295,101 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
   );
 }
 
+function isProgressLifecyclePhase(value: unknown): value is ProgressLifecyclePhase {
+  return value === 'created' || value === 'queued' || value === 'running' || value === 'blocked_for_explicit_action' || value === 'terminal' || value === 'unknown';
+}
+
+function isProgressCurrentStage(value: unknown): value is ProgressCurrentStage {
+  return (
+    value === 'created' ||
+    value === 'queued' ||
+    value === 'running_agent_loop' ||
+    value === 'inspect_non_runnable_child_tasks' ||
+    value === 'completed_with_pending_children' ||
+    value === 'parent_join_ready' ||
+    value === 'completed' ||
+    value === 'failed' ||
+    value === 'cancelled' ||
+    value === 'unknown'
+  );
+}
+
+function isProgressNextAction(value: unknown): value is ProgressNextAction {
+  return (
+    value === 'run_task_explicitly' ||
+    value === 'run_parent_task_explicitly' ||
+    value === 'run_remaining_child_tasks_explicitly' ||
+    value === 'inspect_non_runnable_child_tasks' ||
+    value === 'start_verification_recovery_explicitly' ||
+    value === 'inspect_terminal_result' ||
+    value === 'inspect_task'
+  );
+}
+
+function isProgressVerificationState(value: unknown): value is ProgressVerificationState {
+  return value === 'not_required' || value === 'pending' || value === 'passed' || value === 'failed' || value === 'unknown';
+}
+
+export function isProgressSnapshot(value: unknown): value is ProgressSnapshot {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'lifecycle_phase',
+      'current_stage',
+      'next_action',
+      'source_fingerprint',
+      'event_count',
+      'agent_loop_terminal_evidence_present',
+      'task_terminal_event_present',
+      'controlled_child_count',
+      'pending_controlled_child_count',
+      'terminal_controlled_child_count',
+      'non_runnable_controlled_child_count',
+      'verification_state',
+      'verifier_required',
+      'verifier_failed',
+      'verifier_passed',
+      'recovery_signal_present',
+      'apply_signal_present',
+      'selected_index_context_present',
+      'selected_index_context_count',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isProgressLifecyclePhase(value.lifecycle_phase) &&
+    isProgressCurrentStage(value.current_stage) &&
+    isProgressNextAction(value.next_action) &&
+    typeof value.source_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_fingerprint) &&
+    isNonNegativeInteger(value.event_count) &&
+    typeof value.agent_loop_terminal_evidence_present === 'boolean' &&
+    typeof value.task_terminal_event_present === 'boolean' &&
+    isNonNegativeInteger(value.controlled_child_count) &&
+    isNonNegativeInteger(value.pending_controlled_child_count) &&
+    isNonNegativeInteger(value.terminal_controlled_child_count) &&
+    isNonNegativeInteger(value.non_runnable_controlled_child_count) &&
+    value.pending_controlled_child_count + value.terminal_controlled_child_count + value.non_runnable_controlled_child_count <= value.controlled_child_count &&
+    isProgressVerificationState(value.verification_state) &&
+    typeof value.verifier_required === 'boolean' &&
+    typeof value.verifier_failed === 'boolean' &&
+    typeof value.verifier_passed === 'boolean' &&
+    value.verifier_failed === (value.verification_state === 'failed') &&
+    value.verifier_passed === (value.verification_state === 'passed') &&
+    value.verifier_required === (value.verification_state !== 'not_required') &&
+    typeof value.recovery_signal_present === 'boolean' &&
+    typeof value.apply_signal_present === 'boolean' &&
+    typeof value.selected_index_context_present === 'boolean' &&
+    isNonNegativeInteger(value.selected_index_context_count) &&
+    value.selected_index_context_present === (value.selected_index_context_count > 0)
+  );
+}
+
 export function isRunInspectSummary(value: unknown): value is RunInspectSummary {
   return (
     isRecord(value) &&
     typeof value.run_id === 'string' &&
     (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
     (value.status === undefined || value.status === null || isTaskStatus(value.status)) &&
+    isProgressSnapshot(value.progress_snapshot) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.parent_join_readiness_summary === undefined || value.parent_join_readiness_summary === null || isRunInspectParentJoinReadinessSummary(value.parent_join_readiness_summary)) &&
     (value.consumed_parent_join_recovery_summary === undefined || value.consumed_parent_join_recovery_summary === null || isRunInspectConsumedParentJoinRecoverySummary(value.consumed_parent_join_recovery_summary)) &&
