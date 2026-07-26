@@ -23,6 +23,7 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - `run_id`
 - optional `task_id`
 - optional task `status`
+- `progress_snapshot`, a runtime-owned bounded progress model derived from the task record, child task records, and sanitized run ledger evidence
 - `event_count`
 - `has_tool_execution_completed`
 - `has_subtask_orchestration_queued`
@@ -46,6 +47,20 @@ Keys such as `content`, `full_content`, `file_content`, and `raw_output` are rem
 - a compact human-readable `timeline`
 
 The APIs do not call real LLM services, do not execute tools, and do not perform writes.
+
+## M10.1 runtime progress snapshot
+
+`run.inspect` now returns `run.progress_snapshot`, and `task.inspect` exposes the same snapshot through its nested `run.progress_snapshot`. The snapshot is derived inside the Rust runtime from persisted task status, controlled child task status, and already-recorded run ledger event kinds/payload metadata. It does not add a JSON-RPC method and does not append ledger events.
+
+`ProgressSnapshot` contains only bounded scalar fields:
+
+- `lifecycle_phase`: `created`, `queued`, `running`, `blocked_for_explicit_action`, `terminal`, or `unknown`
+- `current_stage`: a deterministic runtime stage such as `created`, `queued`, `running_agent_loop`, `waiting_on_child_tasks`, `inspect_non_runnable_child_tasks`, `verification_failed`, `recovery_available`, `index_context_materialized`, `completed`, `failed`, `cancelled`, or `unknown`
+- `next_action`: one bounded automation action such as `run_task_explicitly`, `run_remaining_child_tasks_explicitly`, `inspect_non_runnable_child_tasks`, `start_verification_recovery_explicitly`, `inspect_terminal_result`, `inspect_task`, or `none`
+- `source_fingerprint`: a SHA-256 fingerprint over bounded task/run/child event identity used to compute the snapshot
+- bounded counts and booleans for event count, terminal event presence, controlled child states, verifier evidence, recovery evidence, apply evidence, and selected-index prompt-context evidence
+
+The snapshot must not include raw prompts, provider responses, file content, snippets, diffs, stdout/stderr, command strings, environment values, raw request bodies, absolute paths, canonical paths, or secrets. If a state cannot be classified safely, the runtime returns `unknown` / `inspect_task` style guidance rather than exposing raw ledger data or guessing.
 
 ## M5.1 subtask orchestration inspection
 

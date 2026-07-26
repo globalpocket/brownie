@@ -176,6 +176,24 @@ mutation. Snapshot manifests, ledger events, and RPC responses must not expose
 raw file content, snippets, diffs, absolute paths, canonical paths, raw prompts,
 provider responses, stdout/stderr, environment values, commands, or secrets.
 
+## Runtime Progress Visualization Boundary
+
+M10.1 adds the first runtime-owned progress visualization model. Existing
+`run.inspect` and `task.inspect` responses now include `run.progress_snapshot`,
+a bounded classifier derived from persisted `TaskRecord` status, controlled child
+task state, and already-recorded run ledger evidence. The classifier reports
+lifecycle phase, current stage, one explicit next action, replay-safe source
+fingerprint, child/verifier/recovery/apply/index-context counts and booleans.
+
+This is not a new JSON-RPC method, diagnostics wrapper, report, digest, history,
+readiness check, execution preview, or VSIX policy layer. Inspection remains
+read-only: it appends no ledger event, creates no child task, consumes no parent
+join state, applies no patch, runs no verifier, calls no LLM provider, reads no
+workspace file, and performs no shell/git/network/service action. Snapshot fields
+must not expose raw prompts, provider responses, file content, snippets, diffs,
+stdout/stderr, command strings, environment values, raw request bodies, absolute
+paths, canonical paths, or secrets.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

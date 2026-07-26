@@ -32,6 +32,7 @@ use brownie_protocol::{
     JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
     LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
     ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
     ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
@@ -14403,10 +14404,12 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         .map(|record| consumed_parent_join_recovery_summary_for_parent_inspection(store, record))
         .transpose()?
         .flatten();
+    let progress_snapshot = progress_snapshot_for_run(task.as_ref(), &events, &child_tasks);
     Ok(RunInspectSummary {
         run_id: run_id.to_string(),
         task_id: task.as_ref().map(|task| task.task_id.clone()),
         status: task.as_ref().map(|task| task.status.clone()),
+        progress_snapshot,
         recovery_cycle_budget_outcome: recovery_cycle_budget_outcome_from_events(&events),
         parent_join_readiness_summary,
         consumed_parent_join_recovery_summary,
@@ -14441,6 +14444,244 @@ fn inspect_run(store: &BrownieStore, run_id: &str) -> Result<RunInspectSummary, 
         final_response_preview,
         timeline: events.iter().map(timeline_entry).collect(),
     })
+}
+
+fn progress_snapshot_for_run(
+    task: Option<&TaskRecord>,
+    events: &[LedgerEvent],
+    child_tasks: &[TaskRecord],
+) -> ProgressSnapshot {
+    let pending_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| matches!(child.status, TaskStatus::Created | TaskStatus::Queued))
+        .count();
+    let terminal_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| {
+            matches!(
+                child.status,
+                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+            )
+        })
+        .count();
+    let non_runnable_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| matches!(child.status, TaskStatus::Running))
+        .count();
+    let terminal_event_present = events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::AgentLoopCompleted
+                | LedgerEventKind::TaskCompleted
+                | LedgerEventKind::TaskFailed
+                | LedgerEventKind::TaskCancelled
+        )
+    });
+    let verifier_required = events.iter().any(|event| {
+        event.payload.as_ref().is_some_and(|payload| {
+            payload.get("verification_completion_gate").is_some()
+                || payload
+                    .get("required_verifier_count")
+                    .and_then(Value::as_u64)
+                    .is_some_and(|count| count > 0)
+                || payload
+                    .get("tool_id")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tool_id| tool_id.starts_with("verification."))
+        })
+    });
+    let verifier_failed = events.iter().any(|event| {
+        event.payload.as_ref().is_some_and(|payload| {
+            payload
+                .get("verification_status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status == "Failed")
+                || payload
+                    .get("gate_status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "Failed")
+                || payload
+                    .get("verification_completion_gate")
+                    .and_then(|gate| gate.get("gate_status"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "Failed")
+        })
+    });
+    let verifier_passed = events.iter().any(|event| {
+        event.payload.as_ref().is_some_and(|payload| {
+            payload
+                .get("verification_status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status == "Passed")
+                || payload
+                    .get("gate_status")
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "Passed")
+                || payload
+                    .get("verification_completion_gate")
+                    .and_then(|gate| gate.get("gate_status"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|status| status == "Passed")
+        })
+    });
+    let recovery_signal_present = task.is_some_and(|task| {
+        task.recovery_cycle_provenance.is_some()
+            || task.verification_recovery_provenance.is_some()
+            || task.verification_recovery_retry_provenance.is_some()
+    }) || events.iter().any(|event| {
+        event.payload.as_ref().is_some_and(|payload| {
+            payload.get("verification_recovery").is_some()
+                || payload.get("verification_recovery_retry").is_some()
+                || payload.get("verification_recovery_repair").is_some()
+                || payload.get("recovery_cycle_budget_outcome").is_some()
+        })
+    });
+    let apply_signal_present = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded);
+    let selected_index_context_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::CodebaseIndexPromptContextMaterialized)
+        .count();
+    let selected_index_context_present = selected_index_context_count > 0;
+    let has_running_evidence = events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::TaskRunning | LedgerEventKind::AgentLoopStarted
+        )
+    });
+
+    let (lifecycle_phase, current_stage, next_action) = match task.map(|task| &task.status) {
+        _ if non_runnable_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::InspectNonRunnableChildTasks,
+            ProgressNextAction::InspectNonRunnableChildTasks,
+        ),
+        _ if pending_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::WaitingOnChildTasks,
+            ProgressNextAction::RunRemainingChildTasksExplicitly,
+        ),
+        Some(TaskStatus::Completed) => (
+            ProgressLifecyclePhase::Terminal,
+            ProgressCurrentStage::Completed,
+            ProgressNextAction::InspectTerminalResult,
+        ),
+        Some(TaskStatus::Failed) => {
+            let action = if verifier_failed {
+                ProgressNextAction::StartVerificationRecoveryExplicitly
+            } else {
+                ProgressNextAction::InspectTerminalResult
+            };
+            (
+                ProgressLifecyclePhase::Terminal,
+                ProgressCurrentStage::Failed,
+                action,
+            )
+        }
+        Some(TaskStatus::Cancelled) => (
+            ProgressLifecyclePhase::Terminal,
+            ProgressCurrentStage::Cancelled,
+            ProgressNextAction::InspectTerminalResult,
+        ),
+        _ if verifier_failed => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::VerificationFailed,
+            ProgressNextAction::StartVerificationRecoveryExplicitly,
+        ),
+        _ if recovery_signal_present => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::RecoveryAvailable,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        Some(TaskStatus::Running) => (
+            ProgressLifecyclePhase::Running,
+            ProgressCurrentStage::RunningAgentLoop,
+            ProgressNextAction::InspectTask,
+        ),
+        _ if has_running_evidence => (
+            ProgressLifecyclePhase::Running,
+            ProgressCurrentStage::RunningAgentLoop,
+            ProgressNextAction::InspectTask,
+        ),
+        Some(TaskStatus::Queued) => (
+            ProgressLifecyclePhase::Queued,
+            ProgressCurrentStage::Queued,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        Some(TaskStatus::Created) => (
+            ProgressLifecyclePhase::Created,
+            ProgressCurrentStage::Created,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        None if selected_index_context_present => (
+            ProgressLifecyclePhase::Unknown,
+            ProgressCurrentStage::IndexContextMaterialized,
+            ProgressNextAction::InspectTask,
+        ),
+        None => (
+            ProgressLifecyclePhase::Unknown,
+            ProgressCurrentStage::Unknown,
+            ProgressNextAction::InspectTask,
+        ),
+    };
+
+    ProgressSnapshot {
+        lifecycle_phase,
+        current_stage,
+        next_action,
+        source_fingerprint: progress_snapshot_source_fingerprint(task, events, child_tasks),
+        event_count: events.len(),
+        terminal_event_present,
+        controlled_child_count: child_tasks.len(),
+        pending_controlled_child_count,
+        terminal_controlled_child_count,
+        non_runnable_controlled_child_count,
+        verifier_required,
+        verifier_failed,
+        verifier_passed,
+        recovery_signal_present,
+        apply_signal_present,
+        selected_index_context_present,
+        selected_index_context_count,
+    }
+}
+
+fn progress_snapshot_source_fingerprint(
+    task: Option<&TaskRecord>,
+    events: &[LedgerEvent],
+    child_tasks: &[TaskRecord],
+) -> String {
+    let mut parts = vec!["progress_snapshot_v1".to_string()];
+    if let Some(task) = task {
+        parts.push(format!("task_id={}", task.task_id));
+        parts.push(format!("run_id={}", task.run_id));
+        parts.push(format!("status={:?}", task.status));
+        parts.push(format!("updated_at={}", task.updated_at));
+    } else {
+        parts.push("task_id=".to_string());
+        parts.push("run_id=".to_string());
+        parts.push("status=None".to_string());
+    }
+    parts.push(format!("event_count={}", events.len()));
+    for event in events {
+        parts.push(format!(
+            "event={}:{:?}:{}",
+            event.event_id, event.kind, event.timestamp
+        ));
+    }
+    let mut child_inputs = child_tasks
+        .iter()
+        .map(|child| {
+            format!(
+                "child={}:{}:{:?}:{}",
+                child.task_id, child.run_id, child.status, child.updated_at
+            )
+        })
+        .collect::<Vec<_>>();
+    child_inputs.sort();
+    parts.extend(child_inputs);
+    format!("sha256:{}", hex_sha256(parts.join("\n").as_bytes()))
 }
 
 fn recovery_cycle_budget_outcome_for_run(
@@ -24710,6 +24951,41 @@ mod tests {
         assert_eq!(summary["has_subtask_dispatch_handoff_envelope"], true);
         assert_eq!(summary["subtask_dispatch_handoff_envelope_count"], 1);
         assert_eq!(summary["child_task_count"], 1);
+        let progress = &summary["progress_snapshot"];
+        assert_eq!(progress["lifecycle_phase"], "blocked_for_explicit_action");
+        assert_eq!(progress["current_stage"], "waiting_on_child_tasks");
+        assert_eq!(
+            progress["next_action"],
+            "run_remaining_child_tasks_explicitly"
+        );
+        assert_eq!(progress["controlled_child_count"], 1);
+        assert_eq!(progress["pending_controlled_child_count"], 1);
+        assert_eq!(progress["terminal_controlled_child_count"], 0);
+        assert_eq!(progress["non_runnable_controlled_child_count"], 0);
+        assert_eq!(progress["terminal_event_present"], true);
+        assert!(progress["source_fingerprint"]
+            .as_str()
+            .expect("source fingerprint")
+            .starts_with("sha256:"));
+        for forbidden in [
+            "content",
+            "raw_content",
+            "file_content",
+            "prompt",
+            "provider_response",
+            "stdout",
+            "stderr",
+            "command",
+            "env",
+            "absolute_path",
+            "canonical_path",
+            "serialized_request_body",
+        ] {
+            assert!(
+                progress.get(forbidden).is_none(),
+                "forbidden progress field {forbidden}"
+            );
+        }
         assert_eq!(
             summary["child_task_ids"]
                 .as_array()
@@ -24744,10 +25020,193 @@ mod tests {
         let task_inspect = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":5,"method":"task.inspect","params":{{"task_id":"{task_id}"}}}}"#
         ));
+        let task_inspect_result = task_inspect.result.expect("task inspect result");
+        assert_eq!(task_inspect_result["task"]["task_id"], task_id);
         assert_eq!(
-            task_inspect.result.expect("task inspect result")["task"]["task_id"],
-            task_id
+            task_inspect_result["run"]["progress_snapshot"],
+            summary["progress_snapshot"]
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_includes_progress_snapshot_for_created_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Created progress","mode_id":"orchestrator"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().expect("run id");
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"run.inspect","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let progress = inspect.result.expect("inspect result")["run"]["progress_snapshot"].clone();
+        assert_eq!(progress["lifecycle_phase"], "created");
+        assert_eq!(progress["current_stage"], "created");
+        assert_eq!(progress["next_action"], "run_task_explicitly");
+        assert!(progress["event_count"].as_u64().expect("event count") > 0);
+        assert_eq!(progress["terminal_event_present"], false);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_includes_progress_snapshot_for_running_or_active_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Running progress".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .update_task_status(
+                &task.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("running");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"run.inspect","params":{{"run_id":"{}"}}}}"#,
+            task.run_id
+        ));
+        let progress = inspect.result.expect("inspect result")["run"]["progress_snapshot"].clone();
+        assert_eq!(progress["lifecycle_phase"], "running");
+        assert_eq!(progress["current_stage"], "running_agent_loop");
+        assert_eq!(progress["next_action"], "inspect_task");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_progress_snapshot_reports_terminal_completed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Completed progress".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .update_task_status(
+                &task.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("completed");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"run.inspect","params":{{"run_id":"{}"}}}}"#,
+            task.run_id
+        ));
+        let progress = inspect.result.expect("inspect result")["run"]["progress_snapshot"].clone();
+        assert_eq!(progress["lifecycle_phase"], "terminal");
+        assert_eq!(progress["current_stage"], "completed");
+        assert_eq!(progress["next_action"], "inspect_terminal_result");
+        assert_eq!(progress["terminal_event_present"], true);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_progress_snapshot_reports_failed_verification_recovery_next_action() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"progress_failed_fmt\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(temp.path().join("src/lib.rs"), "pub fn bad( )->i32{1}\n").expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let (task_id, run_id, _) = failed_verification_source_from_start_and_run(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+        );
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.inspect","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let progress = inspect.result.expect("inspect result")["run"]["progress_snapshot"].clone();
+        assert_eq!(progress["lifecycle_phase"], "terminal");
+        assert_eq!(progress["current_stage"], "failed");
+        assert_eq!(
+            progress["next_action"],
+            "start_verification_recovery_explicitly"
+        );
+        assert_eq!(progress["verifier_required"], true);
+        assert_eq!(progress["verifier_failed"], true);
+        assert!(progress["source_fingerprint"]
+            .as_str()
+            .expect("fingerprint")
+            .starts_with("sha256:"));
+        let run_inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.inspect","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        assert_eq!(
+            run_inspect.result.expect("run inspect")["run"]["progress_snapshot"],
+            progress
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn run_inspect_progress_snapshot_reports_selected_index_context_signal() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Selected index progress".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::CodebaseIndexPromptContextMaterialized,
+                Some(json!({
+                    "selected_index_context_present": true,
+                    "selected_entry_count": 1,
+                    "content_hash_verified": true
+                })),
+            )
+            .expect("append index context");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let inspect = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":1,"method":"run.inspect","params":{{"run_id":"{}"}}}}"#,
+            task.run_id
+        ));
+        let progress = inspect.result.expect("inspect result")["run"]["progress_snapshot"].clone();
+        assert_eq!(progress["selected_index_context_present"], true);
+        assert_eq!(progress["selected_index_context_count"], 1);
+        assert_eq!(progress["event_count"], 2);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
