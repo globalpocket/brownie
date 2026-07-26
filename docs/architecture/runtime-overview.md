@@ -212,6 +212,24 @@ provider responses, file content, snippets, diffs, stdout/stderr, command
 strings, environment values, raw request bodies, absolute paths, canonical paths,
 or secrets.
 
+M10.2 extends the same milestone through `task.list` by adding
+`progress_overview`, a runtime-owned aggregate over the listed task set. The
+overview returns runnable task IDs, blocked task IDs, terminal task IDs,
+parent-join-ready task IDs, parent/child graph nodes and edges, bounded
+next-action sets, status/stage counts, and a source fingerprint. It is computed
+from persisted `TaskRecord` state, controlled child provenance already loaded
+for the task listing, and bounded parent-run consumption evidence for completed
+parent-join candidates, so headless callers can choose the next explicit action
+without wrapping `run.inspect` across every task or teaching the VSIX to infer a
+task graph. Parent-join-ready IDs require terminal controlled children and no
+consumed parent-join continuation fingerprint.
+
+M10.2 remains read-only. Listing tasks does not execute tasks, consume
+parent-join state, append ledger events, read workspace files, run verifiers,
+apply patches, call providers, or start an asynchronous executor. It also avoids
+0-100% progress percentages and keeps aggregate persisted progress separate from
+future live concurrent observation work reserved for M10.3.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

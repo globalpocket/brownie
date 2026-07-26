@@ -121,26 +121,29 @@ use brownie_protocol::{
     RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListResult, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
+    TaskListProgressBlockedSet, TaskListProgressNextActionSet, TaskListProgressOverview,
+    TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode,
+    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunParams,
+    TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
     TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
     TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
-    TaskStartParams, TaskStartResult, TaskStatus, ToolExecuteParams, ToolExecuteResult,
-    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
-    VerificationRecoveryRetrySource, VerificationRecoverySource,
-    WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
-    WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
-    WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
-    WorkspacePatchApplyDryRunSummary, WorkspacePatchApplyPlanSummary,
-    WorkspacePatchApplyResultCheckSummary, WorkspacePatchApplyResultSummary,
-    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
-    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
-    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
-    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
+    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
+    VerificationRecoveryRetryProvenance, VerificationRecoveryRetrySource,
+    VerificationRecoverySource, WorkspacePatchApplyCapabilityCheckSummary,
+    WorkspacePatchApplyCapabilitySummary, WorkspacePatchApplyCheckSummary,
+    WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
+    WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
+    WorkspacePatchApplyPlanSummary, WorkspacePatchApplyResultCheckSummary,
+    WorkspacePatchApplyResultSummary, WorkspacePatchAuditTrailEntry,
+    WorkspacePatchAuditTrailSummary, WorkspacePatchPreflightSnapshotSummary,
+    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
+    WorkspacePatchReadinessReportSummary, WorkspacePatchReviewBundleSummary,
+    WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary,
@@ -7003,9 +7006,456 @@ fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
     };
 
     match store.tasks().list_tasks() {
-        Ok(tasks) => result_response(id, json!(TaskListResult { tasks })),
+        Ok(tasks) => {
+            let progress_overview = match task_list_progress_overview(&store, &tasks) {
+                Ok(progress_overview) => progress_overview,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+            result_response(
+                id,
+                json!(TaskListResult {
+                    tasks,
+                    progress_overview
+                }),
+            )
+        }
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TaskListProgressClassification {
+    lifecycle_phase: ProgressLifecyclePhase,
+    current_stage: ProgressCurrentStage,
+    next_action: ProgressNextAction,
+}
+
+fn task_list_progress_overview(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+) -> Result<TaskListProgressOverview, String> {
+    let children_by_parent_run = task_list_children_by_parent_run(tasks);
+    let parent_join_consumed_task_ids =
+        task_list_parent_join_consumed_task_ids(store, tasks, &children_by_parent_run)?;
+    let mut status_counts = TaskStatusCounts {
+        created: 0,
+        queued: 0,
+        running: 0,
+        completed: 0,
+        failed: 0,
+        cancelled: 0,
+    };
+    let mut root_task_ids = Vec::new();
+    let mut runnable_task_ids = Vec::new();
+    let mut blocked_task_ids = Vec::new();
+    let mut terminal_task_ids = Vec::new();
+    let mut parent_join_ready_task_ids = Vec::new();
+    let mut classifications = Vec::new();
+    let mut nodes = Vec::new();
+
+    for task in tasks {
+        match task.status {
+            TaskStatus::Created => status_counts.created += 1,
+            TaskStatus::Queued => status_counts.queued += 1,
+            TaskStatus::Running => status_counts.running += 1,
+            TaskStatus::Completed => status_counts.completed += 1,
+            TaskStatus::Failed => status_counts.failed += 1,
+            TaskStatus::Cancelled => status_counts.cancelled += 1,
+        }
+
+        if task.parent_run_id.is_none() {
+            root_task_ids.push(task.task_id.clone());
+        }
+        if matches!(task.status, TaskStatus::Created | TaskStatus::Queued) {
+            runnable_task_ids.push(task.task_id.clone());
+        }
+        if matches!(
+            task.status,
+            TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+        ) {
+            terminal_task_ids.push(task.task_id.clone());
+        }
+
+        let child_tasks: &[&TaskRecord] = children_by_parent_run
+            .get(&task.run_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        let classification = task_list_progress_classification(
+            task,
+            child_tasks,
+            parent_join_consumed_task_ids.contains(&task.task_id),
+        );
+        if classification.lifecycle_phase == ProgressLifecyclePhase::BlockedForExplicitAction {
+            blocked_task_ids.push(task.task_id.clone());
+        }
+        if classification.current_stage == ProgressCurrentStage::ParentJoinReady {
+            parent_join_ready_task_ids.push(task.task_id.clone());
+        }
+
+        nodes.push(TaskProgressGraphNode {
+            task_id: task.task_id.clone(),
+            run_id: task.run_id.clone(),
+            status: task.status.clone(),
+            lifecycle_phase: classification.lifecycle_phase.clone(),
+            current_stage: classification.current_stage.clone(),
+            next_action: classification.next_action.clone(),
+            parent_task_id: task.parent_task_id.clone(),
+            parent_run_id: task.parent_run_id.clone(),
+            child_task_count: child_tasks.len(),
+            created_at: task.created_at.clone(),
+            updated_at: task.updated_at.clone(),
+        });
+        classifications.push((task.task_id.clone(), classification));
+    }
+
+    let edges = task_list_progress_edges(tasks);
+    let stage_counts = task_list_progress_stage_counts(&classifications);
+    let next_action_sets = task_list_progress_next_action_sets(&classifications);
+    let blocked_sets = task_list_progress_blocked_sets(&classifications);
+    let source_fingerprint = task_list_progress_overview_fingerprint(
+        tasks,
+        &nodes,
+        &edges,
+        &root_task_ids,
+        &runnable_task_ids,
+        &blocked_task_ids,
+        &terminal_task_ids,
+        &parent_join_ready_task_ids,
+    );
+
+    Ok(TaskListProgressOverview {
+        source_fingerprint,
+        task_count: tasks.len(),
+        root_task_ids,
+        runnable_task_ids,
+        blocked_task_ids,
+        terminal_task_ids,
+        parent_join_ready_task_ids,
+        status_counts,
+        stage_counts,
+        next_action_sets,
+        blocked_sets,
+        nodes,
+        edges,
+    })
+}
+
+fn task_list_children_by_parent_run(
+    tasks: &[TaskRecord],
+) -> std::collections::BTreeMap<String, Vec<&TaskRecord>> {
+    let mut children_by_parent_run: std::collections::BTreeMap<String, Vec<&TaskRecord>> =
+        std::collections::BTreeMap::new();
+    for task in tasks {
+        if task_has_complete_controlled_child_provenance(task) {
+            if let Some(parent_run_id) = task.parent_run_id.as_ref() {
+                children_by_parent_run
+                    .entry(parent_run_id.clone())
+                    .or_default()
+                    .push(task);
+            }
+        }
+    }
+    children_by_parent_run
+}
+
+fn task_list_parent_join_consumed_task_ids(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    children_by_parent_run: &std::collections::BTreeMap<String, Vec<&TaskRecord>>,
+) -> Result<std::collections::BTreeSet<String>, String> {
+    let mut consumed_task_ids = std::collections::BTreeSet::new();
+    for task in tasks {
+        if task.status != TaskStatus::Completed {
+            continue;
+        }
+        let child_tasks: &[&TaskRecord] = children_by_parent_run
+            .get(&task.run_id)
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        if !task_list_has_terminal_join_candidate_children(child_tasks) {
+            continue;
+        }
+        if task_list_parent_run_has_consumed_join(store, &task.run_id)? {
+            consumed_task_ids.insert(task.task_id.clone());
+        }
+    }
+    Ok(consumed_task_ids)
+}
+
+fn task_list_has_terminal_join_candidate_children(child_tasks: &[&TaskRecord]) -> bool {
+    let terminal_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    terminal_controlled_child_count > 0
+        && child_tasks
+            .iter()
+            .all(|child| is_parent_join_terminal_child_status(&child.status))
+}
+
+fn task_list_parent_run_has_consumed_join(
+    store: &BrownieStore,
+    parent_run_id: &str,
+) -> Result<bool, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(parent_run_id)
+        .map_err(|error| error.to_string())?;
+    Ok(events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed))
+}
+
+fn task_list_progress_classification(
+    task: &TaskRecord,
+    child_tasks: &[&TaskRecord],
+    parent_join_consumed: bool,
+) -> TaskListProgressClassification {
+    match task.status {
+        TaskStatus::Created => TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::Created,
+            current_stage: ProgressCurrentStage::Created,
+            next_action: ProgressNextAction::RunTaskExplicitly,
+        },
+        TaskStatus::Queued => TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::Queued,
+            current_stage: ProgressCurrentStage::Queued,
+            next_action: ProgressNextAction::RunTaskExplicitly,
+        },
+        TaskStatus::Running => TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::Running,
+            current_stage: ProgressCurrentStage::RunningAgentLoop,
+            next_action: ProgressNextAction::InspectTask,
+        },
+        TaskStatus::Failed => TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::Terminal,
+            current_stage: ProgressCurrentStage::Failed,
+            next_action: ProgressNextAction::InspectTerminalResult,
+        },
+        TaskStatus::Cancelled => TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::Terminal,
+            current_stage: ProgressCurrentStage::Cancelled,
+            next_action: ProgressNextAction::InspectTerminalResult,
+        },
+        TaskStatus::Completed => {
+            task_list_completed_progress_classification(child_tasks, parent_join_consumed)
+        }
+    }
+}
+
+fn task_list_completed_progress_classification(
+    child_tasks: &[&TaskRecord],
+    parent_join_consumed: bool,
+) -> TaskListProgressClassification {
+    let pending_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+        .count();
+    let terminal_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let non_runnable_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .count();
+
+    if non_runnable_controlled_child_count > 0 {
+        return TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
+            current_stage: ProgressCurrentStage::InspectNonRunnableChildTasks,
+            next_action: ProgressNextAction::InspectNonRunnableChildTasks,
+        };
+    }
+
+    if pending_controlled_child_count > 0 {
+        return TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
+            current_stage: ProgressCurrentStage::CompletedWithPendingChildren,
+            next_action: ProgressNextAction::RunRemainingChildTasksExplicitly,
+        };
+    }
+
+    if terminal_controlled_child_count > 0 && parent_join_consumed {
+        return TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
+            current_stage: ProgressCurrentStage::Unknown,
+            next_action: ProgressNextAction::InspectTask,
+        };
+    }
+
+    if terminal_controlled_child_count > 0 {
+        return TaskListProgressClassification {
+            lifecycle_phase: ProgressLifecyclePhase::BlockedForExplicitAction,
+            current_stage: ProgressCurrentStage::ParentJoinReady,
+            next_action: ProgressNextAction::RunParentTaskExplicitly,
+        };
+    }
+
+    TaskListProgressClassification {
+        lifecycle_phase: ProgressLifecyclePhase::Terminal,
+        current_stage: ProgressCurrentStage::Completed,
+        next_action: ProgressNextAction::InspectTerminalResult,
+    }
+}
+
+fn task_list_progress_edges(tasks: &[TaskRecord]) -> Vec<TaskProgressGraphEdge> {
+    tasks
+        .iter()
+        .filter(|task| task_has_complete_controlled_child_provenance(task))
+        .filter_map(|task| {
+            Some(TaskProgressGraphEdge {
+                parent_task_id: task.parent_task_id.clone()?,
+                parent_run_id: task.parent_run_id.clone()?,
+                child_task_id: task.task_id.clone(),
+                child_run_id: task.run_id.clone(),
+                source_candidate_id: task.source_candidate_id.clone()?,
+                source_handoff_envelope_fingerprint: task
+                    .source_handoff_envelope_fingerprint
+                    .clone()?,
+            })
+        })
+        .collect()
+}
+
+fn task_list_progress_stage_counts(
+    classifications: &[(String, TaskListProgressClassification)],
+) -> Vec<TaskListProgressStageCount> {
+    vec![
+        ProgressCurrentStage::Created,
+        ProgressCurrentStage::Queued,
+        ProgressCurrentStage::RunningAgentLoop,
+        ProgressCurrentStage::InspectNonRunnableChildTasks,
+        ProgressCurrentStage::CompletedWithPendingChildren,
+        ProgressCurrentStage::ParentJoinReady,
+        ProgressCurrentStage::Completed,
+        ProgressCurrentStage::Failed,
+        ProgressCurrentStage::Cancelled,
+        ProgressCurrentStage::Unknown,
+    ]
+    .into_iter()
+    .filter_map(|current_stage| {
+        let task_count = classifications
+            .iter()
+            .filter(|(_, classification)| classification.current_stage == current_stage)
+            .count();
+        (task_count > 0).then_some(TaskListProgressStageCount {
+            current_stage,
+            task_count,
+        })
+    })
+    .collect()
+}
+
+fn task_list_progress_next_action_sets(
+    classifications: &[(String, TaskListProgressClassification)],
+) -> Vec<TaskListProgressNextActionSet> {
+    vec![
+        ProgressNextAction::RunTaskExplicitly,
+        ProgressNextAction::RunParentTaskExplicitly,
+        ProgressNextAction::RunRemainingChildTasksExplicitly,
+        ProgressNextAction::InspectNonRunnableChildTasks,
+        ProgressNextAction::StartVerificationRecoveryExplicitly,
+        ProgressNextAction::InspectTerminalResult,
+        ProgressNextAction::InspectTask,
+    ]
+    .into_iter()
+    .filter_map(|next_action| {
+        let task_ids: Vec<String> = classifications
+            .iter()
+            .filter(|(_, classification)| classification.next_action == next_action)
+            .map(|(task_id, _)| task_id.clone())
+            .collect();
+        (!task_ids.is_empty()).then_some(TaskListProgressNextActionSet {
+            next_action,
+            task_count: task_ids.len(),
+            task_ids,
+        })
+    })
+    .collect()
+}
+
+fn task_list_progress_blocked_sets(
+    classifications: &[(String, TaskListProgressClassification)],
+) -> Vec<TaskListProgressBlockedSet> {
+    vec![
+        (
+            ProgressCurrentStage::InspectNonRunnableChildTasks,
+            ProgressNextAction::InspectNonRunnableChildTasks,
+        ),
+        (
+            ProgressCurrentStage::CompletedWithPendingChildren,
+            ProgressNextAction::RunRemainingChildTasksExplicitly,
+        ),
+        (
+            ProgressCurrentStage::ParentJoinReady,
+            ProgressNextAction::RunParentTaskExplicitly,
+        ),
+        (
+            ProgressCurrentStage::Unknown,
+            ProgressNextAction::InspectTask,
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(current_stage, next_action)| {
+        let task_ids: Vec<String> = classifications
+            .iter()
+            .filter(|(_, classification)| {
+                classification.lifecycle_phase == ProgressLifecyclePhase::BlockedForExplicitAction
+                    && classification.current_stage == current_stage
+                    && classification.next_action == next_action
+            })
+            .map(|(task_id, _)| task_id.clone())
+            .collect();
+        (!task_ids.is_empty()).then_some(TaskListProgressBlockedSet {
+            current_stage,
+            next_action,
+            task_count: task_ids.len(),
+            task_ids,
+        })
+    })
+    .collect()
+}
+
+fn task_list_progress_overview_fingerprint(
+    tasks: &[TaskRecord],
+    nodes: &[TaskProgressGraphNode],
+    edges: &[TaskProgressGraphEdge],
+    root_task_ids: &[String],
+    runnable_task_ids: &[String],
+    blocked_task_ids: &[String],
+    terminal_task_ids: &[String],
+    parent_join_ready_task_ids: &[String],
+) -> String {
+    let mut entries = vec![
+        ("version", "task_list_progress_overview_v1".to_string()),
+        ("task_count", tasks.len().to_string()),
+        ("root_task_ids", root_task_ids.join(",")),
+        ("runnable_task_ids", runnable_task_ids.join(",")),
+        ("blocked_task_ids", blocked_task_ids.join(",")),
+        ("terminal_task_ids", terminal_task_ids.join(",")),
+        (
+            "parent_join_ready_task_ids",
+            parent_join_ready_task_ids.join(","),
+        ),
+    ];
+
+    for node in nodes {
+        entries.push((
+            "node",
+            serde_json::to_string(node).unwrap_or_else(|_| "serialization_error".to_string()),
+        ));
+    }
+    for edge in edges {
+        entries.push((
+            "edge",
+            serde_json::to_string(edge).unwrap_or_else(|_| "serialization_error".to_string()),
+        ));
+    }
+
+    progress_snapshot_source_fingerprint(&entries)
 }
 
 fn handle_tool_list(id: Value) -> JsonRpcResponse<Value> {
@@ -25902,6 +26352,241 @@ mod tests {
     }
 
     #[test]
+    fn task_list_progress_overview_groups_runtime_owned_task_sets() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent_join = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Parent ready for join".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start join parent");
+        let join_child = start_progress_test_child(&store, &parent_join, "join_child");
+        store
+            .tasks()
+            .update_task_status(
+                &join_child.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete join child");
+        let parent_join = store
+            .tasks()
+            .update_task_status(
+                &parent_join.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete join parent");
+        let parent_pending = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Parent with pending child".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start pending parent");
+        let pending_child = start_progress_test_child(&store, &parent_pending, "pending_child");
+        let parent_pending = store
+            .tasks()
+            .update_task_status(
+                &parent_pending.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete pending parent");
+        let running_task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Running task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start running task");
+        store
+            .tasks()
+            .update_task_status(
+                &running_task.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("mark running task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#);
+        let result = list.result.expect("list result");
+        let progress = &result["progress_overview"];
+        assert_eq!(progress["task_count"], 5);
+        assert_eq!(progress["status_counts"]["created"], 0);
+        assert_eq!(progress["status_counts"]["queued"], 1);
+        assert_eq!(progress["status_counts"]["running"], 1);
+        assert_eq!(progress["status_counts"]["completed"], 3);
+        assert_json_array_contains(&progress["runnable_task_ids"], &pending_child.task_id);
+        assert_json_array_contains(&progress["blocked_task_ids"], &parent_join.task_id);
+        assert_json_array_contains(&progress["blocked_task_ids"], &parent_pending.task_id);
+        assert_json_array_contains(&progress["terminal_task_ids"], &parent_join.task_id);
+        assert_json_array_contains(&progress["terminal_task_ids"], &join_child.task_id);
+        assert_json_array_contains(
+            &progress["parent_join_ready_task_ids"],
+            &parent_join.task_id,
+        );
+        assert_eq!(progress["nodes"].as_array().expect("nodes").len(), 5);
+        assert_eq!(progress["edges"].as_array().expect("edges").len(), 2);
+        assert!(progress["source_fingerprint"]
+            .as_str()
+            .expect("fingerprint")
+            .starts_with("sha256:"));
+        assert_json_next_action_contains(
+            progress,
+            "run_parent_task_explicitly",
+            &parent_join.task_id,
+        );
+        assert_json_next_action_contains(
+            progress,
+            "run_remaining_child_tasks_explicitly",
+            &parent_pending.task_id,
+        );
+        assert_json_next_action_contains(progress, "run_task_explicitly", &pending_child.task_id);
+        assert_json_next_action_contains(progress, "inspect_task", &running_task.task_id);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_list_progress_overview_parent_join_ready_path_is_bounded() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Bounded task listing parent".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let child = start_progress_test_child(&store, &parent, "bounded_join_child");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "child completed",
+                    "completion_result_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                    "raw_provider_response": "must stay out of task.list progress overview"
+                })),
+            )
+            .expect("append terminal child payload");
+        store
+            .tasks()
+            .update_task_status(
+                &child.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete child");
+        let parent = store
+            .tasks()
+            .update_task_status(
+                &parent.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete parent");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let parent_events_before = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events before")
+            .len();
+        let child_events_before = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events before")
+            .len();
+
+        let first = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#);
+        let progress_first = first.result.expect("first list")["progress_overview"].clone();
+        let second = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#);
+        let progress_second = second.result.expect("second list")["progress_overview"].clone();
+        let parent_events_after = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events after")
+            .len();
+        let child_events_after = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events after")
+            .len();
+
+        assert_eq!(parent_events_before, parent_events_after);
+        assert_eq!(child_events_before, child_events_after);
+        assert_eq!(
+            progress_first["source_fingerprint"],
+            progress_second["source_fingerprint"]
+        );
+        assert_json_array_contains(
+            &progress_first["parent_join_ready_task_ids"],
+            &parent.task_id,
+        );
+        assert_json_next_action_contains(
+            &progress_first,
+            "run_parent_task_explicitly",
+            &parent.task_id,
+        );
+        let serialized = serde_json::to_string(&progress_first).expect("serialize overview");
+        assert!(!serialized.contains("raw_provider_response"));
+        assert!(!serialized.contains("final_response"));
+        assert!(!serialized.contains("timeline"));
+        assert!(!serialized.contains("event_count"));
+        assert_eq!(progress_first["nodes"].as_array().expect("nodes").len(), 2);
+        assert_eq!(progress_first["edges"].as_array().expect("edges").len(), 1);
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::ParentJoinContinuationFingerprintConsumed,
+                Some(json!({
+                    "parent_join_continuation_status": "Consumed",
+                    "admission_id": "parent_join_admission_test",
+                    "child_completion_fingerprint": format!("sha256:{}", "e".repeat(64)),
+                    "child_completion_child_count": 1,
+                    "child_terminal_completed_count": 1,
+                    "child_terminal_failed_count": 0,
+                    "child_recovery_cycle_depth": 0,
+                    "fingerprint_input_count": 1,
+                    "reason": "Synthetic consumed join evidence for task.list aggregate test."
+                })),
+            )
+            .expect("append consumed parent join evidence");
+        let consumed = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#);
+        let progress_consumed =
+            consumed.result.expect("consumed list")["progress_overview"].clone();
+        assert_json_array_not_contains(
+            &progress_consumed["parent_join_ready_task_ids"],
+            &parent.task_id,
+        );
+        assert_json_next_action_contains(&progress_consumed, "inspect_task", &parent.task_id);
+        assert_ne!(
+            progress_first["source_fingerprint"],
+            progress_consumed["source_fingerprint"]
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn run_inspect_progress_snapshot_is_read_only_and_fingerprint_is_stable_until_state_changes() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -26015,6 +26700,38 @@ mod tests {
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    fn assert_json_array_contains(value: &Value, expected: &str) {
+        let values = value.as_array().expect("string array");
+        assert!(
+            values.iter().any(|value| value.as_str() == Some(expected)),
+            "expected array to contain {expected}, got {value}"
+        );
+    }
+
+    fn assert_json_array_not_contains(value: &Value, unexpected: &str) {
+        let values = value.as_array().expect("string array");
+        assert!(
+            values
+                .iter()
+                .all(|value| value.as_str() != Some(unexpected)),
+            "expected array to omit {unexpected}, got {value}"
+        );
+    }
+
+    fn assert_json_next_action_contains(progress: &Value, action: &str, expected_task_id: &str) {
+        let action_set = progress["next_action_sets"]
+            .as_array()
+            .expect("next_action_sets")
+            .iter()
+            .find(|set| set["next_action"] == action)
+            .unwrap_or_else(|| panic!("missing next action set {action}"));
+        assert_eq!(
+            action_set["task_count"].as_u64().expect("task count") as usize,
+            action_set["task_ids"].as_array().expect("task ids").len()
+        );
+        assert_json_array_contains(&action_set["task_ids"], expected_task_id);
     }
 
     fn start_progress_test_child(

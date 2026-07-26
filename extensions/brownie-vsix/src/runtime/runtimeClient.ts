@@ -2,6 +2,8 @@ import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
 import type { ProposalApplyResult } from './protocol';
 import type { CodebaseIndexSelectionReadResult, TaskRunParams } from './protocol';
 import { isProposalApplyResult } from './protocol';
+import type { TaskListResult } from './protocol';
+import { isTaskListResult } from './protocol';
 import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunResult, ProposalApproveResult, ProposalAuditTrailResult, ProposalPreflightResult, ProposalReadinessResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictResult, ProposalReviewQueueDiagnosticsDigestResult, ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsReportResult, ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueResult, ProposalReviewReportResult, ProposalReviewVerdictResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
 import type { ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from './protocol';
 import type { ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from './protocol';
@@ -790,13 +792,17 @@ export class RuntimeClient {
   }
 
   async listTasks(): Promise<TaskRecord[]> {
-    const result = await this.call<{ tasks: unknown }>('task.list');
+    return (await this.listTasksWithProgress()).tasks;
+  }
+
+  async listTasksWithProgress(): Promise<TaskListResult> {
+    const result = await this.call<unknown>('task.list');
 
     if (!isTaskListResult(result)) {
       throw new RuntimeProtocolError('task.list returned an invalid result');
     }
 
-    return result.tasks;
+    return result;
   }
 
   private async call<T>(method: string, params?: unknown): Promise<T> {
@@ -823,13 +829,4 @@ export class RuntimeClient {
 
     return this.transport.request<T>(request, this.timeoutMs);
   }
-}
-
-function isTaskListResult(value: unknown): value is { tasks: TaskRecord[] } {
-  return (
-    typeof value === 'object' &&
-    value !== null &&
-    Array.isArray((value as { tasks?: unknown }).tasks) &&
-    (value as { tasks: unknown[] }).tasks.every(isTaskRecord)
-  );
 }

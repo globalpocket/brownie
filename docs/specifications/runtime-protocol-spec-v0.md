@@ -506,7 +506,8 @@ Unknown tasks and tasks whose status is not `Created` return `-32602`. Phase 1.1
 
 ## `task.list`
 
-Returns all persisted tasks discovered in `.brownie/runs/*/state.json`.
+Returns all persisted tasks discovered in `.brownie/runs/*/state.json` plus a
+runtime-owned aggregate progress overview for that bounded task set.
 
 Request line:
 
@@ -517,8 +518,23 @@ Request line:
 Expected response result shape:
 
 ```json
-{"tasks":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","goal":"Implement something","mode_id":"orchestrator","status":"Created","created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}]}
+{"tasks":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","goal":"Implement something","mode_id":"orchestrator","status":"Created","created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"progress_overview":{"source_fingerprint":"sha256:<64 hex chars>","task_count":1,"root_task_ids":["task_<uuid>"],"runnable_task_ids":["task_<uuid>"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[{"current_stage":"created","task_count":1}],"next_action_sets":[{"next_action":"run_task_explicitly","task_count":1,"task_ids":["task_<uuid>"]}],"blocked_sets":[],"nodes":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Created","lifecycle_phase":"created","current_stage":"created","next_action":"run_task_explicitly","parent_task_id":null,"parent_run_id":null,"child_task_count":0,"created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"edges":[]}}
 ```
+
+The `progress_overview` is derived by Rust from persisted `TaskRecord` state,
+controlled child provenance, and bounded parent-run consumption evidence only
+for completed parent-join candidates. It exposes only task IDs, run IDs, bounded
+status/stage/action enums, aggregate counts, parent/child edges, and a
+replay-safe source fingerprint. It does not compute arbitrary percentages, call
+`run.inspect` for every task, scan every task ledger, execute tasks, infer policy
+inside the VSIX, or mix live progress observation with aggregate persisted
+progress. Completed parents with all controlled children in terminal states and
+no consumed parent-join continuation fingerprint are reported in
+`parent_join_ready_task_ids` with `run_parent_task_explicitly`; completed parents
+with runnable pending children are reported with
+`run_remaining_child_tasks_explicitly`, completed parents with non-runnable
+children are reported with `inspect_non_runnable_child_tasks`, and consumed
+join-candidate parents fall back to explicit parent inspection.
 
 ## Errors
 

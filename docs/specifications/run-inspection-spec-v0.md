@@ -67,6 +67,24 @@ Verification classification recognizes `verification_completion_gate.status` or 
 
 The snapshot must not include raw prompts, provider responses, file content, snippets, diffs, stdout/stderr, command strings, environment values, raw request bodies, absolute paths, canonical paths, or secrets. If a state cannot be classified safely, the runtime returns `unknown` / `inspect_task` style guidance rather than exposing raw ledger data or guessing.
 
+## M10.2 task-set progress overview
+
+`task.list` now returns `progress_overview` next to the existing `tasks` array.
+The overview is a runtime-owned aggregate graph over the returned task set: root
+task IDs, parent/child edges, runnable task IDs, blocked task IDs, terminal task
+IDs, parent-join-ready task IDs, bounded next-action sets, status/stage counts,
+nodes, and a source fingerprint.
+
+The overview is not produced by repeatedly calling `run.inspect` and is not a
+task-by-task ledger wrapper. It is derived from persisted `TaskRecord` state,
+controlled child provenance already loaded for the listing, and bounded
+parent-run consumption evidence only for completed parent-join candidates. It is
+read-only and does not execute tasks, consume parent-join state, append ledger
+events, run verifiers, apply patches, call providers, or read workspace files. It
+also does not expose arbitrary 0-100% percentages or raw prompts, provider
+responses, ledger payloads, file content, diffs, stdout/stderr, commands,
+environment values, absolute paths, canonical paths, or secrets.
+
 ## M5.1 subtask orchestration inspection
 
 Run inspection reports both queued subtask orchestration evidence and prepared handoff state. `has_subtask_orchestration_queued` / `subtask_queue_count` count `SubtaskOrchestrationQueued` events, while `has_subtask_handoff_prepared` / `subtask_handoff_count` count `SubtaskHandoffPrepared` events. These fields are summary-only and do not imply child task execution.
