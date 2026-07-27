@@ -386,6 +386,8 @@ pub struct HeadlessContinueOnceParams {
     pub expected_aggregate_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u8>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -996,6 +998,36 @@ pub struct HeadlessContinueOnceResult {
     pub replayed: bool,
     pub task_run_result: Option<TaskRunResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_route: Option<HeadlessContinueRoute>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub step_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executed_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replayed_count: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stop_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<HeadlessContinueStepResult>,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessContinueStepResult {
+    pub step_index: u8,
+    pub status: HeadlessContinueOnceStatus,
+    pub decision_id: Option<String>,
+    pub continuation_id: Option<String>,
+    pub selected_task_id: Option<String>,
+    pub selected_run_id: Option<String>,
+    pub candidate_count: usize,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: Option<String>,
+    pub post_aggregate_sequence: Option<u64>,
+    pub replayed: bool,
     pub next_route: Option<HeadlessContinueRoute>,
     pub next_action: String,
 }

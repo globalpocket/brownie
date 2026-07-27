@@ -87,6 +87,16 @@ limited to inspect progress, refresh progress, no eligible task, start
 verification recovery, review/authorize a recovery proposal, apply an approved
 recovery proposal, start verification retry, or run a parent task explicitly.
 
+M11.3 adds an optional `max_steps` budget to the same RPC. `max_steps` must be
+1, 2, or 3; values greater than 1 require a bounded `continuation_id` so each
+step has a deterministic replay id. The runtime executes or replays each step
+through the M11.2 one-step contract, derives the next expected progress handles
+from the previous post-run overview, and stops at budget exhaustion or any
+route that requires an explicit caller operation other than inspecting progress.
+Budget responses include bounded counts, a stop reason, and per-step summaries;
+they do not expose raw prompts, provider responses, file content, stdout/stderr,
+commands, environment values, request bodies, or paths.
+
 ## Phase 1.1 non-goals
 
 - No LLM calls.
