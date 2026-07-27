@@ -28321,6 +28321,201 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_once_replay_routes_applied_recovery_to_verification_retry_start() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let source = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Source verification failure".to_string(),
+                mode_id: Some("verifier".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start source");
+        let recovery = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Recovery task".to_string(),
+                mode_id: Some("implementer".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start recovery");
+        let retry = store
+            .tasks()
+            .start_verification_recovery_retry_task(VerificationRecoveryRetryTaskStartParams {
+                goal: "Retry verification after applied recovery".to_string(),
+                mode_id: Some("verifier".to_string()),
+                provenance: VerificationRecoveryRetryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    recovery_task_id: recovery.task_id.clone(),
+                    recovery_run_id: recovery.run_id.clone(),
+                    proposal_id: "proposal_recovery_retry_1".to_string(),
+                    apply_id: "apply_recovery_retry_1".to_string(),
+                    failure_fingerprint: format!("sha256:{}", "6".repeat(64)),
+                    apply_fingerprint: format!("sha256:{}", "7".repeat(64)),
+                    retried_verifier_tool_ids: vec![
+                        VERIFICATION_CARGO_FMT_CHECK_TOOL_ID.to_string()
+                    ],
+                },
+            })
+            .expect("start retry")
+            .record;
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &retry,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_66666666666666666666666666666666",
+                    "continuation_id": "m11.2.applied.retry",
+                    "selected_task_id": retry.task_id,
+                    "selected_run_id": retry.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888","expected_aggregate_sequence":1,"continuation_id":"m11.2.applied.retry"}}"#,
+        )
+        .result
+        .expect("replay result");
+        assert_eq!(result["replayed"], true);
+        assert_eq!(result["status"], "task_in_progress");
+        assert_eq!(result["task_run_result"], Value::Null);
+        assert_eq!(
+            result["next_route"]["kind"],
+            "start_verification_retry_explicitly"
+        );
+        assert_eq!(
+            result["next_route"]["proposal_id"],
+            "proposal_recovery_retry_1"
+        );
+        assert_eq!(result["next_route"]["apply_id"], "apply_recovery_retry_1");
+        assert_eq!(
+            result["next_route"]["next_action"],
+            "start_verification_retry_explicitly"
+        );
+        let retry_events = store
+            .tasks()
+            .read_ledger_events(&retry.run_id)
+            .expect("retry events");
+        assert_eq!(
+            retry_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            0
+        );
+        assert!(retry_events.iter().all(|event| {
+            !matches!(
+                event.kind,
+                LedgerEventKind::ToolExecutionRequested
+                    | LedgerEventKind::ToolExecutionPermissionChecked
+                    | LedgerEventKind::ToolExecutionCompleted
+                    | LedgerEventKind::ToolExecutionFailed
+            )
+        }));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_replay_routes_parent_join_ready_to_explicit_parent_run() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Parent ready for explicit join".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let child = start_progress_test_child(&store, &parent, "join_ready_child");
+        append_progress_test_handoff_envelope(&store, &parent, &child);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &child,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_77777777777777777777777777777777",
+                    "continuation_id": "m11.2.parent.join",
+                    "selected_task_id": child.task_id,
+                    "selected_run_id": child.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "9".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "child completed",
+                    "completion_result_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                    "raw_provider_response": "must not be returned"
+                })),
+            )
+            .expect("append child completion");
+        store
+            .tasks()
+            .update_task_status(
+                &child.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete child");
+        let parent_event_count = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events before")
+            .len();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","expected_aggregate_sequence":1,"continuation_id":"m11.2.parent.join"}}"#,
+        )
+        .result
+        .expect("replay result");
+        assert_eq!(result["replayed"], true);
+        assert_eq!(result["next_route"]["kind"], "run_parent_task_explicitly");
+        assert_eq!(result["next_route"]["task_id"], parent.task_id);
+        assert_eq!(result["next_route"]["run_id"], parent.run_id);
+        assert_eq!(
+            result["next_route"]["next_action"],
+            "run_parent_task_explicitly"
+        );
+        assert!(!result.to_string().contains("raw_provider_response"));
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events after");
+        assert_eq!(parent_events.len(), parent_event_count);
+        assert!(parent_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_list_progress_overview_parent_join_ready_path_is_bounded() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
