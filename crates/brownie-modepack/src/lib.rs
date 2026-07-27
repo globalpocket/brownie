@@ -11,6 +11,8 @@ use serde::Deserialize;
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
 pub const WORKSPACE_MODEPACK_PATH: &str = ".brownie/modepack.json";
 pub const MODEPACK_SCHEMA_VERSION: u64 = 1;
+const MAX_HANDOFF_TARGETS: usize = 16;
+const MAX_HANDOFF_TARGET_CHARS: usize = 64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModePackSnapshot {
@@ -33,6 +35,8 @@ struct RawModePolicy {
     display_name: String,
     role_definition: String,
     permissions: ModePermissions,
+    #[serde(default)]
+    allowed_handoff_targets: Vec<String>,
     #[serde(default)]
     completion_rules: Vec<String>,
 }
@@ -72,11 +76,17 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
             bail!("duplicate mode_id in modepack: {mode_id}");
         }
         validate_permissions(&mode_id, &raw_mode.permissions)?;
+        let allowed_handoff_targets = validate_handoff_targets(
+            &mode_id,
+            &raw_mode.permissions,
+            raw_mode.allowed_handoff_targets,
+        )?;
         modes.push(CompiledModePolicy {
             mode_id,
             display_name: non_empty("display_name", raw_mode.display_name)?,
             role_definition: non_empty("role_definition", raw_mode.role_definition)?,
             permissions: raw_mode.permissions,
+            allowed_handoff_targets,
             completion_rules: raw_mode
                 .completion_rules
                 .into_iter()
@@ -118,6 +128,44 @@ fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<
         bail!("mode {mode_id} requests unsupported destructive operations");
     }
     Ok(())
+}
+
+fn validate_handoff_targets(
+    mode_id: &str,
+    permissions: &ModePermissions,
+    targets: Vec<String>,
+) -> Result<Option<Vec<String>>> {
+    if !permissions.can_spawn_subtasks {
+        if targets.is_empty() {
+            return Ok(None);
+        }
+        bail!("mode {mode_id} declares handoff targets without subtask permission");
+    }
+    if targets.is_empty() {
+        bail!("mode {mode_id} can spawn subtasks but declares no allowed_handoff_targets");
+    }
+    if targets.len() > MAX_HANDOFF_TARGETS {
+        bail!("mode {mode_id} declares too many allowed_handoff_targets");
+    }
+    let mut seen = HashSet::new();
+    let mut normalized = Vec::with_capacity(targets.len());
+    for target in targets {
+        let target = non_empty("allowed_handoff_targets[]", target)?;
+        if target.chars().count() > MAX_HANDOFF_TARGET_CHARS {
+            bail!("mode {mode_id} allowed_handoff_targets entry exceeds length limit");
+        }
+        if !target
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+        {
+            bail!("mode {mode_id} allowed_handoff_targets entry contains unsupported characters");
+        }
+        if !seen.insert(target.clone()) {
+            bail!("mode {mode_id} declares duplicate allowed_handoff_targets entry: {target}");
+        }
+        normalized.push(target);
+    }
+    Ok(Some(normalized))
 }
 
 #[cfg(test)]
@@ -168,6 +216,142 @@ mod tests {
         assert_eq!(snapshot.modes.len(), 1);
         assert_eq!(snapshot.modes[0].mode_id, "reviewer-lite");
         assert!(!snapshot.modes[0].permissions.workspace_write);
+        assert_eq!(snapshot.modes[0].allowed_handoff_targets, None);
+    }
+
+    #[test]
+    fn loads_spawning_mode_with_bounded_handoff_targets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "handoff-pack",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Delegate only to approved child modes.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["reviewer-lite"]
+                },
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review without writing.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let snapshot = load_workspace_modepack(temp.path())
+            .expect("load")
+            .expect("snapshot");
+
+        let orchestrator = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-orchestrator")
+            .expect("external orchestrator");
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec!["reviewer-lite".to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_spawning_mode_without_handoff_targets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "unsafe-handoff",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Should declare handoff targets.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  }
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let error = load_workspace_modepack(temp.path())
+            .expect_err("spawning mode without targets should fail")
+            .to_string();
+
+        assert!(error.contains("declares no allowed_handoff_targets"));
+    }
+
+    #[test]
+    fn rejects_invalid_handoff_targets() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "unsafe-handoff",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Invalid target.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["../implementer"]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let error = load_workspace_modepack(temp.path())
+            .expect_err("invalid target should fail")
+            .to_string();
+
+        assert!(error.contains("unsupported characters"));
     }
 
     #[test]

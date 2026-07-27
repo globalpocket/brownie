@@ -75,6 +75,19 @@ The built-in registry resolves `mode_id` values into `CompiledModePolicy` record
 
 Runtime permissions are modeled as policy data so later phases can enforce them outside of LLM instructions. Permission policy remains authoritative over prompt text.
 
+## M12.1 handoff target compatibility
+
+`CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for
+external Mode Pack modes that can spawn subtasks. The field is compiled from the
+Mode Pack snapshot, stored in `ModeResolved`, and reconstructed during
+`task.run`, so handoff admission follows the policy captured when the task
+started instead of later edits to `.brownie/modepack.json`.
+
+For a `subtask.spawn` tool intent, Rust admits a requested child only when the
+active mode can spawn subtasks, the requested child mode resolves, and the child
+mode id is present in the active policy's allow-list when one exists. Built-in
+modes preserve their existing behavior by leaving the allow-list unset.
+
 ## Phase 1.4 permission gate update
 
 Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.

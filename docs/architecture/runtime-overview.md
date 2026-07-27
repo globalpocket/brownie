@@ -275,6 +275,18 @@ it does not add a scheduler, background loop, recovery execution, proposal
 apply, verification retry, parent join execution, shell/git/network/service
 actions, or VSIX-owned continuation policy.
 
+M12.1 adds Rust-owned handoff target admission for external Mode Pack modes that
+request `can_spawn_subtasks`. `brownie-modepack` compiles a bounded
+`allowed_handoff_targets` list into `CompiledModePolicy`, `ModeResolved` persists
+that policy snapshot, and `task.run` reconstructs it before evaluating
+`subtask.spawn` tool intents. The existing permission gate still decides whether
+the active mode may spawn subtasks at all; the new admission step denies an
+unknown or non-allow-listed requested `input.mode_id` before any
+`SubtaskOrchestrationQueued` event or controlled child `TaskRecord` can be
+created. Denial evidence records only active mode id, requested mode id, reason,
+request reason, required action, and bounded input summary. Built-in modes keep
+their current behavior because they do not declare an allow-list.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery
