@@ -675,6 +675,19 @@ kinds are limited to `inspect_progress_overview`,
 `start_verification_retry_explicitly`, `run_parent_task_explicitly`,
 `no_eligible_task`, and `refresh_progress_overview`.
 
+M11.3 adds optional bounded continuation-budget fields to the same method.
+Params may include `max_steps`; it must be 1, 2, or 3. Budgets greater than 1
+require `continuation_id`, and the runtime derives per-step ids by appending
+`.step.N`. A budget response sets `max_steps`, `step_count`, `executed_count`,
+`replayed_count`, `stop_reason`, and `steps`. Each step reports only bounded
+status, decision id, continuation id, selected task/run handles, candidate
+count, current/post aggregate progress handles, replay flag, next route, and
+next action. The method stops at stale progress, no eligible task,
+`task_in_progress`, route boundaries for recovery/proposal/apply/verifier retry
+or parent join, missing post-run progress, or budget exhaustion. It does not add
+another RPC, a report surface, scheduler, background loop, or automatic
+execution beyond explicit task continuation.
+
 ## Phase 1.10 run inspection methods
 
 The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JSON-RPC methods. They return sanitized ledger previews and run summaries only; full file content and raw tool output are not returned through inspection responses. Unknown run or task IDs return `-32602 invalid params`.

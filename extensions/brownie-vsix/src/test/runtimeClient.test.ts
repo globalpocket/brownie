@@ -595,10 +595,61 @@ describe('protocol validation', () => {
       next_action: 'inspect_progress_overview',
     };
     expect(isHeadlessContinueOnceParams(headlessParams)).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 2 })).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, authorize: false })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, expected_progress_fingerprint: 'not-a-fingerprint' })).toBe(false);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 0 })).toBe(false);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 4 })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, command: 'cargo test' })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    const headlessBudgetResult = {
+      ...headlessResult,
+      continuation_id: 'continue.once:budget',
+      max_steps: 2,
+      step_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'explicit_verification_recovery_boundary',
+      steps: [{
+        step_index: 1,
+        status: 'task_executed',
+        decision_id: headlessResult.decision_id,
+        continuation_id: 'continue.once:budget.step.1',
+        selected_task_id: 'task_1',
+        selected_run_id: 'run_1',
+        candidate_count: 1,
+        current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+        post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        replayed: false,
+        next_route: {
+          kind: 'start_verification_recovery_explicitly',
+          reason: 'Selected task failed verifier completion.',
+          task_id: 'task_1',
+          run_id: 'run_1',
+          failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+          next_action: 'start_verification_recovery_explicitly',
+        },
+        next_action: 'start_verification_recovery_explicitly',
+      }],
+      next_route: {
+        kind: 'start_verification_recovery_explicitly',
+        reason: 'Selected task failed verifier completion.',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+        next_action: 'start_verification_recovery_explicitly',
+      },
+      next_action: 'start_verification_recovery_explicitly',
+    };
+    expect(isHeadlessContinueOnceResult(headlessBudgetResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({ ...headlessBudgetResult, step_count: 2 })).toBe(false);
+    expect(isHeadlessContinueOnceResult({ ...headlessBudgetResult, executed_count: 2 })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessBudgetResult,
+      steps: [{ ...headlessBudgetResult.steps[0], stdout: 'raw output' }],
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult({
       ...headlessResult,
       status: 'task_in_progress',
@@ -1699,6 +1750,7 @@ describe('RuntimeClient', () => {
       expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
       expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
       continuation_id: 'continue.once:client',
+      max_steps: 2,
     };
     const taskRunResult = {
       task_id: 'task_1',
@@ -1722,6 +1774,26 @@ describe('RuntimeClient', () => {
       stale: false,
       replayed: false,
       task_run_result: taskRunResult,
+      max_steps: 2,
+      step_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'budget_exhausted',
+      steps: [{
+        step_index: 1,
+        status: 'task_executed',
+        decision_id: `headless_decision_${'a'.repeat(32)}`,
+        continuation_id: 'continue.once:client.step.1',
+        selected_task_id: 'task_1',
+        selected_run_id: 'run_1',
+        candidate_count: 1,
+        current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+        post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        replayed: false,
+        next_action: 'inspect_progress_overview',
+      }],
       next_action: 'inspect_progress_overview',
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });

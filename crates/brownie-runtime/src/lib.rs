@@ -30,19 +30,20 @@ use brownie_protocol::{
     CodebaseIndexSelectionReadParams, CodebaseIndexSelectionReadResult,
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
-    HeadlessContinueRoute, HeadlessContinueRouteKind, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
+    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
+    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
+    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
+    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    ProposalReviewBundleParams, ProposalReviewBundleResult,
+    ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -244,6 +245,7 @@ const METHOD_TASK_RUN: &str = "task.run";
 const METHOD_TASK_INSPECT: &str = "task.inspect";
 const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_HEADLESS_CONTINUE_ONCE: &str = "headless.continue_once";
+const HEADLESS_CONTINUE_MAX_BUDGET_STEPS: u8 = 3;
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -7052,6 +7054,32 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             );
         }
     }
+    if let Some(max_steps) = params.max_steps {
+        if max_steps == 0 || max_steps > HEADLESS_CONTINUE_MAX_BUDGET_STEPS {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: max_steps must be between 1 and 3",
+            );
+        }
+        if max_steps > 1 {
+            let Some(continuation_id) = params.continuation_id.as_deref() else {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: continuation_id is required when max_steps is greater than 1",
+                );
+            };
+            if continuation_id.len() > 80 {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: continuation_id must be at most 80 characters when max_steps is greater than 1",
+                );
+            }
+            return handle_headless_continue_budget(id, params);
+        }
+    }
 
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
@@ -7110,6 +7138,12 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 replayed: false,
                 task_run_result: None,
                 next_route: Some(next_route),
+                max_steps: None,
+                step_count: None,
+                executed_count: None,
+                replayed_count: None,
+                stop_reason: None,
+                steps: Vec::new(),
                 next_action: "refresh_progress_overview".to_string(),
             }),
         );
@@ -7142,6 +7176,12 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 replayed: false,
                 task_run_result: None,
                 next_route: Some(next_route),
+                max_steps: None,
+                step_count: None,
+                executed_count: None,
+                replayed_count: None,
+                stop_reason: None,
+                steps: Vec::new(),
                 next_action: "inspect_progress_overview".to_string(),
             }),
         );
@@ -7179,6 +7219,12 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 replayed: false,
                 task_run_result: None,
                 next_route: Some(next_route),
+                max_steps: None,
+                step_count: None,
+                executed_count: None,
+                replayed_count: None,
+                stop_reason: None,
+                steps: Vec::new(),
                 next_action: "refresh_progress_overview".to_string(),
             }),
         );
@@ -7275,9 +7321,194 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             replayed: false,
             task_run_result: Some(task_run_result),
             next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
             next_action,
         }),
     )
+}
+
+fn handle_headless_continue_budget(
+    id: Value,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let max_steps = params.max_steps.unwrap_or(1);
+    let root_continuation_id = params
+        .continuation_id
+        .clone()
+        .expect("validated budget continuation id");
+    let mut expected_progress_fingerprint = params.expected_progress_fingerprint.clone();
+    let mut expected_aggregate_sequence = params.expected_aggregate_sequence;
+    let mut steps = Vec::new();
+    let mut executed_count = 0usize;
+    let mut replayed_count = 0usize;
+    let mut final_result: Option<HeadlessContinueOnceResult> = None;
+    let mut stop_reason = "budget_exhausted".to_string();
+
+    for step_index in 0..max_steps {
+        let step_continuation_id = format!("{root_continuation_id}.step.{}", step_index + 1);
+        let response = handle_headless_continue_once(
+            id.clone(),
+            Some(json!({
+                "authorize": true,
+                "expected_progress_fingerprint": expected_progress_fingerprint,
+                "expected_aggregate_sequence": expected_aggregate_sequence,
+                "continuation_id": step_continuation_id
+            })),
+        );
+        let Some(result_value) = response.result else {
+            return JsonRpcResponse {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id,
+                result: None,
+                error: response.error,
+            };
+        };
+        let result: HeadlessContinueOnceResult = match serde_json::from_value(result_value) {
+            Ok(result) => result,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+
+        if result.status == HeadlessContinueOnceStatus::TaskExecuted {
+            executed_count += 1;
+        }
+        if result.replayed {
+            replayed_count += 1;
+        }
+        steps.push(HeadlessContinueStepResult {
+            step_index: step_index + 1,
+            status: result.status.clone(),
+            decision_id: result.decision_id.clone(),
+            continuation_id: result.continuation_id.clone(),
+            selected_task_id: result.selected_task_id.clone(),
+            selected_run_id: result.selected_run_id.clone(),
+            candidate_count: result.candidate_count,
+            current_progress_fingerprint: result.current_progress_fingerprint.clone(),
+            current_aggregate_sequence: result.current_aggregate_sequence,
+            post_progress_fingerprint: result.post_progress_fingerprint.clone(),
+            post_aggregate_sequence: result.post_aggregate_sequence,
+            replayed: result.replayed,
+            next_route: result.next_route.clone(),
+            next_action: result.next_action.clone(),
+        });
+
+        let can_continue = result.status == HeadlessContinueOnceStatus::TaskExecuted
+            && result
+                .next_route
+                .as_ref()
+                .map(|route| route.kind == HeadlessContinueRouteKind::InspectProgressOverview)
+                .unwrap_or(false)
+            && step_index + 1 < max_steps;
+        if !can_continue {
+            stop_reason = headless_continue_budget_stop_reason(&result, step_index + 1, max_steps);
+            final_result = Some(result);
+            break;
+        }
+
+        let Some(post_fingerprint) = result.post_progress_fingerprint.clone() else {
+            stop_reason = "missing_post_progress".to_string();
+            final_result = Some(result);
+            break;
+        };
+        let Some(post_sequence) = result.post_aggregate_sequence else {
+            stop_reason = "missing_post_progress".to_string();
+            final_result = Some(result);
+            break;
+        };
+        expected_progress_fingerprint = post_fingerprint;
+        expected_aggregate_sequence = post_sequence;
+        final_result = Some(result);
+    }
+
+    let mut result = final_result.unwrap_or(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::NoEligibleTask,
+        decision_id: None,
+        continuation_id: Some(root_continuation_id.clone()),
+        selected_task_id: None,
+        selected_run_id: None,
+        candidate_count: 0,
+        expected_progress_fingerprint: params.expected_progress_fingerprint,
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: expected_progress_fingerprint,
+        current_aggregate_sequence: expected_aggregate_sequence,
+        post_progress_fingerprint: None,
+        post_aggregate_sequence: None,
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        next_route: None,
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "inspect_progress_overview".to_string(),
+    });
+    if steps.len() == max_steps as usize
+        && result.status == HeadlessContinueOnceStatus::TaskExecuted
+        && result
+            .next_route
+            .as_ref()
+            .map(|route| route.kind == HeadlessContinueRouteKind::InspectProgressOverview)
+            .unwrap_or(false)
+    {
+        stop_reason = "budget_exhausted".to_string();
+    }
+    result.continuation_id = Some(root_continuation_id);
+    result.max_steps = Some(max_steps);
+    result.step_count = Some(steps.len());
+    result.executed_count = Some(executed_count);
+    result.replayed_count = Some(replayed_count);
+    result.stop_reason = Some(stop_reason);
+    result.steps = steps;
+    result_response(id, json!(result))
+}
+
+fn headless_continue_budget_stop_reason(
+    result: &HeadlessContinueOnceResult,
+    completed_step: u8,
+    max_steps: u8,
+) -> String {
+    match result.status {
+        HeadlessContinueOnceStatus::StaleProgress => "stale_progress".to_string(),
+        HeadlessContinueOnceStatus::NoEligibleTask => "no_eligible_task".to_string(),
+        HeadlessContinueOnceStatus::TaskInProgress => "task_in_progress".to_string(),
+        HeadlessContinueOnceStatus::TaskExecuted => {
+            if completed_step >= max_steps {
+                return "budget_exhausted".to_string();
+            }
+            match result.next_route.as_ref().map(|route| &route.kind) {
+                Some(HeadlessContinueRouteKind::InspectProgressOverview) => {
+                    "inspect_progress_overview".to_string()
+                }
+                Some(HeadlessContinueRouteKind::RefreshProgressOverview) => {
+                    "stale_progress".to_string()
+                }
+                Some(HeadlessContinueRouteKind::NoEligibleTask) => "no_eligible_task".to_string(),
+                Some(HeadlessContinueRouteKind::StartVerificationRecoveryExplicitly) => {
+                    "explicit_verification_recovery_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::ReviewAndAuthorizeRecoveryProposal) => {
+                    "explicit_recovery_proposal_review_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::ApplyApprovedRecoveryProposalExplicitly) => {
+                    "explicit_recovery_apply_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::StartVerificationRetryExplicitly) => {
+                    "explicit_verification_retry_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::RunParentTaskExplicitly) => {
+                    "explicit_parent_join_boundary".to_string()
+                }
+                None => "missing_next_route".to_string(),
+            }
+        }
+    }
 }
 
 fn headless_continue_once_replay_result(
@@ -7348,6 +7579,12 @@ fn headless_continue_once_replay_result(
             replayed: true,
             task_run_result,
             next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
             next_action,
         }),
     )
@@ -27660,6 +27897,268 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::TaskRunning)
                 .count();
         assert_eq!(all_events, 1);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_budget_runs_bounded_sequential_created_tasks() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let first = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget first".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start first");
+        let second = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget second".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start second");
+        let third = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget third".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start third");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.1","max_steps":2}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("budget result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["continuation_id"], "continue.budget.1");
+        assert_eq!(result["max_steps"], 2);
+        assert_eq!(result["step_count"], 2);
+        assert_eq!(result["executed_count"], 2);
+        assert_eq!(result["replayed_count"], 0);
+        assert_eq!(result["stop_reason"], "budget_exhausted");
+        let steps = result["steps"].as_array().expect("steps");
+        assert_eq!(steps.len(), 2);
+        assert_eq!(steps[0]["step_index"], 1);
+        assert_eq!(steps[0]["continuation_id"], "continue.budget.1.step.1");
+        assert_eq!(steps[0]["status"], "task_executed");
+        assert_eq!(steps[1]["step_index"], 2);
+        assert_eq!(steps[1]["continuation_id"], "continue.budget.1.step.2");
+        assert_eq!(steps[1]["status"], "task_executed");
+        assert_ne!(steps[0]["selected_task_id"], steps[1]["selected_task_id"]);
+
+        let selected_run_ids = steps
+            .iter()
+            .map(|step| {
+                step["selected_run_id"]
+                    .as_str()
+                    .expect("selected run id")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let running_events = selected_run_ids
+            .iter()
+            .map(|run_id| {
+                store
+                    .tasks()
+                    .read_ledger_events(run_id)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(running_events, 2);
+        assert!(store
+            .tasks()
+            .get_task(&first.task_id)
+            .expect("first")
+            .is_some());
+        assert!(store
+            .tasks()
+            .get_task(&second.task_id)
+            .expect("second")
+            .is_some());
+        assert!(store
+            .tasks()
+            .get_task(&third.task_id)
+            .expect("third")
+            .is_some());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_budget_replays_without_duplicate_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let first = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget replay first".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start first");
+        let second = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget replay second".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start second");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.replay","max_steps":2}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        );
+        let first_response = parse_line(&request);
+        assert!(
+            first_response.result.is_some(),
+            "{:?}",
+            first_response.error
+        );
+        let replay_response = parse_line(&request);
+        let replay = replay_response
+            .result
+            .unwrap_or_else(|| panic!("replay result: {:?}", replay_response.error));
+        assert_eq!(replay["status"], "task_executed");
+        assert_eq!(replay["step_count"], 2);
+        assert_eq!(replay["executed_count"], 2);
+        assert_eq!(replay["replayed_count"], 2);
+        assert_eq!(replay["steps"][0]["replayed"], true);
+        assert_eq!(replay["steps"][1]["replayed"], true);
+
+        let selected_run_ids = replay["steps"]
+            .as_array()
+            .expect("steps")
+            .iter()
+            .map(|step| {
+                step["selected_run_id"]
+                    .as_str()
+                    .expect("selected run id")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let running_events = selected_run_ids
+            .iter()
+            .map(|run_id| {
+                store
+                    .tasks()
+                    .read_ledger_events(run_id)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+        let decision_events = selected_run_ids
+            .iter()
+            .map(|run_id| {
+                store
+                    .tasks()
+                    .read_ledger_events(run_id)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| {
+                        event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded
+                    })
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(running_events, 2);
+        assert_eq!(decision_events, 2);
+        assert!(store
+            .tasks()
+            .get_task(&first.task_id)
+            .expect("first")
+            .is_some());
+        assert!(store
+            .tasks()
+            .get_task(&second.task_id)
+            .expect("second")
+            .is_some());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_budget_validates_budget_authorization_bounds() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget validation".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let missing_continuation = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":2}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert_eq!(missing_continuation.error.expect("error").code, -32602);
+        let too_large = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.invalid","max_steps":4}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert_eq!(too_large.error.expect("error").code, -32602);
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        assert!(events
+            .iter()
+            .all(|event| { event.kind != LedgerEventKind::HeadlessContinuationDecisionRecorded }));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

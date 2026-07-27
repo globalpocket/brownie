@@ -101,6 +101,14 @@ bounded runtime state instead of entering the agent loop again. The returned
 `next_route` is an explicit caller route only; it does not start recovery,
 apply, verification retry, parent join, scheduling, or additional loop work.
 
+M11.3 still does not add scheduler-owned or VSIX-owned loop execution. It lets a
+headless caller authorize a small `max_steps` budget on the existing
+`headless.continue_once` method. Each budget step reuses the same one-step
+runtime contract and therefore enters the agent loop only through `task.run`.
+The runtime stops at stale progress, no eligible task, a still-running selected
+task, explicit recovery/apply/verifier/parent-join boundaries, or budget
+exhaustion.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

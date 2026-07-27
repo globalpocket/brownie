@@ -263,6 +263,18 @@ review a recovery proposal, start verification retry, or run a parent task. The
 route is metadata only and never executes recovery, apply, verifier, parent
 join, shell, git, network, service, scheduler, or loop actions.
 
+M11.3 extends the same method with an optional caller-authorized
+`max_steps` budget from 1 to 3. A budget greater than 1 requires a
+`continuation_id`; the runtime derives per-step continuation ids, executes or
+replays each step through the existing one-step contract, refreshes expected
+progress handles only from the prior step's post-run overview, and stops when
+the budget is exhausted or when the next route leaves `inspect_progress_overview`.
+The bounded result includes step count, executed count, replayed count, stop
+reason, and per-step summary metadata. It remains explicit caller-driven work:
+it does not add a scheduler, background loop, recovery execution, proposal
+apply, verification retry, parent join execution, shell/git/network/service
+actions, or VSIX-owned continuation policy.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

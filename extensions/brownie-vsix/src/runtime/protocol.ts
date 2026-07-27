@@ -261,6 +261,7 @@ export interface HeadlessContinueOnceParams {
   expected_progress_fingerprint: string;
   expected_aggregate_sequence: number;
   continuation_id?: string | null;
+  max_steps?: number | null;
 }
 
 export interface VerificationRecoverySource {
@@ -373,6 +374,29 @@ export interface HeadlessContinueOnceResult {
   stale: boolean;
   replayed: boolean;
   task_run_result?: TaskRunResult | null;
+  next_route?: HeadlessContinueRoute | null;
+  max_steps?: number | null;
+  step_count?: number | null;
+  executed_count?: number | null;
+  replayed_count?: number | null;
+  stop_reason?: string | null;
+  steps?: HeadlessContinueStepResult[];
+  next_action: string;
+}
+
+export interface HeadlessContinueStepResult {
+  step_index: number;
+  status: HeadlessContinueOnceStatus;
+  decision_id?: string | null;
+  continuation_id?: string | null;
+  selected_task_id?: string | null;
+  selected_run_id?: string | null;
+  candidate_count: number;
+  current_progress_fingerprint: string;
+  current_aggregate_sequence: number;
+  post_progress_fingerprint?: string | null;
+  post_aggregate_sequence?: number | null;
+  replayed: boolean;
   next_route?: HeadlessContinueRoute | null;
   next_action: string;
 }
@@ -3918,12 +3942,13 @@ export function isTaskRunParams(value: unknown): value is TaskRunParams {
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
     isNonNegativeInteger(value.expected_aggregate_sequence) &&
-    (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id))
+    (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id)) &&
+    (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3))
   );
 }
 
@@ -3964,6 +3989,12 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'replayed',
       'task_run_result',
       'next_route',
+      'max_steps',
+      'step_count',
+      'executed_count',
+      'replayed_count',
+      'stop_reason',
+      'steps',
       'next_action',
     ]) ||
     !hasNoForbiddenTaskListProgressFields(value) ||
@@ -3985,9 +4016,33 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     typeof value.replayed !== 'boolean' ||
     (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
     (value.next_route !== undefined && value.next_route !== null && !isHeadlessContinueRoute(value.next_route)) ||
+    (value.max_steps !== undefined && value.max_steps !== null && (!isNonNegativeInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 3)) ||
+    (value.step_count !== undefined && value.step_count !== null && !isNonNegativeInteger(value.step_count)) ||
+    (value.executed_count !== undefined && value.executed_count !== null && !isNonNegativeInteger(value.executed_count)) ||
+    (value.replayed_count !== undefined && value.replayed_count !== null && !isNonNegativeInteger(value.replayed_count)) ||
+    (value.stop_reason !== undefined && value.stop_reason !== null && (typeof value.stop_reason !== 'string' || value.stop_reason.length > 120)) ||
+    (value.steps !== undefined && (!Array.isArray(value.steps) || !value.steps.every(isHeadlessContinueStepResult))) ||
     typeof value.next_action !== 'string'
   ) {
     return false;
+  }
+
+  if (value.max_steps !== undefined && value.max_steps !== null) {
+    if (
+      value.step_count === undefined ||
+      value.step_count === null ||
+      value.executed_count === undefined ||
+      value.executed_count === null ||
+      value.replayed_count === undefined ||
+      value.replayed_count === null ||
+      typeof value.stop_reason !== 'string' ||
+      !Array.isArray(value.steps) ||
+      value.step_count !== value.steps.length ||
+      value.executed_count > value.step_count ||
+      value.replayed_count > value.step_count
+    ) {
+      return false;
+    }
   }
 
   if (value.status === 'stale_progress') {
@@ -4010,6 +4065,44 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.selected_run_id !== null &&
     value.task_run_result !== undefined &&
     value.task_run_result !== null
+  );
+}
+
+function isHeadlessContinueStepResult(value: unknown): value is HeadlessContinueStepResult {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'step_index',
+      'status',
+      'decision_id',
+      'continuation_id',
+      'selected_task_id',
+      'selected_run_id',
+      'candidate_count',
+      'current_progress_fingerprint',
+      'current_aggregate_sequence',
+      'post_progress_fingerprint',
+      'post_aggregate_sequence',
+      'replayed',
+      'next_route',
+      'next_action',
+    ]) &&
+    isNonNegativeInteger(value.step_index) &&
+    value.step_index >= 1 &&
+    isHeadlessContinueOnceStatus(value.status) &&
+    (value.decision_id === undefined || value.decision_id === null || (typeof value.decision_id === 'string' && /^headless_decision_[a-f0-9]{32}$/.test(value.decision_id))) &&
+    (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id)) &&
+    (value.selected_task_id === undefined || value.selected_task_id === null || typeof value.selected_task_id === 'string') &&
+    (value.selected_run_id === undefined || value.selected_run_id === null || typeof value.selected_run_id === 'string') &&
+    isNonNegativeInteger(value.candidate_count) &&
+    typeof value.current_progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.current_progress_fingerprint) &&
+    isNonNegativeInteger(value.current_aggregate_sequence) &&
+    (value.post_progress_fingerprint === undefined || value.post_progress_fingerprint === null || (typeof value.post_progress_fingerprint === 'string' && isSha256Fingerprint(value.post_progress_fingerprint))) &&
+    (value.post_aggregate_sequence === undefined || value.post_aggregate_sequence === null || isNonNegativeInteger(value.post_aggregate_sequence)) &&
+    typeof value.replayed === 'boolean' &&
+    (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
+    typeof value.next_action === 'string'
   );
 }
 
