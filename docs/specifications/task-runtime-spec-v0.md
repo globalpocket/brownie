@@ -76,6 +76,17 @@ uses the existing `task.run` admission path. This method does not execute
 parent-join-ready completed parents, run recovery retries, apply proposals, loop,
 schedule background work, or let VSIX code own task-selection policy.
 
+M11.2 extends the same method with replay-safe continuation ids. If a
+`continuation_id` already resolves to a prior bounded continuation decision, the
+runtime does not select a new task, append another decision, or append duplicate
+`TaskRunning`. It returns the same selected task/run handles, `replayed=true`,
+bounded terminal task-run evidence when present, or `task_in_progress` for a
+non-terminal selected task. The response includes one `next_route` object with
+summary-only handles for the next explicit caller operation. Route kinds are
+limited to inspect progress, refresh progress, no eligible task, start
+verification recovery, review/authorize a recovery proposal, apply an approved
+recovery proposal, start verification retry, or run a parent task explicitly.
+
 ## Phase 1.1 non-goals
 
 - No LLM calls.

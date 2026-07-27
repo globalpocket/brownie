@@ -250,6 +250,19 @@ stay summary-only and must not include raw prompts, provider responses, file
 contents, ledger payloads, stdout/stderr, commands, environment values, raw
 request bodies, absolute paths, canonical paths, secrets, or percentages.
 
+M11.2 makes `headless.continue_once` replay-safe for callers that lose a
+response after the runtime records a continuation decision. When a bounded
+`continuation_id` already has `HeadlessContinuationDecisionRecorded` evidence,
+the Rust runtime returns `replayed=true` with the same selected task/run handles
+and does not append another decision or `TaskRunning` event. Terminal selected
+tasks return bounded reconstructed `TaskRunResult` evidence when available;
+still-running selected tasks return `task_in_progress`. Every replay and
+post-step execution result includes one bounded `next_route` describing the next
+explicit caller action, such as inspect progress, start verifier recovery,
+review a recovery proposal, start verification retry, or run a parent task. The
+route is metadata only and never executes recovery, apply, verifier, parent
+join, shell, git, network, service, scheduler, or loop actions.
+
 Generic `process.exec` remains listed as a non-executable planning surface. The runtime denies it even for modes that may execute the controlled verifier. Verifier results expose only check id, verifier status, launch/timeout flags, exit code, duration, byte counts, truncation flags, redaction status, and bounded reason strings. They must not expose raw stdout, stderr, command strings, environment values, stdin, raw input JSON, file content, canonical paths, absolute paths, shell execution, git execution, network access, service control, or arbitrary test execution.
 
 ## R3 Verifier Integrity Recovery

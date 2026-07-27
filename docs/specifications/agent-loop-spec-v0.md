@@ -94,6 +94,13 @@ path. The agent loop itself is unchanged: it is still entered only through
 parent-join execution, recovery retry execution, proposal apply, or new
 workspace/tool permissions.
 
+M11.2 does not change agent-loop execution. It changes the headless continuation
+contract around the loop: a repeated `headless.continue_once` call with an
+already-recorded `continuation_id` replays the selected task/run outcome from
+bounded runtime state instead of entering the agent loop again. The returned
+`next_route` is an explicit caller route only; it does not start recovery,
+apply, verification retry, parent join, scheduling, or additional loop work.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

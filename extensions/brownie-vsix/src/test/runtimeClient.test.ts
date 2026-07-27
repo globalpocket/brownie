@@ -583,6 +583,15 @@ describe('protocol validation', () => {
       stale: false,
       replayed: false,
       task_run_result: taskRunResult,
+      next_route: {
+        kind: 'inspect_progress_overview',
+        reason: 'Selected task completed; inspect progress.',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'inspect_progress_overview',
+      },
       next_action: 'inspect_progress_overview',
     };
     expect(isHeadlessContinueOnceParams(headlessParams)).toBe(true);
@@ -592,12 +601,46 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     expect(isHeadlessContinueOnceResult({
       ...headlessResult,
+      status: 'task_in_progress',
+      replayed: true,
+      task_run_result: null,
+      next_route: {
+        kind: 'inspect_progress_overview',
+        reason: 'Selected task is still running.',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        progress_fingerprint: `sha256:${'d'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'inspect_progress_overview',
+      },
+    })).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      next_route: { ...headlessResult.next_route, kind: 'run_shell' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      next_route: { ...headlessResult.next_route, stdout: 'raw' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      next_route: { ...headlessResult.next_route, reason: 'x'.repeat(241) },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
       status: 'stale_progress',
       decision_id: null,
       selected_task_id: null,
       selected_run_id: null,
       task_run_result: null,
       stale: true,
+      next_route: {
+        kind: 'refresh_progress_overview',
+        reason: 'Refresh before continuing.',
+        progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+        next_action: 'refresh_progress_overview',
+      },
       next_action: 'refresh_progress_overview',
     })).toBe(true);
     expect(isHeadlessContinueOnceResult({ ...headlessResult, decision_id: 'decision_1' })).toBe(false);

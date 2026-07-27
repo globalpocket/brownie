@@ -938,7 +938,44 @@ pub struct TaskRunResult {
 pub enum HeadlessContinueOnceStatus {
     StaleProgress,
     NoEligibleTask,
+    TaskInProgress,
     TaskExecuted,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessContinueRouteKind {
+    InspectProgressOverview,
+    StartVerificationRecoveryExplicitly,
+    ReviewAndAuthorizeRecoveryProposal,
+    ApplyApprovedRecoveryProposalExplicitly,
+    StartVerificationRetryExplicitly,
+    RunParentTaskExplicitly,
+    NoEligibleTask,
+    RefreshProgressOverview,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessContinueRoute {
+    pub kind: HeadlessContinueRouteKind,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub aggregate_sequence: Option<u64>,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -958,6 +995,8 @@ pub struct HeadlessContinueOnceResult {
     pub stale: bool,
     pub replayed: bool,
     pub task_run_result: Option<TaskRunResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_route: Option<HeadlessContinueRoute>,
     pub next_action: String,
 }
 
