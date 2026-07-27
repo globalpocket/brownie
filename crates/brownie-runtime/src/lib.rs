@@ -30,19 +30,19 @@ use brownie_protocol::{
     CodebaseIndexSelectionReadParams, CodebaseIndexSelectionReadResult,
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
-    LlmHealthResult, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
-    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
-    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    ProposalReviewBundleParams, ProposalReviewBundleResult,
-    ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    HeadlessContinueRoute, HeadlessContinueRouteKind, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmRequestBudgetSummary,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
+    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
+    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -207,8 +207,8 @@ use brownie_protocol::{
     WorkspacePatchReviewVerdictSummary,
 };
 use brownie_store::{
-    BrownieStore, ChildTaskStartParams, LedgerEvent, LedgerEventKind,
-    ParentJoinContinuationRunAdmission, VerificationRecoveryRetryTaskStartParams,
+    BrownieStore, ChildTaskStartParams, HeadlessContinuationDecisionLookup, LedgerEvent,
+    LedgerEventKind, ParentJoinContinuationRunAdmission, VerificationRecoveryRetryTaskStartParams,
     VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
@@ -7066,9 +7066,31 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
 
+    if let Some(continuation_id) = params.continuation_id.as_deref() {
+        match headless_continuation_decision_for_replay(&store, &tasks, continuation_id) {
+            Ok(Some(decision)) => {
+                return headless_continue_once_replay_result(
+                    id,
+                    &store,
+                    &progress_overview,
+                    params,
+                    decision,
+                );
+            }
+            Ok(None) => {}
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        }
+    }
+
     if progress_overview.source_fingerprint != params.expected_progress_fingerprint
         || progress_overview.aggregate_sequence != params.expected_aggregate_sequence
     {
+        let next_route = headless_continue_route_refresh(
+            "Current progress differs from the caller's expected fingerprint; refresh before continuing.",
+            &progress_overview,
+        );
         return result_response(
             id,
             json!(HeadlessContinueOnceResult {
@@ -7087,6 +7109,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 stale: true,
                 replayed: false,
                 task_run_result: None,
+                next_route: Some(next_route),
                 next_action: "refresh_progress_overview".to_string(),
             }),
         );
@@ -7096,6 +7119,10 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     candidate_task_ids.sort();
     let candidate_count = candidate_task_ids.len();
     let Some(selected_task_id) = candidate_task_ids.first().cloned() else {
+        let next_route = headless_continue_route_no_eligible(
+            "No created or queued task is currently eligible for headless continuation.",
+            &progress_overview,
+        );
         return result_response(
             id,
             json!(HeadlessContinueOnceResult {
@@ -7114,6 +7141,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 stale: false,
                 replayed: false,
                 task_run_result: None,
+                next_route: Some(next_route),
                 next_action: "inspect_progress_overview".to_string(),
             }),
         );
@@ -7128,6 +7156,10 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         selected_record.status,
         TaskStatus::Created | TaskStatus::Queued
     ) {
+        let next_route = headless_continue_route_refresh(
+            "Selected task was no longer runnable after candidate selection; refresh progress.",
+            &progress_overview,
+        );
         return result_response(
             id,
             json!(HeadlessContinueOnceResult {
@@ -7146,6 +7178,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 stale: true,
                 replayed: false,
                 task_run_result: None,
+                next_route: Some(next_route),
                 next_action: "refresh_progress_overview".to_string(),
             }),
         );
@@ -7171,6 +7204,22 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: selected_record.task_id.clone(),
+                selected_run_id: selected_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
     }
 
     let task_run_response = handle_task_run(
@@ -7200,6 +7249,12 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         Ok(progress_overview) => progress_overview,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
+    let next_route = headless_continue_next_route(
+        &selected_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
 
     result_response(
         id,
@@ -7219,9 +7274,519 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             stale: false,
             replayed: false,
             task_run_result: Some(task_run_result),
-            next_action: "inspect_progress_overview".to_string(),
+            next_route: Some(next_route),
+            next_action,
         }),
     )
+}
+
+fn headless_continue_once_replay_result(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    decision: HeadlessContinuationDecisionLookup,
+) -> JsonRpcResponse<Value> {
+    let selected_record = match store.tasks().get_task(&decision.selected_task_id) {
+        Ok(Some(record)) if record.run_id == decision.selected_run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: headless continuation decision selected task/run mismatch",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: headless continuation decision selected task not found",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let task_run_result = match task_run_result_for_headless_replay(store, &selected_record) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &selected_record,
+        task_run_result.as_ref(),
+        &post_progress_overview,
+    );
+    let status = if task_run_result.is_some() {
+        HeadlessContinueOnceStatus::TaskExecuted
+    } else {
+        HeadlessContinueOnceStatus::TaskInProgress
+    };
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status,
+            decision_id: Some(decision.decision_id),
+            continuation_id: Some(decision.continuation_id),
+            selected_task_id: Some(selected_record.task_id),
+            selected_run_id: Some(selected_record.run_id),
+            candidate_count: decision.candidate_count,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result,
+            next_route: Some(next_route),
+            next_action,
+        }),
+    )
+}
+
+fn headless_continuation_decision_for_replay(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    continuation_id: &str,
+) -> Result<Option<HeadlessContinuationDecisionLookup>, String> {
+    if let Some(indexed) = store
+        .tasks()
+        .read_headless_continuation_decision(continuation_id)
+        .map_err(|error| error.to_string())?
+    {
+        if let Some(scanned) =
+            headless_continuation_decision_from_task_ledgers(store, tasks, continuation_id)?
+        {
+            if scanned != indexed {
+                return Err(format!(
+                    "conflicting headless continuation decision for {continuation_id}"
+                ));
+            }
+        }
+        return Ok(Some(indexed));
+    }
+    let Some(scanned) =
+        headless_continuation_decision_from_task_ledgers(store, tasks, continuation_id)?
+    else {
+        return Ok(None);
+    };
+    store
+        .tasks()
+        .write_headless_continuation_decision(&scanned)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(scanned))
+}
+
+fn headless_continuation_decision_from_task_ledgers(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    continuation_id: &str,
+) -> Result<Option<HeadlessContinuationDecisionLookup>, String> {
+    let mut found: Option<HeadlessContinuationDecisionLookup> = None;
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| error.to_string())?;
+        for event in events {
+            if event.kind != LedgerEventKind::HeadlessContinuationDecisionRecorded {
+                continue;
+            }
+            let Some(payload) = event.payload.as_ref() else {
+                continue;
+            };
+            if payload.get("continuation_id").and_then(Value::as_str) != Some(continuation_id) {
+                continue;
+            }
+            let Some(decision) = headless_continuation_decision_from_payload(payload) else {
+                return Err(format!(
+                    "invalid headless continuation decision evidence for {continuation_id}"
+                ));
+            };
+            if let Some(existing) = found.as_ref() {
+                if existing != &decision {
+                    return Err(format!(
+                        "conflicting headless continuation decision for {continuation_id}"
+                    ));
+                }
+            } else {
+                found = Some(decision);
+            }
+        }
+    }
+    Ok(found)
+}
+
+fn headless_continuation_decision_from_payload(
+    payload: &Value,
+) -> Option<HeadlessContinuationDecisionLookup> {
+    Some(HeadlessContinuationDecisionLookup {
+        decision_id: payload.get("decision_id")?.as_str()?.to_string(),
+        continuation_id: payload.get("continuation_id")?.as_str()?.to_string(),
+        selected_task_id: payload.get("selected_task_id")?.as_str()?.to_string(),
+        selected_run_id: payload.get("selected_run_id")?.as_str()?.to_string(),
+        expected_progress_fingerprint: payload
+            .get("expected_progress_fingerprint")?
+            .as_str()?
+            .to_string(),
+        expected_aggregate_sequence: payload.get("expected_aggregate_sequence")?.as_u64()?,
+        candidate_count: payload.get("candidate_count")?.as_u64()? as usize,
+        policy_version: payload
+            .get("policy_version")
+            .and_then(Value::as_str)
+            .unwrap_or("headless_continue_once_v1")
+            .to_string(),
+    })
+}
+
+fn task_run_result_for_headless_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<TaskRunResult>, String> {
+    if !matches!(
+        record.status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    ) {
+        return Ok(None);
+    }
+
+    match verification_recovery_repair_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, verification_recovery_repair))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                selected_index_prompt_context: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: Some(verification_recovery_repair),
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+
+    match verification_recovery_retry_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, verification_completion_gate, verification_recovery_retry))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                selected_index_prompt_context: None,
+                verification_completion_gate,
+                verification_recovery_repair: None,
+                verification_recovery_retry: Some(verification_recovery_retry),
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+
+    match recovery_cycle_budget_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, recovery_cycle_budget_outcome))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                selected_index_prompt_context: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+
+    match child_orchestration_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, child_orchestration_outcome))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                selected_index_prompt_context: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: Some(child_orchestration_outcome),
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+
+    match parent_join_readiness_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, parent_join_readiness_outcome))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                selected_index_prompt_context: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    let Some(agent_loop) = task_run_agent_loop_summary_from_events(&events) else {
+        return Ok(None);
+    };
+    let runtime_requirement = runtime_verification_requirement_for_record(record);
+    let verification_completion_gate = verification_completion_gate_for_run_with_requirement(
+        &events,
+        runtime_requirement.as_ref(),
+    );
+    Ok(Some(TaskRunResult {
+        task_id: record.task_id.clone(),
+        run_id: record.run_id.clone(),
+        status: record.status.clone(),
+        agent_loop,
+        selected_index_prompt_context: None,
+        verification_completion_gate,
+        verification_recovery_repair: None,
+        verification_recovery_retry: None,
+        recovery_cycle_budget_outcome: None,
+        child_orchestration_outcome: None,
+        parent_join_readiness_outcome: None,
+    }))
+}
+
+fn headless_continue_next_route(
+    record: &TaskRecord,
+    result: Option<&TaskRunResult>,
+    progress_overview: &TaskListProgressOverview,
+) -> HeadlessContinueRoute {
+    if matches!(
+        record.status,
+        TaskStatus::Created | TaskStatus::Queued | TaskStatus::Running
+    ) && result.is_none()
+    {
+        if matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
+            if let Some(provenance) = record.verification_recovery_retry_provenance.as_ref() {
+                return HeadlessContinueRoute {
+                    kind: HeadlessContinueRouteKind::StartVerificationRetryExplicitly,
+                    reason: "Approved recovery apply evidence has materialized a verification retry task; run it explicitly."
+                        .to_string(),
+                    task_id: Some(record.task_id.clone()),
+                    run_id: Some(record.run_id.clone()),
+                    proposal_id: Some(provenance.proposal_id.clone()),
+                    apply_id: Some(provenance.apply_id.clone()),
+                    failure_fingerprint: Some(provenance.failure_fingerprint.clone()),
+                    apply_fingerprint: Some(provenance.apply_fingerprint.clone()),
+                    progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                    aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                    next_action: "start_verification_retry_explicitly".to_string(),
+                };
+            }
+        }
+        return headless_continue_route_inspect(
+            "Selected task is not terminal; inspect progress before retrying.",
+            Some(record.task_id.clone()),
+            Some(record.run_id.clone()),
+            progress_overview,
+        );
+    }
+    let Some(result) = result else {
+        return headless_continue_route_inspect(
+            "Selected task outcome is unavailable from bounded replay evidence.",
+            Some(record.task_id.clone()),
+            Some(record.run_id.clone()),
+            progress_overview,
+        );
+    };
+
+    if let Some(repair) = result.verification_recovery_repair.as_ref() {
+        if let Some(proposal_id) = repair.proposal_id.as_ref() {
+            return HeadlessContinueRoute {
+                kind: HeadlessContinueRouteKind::ReviewAndAuthorizeRecoveryProposal,
+                reason: "Recovery repair produced one bounded proposal; review and authorize it explicitly."
+                    .to_string(),
+                task_id: Some(repair.recovery_task_id.clone()),
+                run_id: Some(repair.recovery_run_id.clone()),
+                proposal_id: Some(proposal_id.clone()),
+                apply_id: None,
+                failure_fingerprint: Some(repair.failure_fingerprint.clone()),
+                apply_fingerprint: None,
+                progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                next_action: "review_and_authorize_recovery_proposal".to_string(),
+            };
+        }
+    }
+
+    if let Some(retry) = result.verification_recovery_retry.as_ref() {
+        return HeadlessContinueRoute {
+            kind: if retry.retry_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+                HeadlessContinueRouteKind::InspectProgressOverview
+            } else {
+                HeadlessContinueRouteKind::StartVerificationRecoveryExplicitly
+            },
+            reason: if retry.retry_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+                "Verification retry passed; inspect progress for remaining work.".to_string()
+            } else {
+                "Verification retry failed; start recovery explicitly if policy allows.".to_string()
+            },
+            task_id: Some(retry.retry_task_id.clone()),
+            run_id: Some(retry.retry_run_id.clone()),
+            proposal_id: Some(retry.proposal_id.clone()),
+            apply_id: Some(retry.apply_id.clone()),
+            failure_fingerprint: Some(retry.failure_fingerprint.clone()),
+            apply_fingerprint: Some(retry.apply_fingerprint.clone()),
+            progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+            aggregate_sequence: Some(progress_overview.aggregate_sequence),
+            next_action: if retry.retry_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+                "inspect_progress_overview".to_string()
+            } else {
+                "start_verification_recovery_explicitly".to_string()
+            },
+        };
+    }
+
+    if let Some(parent_join) = result.parent_join_readiness_outcome.as_ref() {
+        if parent_join.parent_join_ready {
+            return HeadlessContinueRoute {
+                kind: HeadlessContinueRouteKind::RunParentTaskExplicitly,
+                reason: "All controlled children reached terminal state; run the parent continuation explicitly."
+                    .to_string(),
+                task_id: Some(parent_join.parent_task_id.clone()),
+                run_id: Some(parent_join.parent_run_id.clone()),
+                proposal_id: None,
+                apply_id: None,
+                failure_fingerprint: None,
+                apply_fingerprint: None,
+                progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                next_action: "run_parent_task_explicitly".to_string(),
+            };
+        }
+    }
+
+    if let Some(gate) = result.verification_completion_gate.as_ref() {
+        if gate.status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED {
+            return HeadlessContinueRoute {
+                kind: HeadlessContinueRouteKind::StartVerificationRecoveryExplicitly,
+                reason: "Verification completion gate failed; start recovery explicitly with bounded failure evidence."
+                    .to_string(),
+                task_id: Some(result.task_id.clone()),
+                run_id: Some(result.run_id.clone()),
+                proposal_id: None,
+                apply_id: None,
+                failure_fingerprint: gate.requirement_fingerprint.clone(),
+                apply_fingerprint: None,
+                progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                next_action: "start_verification_recovery_explicitly".to_string(),
+            };
+        }
+    }
+
+    let candidate_task_ids = headless_continue_once_candidate_task_ids(progress_overview);
+    if candidate_task_ids.is_empty() {
+        return headless_continue_route_no_eligible(
+            "Selected task is terminal and no eligible continuation task remains.",
+            progress_overview,
+        );
+    }
+    headless_continue_route_inspect(
+        "Selected task is terminal; inspect progress for the next explicit continuation step.",
+        Some(result.task_id.clone()),
+        Some(result.run_id.clone()),
+        progress_overview,
+    )
+}
+
+fn headless_continue_route_refresh(
+    reason: &str,
+    progress_overview: &TaskListProgressOverview,
+) -> HeadlessContinueRoute {
+    HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+        reason: reason.to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "refresh_progress_overview".to_string(),
+    }
+}
+
+fn headless_continue_route_no_eligible(
+    reason: &str,
+    progress_overview: &TaskListProgressOverview,
+) -> HeadlessContinueRoute {
+    HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::NoEligibleTask,
+        reason: reason.to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "inspect_progress_overview".to_string(),
+    }
+}
+
+fn headless_continue_route_inspect(
+    reason: &str,
+    task_id: Option<String>,
+    run_id: Option<String>,
+    progress_overview: &TaskListProgressOverview,
+) -> HeadlessContinueRoute {
+    HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::InspectProgressOverview,
+        reason: reason.to_string(),
+        task_id,
+        run_id,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "inspect_progress_overview".to_string(),
+    }
 }
 
 fn is_valid_headless_continuation_id(value: &str) -> bool {
@@ -27337,6 +27902,420 @@ mod tests {
             event.kind != LedgerEventKind::HeadlessContinuationDecisionRecorded
                 && event.kind != LedgerEventKind::TaskRunning
         }));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_replays_terminal_continuation_without_duplicate_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Replay terminal continuation".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let first = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"m11.2.terminal"}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let first_result = first
+            .result
+            .unwrap_or_else(|| panic!("first result: {:?}", first.error));
+        assert_eq!(first_result["status"], "task_executed");
+        assert_eq!(first_result["replayed"], false);
+
+        let replay = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":0,"continuation_id":"m11.2.terminal"}}"#,
+        );
+        let replay_result = replay
+            .result
+            .unwrap_or_else(|| panic!("replay result: {:?}", replay.error));
+        assert_eq!(replay_result["status"], "task_executed");
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["selected_task_id"],
+            first_result["selected_task_id"]
+        );
+        assert_eq!(
+            replay_result["selected_run_id"],
+            first_result["selected_run_id"]
+        );
+        assert_eq!(
+            replay_result["next_route"]["kind"],
+            "inspect_progress_overview"
+        );
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_replays_running_continuation_without_duplicate_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Replay running continuation".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        let continuation_id = "m11.2.running";
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_11111111111111111111111111111111",
+                    "continuation_id": continuation_id,
+                    "selected_task_id": task.task_id,
+                    "selected_run_id": task.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .update_task_status(
+                &task.task_id,
+                TaskStatus::Running,
+                LedgerEventKind::TaskRunning,
+            )
+            .expect("running");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"{}"}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+            continuation_id
+        ));
+        let result = replay
+            .result
+            .unwrap_or_else(|| panic!("replay result: {:?}", replay.error));
+        assert_eq!(result["status"], "task_in_progress");
+        assert_eq!(result["replayed"], true);
+        assert_eq!(result["task_run_result"], Value::Null);
+        assert_eq!(result["next_route"]["kind"], "inspect_progress_overview");
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_rejects_conflicting_continuation_decision_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let first = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Conflict first".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start first");
+        let second = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Conflict second".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start second");
+        for (task, decision_id) in [
+            (&first, "headless_decision_22222222222222222222222222222222"),
+            (
+                &second,
+                "headless_decision_33333333333333333333333333333333",
+            ),
+        ] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    task,
+                    LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                    Some(json!({
+                        "decision_id": decision_id,
+                        "continuation_id": "m11.2.conflict",
+                        "selected_task_id": task.task_id,
+                        "selected_run_id": task.run_id,
+                        "expected_progress_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                        "expected_aggregate_sequence": 1,
+                        "candidate_count": 1,
+                        "policy_version": "headless_continue_once_v1"
+                    })),
+                )
+                .expect("append decision");
+        }
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","expected_aggregate_sequence":1,"continuation_id":"m11.2.conflict"}}"#,
+        );
+        let error = response.error.expect("conflict error");
+        assert_eq!(error.code, -32603);
+        assert!(error
+            .message
+            .contains("conflicting headless continuation decision"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_replay_routes_failed_verification_to_recovery_start() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Failed verifier route".to_string(),
+                mode_id: Some("verifier".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_44444444444444444444444444444444",
+                    "continuation_id": "m11.2.failed.verifier",
+                    "selected_task_id": task.task_id,
+                    "selected_run_id": task.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Failed",
+                    "completion_summary": "verification failed"
+                })),
+            )
+            .expect("append loop completion");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::ToolIntentPermissionChecked,
+                Some(json!({
+                    "tool_id": "verification.cargo_check"
+                })),
+            )
+            .expect("append verifier intent");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::ToolExecutionFailed,
+                Some(json!({
+                    "tool_id": "verification.cargo_check",
+                    "verification_status": "Failed"
+                })),
+            )
+            .expect("append verifier failure");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &task.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+                Some(json!({
+                    "verification_completion_gate_status": "Failed",
+                    "required_verifier_count": 1,
+                    "passed_verifier_count": 0,
+                    "failed_verifier_count": 1,
+                    "required_verifier_tool_ids": ["verification.cargo_check"],
+                    "passed_verifier_tool_ids": [],
+                    "failed_verifier_tool_ids": ["verification.cargo_check"],
+                    "failure_reasons": ["cargo check failed"],
+                    "requirement_fingerprint": format!("sha256:{}", "e".repeat(64))
+                })),
+            )
+            .expect("fail task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","expected_aggregate_sequence":1,"continuation_id":"m11.2.failed.verifier"}}"#,
+        )
+        .result
+        .expect("replay result");
+        assert_eq!(result["replayed"], true);
+        assert_eq!(
+            result["next_route"]["kind"],
+            "start_verification_recovery_explicitly"
+        );
+        assert_eq!(
+            result["next_route"]["next_action"],
+            "start_verification_recovery_explicitly"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_replay_routes_recovery_repair_to_proposal_review() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let source = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Source verification failure".to_string(),
+                mode_id: Some("verifier".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start source");
+        let failure_fingerprint = format!("sha256:{}", "f".repeat(64));
+        let recovery = store
+            .tasks()
+            .start_verification_recovery_task(VerificationRecoveryTaskStartParams {
+                goal: "Repair failed verification".to_string(),
+                mode_id: Some("implementer".to_string()),
+                provenance: VerificationRecoveryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    failure_fingerprint: failure_fingerprint.clone(),
+                    required_verifier_count: 1,
+                    passed_verifier_count: 0,
+                    failed_verifier_count: 1,
+                    failed_verifier_tool_ids: vec!["verification.cargo_check".to_string()],
+                    failure_reasons: vec!["verification.cargo_check:Failed".to_string()],
+                    bounded_cargo_diagnostics: Vec::new(),
+                },
+            })
+            .expect("start recovery")
+            .record;
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &recovery,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_55555555555555555555555555555555",
+                    "continuation_id": "m11.2.recovery.proposal",
+                    "selected_task_id": recovery.task_id,
+                    "selected_run_id": recovery.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &recovery,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(json!({
+                    "verification_recovery_repair": true,
+                    "proposal_id": "proposal_recovery_1",
+                    "validation_status": "Valid",
+                    "source_task_id": source.task_id,
+                    "source_run_id": source.run_id,
+                    "recovery_task_id": recovery.task_id,
+                    "recovery_run_id": recovery.run_id,
+                    "failure_fingerprint": failure_fingerprint,
+                    "failed_verifier_tool_ids": ["verification.cargo_check"]
+                })),
+            )
+            .expect("append proposal");
+        store
+            .tasks()
+            .update_task_status(
+                &recovery.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete recovery");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":1,"continuation_id":"m11.2.recovery.proposal"}}"#,
+        )
+        .result
+        .expect("replay result");
+        assert_eq!(result["replayed"], true);
+        assert_eq!(
+            result["next_route"]["kind"],
+            "review_and_authorize_recovery_proposal"
+        );
+        assert_eq!(result["next_route"]["proposal_id"], "proposal_recovery_1");
+        assert_eq!(
+            result["next_route"]["next_action"],
+            "review_and_authorize_recovery_proposal"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

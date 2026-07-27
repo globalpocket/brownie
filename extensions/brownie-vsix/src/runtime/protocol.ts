@@ -331,7 +331,31 @@ export interface TaskRunResult {
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
 }
 
-export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_executed';
+export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_in_progress' | 'task_executed';
+
+export type HeadlessContinueRouteKind =
+  | 'inspect_progress_overview'
+  | 'start_verification_recovery_explicitly'
+  | 'review_and_authorize_recovery_proposal'
+  | 'apply_approved_recovery_proposal_explicitly'
+  | 'start_verification_retry_explicitly'
+  | 'run_parent_task_explicitly'
+  | 'no_eligible_task'
+  | 'refresh_progress_overview';
+
+export interface HeadlessContinueRoute {
+  kind: HeadlessContinueRouteKind;
+  reason: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  proposal_id?: string | null;
+  apply_id?: string | null;
+  failure_fingerprint?: string | null;
+  apply_fingerprint?: string | null;
+  progress_fingerprint?: string | null;
+  aggregate_sequence?: number | null;
+  next_action: string;
+}
 
 export interface HeadlessContinueOnceResult {
   status: HeadlessContinueOnceStatus;
@@ -349,7 +373,8 @@ export interface HeadlessContinueOnceResult {
   stale: boolean;
   replayed: boolean;
   task_run_result?: TaskRunResult | null;
-  next_action: 'refresh_progress_overview' | 'inspect_progress_overview';
+  next_route?: HeadlessContinueRoute | null;
+  next_action: string;
 }
 
 export interface TaskRunSelectedIndexPromptContextSummary {
@@ -3938,6 +3963,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'stale',
       'replayed',
       'task_run_result',
+      'next_route',
       'next_action',
     ]) ||
     !hasNoForbiddenTaskListProgressFields(value) ||
@@ -3958,7 +3984,8 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     typeof value.stale !== 'boolean' ||
     typeof value.replayed !== 'boolean' ||
     (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
-    (value.next_action !== 'refresh_progress_overview' && value.next_action !== 'inspect_progress_overview')
+    (value.next_route !== undefined && value.next_route !== null && !isHeadlessContinueRoute(value.next_route)) ||
+    typeof value.next_action !== 'string'
   ) {
     return false;
   }
@@ -3968,6 +3995,9 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
   }
   if (value.status === 'no_eligible_task') {
     return value.stale === false && value.task_run_result == null && value.decision_id == null;
+  }
+  if (value.status === 'task_in_progress') {
+    return value.stale === false && value.replayed === true && value.decision_id !== undefined && value.decision_id !== null && value.selected_task_id !== undefined && value.selected_task_id !== null && value.selected_run_id !== undefined && value.selected_run_id !== null && value.task_run_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'inspect_progress_overview';
   }
   return (
     value.status === 'task_executed' &&
@@ -3984,11 +4014,38 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
 }
 
 function isHeadlessContinueOnceStatus(value: unknown): value is HeadlessContinueOnceStatus {
-  return value === 'stale_progress' || value === 'no_eligible_task' || value === 'task_executed';
+  return value === 'stale_progress' || value === 'no_eligible_task' || value === 'task_in_progress' || value === 'task_executed';
 }
 
 function isHeadlessContinuationId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,96}$/.test(value);
+}
+
+function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+}
+
+function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['kind', 'reason', 'task_id', 'run_id', 'proposal_id', 'apply_id', 'failure_fingerprint', 'apply_fingerprint', 'progress_fingerprint', 'aggregate_sequence', 'next_action']) &&
+    hasNoForbiddenTaskListProgressFields(value) &&
+    isHeadlessContinueRouteKind(value.kind) &&
+    typeof value.reason === 'string' &&
+    value.reason.length > 0 &&
+    value.reason.length <= 240 &&
+    (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
+    (value.run_id === undefined || value.run_id === null || typeof value.run_id === 'string') &&
+    (value.proposal_id === undefined || value.proposal_id === null || typeof value.proposal_id === 'string') &&
+    (value.apply_id === undefined || value.apply_id === null || typeof value.apply_id === 'string') &&
+    (value.failure_fingerprint === undefined || value.failure_fingerprint === null || (typeof value.failure_fingerprint === 'string' && isSha256Fingerprint(value.failure_fingerprint))) &&
+    (value.apply_fingerprint === undefined || value.apply_fingerprint === null || (typeof value.apply_fingerprint === 'string' && isSha256Fingerprint(value.apply_fingerprint))) &&
+    (value.progress_fingerprint === undefined || value.progress_fingerprint === null || (typeof value.progress_fingerprint === 'string' && isSha256Fingerprint(value.progress_fingerprint))) &&
+    (value.aggregate_sequence === undefined || value.aggregate_sequence === null || isNonNegativeInteger(value.aggregate_sequence)) &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 96
+  );
 }
 
 export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): value is TaskRunSelectedIndexPromptContextSummary {

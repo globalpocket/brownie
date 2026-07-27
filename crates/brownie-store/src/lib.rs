@@ -19,6 +19,7 @@ use uuid::Uuid;
 pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
+const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
@@ -64,6 +65,18 @@ pub struct TaskStore {
 #[derive(Debug, Clone)]
 pub struct CodebaseIndexStore {
     workspace_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessContinuationDecisionLookup {
+    pub decision_id: String,
+    pub continuation_id: String,
+    pub selected_task_id: String,
+    pub selected_run_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub candidate_count: usize,
+    pub policy_version: String,
 }
 
 impl CodebaseIndexStore {
@@ -1126,6 +1139,39 @@ impl TaskStore {
         RunLedger::new(self.run_dir(run_id)).read_events()
     }
 
+    pub fn read_headless_continuation_decision(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessContinuationDecisionLookup>> {
+        let path = self.headless_continuation_decision_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_continuation_decision(
+        &self,
+        lookup: &HeadlessContinuationDecisionLookup,
+    ) -> Result<()> {
+        let path = self.headless_continuation_decision_path(&lookup.continuation_id);
+        if let Some(existing) = self.read_headless_continuation_decision(&lookup.continuation_id)? {
+            if existing == *lookup {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless continuation decision for {}",
+                lookup.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(lookup)
+            .context("failed to serialize headless continuation decision")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     fn append_task_events_with_payloads(
         &self,
         record: &TaskRecord,
@@ -1181,6 +1227,13 @@ impl TaskStore {
 
     fn runs_dir(&self) -> PathBuf {
         self.workspace_root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR)
+    }
+
+    fn headless_continuation_decision_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!("{continuation_id}.json"))
     }
 
     pub fn workspace_root(&self) -> &std::path::Path {

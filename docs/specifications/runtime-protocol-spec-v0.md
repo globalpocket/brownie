@@ -660,6 +660,21 @@ or return raw prompts, provider responses, file contents, ledger payloads,
 stdout/stderr, commands, environment values, raw request bodies, absolute paths,
 canonical paths, secrets, or arbitrary percentages.
 
+M11.2 adds replay and route metadata to this same method. If `continuation_id`
+matches prior bounded decision evidence, the runtime returns `replayed=true`
+with the same selected task/run handles and does not append duplicate
+`HeadlessContinuationDecisionRecorded` or `TaskRunning` events. Replayed running
+tasks return `status = task_in_progress` with no `task_run_result`; replayed
+terminal tasks return a bounded reconstructed `task_run_result` when available.
+Responses may include `next_route`, a bounded object with `kind`, `reason`,
+optional task/run/proposal/apply/fingerprint handles, and `next_action`. Route
+kinds are limited to `inspect_progress_overview`,
+`start_verification_recovery_explicitly`,
+`review_and_authorize_recovery_proposal`,
+`apply_approved_recovery_proposal_explicitly`,
+`start_verification_retry_explicitly`, `run_parent_task_explicitly`,
+`no_eligible_task`, and `refresh_progress_overview`.
+
 ## Phase 1.10 run inspection methods
 
 The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JSON-RPC methods. They return sanitized ledger previews and run summaries only; full file content and raw tool output are not returned through inspection responses. Unknown run or task IDs return `-32602 invalid params`.
