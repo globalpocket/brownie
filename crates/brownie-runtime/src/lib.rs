@@ -28164,6 +28164,248 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_once_budget_stale_progress_stops_before_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget stale".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":0,"continuation_id":"continue.budget.stale","max_steps":2}}"#,
+        );
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("stale budget result: {:?}", response.error));
+        assert_eq!(result["status"], "stale_progress");
+        assert_eq!(result["max_steps"], 2);
+        assert_eq!(result["step_count"], 1);
+        assert_eq!(result["executed_count"], 0);
+        assert_eq!(result["replayed_count"], 0);
+        assert_eq!(result["stop_reason"], "stale_progress");
+        assert_eq!(result["steps"][0]["status"], "stale_progress");
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::HeadlessContinuationDecisionRecorded));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_budget_stops_at_failed_verifier_recovery_boundary() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget failed verifier route".to_string(),
+                mode_id: Some("verifier".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_88888888888888888888888888888888",
+                    "continuation_id": "continue.budget.failed.step.1",
+                    "selected_task_id": task.task_id,
+                    "selected_run_id": task.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "d".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Failed",
+                    "completion_summary": "verification failed"
+                })),
+            )
+            .expect("append loop completion");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::ToolIntentPermissionChecked,
+                Some(json!({
+                    "tool_id": "verification.cargo_check"
+                })),
+            )
+            .expect("append verifier intent");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &task,
+                LedgerEventKind::ToolExecutionFailed,
+                Some(json!({
+                    "tool_id": "verification.cargo_check",
+                    "verification_status": "Failed"
+                })),
+            )
+            .expect("append verifier failure");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &task.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+                Some(json!({
+                    "verification_completion_gate_status": "Failed",
+                    "required_verifier_count": 1,
+                    "passed_verifier_count": 0,
+                    "failed_verifier_count": 1,
+                    "required_verifier_tool_ids": ["verification.cargo_check"],
+                    "passed_verifier_tool_ids": [],
+                    "failed_verifier_tool_ids": ["verification.cargo_check"],
+                    "failure_reasons": ["cargo check failed"],
+                    "requirement_fingerprint": format!("sha256:{}", "e".repeat(64))
+                })),
+            )
+            .expect("fail task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","expected_aggregate_sequence":1,"continuation_id":"continue.budget.failed","max_steps":2}}"#,
+        )
+        .result
+        .expect("budget result");
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["step_count"], 1);
+        assert_eq!(result["replayed_count"], 1);
+        assert_eq!(
+            result["stop_reason"],
+            "explicit_verification_recovery_boundary"
+        );
+        assert_eq!(
+            result["next_route"]["kind"],
+            "start_verification_recovery_explicitly"
+        );
+        assert_eq!(
+            result["steps"][0]["next_route"]["kind"],
+            "start_verification_recovery_explicitly"
+        );
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_budget_stops_at_parent_join_boundary_without_running_parent() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Budget parent ready for explicit join".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let child = start_progress_test_child(&store, &parent, "budget_join_ready_child");
+        append_progress_test_handoff_envelope(&store, &parent, &child);
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &child,
+                LedgerEventKind::HeadlessContinuationDecisionRecorded,
+                Some(json!({
+                    "decision_id": "headless_decision_99999999999999999999999999999999",
+                    "continuation_id": "continue.budget.parent.step.1",
+                    "selected_task_id": child.task_id,
+                    "selected_run_id": child.run_id,
+                    "expected_progress_fingerprint": format!("sha256:{}", "9".repeat(64)),
+                    "expected_aggregate_sequence": 1,
+                    "candidate_count": 1,
+                    "policy_version": "headless_continue_once_v1"
+                })),
+            )
+            .expect("append decision");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &child,
+                LedgerEventKind::AgentLoopCompleted,
+                Some(json!({
+                    "final_state": "Completed",
+                    "completion_summary": "child completed",
+                    "completion_result_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                    "raw_provider_response": "must not be returned"
+                })),
+            )
+            .expect("append child completion");
+        store
+            .tasks()
+            .update_task_status(
+                &child.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete child");
+        let parent_event_count = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events before")
+            .len();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.continue_once","params":{"authorize":true,"expected_progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","expected_aggregate_sequence":1,"continuation_id":"continue.budget.parent","max_steps":2}}"#,
+        )
+        .result
+        .expect("budget result");
+        assert_eq!(result["step_count"], 1);
+        assert_eq!(result["replayed_count"], 1);
+        assert_eq!(result["stop_reason"], "explicit_parent_join_boundary");
+        assert_eq!(result["next_route"]["kind"], "run_parent_task_explicitly");
+        assert_eq!(result["next_route"]["task_id"], parent.task_id);
+        assert!(!result.to_string().contains("raw_provider_response"));
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events after");
+        assert_eq!(parent_events.len(), parent_event_count);
+        assert!(parent_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_continue_once_runs_one_queued_controlled_child_from_expected_progress_state() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
