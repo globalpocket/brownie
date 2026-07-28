@@ -32,7 +32,8 @@ use brownie_protocol::{
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
     ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
     PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
     ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
@@ -209,8 +210,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     BrownieStore, ChildTaskStartParams, HeadlessContinuationDecisionLookup, LedgerEvent,
-    LedgerEventKind, ParentJoinContinuationRunAdmission, VerificationRecoveryRetryTaskStartParams,
-    VerificationRecoveryTaskStartParams,
+    LedgerEventKind, LlmProviderFailureRetryTaskStartParams, ParentJoinContinuationRunAdmission,
+    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -1742,6 +1743,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         mode_id,
         verification_recovery_source,
         verification_recovery_retry_source,
+        llm_provider_failure_retry_source,
     } = params;
 
     if goal.trim().is_empty() {
@@ -1758,11 +1760,19 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         Err(message) => return error_response(id, -32602, &message),
     };
 
-    if verification_recovery_source.is_some() && verification_recovery_retry_source.is_some() {
+    let start_source_count = [
+        verification_recovery_source.is_some(),
+        verification_recovery_retry_source.is_some(),
+        llm_provider_failure_retry_source.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if start_source_count > 1 {
         return error_response(
             id,
             -32602,
-            "invalid params: specify only one verification recovery source envelope",
+            "invalid params: specify only one task start source envelope",
         );
     }
 
@@ -1811,6 +1821,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                             replayed: admission.replayed,
                         }),
                         verification_recovery_retry_admission: None,
+                        llm_provider_failure_retry_admission: None,
                     }),
                 )
             }
@@ -1869,6 +1880,64 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                                 replayed: admission.replayed,
                             }
                         ),
+                        llm_provider_failure_retry_admission: None,
+                    }),
+                )
+            }
+            Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else if let Some(source) = llm_provider_failure_retry_source {
+        let provenance = match llm_provider_failure_retry_provenance_for_source(&store, &source) {
+            Ok(provenance) => provenance,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        let failure_fingerprint = provenance.failure_fingerprint.clone();
+        let failure_class = provenance.failure_class.clone();
+        let retryable = provenance.retryable;
+        match store.tasks().start_llm_provider_failure_retry_task(
+            LlmProviderFailureRetryTaskStartParams {
+                goal,
+                mode_id: Some(policy.mode_id.clone()),
+                provenance,
+            },
+        ) {
+            Ok(admission) => {
+                if !admission.replayed {
+                    if let Err(error) = store.tasks().append_task_event_with_payload(
+                        &admission.record,
+                        LedgerEventKind::ModeResolved,
+                        Some(mode_resolved_payload(&policy)),
+                    ) {
+                        return error_response(id, -32603, &format!("internal error: {error}"));
+                    }
+                }
+                result_response(
+                    id,
+                    json!(TaskStartResult {
+                        task_id: admission.record.task_id.clone(),
+                        run_id: admission.record.run_id.clone(),
+                        status: admission.record.status.clone(),
+                        verification_recovery_admission: None,
+                        verification_recovery_retry_admission: None,
+                        llm_provider_failure_retry_admission: Some(
+                            LlmProviderFailureRetryAdmission {
+                                source_task_id: source.source_task_id,
+                                source_run_id: source.source_run_id,
+                                retry_task_id: admission.record.task_id,
+                                retry_run_id: admission.record.run_id,
+                                failure_fingerprint,
+                                failure_class,
+                                retryable,
+                                retry_running_enabled: false,
+                                next_action: "run_llm_provider_retry_task_explicitly".into(),
+                                replayed: admission.replayed,
+                            }
+                        ),
                     }),
                 )
             }
@@ -1880,6 +1949,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
             mode_id: Some(policy.mode_id.clone()),
             verification_recovery_source: None,
             verification_recovery_retry_source: None,
+            llm_provider_failure_retry_source: None,
         };
 
         match store.tasks().start_task(params) {
@@ -1899,6 +1969,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         status: record.status,
                         verification_recovery_admission: None,
                         verification_recovery_retry_admission: None,
+                        llm_provider_failure_retry_admission: None,
                     }),
                 )
             }
@@ -16644,6 +16715,7 @@ fn progress_snapshot_for_run(
         task.recovery_cycle_provenance.is_some()
             || task.verification_recovery_provenance.is_some()
             || task.verification_recovery_retry_provenance.is_some()
+            || task.llm_provider_failure_retry_provenance.is_some()
     }) || events.iter().any(|event| {
         event.payload.as_ref().is_some_and(|payload| {
             payload.get("verification_recovery").is_some()
@@ -18344,6 +18416,7 @@ fn child_task_inspect_summary(
         recovery_cycle_provenance: task.recovery_cycle_provenance.clone(),
         verification_recovery_provenance: task.verification_recovery_provenance.clone(),
         verification_recovery_retry_provenance: task.verification_recovery_retry_provenance.clone(),
+        llm_provider_failure_retry_provenance: task.llm_provider_failure_retry_provenance.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
         completion_final_state,
@@ -20063,6 +20136,104 @@ fn verification_recovery_retry_provenance_for_source(
             .map(ToString::to_string)
             .collect(),
     })
+}
+
+fn llm_provider_failure_retry_provenance_for_source(
+    store: &BrownieStore,
+    source: &LlmProviderFailureRetrySource,
+) -> Result<LlmProviderFailureRetryProvenance, VerificationRecoveryAdmissionError> {
+    if source.source_task_id.trim().is_empty() {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.source_task_id must not be empty"
+                .into(),
+        ));
+    }
+    if source.source_run_id.trim().is_empty() {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.source_run_id must not be empty"
+                .into(),
+        ));
+    }
+    if !source.authorize_provider_failure_retry {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.authorize_provider_failure_retry must be true"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&source.expected_failure_fingerprint) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.expected_failure_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+
+    let source_task = store
+        .tasks()
+        .get_task(&source.source_task_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: llm_provider_failure_retry_source.source_task_id was not found"
+                    .into(),
+            )
+        })?;
+
+    if source_task.run_id != source.source_run_id {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.source_run_id does not match source task"
+                .into(),
+        ));
+    }
+    if source_task.status != TaskStatus::Failed {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: LLM provider failure retry source task must be terminal Failed".into(),
+        ));
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&source.source_run_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let Some(outcome) = llm_provider_failure_outcome_from_events(&events) else {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: LLM provider failure retry source has no structured provider failure evidence"
+                .into(),
+        ));
+    };
+    if outcome.failure_fingerprint != source.expected_failure_fingerprint {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: llm_provider_failure_retry_source.expected_failure_fingerprint is stale"
+                .into(),
+        ));
+    }
+    if !outcome.retryable || !is_retryable_llm_provider_failure_class(&outcome.failure_class) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: LLM provider failure retry source failure class is not retryable"
+                .into(),
+        ));
+    }
+
+    Ok(LlmProviderFailureRetryProvenance {
+        source_task_id: source_task.task_id,
+        source_run_id: source_task.run_id,
+        failure_fingerprint: outcome.failure_fingerprint,
+        failure_class: outcome.failure_class,
+        provider: outcome.provider,
+        model: outcome.model,
+        request_phase: outcome.request_phase,
+        retryable: outcome.retryable,
+    })
+}
+
+fn is_retryable_llm_provider_failure_class(failure_class: &str) -> bool {
+    matches!(
+        failure_class,
+        "http_status"
+            | "transport_or_timeout"
+            | "invalid_provider_response"
+            | "missing_provider_content"
+            | "unknown_provider_failure"
+    )
 }
 
 fn validate_verification_recovery_retry_source_shape(
@@ -26301,6 +26472,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("created source");
         let running = store
@@ -26310,6 +26482,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("running source");
         store
@@ -26327,6 +26500,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("completed source");
         store
@@ -26344,6 +26518,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("cancelled source");
         store
@@ -26361,6 +26536,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("failed source");
         store
@@ -27634,6 +27810,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27666,6 +27843,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "queued_child");
@@ -27697,6 +27875,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "queued_child");
@@ -27730,6 +27909,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27766,6 +27946,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27815,6 +27996,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         let completed = store
@@ -27858,6 +28040,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27896,6 +28079,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27935,6 +28119,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -27973,6 +28158,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -28026,6 +28212,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -28074,6 +28261,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         start_progress_test_child(&store, &parent, "queued_child");
@@ -28112,6 +28300,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "running_child");
@@ -28158,6 +28347,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         start_progress_test_child(&store, &parent, "queued_child");
@@ -28200,6 +28390,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "running_child");
@@ -28251,6 +28442,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "completed_child");
@@ -28316,6 +28508,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start join parent");
         let join_child = start_progress_test_child(&store, &parent_join, "join_child");
@@ -28355,6 +28548,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start pending parent");
         let pending_child = start_progress_test_child(&store, &parent_pending, "pending_child");
@@ -28373,6 +28567,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start running task");
         store
@@ -28442,6 +28637,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start first");
         let second = store
@@ -28451,6 +28647,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start second");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -28556,6 +28753,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start first");
         let second = store
@@ -28565,6 +28763,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start second");
         let third = store
@@ -28574,6 +28773,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start third");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -28662,6 +28862,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start first");
         let second = store
@@ -28671,6 +28872,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start second");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -28768,6 +28970,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -28818,6 +29021,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -28861,6 +29065,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -28976,6 +29181,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "budget_join_ready_child");
@@ -29060,6 +29266,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         store
@@ -29108,6 +29315,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -29142,6 +29350,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -29179,6 +29388,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -29229,6 +29439,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "completed_child");
@@ -29302,6 +29513,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -29378,6 +29590,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         let continuation_id = "m11.2.running";
@@ -29454,6 +29667,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start first");
         let second = store
@@ -29463,6 +29677,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start second");
         for (task, decision_id) in [
@@ -29516,6 +29731,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -29618,6 +29834,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start source");
         let failure_fingerprint = format!("sha256:{}", "f".repeat(64));
@@ -29716,6 +29933,7 @@ mod tests {
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start source");
         let recovery = store
@@ -29725,6 +29943,7 @@ mod tests {
                 mode_id: Some("implementer".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start recovery");
         let retry = store
@@ -29824,6 +30043,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "join_ready_child");
@@ -29911,6 +30131,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "z_bounded_join_child");
@@ -30093,6 +30314,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -30293,6 +30515,7 @@ mod tests {
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -32856,6 +33079,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -32966,6 +33190,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let parser_decision = ToolIntentDecision {
@@ -33242,6 +33467,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
@@ -33302,6 +33528,7 @@ mod tests {
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -33353,6 +33580,7 @@ mod tests {
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -33447,6 +33675,7 @@ mod tests {
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -33570,6 +33799,7 @@ mod tests {
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -33657,6 +33887,7 @@ mod tests {
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -33717,6 +33948,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -34263,6 +34495,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let provenance = RecoveryCycleChildProvenance {
@@ -36900,6 +37133,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         store
@@ -36950,6 +37184,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let continuation = ParentJoinContinuationMaterialization {
@@ -37059,6 +37294,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
         let running_parent = store
@@ -40286,6 +40522,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40431,6 +40668,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40504,6 +40742,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40572,6 +40811,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40643,6 +40883,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40715,6 +40956,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40862,6 +41104,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -40929,6 +41172,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -41023,6 +41267,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -41091,6 +41336,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -41129,6 +41375,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -41176,6 +41423,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -41217,6 +41465,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(&store, &record, "proposal_blocked", "Blocked", None, true);
@@ -41249,6 +41498,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -41293,6 +41543,7 @@ mod tests {
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
 
@@ -45350,6 +45601,226 @@ content-length: {}
             .filter(|event| event["kind"] == "LlmRequestFailed")
             .count();
         assert_eq!(failed_events, 1);
+    }
+
+    fn failed_retryable_provider_task(
+    ) -> (tempfile::TempDir, serde_json::Value, String, String, String) {
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock("500 Internal Server Error", r#"{"error":"boom"}"#);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let source_task_id = start["task_id"].as_str().unwrap().to_string();
+        let source_run_id = start["run_id"].as_str().unwrap().to_string();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{source_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        handle.join().unwrap();
+        let failure_fingerprint = run["llm_provider_failure"]["failure_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        (
+            temp,
+            run,
+            source_task_id,
+            source_run_id,
+            failure_fingerprint,
+        )
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_admission_creates_and_replays_retry_task() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+
+        let request = format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry provider failure",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        );
+        let first = parse_line(&request).result.unwrap();
+        let admission = &first["llm_provider_failure_retry_admission"];
+        assert_eq!(admission["source_task_id"], source_task_id);
+        assert_eq!(admission["source_run_id"], source_run_id);
+        assert_eq!(admission["failure_fingerprint"], failure_fingerprint);
+        assert_eq!(admission["failure_class"], "http_status");
+        assert_eq!(admission["retryable"], true);
+        assert_eq!(admission["retry_running_enabled"], false);
+        assert_eq!(
+            admission["next_action"],
+            "run_llm_provider_retry_task_explicitly"
+        );
+        assert_eq!(admission["replayed"], false);
+        assert_ne!(admission["retry_task_id"], source_task_id);
+        assert_ne!(admission["retry_run_id"], source_run_id);
+
+        let second = parse_line(&request).result.unwrap();
+        let replay = &second["llm_provider_failure_retry_admission"];
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["retry_task_id"], admission["retry_task_id"]);
+        assert_eq!(replay["retry_run_id"], admission["retry_run_id"]);
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{}"}}}}"#,
+            admission["retry_run_id"].as_str().unwrap()
+        ))
+        .result
+        .unwrap();
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("run_llm_provider_retry_task_explicitly"));
+        assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+        assert!(!serialized.contains("raw_provider_response"));
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(admission["retry_run_id"].as_str().unwrap())
+                .join("ledger.jsonl"),
+        )
+        .expect("retry ledger");
+        assert!(ledger.contains("llm_provider_failure_retry_provenance"));
+        assert!(!ledger.contains("test-key"));
+        let task_running_count = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "TaskRunning")
+            .count();
+        assert_eq!(task_running_count, 0);
+        let provider_request_count = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "LlmRequestCreated")
+            .count();
+        assert_eq!(provider_request_count, 0);
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_admission_rejects_stale_or_missing_authorization() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+
+        let missing_auth = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry without auth",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": false
+    }}
+  }}
+}}"#
+        ));
+        assert!(missing_auth.error.unwrap().message.contains(
+            "llm_provider_failure_retry_source.authorize_provider_failure_retry must be true"
+        ));
+
+        let stale = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry stale failure",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ));
+        assert!(stale
+            .error
+            .unwrap()
+            .message
+            .contains("expected_failure_fingerprint is stale"));
+
+        let tasks = brownie_store::BrownieStore::new(temp.path())
+            .tasks()
+            .list_tasks()
+            .unwrap();
+        assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_admission_rejects_non_retryable_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Guard failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let source_task_id = start["task_id"].as_str().unwrap();
+        let source_run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{source_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let failure_fingerprint = run["llm_provider_failure"]["failure_fingerprint"]
+            .as_str()
+            .unwrap();
+        assert_eq!(
+            run["llm_provider_failure"]["failure_class"],
+            "network_not_authorized"
+        );
+
+        let retry = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry non-retryable provider failure",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ));
+        assert!(retry
+            .error
+            .unwrap()
+            .message
+            .contains("failure class is not retryable"));
     }
 
     #[test]
