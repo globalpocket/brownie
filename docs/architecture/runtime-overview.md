@@ -176,6 +176,22 @@ mutation. Snapshot manifests, ledger events, and RPC responses must not expose
 raw file content, snippets, diffs, absolute paths, canonical paths, raw prompts,
 provider responses, stdout/stderr, environment values, commands, or secrets.
 
+## External Mode Pack Execution Policy Boundary
+
+M12.1 lets external Mode Pack modes constrain `subtask.spawn` handoff targets
+with bounded `allowed_handoff_targets`, and the Rust runtime denies unknown or
+unlisted requested child mode ids before subtask queueing or child
+materialization.
+
+M12.2 extends that runtime boundary to controlled child execution. Children
+materialized from external Mode Pack handoff envelopes carry bounded
+`external_modepack_child_provenance` in their `TaskStarted` evidence. Before a
+queued child can enter `TaskRunning`, `task.run` validates the current external
+Mode Pack child policy fingerprint against the captured provenance. Missing,
+malformed, stale, or mismatched provenance is denied before LLM/provider/tool
+work. Built-in parent/child behavior remains compatible when no external Mode
+Pack handoff provenance is required.
+
 ## Runtime Progress Visualization Boundary
 
 M10.1 adds the first runtime-owned progress visualization model. Existing

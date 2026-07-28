@@ -20,7 +20,7 @@ use brownie_llm::{
     OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
     PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
-use brownie_modepack::load_workspace_modepack;
+use brownie_modepack::{load_workspace_modepack, WORKSPACE_MODEPACK_PATH};
 use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
     ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
@@ -232,6 +232,9 @@ use std::{
 
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
+const EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION: &str = "external_modepack_child_provenance_v1";
+const EXTERNAL_MODEPACK_POLICY_FINGERPRINT_VERSION: &str =
+    "external_modepack_policy_fingerprint_v1";
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
@@ -3416,8 +3419,194 @@ fn validate_controlled_queued_child_task_provenance(
         source_handoff_envelope_id,
         source_handoff_envelope_fingerprint,
     )?;
+    validate_external_modepack_child_run_provenance(record, store, &parent, &parent_events)?;
 
     Ok(())
+}
+
+fn validate_external_modepack_child_run_provenance(
+    record: &TaskRecord,
+    store: &BrownieStore,
+    parent: &TaskRecord,
+    parent_events: &[LedgerEvent],
+) -> Result<(), TaskRunAdmissionRejection> {
+    let task_started_payload = controlled_child_task_started_payload(record, store)?;
+    let has_child_provenance = task_started_payload
+        .as_ref()
+        .and_then(|payload| payload.get("external_modepack_child_provenance"))
+        .is_some_and(|value| !value.is_null());
+    let requires_child_provenance = has_child_provenance
+        || parent_external_handoff_policy_requires_child_provenance(parent, parent_events, store);
+    if !requires_child_provenance {
+        return Ok(());
+    }
+
+    let Some(provenance) = task_started_payload
+        .as_ref()
+        .and_then(|payload| payload.get("external_modepack_child_provenance"))
+    else {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "missing_external_modepack_child_provenance",
+            "invalid params: external Mode Pack child provenance is missing",
+        );
+    };
+
+    let Some(mode_id) = record.mode_id.as_deref() else {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "missing_child_mode_id",
+            "invalid params: external Mode Pack child provenance is invalid",
+        );
+    };
+    if provenance.get("version").and_then(Value::as_str)
+        != Some(EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION)
+        || provenance.get("source_kind").and_then(Value::as_str) != Some("workspace_modepack")
+        || provenance.get("source_path").and_then(Value::as_str) != Some(WORKSPACE_MODEPACK_PATH)
+        || provenance.get("mode_id").and_then(Value::as_str) != Some(mode_id)
+        || provenance
+            .get("captured_parent_run_id")
+            .and_then(Value::as_str)
+            != record.parent_run_id.as_deref()
+        || provenance
+            .get("captured_handoff_envelope_id")
+            .and_then(Value::as_str)
+            != record.source_handoff_envelope_id.as_deref()
+        || provenance
+            .get("captured_handoff_envelope_fingerprint")
+            .and_then(Value::as_str)
+            != record.source_handoff_envelope_fingerprint.as_deref()
+    {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "malformed_external_modepack_child_provenance",
+            "invalid params: external Mode Pack child provenance is invalid",
+        );
+    }
+    let Some(policy_fingerprint) = provenance.get("policy_fingerprint").and_then(Value::as_str)
+    else {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "missing_external_modepack_policy_fingerprint",
+            "invalid params: external Mode Pack child provenance is invalid",
+        );
+    };
+    if !is_sha256_fingerprint(policy_fingerprint) {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "malformed_external_modepack_policy_fingerprint",
+            "invalid params: external Mode Pack child provenance is invalid",
+        );
+    }
+
+    let current = external_modepack_child_provenance_payload(
+        store,
+        mode_id,
+        record.parent_run_id.as_deref().unwrap_or_default(),
+        record
+            .source_handoff_envelope_id
+            .as_deref()
+            .unwrap_or_default(),
+        record
+            .source_handoff_envelope_fingerprint
+            .as_deref()
+            .unwrap_or_default(),
+    )
+    .map_err(TaskRunAdmissionRejection::Internal)?;
+    let Some(current) = current else {
+        return external_modepack_child_provenance_denied(
+            record,
+            store,
+            "stale_external_modepack_child_policy_missing",
+            "invalid params: external Mode Pack child provenance is stale",
+        );
+    };
+    for key in [
+        "modepack_name",
+        "schema_version",
+        "source_path",
+        "mode_id",
+        "policy_fingerprint",
+    ] {
+        if provenance.get(key) != current.get(key) {
+            return external_modepack_child_provenance_denied(
+                record,
+                store,
+                "stale_external_modepack_child_policy_mismatch",
+                "invalid params: external Mode Pack child provenance is stale",
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn controlled_child_task_started_payload(
+    record: &TaskRecord,
+    store: &BrownieStore,
+) -> Result<Option<Value>, TaskRunAdmissionRejection> {
+    Ok(store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .into_iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::TaskStarted)
+        .and_then(|event| event.payload))
+}
+
+fn parent_external_handoff_policy_requires_child_provenance(
+    parent: &TaskRecord,
+    parent_events: &[LedgerEvent],
+    store: &BrownieStore,
+) -> bool {
+    if parent_events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("allowed_handoff_targets"))
+        .and_then(Value::as_array)
+        .is_some_and(|targets| !targets.is_empty())
+    {
+        return true;
+    }
+    resolve_policy_for_task_run(parent, store)
+        .ok()
+        .and_then(|policy| policy.allowed_handoff_targets)
+        .is_some_and(|targets| !targets.is_empty())
+}
+
+fn external_modepack_child_provenance_denied(
+    record: &TaskRecord,
+    store: &BrownieStore,
+    reason: &'static str,
+    message: &'static str,
+) -> Result<(), TaskRunAdmissionRejection> {
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            record,
+            LedgerEventKind::ExternalModePackChildProvenanceDenied,
+            Some(json!({
+                "status": "Denied",
+                "reason": reason,
+                "task_id": record.task_id,
+                "run_id": record.run_id,
+                "parent_run_id": record.parent_run_id,
+                "source_candidate_id": record.source_candidate_id,
+                "source_handoff_envelope_id": record.source_handoff_envelope_id,
+                "source_handoff_envelope_fingerprint": record.source_handoff_envelope_fingerprint,
+                "mode_id": record.mode_id,
+            })),
+        )
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    Err(TaskRunAdmissionRejection::InvalidParams(message))
 }
 
 fn validate_recovery_cycle_child_run_provenance(
@@ -18485,6 +18674,70 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
     })
 }
 
+fn external_modepack_policy_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    policy: &CompiledModePolicy,
+) -> String {
+    let canonical = json!({
+        "version": EXTERNAL_MODEPACK_POLICY_FINGERPRINT_VERSION,
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": WORKSPACE_MODEPACK_PATH,
+        "mode_id": policy.mode_id,
+        "display_name": policy.display_name,
+        "role_definition": policy.role_definition,
+        "allowed_handoff_targets": policy.allowed_handoff_targets,
+        "completion_rules": policy.completion_rules,
+        "permissions": {
+            "read_only": policy.permissions.read_only,
+            "workspace_write": policy.permissions.workspace_write,
+            "process_exec": policy.permissions.process_exec,
+            "network_access": policy.permissions.network_access,
+            "service_control": policy.permissions.service_control,
+            "destructive": policy.permissions.destructive,
+            "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+            "codebase_index": policy.permissions.codebase_index,
+        }
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn external_modepack_child_provenance_payload(
+    store: &BrownieStore,
+    child_mode_id: &str,
+    parent_run_id: &str,
+    source_handoff_envelope_id: &str,
+    source_handoff_envelope_fingerprint: &str,
+) -> Result<Option<Value>, String> {
+    let Some(snapshot) = load_workspace_modepack(store.workspace_root())
+        .map_err(|error| format!("modepack load failed: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(policy) = snapshot
+        .modes
+        .iter()
+        .find(|policy| policy.mode_id == child_mode_id)
+    else {
+        return Ok(None);
+    };
+    let policy_fingerprint =
+        external_modepack_policy_fingerprint(&snapshot.name, snapshot.schema_version, policy);
+    Ok(Some(json!({
+        "version": EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION,
+        "source_kind": "workspace_modepack",
+        "modepack_name": snapshot.name,
+        "schema_version": snapshot.schema_version,
+        "source_path": WORKSPACE_MODEPACK_PATH,
+        "mode_id": policy.mode_id,
+        "policy_fingerprint": policy_fingerprint,
+        "captured_parent_run_id": parent_run_id,
+        "captured_handoff_envelope_id": source_handoff_envelope_id,
+        "captured_handoff_envelope_fingerprint": source_handoff_envelope_fingerprint,
+    })))
+}
+
 fn tool_summary(tool: brownie_tools::ToolDefinition) -> ToolSummary {
     ToolSummary {
         tool_id: tool.tool_id,
@@ -22345,6 +22598,17 @@ fn materialize_controlled_child_task_from_handoff_envelope(
                     .as_ref()
                     .and_then(|summary| summary.requested_mode_id.clone())
                     .or_else(|| record.mode_id.clone());
+                let external_modepack_child_provenance = match mode_id.as_deref() {
+                    Some(child_mode_id) => external_modepack_child_provenance_payload(
+                        store,
+                        child_mode_id,
+                        &record.run_id,
+                        &source_handoff_envelope_id,
+                        &source_handoff_envelope_fingerprint,
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                    None => None,
+                };
 
                 store.tasks().start_child_task(ChildTaskStartParams {
                     goal,
@@ -22357,6 +22621,7 @@ fn materialize_controlled_child_task_from_handoff_envelope(
                         .clone(),
                     source_intent_summary,
                     recovery_cycle_provenance: recovery_cycle_provenance.clone(),
+                    external_modepack_child_provenance,
                 })?
             };
             if first_child.is_none() {
@@ -24587,6 +24852,52 @@ mod tests {
             }"#,
         )
         .expect("modepack");
+    }
+
+    fn write_changed_test_handoff_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "handoff-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Delegate only to admitted child modes.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["reviewer-lite"],
+                  "completion_rules": ["Stop after dispatching admitted subtasks."]
+                },
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite Changed",
+                  "role_definition": "Changed reviewer role that should not leak into denial evidence.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting changed local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("changed modepack");
     }
 
     fn write_test_index_modepack(workspace_root: &std::path::Path) {
@@ -29710,6 +30021,7 @@ mod tests {
                     },
                 }),
                 recovery_cycle_provenance: None,
+                external_modepack_child_provenance: None,
             })
             .expect("start progress child")
     }
@@ -32773,6 +33085,310 @@ mod tests {
     }
 
     #[test]
+    fn external_modepack_child_run_validates_matching_snapshot_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::ModeResolved,
+                Some(mode_resolved_payload(&policy)),
+            )
+            .expect("mode resolved");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create admitted child task.\",\"input\":{\"goal\":\"Review only bounded evidence.\",\"mode_id\":\"reviewer-lite\"}}]}\n```";
+
+        append_tool_intent_events(&store, &parent, &policy, assistant_content)
+            .expect("append tool intent events");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("handle approved workspace intents");
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        let source_candidate_id = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("subtask_id"))
+            .and_then(Value::as_str)
+            .expect("source candidate id")
+            .to_string();
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_external_snapshot",
+                    "handoff_envelope_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                    "candidate_ids": [source_candidate_id],
+                })),
+            )
+            .expect("append handoff envelope");
+        let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize child")
+            .expect("child");
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        let provenance = &child_events[0]
+            .payload
+            .as_ref()
+            .expect("child started payload")["external_modepack_child_provenance"];
+        assert_eq!(provenance["source_kind"], "workspace_modepack");
+        assert_eq!(provenance["source_path"], ".brownie/modepack.json");
+        assert_eq!(provenance["mode_id"], "reviewer-lite");
+        assert!(provenance["policy_fingerprint"]
+            .as_str()
+            .expect("policy fingerprint")
+            .starts_with("sha256:"));
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(run.error.is_none());
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events after run");
+        assert!(child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn external_modepack_child_run_rejects_stale_snapshot_before_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::ModeResolved,
+                Some(mode_resolved_payload(&policy)),
+            )
+            .expect("mode resolved");
+        let decision = ToolIntentDecision {
+            tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+            required_action: RuntimeAction::SpawnSubtask,
+            allowed: true,
+            reason: "Mode external-orchestrator allows SpawnSubtask.".into(),
+            request_reason: "Create admitted child task.".into(),
+            input: json!({
+                "goal": "Review only bounded evidence.",
+                "mode_id": "reviewer-lite"
+            }),
+        };
+        append_subtask_orchestration_queued(&store, &parent, &policy, &decision)
+            .expect("queue child");
+        let source_candidate_id = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events")
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .and_then(|payload| payload.get("subtask_id"))
+            .and_then(Value::as_str)
+            .expect("source candidate id")
+            .to_string();
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_stale_snapshot",
+                    "handoff_envelope_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                    "candidate_ids": [source_candidate_id],
+                })),
+            )
+            .expect("append handoff envelope");
+        let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize child")
+            .expect("child");
+        write_changed_test_handoff_modepack(temp.path());
+
+        let first = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(first.result.is_none());
+        assert_eq!(first.error.expect("stale error").code, -32602);
+        let second = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(second.result.is_none());
+        assert_eq!(second.error.expect("repeat stale error").code, -32602);
+
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(child_events.iter().any(|event| {
+            event.kind == LedgerEventKind::ExternalModePackChildProvenanceDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("reason"))
+                    .and_then(Value::as_str)
+                    == Some("stale_external_modepack_child_policy_mismatch")
+        }));
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list tasks")
+                .into_iter()
+                .filter(|record| record.parent_run_id.as_deref() == Some(parent.run_id.as_str()))
+                .count(),
+            1
+        );
+        let child_ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&child.run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("child ledger");
+        assert!(!child_ledger.contains("Changed reviewer role"));
+        assert!(!child_ledger.contains("raw_content"));
+        assert!(!child_ledger.contains("stdout"));
+        assert!(!child_ledger.contains("stderr"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn external_modepack_child_run_rejects_missing_snapshot_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::ModeResolved,
+                Some(mode_resolved_payload(&policy)),
+            )
+            .expect("mode resolved");
+        let source_candidate_id = "subtask_missing_modepack_provenance";
+        let handoff_fingerprint = format!("sha256:{}", "c".repeat(64));
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_missing_snapshot",
+                    "handoff_envelope_fingerprint": handoff_fingerprint,
+                    "candidate_ids": [source_candidate_id],
+                })),
+            )
+            .expect("append handoff envelope");
+        let child = store
+            .tasks()
+            .start_child_task(ChildTaskStartParams {
+                goal: "Run child without external provenance".into(),
+                mode_id: Some("reviewer-lite".into()),
+                parent_task_id: parent.task_id.clone(),
+                parent_run_id: parent.run_id.clone(),
+                source_candidate_id: source_candidate_id.into(),
+                source_handoff_envelope_id: "handoff_envelope_missing_snapshot".into(),
+                source_handoff_envelope_fingerprint: handoff_fingerprint,
+                source_intent_summary: None,
+                recovery_cycle_provenance: None,
+                external_modepack_child_provenance: None,
+            })
+            .expect("start child");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(run.result.is_none());
+        assert_eq!(run.error.expect("missing provenance error").code, -32602);
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        assert!(!child_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(child_events.iter().any(|event| {
+            event.kind == LedgerEventKind::ExternalModePackChildProvenanceDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("reason"))
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| {
+                        reason == "missing_external_modepack_child_provenance"
+                            || reason == "malformed_external_modepack_child_provenance"
+                    })
+        }));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn external_mode_handoff_disallowed_target_is_denied_before_queueing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -33459,6 +34075,7 @@ mod tests {
                 source_handoff_envelope_fingerprint,
                 source_intent_summary: None,
                 recovery_cycle_provenance: Some(provenance.clone()),
+                external_modepack_child_provenance: None,
             })
             .expect("start recovery-cycle child");
 
@@ -36319,6 +36936,7 @@ mod tests {
                         },
                     }),
                     recovery_cycle_provenance,
+                    external_modepack_child_provenance: None,
                 })
                 .expect("start child");
             let running_child = store

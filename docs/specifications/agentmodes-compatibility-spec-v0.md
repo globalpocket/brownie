@@ -88,6 +88,18 @@ active mode can spawn subtasks, the requested child mode resolves, and the child
 mode id is present in the active policy's allow-list when one exists. Built-in
 modes preserve their existing behavior by leaving the allow-list unset.
 
+## M12.2 child snapshot provenance compatibility
+
+Controlled children spawned through external Mode Pack handoff targets carry a
+bounded snapshot identity for the child mode policy. The identity is a runtime
+fingerprint over normalized compiled policy data and Mode Pack metadata, not raw
+Mode Pack content. `task.run` validates the fingerprint before a queued child
+can enter `TaskRunning`, so later edits to `.brownie/modepack.json` cannot
+silently change the child policy admitted by the parent handoff.
+
+This compatibility layer still does not fetch remote Mode Packs, activate
+registries, run automatic child execution, or let the VSIX decide policy.
+
 ## Phase 1.4 permission gate update
 
 Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks are based on compiled mode policy capabilities and override LLM instructions.

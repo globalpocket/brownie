@@ -526,6 +526,7 @@ pub struct ChildTaskStartParams {
     pub source_handoff_envelope_fingerprint: String,
     pub source_intent_summary: Option<ChildTaskSourceIntentSummary>,
     pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
+    pub external_modepack_child_provenance: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -648,6 +649,7 @@ impl TaskStore {
                 "source_handoff_envelope_fingerprint": record.source_handoff_envelope_fingerprint.clone(),
                 "source_intent_summary": record.source_intent_summary.clone(),
                 "recovery_cycle_provenance": record.recovery_cycle_provenance.clone(),
+                "external_modepack_child_provenance": params.external_modepack_child_provenance,
                 "execution_enabled": false,
                 "scheduler_handoff_enabled": false,
                 "reason": "Controlled child task materialized from parent handoff envelope; child execution remains disabled."
@@ -1391,6 +1393,7 @@ pub enum LedgerEventKind {
     CodebaseIndexPromptContextMaterialized,
     TaskStarted,
     ModeResolved,
+    ExternalModePackChildProvenanceDenied,
     PermissionChecked,
     PermissionDenied,
     ToolPlanned,
@@ -1833,6 +1836,7 @@ mod tests {
                     },
                 }),
                 recovery_cycle_provenance: None,
+                external_modepack_child_provenance: None,
             })
             .expect("start child");
 

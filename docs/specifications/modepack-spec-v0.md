@@ -88,6 +88,22 @@ Denied targets append bounded denial evidence before subtask queueing or child
 materialization. Built-in modes keep unrestricted legacy handoff behavior by
 storing no target allow-list.
 
+## M12.2 controlled child snapshot provenance
+
+M12.2 carries the external Mode Pack policy boundary from parent admission into
+controlled child execution. When a child task is materialized from an external
+Mode Pack handoff target, the child `TaskStarted` evidence stores bounded
+`external_modepack_child_provenance`: source kind, Mode Pack name, schema
+version, workspace-relative Mode Pack path, child mode id, policy fingerprint,
+parent run id, and handoff envelope identifiers.
+
+`task.run` validates that provenance before recording `TaskRunning` for the
+queued child. Missing, malformed, stale, or mismatched external Mode Pack child
+provenance is denied before provider or tool execution. The denial evidence is
+bounded and must not include raw Mode Pack JSON, raw prompts, provider
+responses, file content, stdout, stderr, commands, environment values, secrets,
+request bodies, absolute paths, or canonical paths.
+
 ## Non-goals for v0
 
 - Vendoring AgentModes into Brownie.
