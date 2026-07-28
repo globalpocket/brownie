@@ -32,18 +32,18 @@ use brownie_protocol::{
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult, JsonRpcError,
     JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams, ModeListResult,
-    ModePermissionsSummary, ModeSummary, PermissionCheckParams, PermissionCheckResult,
-    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
-    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
-    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
-    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
-    ProposalReviewBundleParams, ProposalReviewBundleResult,
-    ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    LlmProviderFailureOutcome, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
+    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
+    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
+    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -1951,6 +1951,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
@@ -1974,6 +1975,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
@@ -2008,6 +2010,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2031,6 +2034,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2054,6 +2058,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2061,6 +2066,30 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
                     parent_join_readiness_outcome: Some(parent_join_readiness_outcome),
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    match llm_provider_failure_outcome_for_replay(&store, &record) {
+        Ok(Some((agent_loop, llm_provider_failure))) => {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop,
+                    llm_provider_failure: Some(llm_provider_failure),
+                    selected_index_prompt_context: None,
+                    verification_completion_gate: None,
+                    verification_recovery_repair: None,
+                    verification_recovery_retry: None,
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
                 }),
             );
         }
@@ -2572,6 +2601,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    llm_provider_failure: None,
                     selected_index_prompt_context: selected_index_context
                         .as_ref()
                         .map(|context| context.summary.clone()),
@@ -2760,6 +2790,7 @@ fn handle_verification_recovery_retry_task_run(
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
@@ -3831,6 +3862,13 @@ fn fail_llm_request(
     let reason_preview = preview_with_limit(&redacted_reason, LLM_FAILURE_REASON_PREVIEW_CHARS);
     let reason_chars = redacted_reason.chars().count();
     let reason_sha256 = format!("sha256:{}", hex_sha256(redacted_reason.as_bytes()));
+    let outcome = llm_provider_failure_outcome(
+        &selection,
+        &kind,
+        &reason_preview,
+        reason_chars,
+        reason_chars > LLM_FAILURE_REASON_PREVIEW_CHARS,
+    );
     if redacted_reason.contains("Prompt sensitive-content guard failed") {
         let _ = store.tasks().append_task_event_with_payload(
             running,
@@ -3857,6 +3895,7 @@ fn fail_llm_request(
             "base_url": selection.status.base_url.as_deref().map(redact_secret),
             "strict": selection.strict,
             "sensitive_guard": selection.sensitive_guard_mode.as_config_str(),
+            "llm_provider_failure": outcome.clone(),
         })),
     );
     let updated_record = store.tasks().update_task_status(
@@ -3873,7 +3912,8 @@ fn fail_llm_request(
                         task_id: record.task_id,
                         run_id: record.run_id,
                         status: record.status,
-                        agent_loop: controlled_child_failed_agent_loop_summary(),
+                        agent_loop: llm_provider_failed_agent_loop_summary(),
+                        llm_provider_failure: Some(outcome),
                         selected_index_prompt_context: None,
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
@@ -3887,12 +3927,141 @@ fn fail_llm_request(
             Ok(None) => {}
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         }
+        return result_response(
+            id,
+            json!(TaskRunResult {
+                task_id: record.task_id,
+                run_id: record.run_id,
+                status: record.status,
+                agent_loop: llm_provider_failed_agent_loop_summary(),
+                llm_provider_failure: Some(outcome),
+                selected_index_prompt_context: None,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }),
+        );
     }
     error_response(
         id,
         -32603,
         &format!("internal error: LLM request failed: {}", reason_preview),
     )
+}
+
+fn llm_provider_failure_outcome(
+    selection: &RuntimeLlmProviderStatus,
+    kind: &LedgerEventKind,
+    reason_preview: &str,
+    reason_chars: usize,
+    reason_truncated: bool,
+) -> LlmProviderFailureOutcome {
+    let failure_class = llm_provider_failure_class(reason_preview);
+    let retryable = matches!(
+        failure_class,
+        "http_status" | "transport_or_timeout" | "unknown_provider_failure"
+    );
+    let next_action = match failure_class {
+        "configuration_missing" | "configuration_invalid" => "fix_provider_configuration",
+        "network_not_authorized" => "authorize_task_run_network",
+        "sensitive_prompt_denied" => "reduce_or_redact_prompt_context",
+        "http_status" | "transport_or_timeout" => "inspect_llm_health",
+        "invalid_provider_response" | "missing_provider_content" => {
+            "retry_task_run_after_provider_recovery"
+        }
+        _ => "inspect_llm_health",
+    };
+    let request_phase = match kind {
+        LedgerEventKind::SecondPassLlmRequestFailed => "second_pass",
+        _ => "initial",
+    };
+    let http_status = if failure_class == "http_status" {
+        http_status_from_failure_reason(reason_preview)
+    } else {
+        None
+    };
+    let fingerprint_input = json!({
+        "version": "llm_provider_failure_v1",
+        "provider": provider_kind_name(&selection.status.provider),
+        "model": selection.status.model,
+        "request_phase": request_phase,
+        "failure_class": failure_class,
+        "next_action": next_action,
+        "http_status": http_status,
+        "reason": reason_preview,
+        "reason_chars": reason_chars,
+        "reason_truncated": reason_truncated,
+    });
+    LlmProviderFailureOutcome {
+        provider: provider_kind_name(&selection.status.provider).to_string(),
+        model: selection.status.model.clone(),
+        request_phase: request_phase.to_string(),
+        failure_class: failure_class.to_string(),
+        retryable,
+        next_action: next_action.to_string(),
+        failure_fingerprint: format!(
+            "sha256:{}",
+            hex_sha256(fingerprint_input.to_string().as_bytes())
+        ),
+        reason: reason_preview.to_string(),
+        reason_chars,
+        reason_truncated,
+        http_status,
+    }
+}
+
+fn llm_provider_failure_class(reason: &str) -> &'static str {
+    let lower = reason.to_ascii_lowercase();
+    if lower.contains("real-provider task.run requires brownie_llm_allow_task_run_network=true") {
+        return "network_not_authorized";
+    }
+    if lower.contains("prompt sensitive-content guard failed") {
+        return "sensitive_prompt_denied";
+    }
+    if lower.contains("missing config")
+        || lower.contains("provider disabled")
+        || lower.contains("unknown provider")
+        || lower.contains("active_profile references unknown profile")
+    {
+        return "configuration_missing";
+    }
+    if lower.contains("invalid brownie_llm_")
+        || lower.contains("invalid llm request budget")
+        || lower.contains("runtime config")
+    {
+        return "configuration_invalid";
+    }
+    if lower.contains("non-2xx http status") {
+        return "http_status";
+    }
+    if lower.contains("invalid json") {
+        return "invalid_provider_response";
+    }
+    if lower.contains("missing choices") || lower.contains("missing message content") {
+        return "missing_provider_content";
+    }
+    if lower.contains("timed out")
+        || lower.contains("timeout")
+        || lower.contains("connection")
+        || lower.contains("error sending request")
+        || lower.contains("tcp")
+    {
+        return "transport_or_timeout";
+    }
+    "unknown_provider_failure"
+}
+
+fn http_status_from_failure_reason(reason: &str) -> Option<u16> {
+    let marker = "non-2xx HTTP status ";
+    let start = reason.find(marker)? + marker.len();
+    let digits = reason[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_digit())
+        .collect::<String>();
+    digits.parse().ok()
 }
 
 fn handle_run_events(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
@@ -7892,6 +8061,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: Some(verification_recovery_repair),
@@ -7912,6 +8082,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_completion_gate,
                 verification_recovery_repair: None,
@@ -7932,6 +8103,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -7952,6 +8124,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -7972,6 +8145,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -8002,6 +8176,7 @@ fn task_run_result_for_headless_replay(
         run_id: record.run_id.clone(),
         status: record.status.clone(),
         agent_loop,
+        llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
         selected_index_prompt_context: None,
         verification_completion_gate,
         verification_recovery_repair: None,
@@ -16914,6 +17089,78 @@ fn task_run_agent_loop_summary_from_events(
     })
 }
 
+fn llm_provider_failure_outcome_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<(TaskRunAgentLoopSummary, LlmProviderFailureOutcome)>, String> {
+    if record.status != TaskStatus::Failed {
+        return Ok(None);
+    }
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    let Some(outcome) = llm_provider_failure_outcome_from_events(&events) else {
+        return Ok(None);
+    };
+    let agent_loop = task_run_agent_loop_summary_from_events(&events)
+        .unwrap_or_else(llm_provider_failed_agent_loop_summary);
+    Ok(Some((agent_loop, outcome)))
+}
+
+fn llm_provider_failure_outcome_from_events(
+    events: &[LedgerEvent],
+) -> Option<LlmProviderFailureOutcome> {
+    events
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::LlmRequestFailed | LedgerEventKind::SecondPassLlmRequestFailed
+            )
+        })
+        .and_then(|event| event.payload.as_ref())
+        .and_then(llm_provider_failure_outcome_from_payload)
+}
+
+fn llm_provider_failure_outcome_from_payload(payload: &Value) -> Option<LlmProviderFailureOutcome> {
+    let failure = payload.get("llm_provider_failure")?;
+    let reason = failure.get("reason").and_then(Value::as_str)?.to_string();
+    let reason_chars = payload_usize(failure, "reason_chars")?;
+    Some(LlmProviderFailureOutcome {
+        provider: failure.get("provider").and_then(Value::as_str)?.to_string(),
+        model: failure.get("model").and_then(Value::as_str)?.to_string(),
+        request_phase: failure
+            .get("request_phase")
+            .and_then(Value::as_str)?
+            .to_string(),
+        failure_class: failure
+            .get("failure_class")
+            .and_then(Value::as_str)?
+            .to_string(),
+        retryable: failure.get("retryable").and_then(Value::as_bool)?,
+        next_action: failure
+            .get("next_action")
+            .and_then(Value::as_str)?
+            .to_string(),
+        failure_fingerprint: failure
+            .get("failure_fingerprint")
+            .and_then(Value::as_str)?
+            .to_string(),
+        reason,
+        reason_chars,
+        reason_truncated: failure
+            .get("reason_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        http_status: failure
+            .get("http_status")
+            .and_then(Value::as_u64)
+            .and_then(|value| u16::try_from(value).ok()),
+    })
+}
+
 fn task_run_terminal_child_agent_loop_summary_from_events(
     record: &TaskRecord,
     events: &[LedgerEvent],
@@ -17796,6 +18043,14 @@ fn controlled_child_failed_agent_loop_summary() -> TaskRunAgentLoopSummary {
         completion_summary:
             "Controlled child task failed before agent loop completion; run parent task explicitly."
                 .to_string(),
+    }
+}
+
+fn llm_provider_failed_agent_loop_summary() -> TaskRunAgentLoopSummary {
+    TaskRunAgentLoopSummary {
+        final_state: "Failed".to_string(),
+        completion_summary: "LLM provider execution failed before agent loop completion."
+            .to_string(),
     }
 }
 
@@ -44850,7 +45105,13 @@ content-length: {}
         assert!(serialized.contains("Mock LLM final response after tool feedback"));
     }
 
-    fn assert_strict_failure(status_line: &str, body: &'static str, expected_reason: &str) {
+    fn assert_strict_failure(
+        status_line: &str,
+        body: &'static str,
+        expected_reason: &str,
+        expected_failure_class: &str,
+        expected_next_action: &str,
+    ) {
         let _guard = EnvGuard::clear();
         let temp = tempfile::tempdir().unwrap();
         let (base_url, handle) = spawn_mock(status_line, body);
@@ -44864,7 +45125,28 @@ content-length: {}
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert_eq!(run.error.unwrap().code, -32603);
+        assert!(run.error.is_none());
+        let result = run.result.unwrap();
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["agent_loop"]["final_state"], "Failed");
+        assert!(result["agent_loop"]["completion_summary"]
+            .as_str()
+            .unwrap()
+            .contains("LLM provider execution failed"));
+        let failure = &result["llm_provider_failure"];
+        assert_eq!(failure["provider"], "OpenAiCompatible");
+        assert_eq!(failure["model"], "mock-model");
+        assert_eq!(failure["request_phase"], "initial");
+        assert_eq!(failure["failure_class"], expected_failure_class);
+        assert_eq!(failure["next_action"], expected_next_action);
+        assert!(failure["failure_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(failure["reason"]
+            .as_str()
+            .unwrap()
+            .contains(expected_reason));
         handle.join().unwrap();
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
@@ -44893,9 +45175,16 @@ content-length: {}
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        let error = run.error.unwrap();
-        assert_eq!(error.code, -32603);
-        assert!(error.message.contains(task_run_network_guard_reason()));
+        assert!(run.error.is_none());
+        let result = run.result.unwrap();
+        let failure = &result["llm_provider_failure"];
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(failure["failure_class"], "network_not_authorized");
+        assert_eq!(failure["next_action"], "authorize_task_run_network");
+        assert!(failure["reason"]
+            .as_str()
+            .unwrap()
+            .contains(task_run_network_guard_reason()));
         let events = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
         ))
@@ -44915,19 +45204,152 @@ content-length: {}
             "500 Internal Server Error",
             r#"{"error":"boom"}"#,
             "non-2xx",
+            "http_status",
+            "inspect_llm_health",
         );
     }
 
     #[test]
     fn malformed_json_strict_fails_and_records_llm_failure() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
-        assert_strict_failure("200 OK", "not json", "invalid JSON");
+        assert_strict_failure(
+            "200 OK",
+            "not json",
+            "invalid JSON",
+            "invalid_provider_response",
+            "retry_task_run_after_provider_recovery",
+        );
     }
 
     #[test]
     fn missing_choices_strict_fails_and_records_llm_failure() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
-        assert_strict_failure("200 OK", r#"{"choices":[]}"#, "missing choices");
+        assert_strict_failure(
+            "200 OK",
+            r#"{"choices":[]}"#,
+            "missing choices",
+            "missing_provider_content",
+            "retry_task_run_after_provider_recovery",
+        );
+    }
+
+    #[test]
+    fn missing_message_content_strict_returns_structured_provider_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        assert_strict_failure(
+            "200 OK",
+            r#"{"choices":[{"message":{"content":""}}]}"#,
+            "missing message content",
+            "missing_provider_content",
+            "retry_task_run_after_provider_recovery",
+        );
+    }
+
+    #[test]
+    fn strict_openai_missing_configuration_returns_structured_provider_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(temp.path().join(".brownie")).unwrap();
+        fs::write(temp.path().join("README.md"), "# Brownie\n").unwrap();
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "openai-compatible");
+        std::env::set_var("BROWNIE_LLM_STRICT", "true");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail before provider configuration","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let result = run.result.unwrap();
+        let failure = &result["llm_provider_failure"];
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(failure["failure_class"], "configuration_missing");
+        assert_eq!(failure["next_action"], "fix_provider_configuration");
+        assert_eq!(failure["retryable"], false);
+    }
+
+    #[test]
+    fn sensitive_prompt_guard_failure_returns_structured_provider_failure() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+        std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "fail");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=sk-test-sensitive-denied","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let result = run.result.unwrap();
+        let failure = &result["llm_provider_failure"];
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(failure["failure_class"], "sensitive_prompt_denied");
+        assert_eq!(failure["next_action"], "reduce_or_redact_prompt_context");
+        assert_eq!(failure["retryable"], false);
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(serialized.contains("PromptSensitiveScanFailed"));
+        assert!(serialized.contains("LlmRequestFailed"));
+        assert!(!serialized.contains("sk-test-sensitive-denied"));
+        assert!(!serialized.contains("test-key"));
+    }
+
+    #[test]
+    fn llm_provider_failure_replay_returns_same_structured_outcome() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let (base_url, handle) = spawn_mock("500 Internal Server Error", r#"{"error":"boom"}"#);
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Replay provider failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let first = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        handle.join().unwrap();
+        let second = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(
+            first["llm_provider_failure"]["failure_fingerprint"],
+            second["llm_provider_failure"]["failure_fingerprint"]
+        );
+        assert_eq!(second["agent_loop"]["final_state"], "Failed");
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let failed_events = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "LlmRequestFailed")
+            .count();
+        assert_eq!(failed_events, 1);
     }
 
     #[test]

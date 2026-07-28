@@ -100,6 +100,20 @@ export interface LlmHealthResult {
   diagnostics: RuntimeDiagnostic[];
 }
 
+export interface LlmProviderFailureOutcome {
+  provider: string;
+  model: string;
+  request_phase: string;
+  failure_class: string;
+  retryable: boolean;
+  next_action: string;
+  failure_fingerprint: string;
+  reason: string;
+  reason_chars: number;
+  reason_truncated: boolean;
+  http_status?: number | null;
+}
+
 export type TaskStatus = 'Created' | 'Queued' | 'Running' | 'Completed' | 'Failed' | 'Cancelled';
 
 export type RuntimeActionName =
@@ -330,6 +344,7 @@ export interface TaskRunResult {
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
+  llm_provider_failure?: LlmProviderFailureOutcome | null;
 }
 
 export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_in_progress' | 'task_executed';
@@ -3965,7 +3980,39 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     (value.verification_recovery_retry === undefined || value.verification_recovery_retry === null || isTaskRunVerificationRecoveryRetryOutcome(value.verification_recovery_retry)) &&
     (value.recovery_cycle_budget_outcome === undefined || value.recovery_cycle_budget_outcome === null || isRecoveryCycleBudgetOutcome(value.recovery_cycle_budget_outcome)) &&
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
-    (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome))
+    (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome)) &&
+    (value.llm_provider_failure === undefined || value.llm_provider_failure === null || isLlmProviderFailureOutcome(value.llm_provider_failure))
+  );
+}
+
+export function isLlmProviderFailureOutcome(value: unknown): value is LlmProviderFailureOutcome {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'provider',
+      'model',
+      'request_phase',
+      'failure_class',
+      'retryable',
+      'next_action',
+      'failure_fingerprint',
+      'reason',
+      'reason_chars',
+      'reason_truncated',
+      'http_status',
+    ]) &&
+    typeof value.provider === 'string' &&
+    typeof value.model === 'string' &&
+    typeof value.request_phase === 'string' &&
+    typeof value.failure_class === 'string' &&
+    typeof value.retryable === 'boolean' &&
+    typeof value.next_action === 'string' &&
+    typeof value.failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.failure_fingerprint) &&
+    typeof value.reason === 'string' &&
+    isNonNegativeInteger(value.reason_chars) &&
+    typeof value.reason_truncated === 'boolean' &&
+    (value.http_status === undefined || value.http_status === null || (isNonNegativeInteger(value.http_status) && value.http_status >= 100 && value.http_status <= 599))
   );
 }
 
