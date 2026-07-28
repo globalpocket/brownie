@@ -914,11 +914,29 @@ pub struct TaskInspectParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmProviderFailureOutcome {
+    pub provider: String,
+    pub model: String,
+    pub request_phase: String,
+    pub failure_class: String,
+    pub retryable: bool,
+    pub next_action: String,
+    pub failure_fingerprint: String,
+    pub reason: String,
+    pub reason_chars: usize,
+    pub reason_truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_status: Option<u16>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskRunResult {
     pub task_id: String,
     pub run_id: String,
     pub status: TaskStatus,
     pub agent_loop: TaskRunAgentLoopSummary,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure: Option<LlmProviderFailureOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]

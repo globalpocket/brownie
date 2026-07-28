@@ -54,6 +54,30 @@ The Rust runtime owns:
 
 The runtime is the execution authority. The VSIX presents state and connects Code-OSS capabilities.
 
+## Runtime LLM Provider Execution Boundary
+
+M13.1 makes controlled provider failures an actionable `task.run` outcome. When
+real-provider selection or completion fails under strict execution, the Rust
+runtime still marks the task terminal `Failed`, but now returns bounded
+`llm_provider_failure` metadata on `TaskRunResult` and records the same
+classification on `LlmRequestFailed` or `SecondPassLlmRequestFailed` events.
+The outcome includes provider kind, model, request phase, deterministic failure
+class, retryability, next action, failure fingerprint, and a bounded redacted
+reason preview.
+
+This boundary covers configuration, task-run network authorization, sensitive
+prompt denial, non-2xx HTTP status, transport/timeout, invalid provider JSON,
+and missing provider content classes. Replaying `task.run` for the same failed
+task returns the same structured failure outcome without appending duplicate
+`TaskRunning` or provider request events. The VSIX mirrors the protocol shape
+but does not own provider policy.
+
+The provider failure outcome must not expose raw prompts, raw provider
+responses, raw request bodies, file content, stdout, stderr, commands,
+environment values, API keys, secrets, absolute paths, or canonical paths. It
+does not add a provider report, status wrapper, history, digest, readiness
+surface, automatic retry, or network/sensitive-guard bypass.
+
 ## R1 architecture recovery
 
 R1 freezes the Phase 3 diagnostics wrapper chain and redirects follow-up work to diagnostics API consolidation. New phases must not extend the `proposal.reviewQueueDiagnostics...Digest...Report...History` pattern.
