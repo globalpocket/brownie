@@ -11,6 +11,8 @@ pub struct CompiledModePolicy {
     pub display_name: String,
     pub role_definition: String,
     pub permissions: ModePermissions,
+    #[serde(default)]
+    pub allowed_handoff_targets: Option<Vec<String>>,
     pub completion_rules: Vec<String>,
 }
 
@@ -131,6 +133,7 @@ fn orchestrator() -> CompiledModePolicy {
             "Coordinate task planning without direct workspace writes or process execution."
                 .to_string(),
         permissions: permissions(false, false, true, true),
+        allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after producing a coordination result for the current task phase.".to_string(),
         ],
@@ -143,6 +146,7 @@ fn implementer() -> CompiledModePolicy {
         display_name: "Implementer".to_string(),
         role_definition: "Implement bounded workspace changes for an assigned task.".to_string(),
         permissions: permissions(true, true, false, true),
+        allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after the requested implementation work is complete or blocked.".to_string(),
         ],
@@ -157,6 +161,7 @@ fn verifier() -> CompiledModePolicy {
             "Run checks and report verification results without modifying workspace files."
                 .to_string(),
         permissions: permissions(false, true, false, false),
+        allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after reporting verification status and relevant failures.".to_string(),
         ],

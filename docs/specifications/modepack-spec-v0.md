@@ -73,6 +73,21 @@ The M2 JSON schema is intentionally minimal:
 
 M2 does not fetch remote Mode Packs. It rejects Mode Pack modes that request workspace writes, process execution, network access, service control, destructive operations, or non-read-only permissions. M9.2 permits Mode Packs to opt into metadata-only codebase indexing with `codebase_index`; omitted fields default to `false` for compatibility. `task.start` stores the resolved policy summary in `ModeResolved`, and `task.run` reconstructs the policy from that ledger snapshot so later Mode Pack edits do not change already-started tasks.
 
+## M12.1 handoff target admission
+
+M12.1 lets an external Mode Pack mode with `can_spawn_subtasks=true` declare an
+`allowed_handoff_targets` array. The array is required for spawning external
+modes, capped at 16 entries, and each target id must be non-empty, duplicate-free,
+64 characters or fewer, and limited to ASCII letters, digits, `.`, `_`, and `-`.
+Modes without `can_spawn_subtasks` must omit the field or leave it empty.
+
+At runtime, `subtask.spawn` admission first uses the existing permission gate for
+`SpawnSubtask`, then verifies that the requested `input.mode_id` exists and is in
+the active mode policy's `allowed_handoff_targets` when that policy declares one.
+Denied targets append bounded denial evidence before subtask queueing or child
+materialization. Built-in modes keep unrestricted legacy handoff behavior by
+storing no target allow-list.
+
 ## Non-goals for v0
 
 - Vendoring AgentModes into Brownie.

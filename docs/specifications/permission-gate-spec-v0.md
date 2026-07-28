@@ -33,6 +33,13 @@ metadata-only index construction and does not imply workspace writes, process
 execution, network access, service control, destructive operations, query,
 retrieval, chunks, embeddings, or Qdrant writes.
 
+M12.1 keeps `SpawnSubtask` as the permission bit for subtask capability and adds
+a second Rust-owned admission check for external Mode Pack handoff targets. A
+mode that may spawn subtasks can still be denied for a specific `subtask.spawn`
+request when the requested `input.mode_id` is unknown or absent from that mode's
+`allowed_handoff_targets`. This denial is recorded as bounded tool-intent
+evidence before queueing, and it does not create or materialize a child task.
+
 ## Phase 1.5 tool planning update
 
 Phase 1.5 adds dry-run tool planning before future tool execution. Tool definitions and plans are declarative only and do not perform file reads, file writes, process execution, subtask spawning, network access, service control, or destructive operations. Planned tools are evaluated through `RuntimePermissionGate`; denied dry-run items are recorded but do not fail `task.run` in Phase 1.5. See `docs/specifications/tool-planning-spec-v0.md`.

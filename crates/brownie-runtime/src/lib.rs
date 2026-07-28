@@ -18392,6 +18392,7 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "role_definition": policy.role_definition,
+        "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
         "permissions": {
             "read_only": policy.permissions.read_only,
@@ -18470,6 +18471,16 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         },
+        allowed_handoff_targets: payload
+            .get("allowed_handoff_targets")
+            .and_then(Value::as_array)
+            .map(|targets| {
+                targets
+                    .iter()
+                    .filter_map(|target| target.as_str().map(ToString::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .filter(|targets| !targets.is_empty()),
         completion_rules,
     })
 }
@@ -18593,6 +18604,7 @@ fn normalized_subtask_spawn_mode_id(input: &Value) -> Option<String> {
 
 fn subtask_spawn_input_runtime_rejection_reason(
     store: &BrownieStore,
+    policy: &CompiledModePolicy,
     input: &Value,
 ) -> anyhow::Result<Option<&'static str>> {
     let Some(mode_id) = normalized_subtask_spawn_mode_id(input) else {
@@ -18603,6 +18615,16 @@ fn subtask_spawn_input_runtime_rejection_reason(
         .is_none()
     {
         return Ok(Some("subtask.spawn input.mode_id is unknown."));
+    }
+    if let Some(allowed_handoff_targets) = policy.allowed_handoff_targets.as_ref() {
+        if !allowed_handoff_targets
+            .iter()
+            .any(|allowed_mode_id| allowed_mode_id == &mode_id)
+        {
+            return Ok(Some(
+                "subtask.spawn input.mode_id is not allowed by active mode handoff policy.",
+            ));
+        }
     }
     Ok(None)
 }
@@ -20168,7 +20190,7 @@ fn append_tool_intent_events(
     for decision in evaluation.items {
         let runtime_rejection_reason =
             if decision.allowed && decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
-                subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?
+                subtask_spawn_input_runtime_rejection_reason(store, policy, &decision.input)?
             } else {
                 None
             };
@@ -20183,6 +20205,7 @@ fn append_tool_intent_events(
             "input_summary": summarize_intent_input(&decision.input),
         });
         if runtime_rejection_reason.is_some() {
+            payload["mode_id"] = json!(policy.mode_id);
             if let Some(mode_id) = normalized_subtask_spawn_mode_id(&decision.input) {
                 payload["requested_mode_id"] = json!(mode_id);
             }
@@ -20248,10 +20271,12 @@ fn handle_approved_workspace_intents(
             continue;
         }
         if decision.tool_id == SUBTASK_SPAWN_TOOL_ID {
-            if subtask_spawn_input_runtime_rejection_reason(store, &decision.input)?.is_some() {
+            if subtask_spawn_input_runtime_rejection_reason(store, policy, &decision.input)?
+                .is_some()
+            {
                 continue;
             }
-            append_subtask_orchestration_queued(store, record, &decision)?;
+            append_subtask_orchestration_queued(store, record, policy, &decision)?;
             continue;
         }
         if !controlled_execution_tool {
@@ -20345,14 +20370,18 @@ fn append_controlled_tool_execution_denied(
 fn append_subtask_orchestration_queued(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
     decision: &ToolIntentDecision,
 ) -> anyhow::Result<()> {
     let requested_goal_preview = normalized_subtask_spawn_goal_preview(&decision.input);
     let requested_mode_id = normalized_subtask_spawn_mode_id(&decision.input);
-    if let Some(reason) = subtask_spawn_input_runtime_rejection_reason(store, &decision.input)? {
+    if let Some(reason) =
+        subtask_spawn_input_runtime_rejection_reason(store, policy, &decision.input)?
+    {
         return append_subtask_spawn_input_denied(
             store,
             record,
+            policy,
             decision,
             requested_mode_id.as_deref().unwrap_or_default(),
             reason,
@@ -20395,6 +20424,7 @@ fn append_subtask_orchestration_queued(
 fn append_subtask_spawn_input_denied(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
     decision: &ToolIntentDecision,
     requested_mode_id: &str,
     reason: &str,
@@ -20406,6 +20436,7 @@ fn append_subtask_spawn_input_denied(
             "tool_id": decision.tool_id,
             "required_action": runtime_action_name(&decision.required_action),
             "allowed": false,
+            "mode_id": policy.mode_id,
             "reason": reason,
             "request_reason": decision.request_reason,
             "requested_mode_id": requested_mode_id,
@@ -24491,6 +24522,52 @@ mod tests {
               "name": "local-agentmodes",
               "schema_version": 1,
               "modes": [
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review local changes without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
+    fn write_test_handoff_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "handoff-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Delegate only to admitted child modes.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["reviewer-lite"],
+                  "completion_rules": ["Stop after dispatching admitted subtasks."]
+                },
                 {
                   "mode_id": "reviewer-lite",
                   "display_name": "Reviewer Lite",
@@ -32225,8 +32302,10 @@ mod tests {
                 "mode_id": "implementer"
             }),
         };
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
 
-        append_subtask_orchestration_queued(&store, &parent, &decision).expect("queue subtask");
+        append_subtask_orchestration_queued(&store, &parent, &policy, &decision)
+            .expect("queue subtask");
         let parent_events = store
             .tasks()
             .read_ledger_events(&parent.run_id)
@@ -32344,10 +32423,11 @@ mod tests {
                 "mode_id": "verifier"
             }),
         };
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
 
-        append_subtask_orchestration_queued(&store, &parent, &parser_decision)
+        append_subtask_orchestration_queued(&store, &parent, &policy, &parser_decision)
             .expect("queue parser subtask");
-        append_subtask_orchestration_queued(&store, &parent, &verifier_decision)
+        append_subtask_orchestration_queued(&store, &parent, &policy, &verifier_decision)
             .expect("queue verifier subtask");
         let parent_events = store
             .tasks()
@@ -32642,6 +32722,120 @@ mod tests {
     }
 
     #[test]
+    fn external_mode_handoff_allowed_target_queues_subtask() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create admitted child task.\",\"input\":{\"goal\":\"Review only bounded evidence.\",\"mode_id\":\"reviewer-lite\"}}]}\n```";
+
+        append_tool_intent_events(&store, &parent, &policy, assistant_content)
+            .expect("append tool intent events");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("handle approved workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentApproved)
+                .count(),
+            1
+        );
+        let queued_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .expect("queued payload");
+        assert_eq!(queued_payload["requested_mode_id"], "reviewer-lite");
+        assert_eq!(
+            queued_payload["requested_goal_preview"],
+            "Review only bounded evidence."
+        );
+        assert!(queued_payload.get("input").is_none());
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn external_mode_handoff_disallowed_target_is_denied_before_queueing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create unadmitted child task.\",\"input\":{\"goal\":\"Implement something.\",\"mode_id\":\"implementer\"}}]}\n```";
+
+        append_tool_intent_events(&store, &parent, &policy, assistant_content)
+            .expect("append tool intent events");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("handle approved workspace intents");
+        handle_approved_workspace_intents(&store, &parent, &policy, assistant_content)
+            .expect("replay approved workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentApproved)
+                .count(),
+            0
+        );
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+        let denial_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ToolIntentDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(denial_payload["mode_id"], "external-orchestrator");
+        assert_eq!(denial_payload["requested_mode_id"], "implementer");
+        assert_eq!(
+            denial_payload["reason"],
+            "subtask.spawn input.mode_id is not allowed by active mode handoff policy."
+        );
+        assert!(denial_payload.get("input").is_none());
+        assert!(store
+            .tasks()
+            .list_tasks()
+            .expect("list tasks")
+            .iter()
+            .all(|record| record.parent_run_id.as_deref() != Some(parent.run_id.as_str())));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn subtask_spawn_unknown_mode_id_is_denied_before_queueing() {
         let temp = tempfile::tempdir().expect("tempdir");
         let store = BrownieStore::new(temp.path());
@@ -32665,8 +32859,10 @@ mod tests {
                 "mode_id": "missing-mode"
             }),
         };
+        let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
 
-        append_subtask_orchestration_queued(&store, &parent, &decision).expect("deny invalid mode");
+        append_subtask_orchestration_queued(&store, &parent, &policy, &decision)
+            .expect("deny invalid mode");
         let events = store
             .tasks()
             .read_ledger_events(&parent.run_id)
