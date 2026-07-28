@@ -302,6 +302,8 @@ pub struct TaskStartParams {
     pub verification_recovery_source: Option<VerificationRecoverySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_source: Option<VerificationRecoveryRetrySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_source: Option<LlmProviderFailureRetrySource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -326,6 +328,14 @@ pub struct VerificationRecoveryRetrySource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmProviderFailureRetrySource {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub expected_failure_fingerprint: String,
+    pub authorize_provider_failure_retry: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -334,6 +344,8 @@ pub struct TaskStartResult {
     pub verification_recovery_admission: Option<VerificationRecoveryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_admission: Option<VerificationRecoveryRetryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -360,6 +372,20 @@ pub struct VerificationRecoveryRetryAdmission {
     pub apply_id: String,
     pub failure_fingerprint: String,
     pub apply_fingerprint: String,
+    pub retry_running_enabled: bool,
+    pub next_action: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmProviderFailureRetryAdmission {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub retry_task_id: String,
+    pub retry_run_id: String,
+    pub failure_fingerprint: String,
+    pub failure_class: String,
+    pub retryable: bool,
     pub retry_running_enabled: bool,
     pub next_action: String,
     pub replayed: bool,
@@ -3156,6 +3182,7 @@ pub struct ChildTaskInspectSummary {
     pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
     pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
+    pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
@@ -3213,6 +3240,18 @@ pub struct VerificationRecoveryRetryProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LlmProviderFailureRetryProvenance {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub failure_fingerprint: String,
+    pub failure_class: String,
+    pub provider: String,
+    pub model: String,
+    pub request_phase: String,
+    pub retryable: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -3241,6 +3280,8 @@ pub struct TaskRecord {
     pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
     #[serde(default)]
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
+    #[serde(default)]
+    pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     pub created_at: String,
     pub updated_at: String,
 }

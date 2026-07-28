@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
-    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, LlmProviderFailureRetryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -556,6 +556,19 @@ pub struct VerificationRecoveryRetryTaskStartResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmProviderFailureRetryTaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub provenance: LlmProviderFailureRetryProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LlmProviderFailureRetryTaskStartResult {
+    pub record: TaskRecord,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParentJoinContinuationRunAdmission {
     pub child_completion_fingerprint: String,
     pub child_completion_child_count: usize,
@@ -597,6 +610,7 @@ impl TaskStore {
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -629,6 +643,7 @@ impl TaskStore {
             recovery_cycle_provenance: params.recovery_cycle_provenance,
             verification_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -693,6 +708,7 @@ impl TaskStore {
             recovery_cycle_provenance: None,
             verification_recovery_provenance: Some(params.provenance),
             verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -769,6 +785,7 @@ impl TaskStore {
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
             verification_recovery_retry_provenance: Some(params.provenance),
+            llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -829,6 +846,90 @@ impl TaskStore {
         )?;
 
         Ok(VerificationRecoveryRetryTaskStartResult {
+            record,
+            replayed: false,
+        })
+    }
+
+    pub fn start_llm_provider_failure_retry_task(
+        &self,
+        params: LlmProviderFailureRetryTaskStartParams,
+    ) -> Result<LlmProviderFailureRetryTaskStartResult> {
+        let _lock = self.acquire_run_admission_lock(&params.provenance.source_run_id)?;
+        if let Some(record) = self.find_llm_provider_failure_retry_task_by_failure_fingerprint(
+            &params.provenance.source_task_id,
+            &params.provenance.source_run_id,
+            &params.provenance.failure_fingerprint,
+        )? {
+            return Ok(LlmProviderFailureRetryTaskStartResult {
+                record,
+                replayed: true,
+            });
+        }
+
+        let now = timestamp()?;
+        let task_id = format!("task_{}", Uuid::new_v4());
+        let run_id = format!("run_{}", Uuid::new_v4());
+        let record = TaskRecord {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            goal: params.goal,
+            mode_id: params.mode_id,
+            status: TaskStatus::Created,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            verification_recovery_provenance: None,
+            verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: Some(params.provenance),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let run_dir = self.run_dir(&run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        self.write_task_state(&record)?;
+        let provenance = record.llm_provider_failure_retry_provenance.clone();
+        self.append_task_event_with_payload(
+            &record,
+            LedgerEventKind::TaskStarted,
+            Some(serde_json::json!({
+                "status": "Created",
+                "llm_provider_failure_retry_provenance": provenance,
+                "source_task_id": record
+                    .llm_provider_failure_retry_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_task_id.clone()),
+                "source_run_id": record
+                    .llm_provider_failure_retry_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_run_id.clone()),
+                "failure_fingerprint": record
+                    .llm_provider_failure_retry_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.failure_fingerprint.clone()),
+                "failure_class": record
+                    .llm_provider_failure_retry_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.failure_class.clone()),
+                "retryable": record
+                    .llm_provider_failure_retry_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.retryable),
+                "execution_enabled": false,
+                "retry_running_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "next_action": "run_llm_provider_retry_task_explicitly",
+                "reason": "LLM provider failure retry task admitted from bounded provider failure evidence; retry execution remains explicit."
+            })),
+        )?;
+
+        Ok(LlmProviderFailureRetryTaskStartResult {
             record,
             replayed: false,
         })
@@ -1057,6 +1158,29 @@ impl TaskStore {
                         && provenance.apply_fingerprint.as_str() == apply_fingerprint
                         && provenance.proposal_id.as_str() == proposal_id
                         && provenance.apply_id.as_str() == apply_id
+                })
+                .unwrap_or(false)
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_llm_provider_failure_retry_task_by_failure_fingerprint(
+        &self,
+        source_task_id: &str,
+        source_run_id: &str,
+        failure_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record
+                .llm_provider_failure_retry_provenance
+                .as_ref()
+                .map(|provenance| {
+                    provenance.source_task_id.as_str() == source_task_id
+                        && provenance.source_run_id.as_str() == source_run_id
+                        && provenance.failure_fingerprint.as_str() == failure_fingerprint
                 })
                 .unwrap_or(false)
             {
@@ -1699,6 +1823,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
 
@@ -1726,6 +1851,7 @@ mod tests {
                 mode_id: None,
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
 
@@ -1764,6 +1890,7 @@ mod tests {
                 mode_id: None,
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
         store
@@ -1792,6 +1919,7 @@ mod tests {
                 mode_id: None,
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start task");
 
@@ -1812,6 +1940,7 @@ mod tests {
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
                 verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
             })
             .expect("start parent");
 

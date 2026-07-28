@@ -78,6 +78,26 @@ environment values, API keys, secrets, absolute paths, or canonical paths. It
 does not add a provider report, status wrapper, history, digest, readiness
 surface, automatic retry, or network/sensitive-guard bypass.
 
+M13.2 adds the first runtime-owned retry admission step for those structured
+provider failures. A caller may pass `llm_provider_failure_retry_source` to the
+existing `task.start` method with source task/run IDs, the expected current
+`failure_fingerprint`, and `authorize_provider_failure_retry=true`. The runtime
+requires the source task to be terminal `Failed`, re-reads the source run ledger,
+requires the latest bounded `llm_provider_failure` evidence to match the
+expected fingerprint, and admits only retryable classes such as `http_status`,
+`transport_or_timeout`, `invalid_provider_response`, `missing_provider_content`,
+or retryable `unknown_provider_failure`.
+
+Admission creates or replays exactly one retry task and records bounded
+`llm_provider_failure_retry_provenance` on the retry task's `TaskStarted` event.
+It returns `llm_provider_failure_retry_admission` with source IDs, retry IDs,
+failure class, fingerprint, `retry_running_enabled=false`, replay state, and
+`next_action=run_llm_provider_retry_task_explicitly`. Admission itself does not
+call a provider, append `TaskRunning`, automatically execute the retry task,
+bypass provider network or sensitive prompt guards, or expose raw prompts,
+provider responses, request bodies, file content, command output, environment
+values, secrets, absolute paths, or canonical paths.
+
 ## R1 architecture recovery
 
 R1 freezes the Phase 3 diagnostics wrapper chain and redirects follow-up work to diagnostics API consolidation. New phases must not extend the `proposal.reviewQueueDiagnostics...Digest...Report...History` pattern.
