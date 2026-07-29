@@ -131,6 +131,41 @@ Before deleting, the runtime performs latest preflight validation, expected targ
 
 On success, the runtime removes the target file, syncs the parent directory when possible, verifies post-delete absence, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `pre_write_target_sha256`, `pre_write_target_exists`, `atomic_delete_completed`, `post_delete_target_exists`, and check metadata. On denial or failure, it does not consume authorization before verified success, preserves the file whenever a precondition fails, and records bounded failure metadata for post-delete verification failures.
 
+## M14.2 controlled transaction recovery apply
+
+`proposal.apply` may also accept a bounded multi-file transaction recovery
+request for `replace_file` transaction evidence. The request reuses the existing
+side-effecting RPC and includes `transaction_recovery_source` with
+`source_run_id`, `source_apply_id`, `source_transaction_id`, and
+`expected_source_transaction_fingerprint`, plus one to five recovery
+`transaction_items`.
+
+The runtime admits recovery only when the source run is the current run, the
+latest matching `WorkspacePatchApplyResultRecorded` event is a partial failed
+transaction, its bounded fingerprint matches the caller expectation, at least
+one source item was applied and at least one item remains unrecovered, and no
+successful recovery has already been recorded for that source. Already-applied
+source items are revalidated against current workspace hashes and are not
+rewritten by recovery.
+
+Recovery items must be source transaction items that were not already applied,
+and each target must pass the same approved `replace_file` proposal gates,
+approval freshness, unconsumed authorization, fresh preflight, expected target
+hash, safe path, file-kind, symlink, UTF-8, sensitive-content, content-bound,
+and diff-match checks before any write. On success, the runtime writes prepared
+temporary sibling files, atomically replaces each recovery target, verifies
+post-write SHA-256, records bounded `transaction_recovery_source`,
+`transaction_recovery_status`, and per-item result metadata, and consumes
+authorization only after verified recovery success.
+
+Transaction recovery does not create or delete files, mutate directories, roll
+back already-applied source items, run shell/git/tests/network/services, add a
+new RPC, or add report, history, digest, preview, readiness, or inspection-only
+surfaces. Ledger and RPC payloads must not expose raw file content, raw
+replacement content, raw diffs, raw request bodies, raw ledger payloads,
+absolute paths, canonical paths, stdout, stderr, command strings, environment
+values, prompts, provider responses, secrets, or API keys.
+
 ## Phase 3.7 apply dry-run history
 
 `proposal.applyDryRunHistory` accepts `{ "run_id": string, "proposal_id": string }` for an existing proposal and returns `{ "proposal": WorkspacePatchProposalSummary, "history": WorkspacePatchApplyDryRunHistorySummary }`. It reconstructs the dry-run count, latest dry-run check, and 10 newest dry-run entries from existing sanitized `WorkspacePatchApplyDryRunChecked` ledger events.

@@ -125,6 +125,27 @@ M6.3 extends the same `proposal.apply` authority to one approved `delete_file` p
 
 Controlled apply must not run shell or git commands, use network access, create parent directories, overwrite existing targets during create, remove files outside the approved `delete_file` path, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file or absent target whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic mutation and verification.
 
+M14.1 adds the first bounded multi-file mutation path to the same
+`proposal.apply` authority for two to five approved `replace_file` proposals.
+M14.2 adds bounded recovery for that transaction path. A caller may include
+`transaction_recovery_source` with source run, apply, transaction, and expected
+source fingerprint fields plus a recovery `transaction_items` set. The Rust
+runtime re-reads latest transaction result ledger evidence, admits only partial
+failed source transactions, verifies already-applied source items still match
+their recorded post-write hashes, rejects already-recovered sources, and then
+applies only eligible failed or not-applied replacement proposals through the
+same temporary sibling, atomic replacement, and post-write SHA-256 checks.
+
+Transaction recovery does not add a recovery report, preview, history, digest,
+readiness surface, new RPC, automatic recovery, rollback of already-applied
+files, create/delete/mixed transaction scope, shell/git/network/test/service
+execution, or VSIX-owned policy. Ledger and RPC results expose only bounded
+source transaction metadata, recovery status, per-item hashes and counts, and
+check names; they must not contain raw file content, raw replacement content,
+raw diffs, raw request bodies, raw ledger payloads, absolute paths, canonical
+paths, stdout, stderr, command strings, environment values, provider responses,
+prompts, or secrets.
+
 ## Controlled Verification Boundary
 
 M7.1 introduces the first runtime-owned verification execution path. The built-in `verification.cargo_fmt_check` tool is the only executable verifier in this slice: it requires `ExecuteProcess` permission, runs exactly `cargo fmt --check` at the workspace root, rejects caller-supplied command, argv, cwd, environment, stdin, shell, timeout, or unknown fields, and reports bounded status metadata through `tool.execute` and task-scoped `ToolExecution*` ledger events.
