@@ -2183,6 +2183,27 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             }
         };
 
+    if record.llm_provider_failure_retry_provenance.is_some() {
+        if params.selected_index_context.is_some() {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: selected_index_context is not supported for LLM provider failure retry tasks",
+            );
+        }
+        if let Err(rejection) = revalidate_llm_provider_failure_retry_task_for_run(&store, &record)
+        {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+        }
+    }
+
     let selected_index_context = match params.selected_index_context.as_ref() {
         Some(context) => {
             let policy = match resolve_policy_for_task_run(&record, &store) {
@@ -20465,6 +20486,40 @@ fn revalidate_verification_recovery_retry_task_for_run(
     if latest != *provenance {
         return Err(TaskRunAdmissionRejection::InvalidParams(
             "invalid params: verification recovery retry provenance is stale",
+        ));
+    }
+    Ok(true)
+}
+
+fn revalidate_llm_provider_failure_retry_task_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<bool, TaskRunAdmissionRejection> {
+    let Some(provenance) = record.llm_provider_failure_retry_provenance.as_ref() else {
+        return Ok(false);
+    };
+    let source = LlmProviderFailureRetrySource {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        expected_failure_fingerprint: provenance.failure_fingerprint.clone(),
+        authorize_provider_failure_retry: true,
+    };
+    let latest =
+        llm_provider_failure_retry_provenance_for_source(store, &source).map_err(|error| {
+            match error {
+                VerificationRecoveryAdmissionError::InvalidParams(_) => {
+                    TaskRunAdmissionRejection::InvalidParams(
+                        "invalid params: LLM provider failure retry provenance is stale",
+                    )
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    TaskRunAdmissionRejection::Internal(message)
+                }
+            }
+        })?;
+    if latest != *provenance {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: LLM provider failure retry provenance is stale",
         ));
     }
     Ok(true)
@@ -45634,6 +45689,40 @@ content-length: {}
         )
     }
 
+    fn failed_transport_provider_task(
+    ) -> (tempfile::TempDir, serde_json::Value, String, String, String) {
+        let temp = tempfile::tempdir().unwrap();
+        write_mock_config(temp.path(), "http://127.0.0.1:9/v1");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider transport failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let source_task_id = start["task_id"].as_str().unwrap().to_string();
+        let source_run_id = start["run_id"].as_str().unwrap().to_string();
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{source_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(
+            run["llm_provider_failure"]["failure_class"],
+            "transport_or_timeout"
+        );
+        assert_eq!(run["llm_provider_failure"]["retryable"], true);
+        let failure_fingerprint = run["llm_provider_failure"]["failure_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        (
+            temp,
+            run,
+            source_task_id,
+            source_run_id,
+            failure_fingerprint,
+        )
+    }
+
     #[test]
     fn llm_provider_failure_retry_admission_creates_and_replays_retry_task() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
@@ -45714,6 +45803,152 @@ content-length: {}
             .filter(|event| event["kind"] == "LlmRequestCreated")
             .count();
         assert_eq!(provider_request_count, 0);
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_task_run_revalidates_and_enters_provider_path() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_transport_provider_task();
+
+        let retry_start = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry transport provider failure",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap();
+        let admission = &retry_start["llm_provider_failure_retry_admission"];
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+
+        let retry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(retry_run["status"], "Failed");
+        assert_eq!(
+            retry_run["llm_provider_failure"]["failure_class"],
+            "transport_or_timeout"
+        );
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(
+            replay["llm_provider_failure"]["failure_fingerprint"],
+            retry_run["llm_provider_failure"]["failure_fingerprint"]
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let task_running_count = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "TaskRunning")
+            .count();
+        assert_eq!(task_running_count, 1);
+        let provider_failure_count = events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["kind"] == "LlmRequestFailed")
+            .count();
+        assert_eq!(provider_failure_count, 1);
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_task_run_rejects_stale_source_before_running() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (temp, source_run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+
+        let retry_start = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry stale source provider failure",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap();
+        let admission = &retry_start["llm_provider_failure_retry_admission"];
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+
+        let store = brownie_store::BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task(&source_task_id)
+            .unwrap()
+            .expect("source task");
+        let mut stale_failure = source_run["llm_provider_failure"].clone();
+        stale_failure["failure_fingerprint"] =
+            json!("sha256:1111111111111111111111111111111111111111111111111111111111111111");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::LlmRequestFailed,
+                Some(json!({ "llm_provider_failure": stale_failure })),
+            )
+            .unwrap();
+
+        let rejected = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ));
+        assert!(rejected
+            .error
+            .unwrap()
+            .message
+            .contains("LLM provider failure retry provenance is stale"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["kind"] != "TaskRunning"
+                && event["kind"] != "LlmRequestCreated"
+                && event["kind"] != "LlmRequestFailed"));
     }
 
     #[test]

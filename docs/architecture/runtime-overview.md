@@ -98,6 +98,17 @@ bypass provider network or sensitive prompt guards, or expose raw prompts,
 provider responses, request bodies, file content, command output, environment
 values, secrets, absolute paths, or canonical paths.
 
+M13.3 closes the explicit retry execution boundary. When a caller later runs a
+retry task that carries `llm_provider_failure_retry_provenance`, `task.run`
+revalidates that stored provenance against the current source task and source
+run ledger before appending `TaskRunning` or making any provider request. Stale,
+missing, malformed, or currently non-retryable source failure evidence is denied
+before provider execution. Valid retry tasks proceed through the existing task-run
+provider path, so task-run network authorization, sensitive prompt scanning,
+request budgets, strict/fallback behavior, and provider selection remain
+unchanged. Replaying a terminal retry task reuses the existing terminal replay
+path without duplicate `TaskRunning` or provider failure events.
+
 ## R1 architecture recovery
 
 R1 freezes the Phase 3 diagnostics wrapper chain and redirects follow-up work to diagnostics API consolidation. New phases must not extend the `proposal.reviewQueueDiagnostics...Digest...Report...History` pattern.
