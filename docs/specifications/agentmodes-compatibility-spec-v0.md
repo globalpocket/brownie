@@ -107,3 +107,9 @@ Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks
 Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, `SpawnSubtask`, and `IndexCodebase`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
 
 The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.
+
+M15.1 reuses the same runtime permission gate at apply time. `proposal.apply`
+must reconstruct the source run's stored mode policy and check
+`WriteWorkspace` before any workspace mutation begins. Denial is fail-closed and
+records bounded permission evidence; the VSIX remains display/protocol glue and
+does not decide whether an apply is allowed.

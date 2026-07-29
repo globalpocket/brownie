@@ -10316,6 +10316,115 @@ fn record_apply_result(
     Ok((inspect_proposal(store, run_id, proposal_id)?, apply_result))
 }
 
+fn resolve_apply_write_policy(
+    store: &BrownieStore,
+    task: &TaskRecord,
+) -> Result<CompiledModePolicy, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&task.run_id)
+        .map_err(|error| format!("invalid params: {error}"))?;
+    if let Some(mode_event) = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+    {
+        let payload = mode_event
+            .payload
+            .as_ref()
+            .ok_or_else(|| "apply permission check failed: mode evidence is missing".to_string())?;
+        return compiled_mode_policy_from_payload(payload).ok_or_else(|| {
+            "apply permission check failed: mode evidence is malformed".to_string()
+        });
+    }
+    let mode_id = task
+        .mode_id
+        .as_deref()
+        .filter(|mode_id| !mode_id.trim().is_empty())
+        .ok_or_else(|| "apply permission check failed: source run mode is missing".to_string())?;
+    resolve_workspace_mode_policy(store, mode_id)?
+        .ok_or_else(|| "apply permission check failed: source run mode is unknown".to_string())
+}
+
+fn append_apply_write_permission_check(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    apply_result: &mut WorkspacePatchApplyResultSummary,
+) -> Result<bool, String> {
+    let policy = match resolve_apply_write_policy(store, task) {
+        Ok(policy) => policy,
+        Err(reason) => {
+            apply_result.checklist.push(apply_result_check(
+                "apply_time_write_workspace_permission",
+                "Fail",
+                Some(&reason),
+            ));
+            apply_result.apply_reason = reason.clone();
+            let payload = json!({
+                "scope": "proposal.apply",
+                "apply_id": apply_result.apply_id,
+                "proposal_id": apply_result.proposal_id,
+                "operation": apply_result.operation,
+                "required_action": "WriteWorkspace",
+                "allowed": false,
+                "reason": reason,
+            });
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    task,
+                    LedgerEventKind::PermissionChecked,
+                    Some(payload.clone()),
+                )
+                .map_err(|e| format!("invalid params: {e}"))?;
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    task,
+                    LedgerEventKind::PermissionDenied,
+                    Some(payload),
+                )
+                .map_err(|e| format!("invalid params: {e}"))?;
+            return Ok(false);
+        }
+    };
+    let decision = RuntimePermissionGate::check(&policy, RuntimeAction::WriteWorkspace);
+    let status = if decision.allowed { "Pass" } else { "Fail" };
+    apply_result.checklist.push(apply_result_check(
+        "apply_time_write_workspace_permission",
+        status,
+        Some(&decision.reason),
+    ));
+    if !decision.allowed {
+        apply_result.apply_reason = decision.reason.clone();
+    }
+    let payload = json!({
+        "scope": "proposal.apply",
+        "apply_id": apply_result.apply_id,
+        "proposal_id": apply_result.proposal_id,
+        "operation": apply_result.operation,
+        "mode_id": policy.mode_id,
+        "required_action": "WriteWorkspace",
+        "allowed": decision.allowed,
+        "reason": decision.reason,
+    });
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            task,
+            LedgerEventKind::PermissionChecked,
+            Some(payload.clone()),
+        )
+        .map_err(|e| format!("invalid params: {e}"))?;
+    if !decision.allowed {
+        store
+            .tasks()
+            .append_task_event_with_payload(task, LedgerEventKind::PermissionDenied, Some(payload))
+            .map_err(|e| format!("invalid params: {e}"))?;
+    }
+    Ok(decision.allowed)
+}
+
 fn has_consumed_apply_authorization(events: &[LedgerEvent], proposal_id: &str) -> bool {
     events.iter().any(|event| {
         if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
@@ -11743,6 +11852,17 @@ fn apply_replace_file_transaction_recovery(
         "Pass",
         None,
     ));
+    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+        apply_result.transaction_status = Some("Denied".to_string());
+        apply_result.transaction_recovery_status = Some("Denied".to_string());
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
     if source.source_run_id != params.run_id {
         return deny(
             apply_result,
@@ -12319,6 +12439,16 @@ fn apply_replace_file_transaction(
         "Pass",
         None,
     ));
+    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+        apply_result.transaction_status = Some("Denied".to_string());
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
 
     if !(2..=5).contains(&items.len()) {
         apply_result.checklist.push(apply_result_check(
@@ -12803,6 +12933,15 @@ fn apply_proposal(
         "Pass",
         None,
     ));
+    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
 
     if operation != WorkspacePatchOperation::ReplaceFile.as_str()
         && operation != WorkspacePatchOperation::CreateFile.as_str()
@@ -19875,6 +20014,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "completion_rules",
         "permissions",
         "required_action",
+        "scope",
         "allowed",
         "request_reason",
         "subtask_id",
@@ -41809,6 +41949,100 @@ mod tests {
     }
 
     #[test]
+    fn proposal_apply_denies_read_only_source_mode_before_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Review README update","mode_id":"orchestrator"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_read_only_apply",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README",
+        );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"proposal_read_only_apply","reason":"approval does not bypass runtime permission"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_read_only_apply"}}}}"#
+        ));
+        let expected_hash = preflight.result.expect("preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_read_only_apply","expected_target_sha256":"{expected_hash}","replacement_content":"updated README","authorize":true}}}}"#
+        ));
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["applied"], false);
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_time_write_workspace_permission"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(events
+            .iter()
+            .any(|event| event["kind"] == "PermissionDenied"
+                && event["payload"]["scope"] == "proposal.apply"
+                && event["payload"]["required_action"] == "WriteWorkspace"
+                && event["payload"]["allowed"] == false));
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "updated README",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn proposal_apply_replace_file_transaction_updates_two_files_with_bounded_result() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -41936,6 +42170,154 @@ mod tests {
             .unwrap()
             .iter()
             .any(|check| check == "transaction_approvals_unconsumed"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_transaction_denies_read_only_source_mode_before_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::fs::write(temp.path().join("NOTES.md"), "original notes").expect("write notes");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Review two-file update","mode_id":"orchestrator"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_read_only_readme",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_read_only_notes",
+            "NOTES.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated notes",
+        );
+        for proposal_id in [
+            "proposal_tx_read_only_readme",
+            "proposal_tx_read_only_notes",
+        ] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approval does not bypass runtime permission"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let readme_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_read_only_readme"}}}}"#
+        ));
+        let readme_hash = readme_preflight.result.expect("readme preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let notes_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_read_only_notes"}}}}"#
+        ));
+        let notes_hash = notes_preflight.result.expect("notes preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_read_only_readme","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_read_only_readme","expected_target_sha256":"{readme_hash}","replacement_content":"updated README"}},{{"proposal_id":"proposal_tx_read_only_notes","expected_target_sha256":"{notes_hash}","replacement_content":"updated notes"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["transaction_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_time_write_workspace_permission"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("NOTES.md")).unwrap(),
+            "original notes"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_transaction_recovery_denies_read_only_source_mode_before_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("NOTES.md"), "original notes").expect("write notes");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Review recovery update","mode_id":"orchestrator"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_recovery_read_only_notes",
+            "NOTES.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated notes",
+        );
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_recovery_read_only_notes","authorize":true,"transaction_recovery_source":{{"source_run_id":"{run_id}","source_apply_id":"apply_source","source_transaction_id":"tx_source","expected_source_transaction_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},"transaction_items":[{{"proposal_id":"proposal_recovery_read_only_notes","expected_target_sha256":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","replacement_content":"updated notes"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("recovery apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["transaction_recovery_status"],
+            "Denied"
+        );
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_time_write_workspace_permission"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("NOTES.md")).unwrap(),
+            "original notes"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
