@@ -1087,6 +1087,25 @@ export interface WorkspacePatchApplyResultSummary {
   failed_checks: string[];
   blocked_checks: string[];
   checklist: WorkspacePatchApplyResultCheckSummary[];
+  transaction_id?: string | null;
+  transaction_status?: string | null;
+  transaction_items?: WorkspacePatchApplyTransactionItemResultSummary[];
+}
+
+export interface WorkspacePatchApplyTransactionItemResultSummary {
+  proposal_id: string;
+  apply_status: string;
+  apply_reason: string;
+  operation: string;
+  path: string;
+  expected_target_sha256: string;
+  pre_write_target_sha256: string | null;
+  post_write_sha256: string | null;
+  content_chars: number;
+  content_bytes: number;
+  atomic_replacement_completed: boolean;
+  applied: boolean;
+  temp_file_cleaned: boolean;
 }
 
 export interface WorkspacePatchApplyResultCheckSummary {
@@ -2597,8 +2616,12 @@ export function isWorkspacePatchApplyResultCheckSummary(value: unknown): value i
   return isRecord(value) && typeof value.name === 'string' && (value.status === 'Pass' || value.status === 'Fail' || value.status === 'Blocked' || value.status === 'Skipped') && (typeof value.reason === 'string' || value.reason === null) && hasNoForbiddenRawFields(value);
 }
 
+export function isWorkspacePatchApplyTransactionItemResultSummary(value: unknown): value is WorkspacePatchApplyTransactionItemResultSummary {
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.apply_status === 'string' && typeof value.apply_reason === 'string' && typeof value.operation === 'string' && typeof value.path === 'string' && typeof value.expected_target_sha256 === 'string' && (typeof value.pre_write_target_sha256 === 'string' || value.pre_write_target_sha256 === null) && (typeof value.post_write_sha256 === 'string' || value.post_write_sha256 === null) && isNonNegativeInteger(value.content_chars) && isNonNegativeInteger(value.content_bytes) && typeof value.atomic_replacement_completed === 'boolean' && typeof value.applied === 'boolean' && typeof value.temp_file_cleaned === 'boolean' && hasNoForbiddenRawFields(value);
+}
+
 export function isWorkspacePatchApplyResultSummary(value: unknown): value is WorkspacePatchApplyResultSummary {
-  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.apply_id === 'string' && typeof value.apply_status === 'string' && typeof value.apply_reason === 'string' && typeof value.authorization_id === 'string' && typeof value.authorization_consumed === 'boolean' && typeof value.applied === 'boolean' && typeof value.operation === 'string' && typeof value.atomic_replacement_completed === 'boolean' && typeof value.atomic_create_completed === 'boolean' && typeof value.atomic_delete_completed === 'boolean' && typeof value.path === 'string' && (typeof value.expected_target_sha256 === 'string' || value.expected_target_sha256 === null) && (typeof value.expected_target_absent === 'boolean' || value.expected_target_absent === null) && (typeof value.pre_write_target_sha256 === 'string' || value.pre_write_target_sha256 === null) && (typeof value.pre_write_target_exists === 'boolean' || value.pre_write_target_exists === null) && (typeof value.post_write_sha256 === 'string' || value.post_write_sha256 === null) && (typeof value.post_delete_target_exists === 'boolean' || value.post_delete_target_exists === null) && isNonNegativeInteger(value.content_chars) && isNonNegativeInteger(value.content_bytes) && typeof value.checked_at === 'string' && (typeof value.applied_at === 'string' || value.applied_at === null) && typeof value.temp_file_cleaned === 'boolean' && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyResultCheckSummary) && hasNoForbiddenRawFields(value);
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.apply_id === 'string' && typeof value.apply_status === 'string' && typeof value.apply_reason === 'string' && typeof value.authorization_id === 'string' && typeof value.authorization_consumed === 'boolean' && typeof value.applied === 'boolean' && typeof value.operation === 'string' && typeof value.atomic_replacement_completed === 'boolean' && typeof value.atomic_create_completed === 'boolean' && typeof value.atomic_delete_completed === 'boolean' && typeof value.path === 'string' && (typeof value.expected_target_sha256 === 'string' || value.expected_target_sha256 === null) && (typeof value.expected_target_absent === 'boolean' || value.expected_target_absent === null) && (typeof value.pre_write_target_sha256 === 'string' || value.pre_write_target_sha256 === null) && (typeof value.pre_write_target_exists === 'boolean' || value.pre_write_target_exists === null) && (typeof value.post_write_sha256 === 'string' || value.post_write_sha256 === null) && (typeof value.post_delete_target_exists === 'boolean' || value.post_delete_target_exists === null) && isNonNegativeInteger(value.content_chars) && isNonNegativeInteger(value.content_bytes) && typeof value.checked_at === 'string' && (typeof value.applied_at === 'string' || value.applied_at === null) && typeof value.temp_file_cleaned === 'boolean' && isNonNegativeInteger(value.check_count) && Array.isArray(value.failed_checks) && value.failed_checks.every((check) => typeof check === 'string') && Array.isArray(value.blocked_checks) && value.blocked_checks.every((check) => typeof check === 'string') && Array.isArray(value.checklist) && value.checklist.every(isWorkspacePatchApplyResultCheckSummary) && (value.transaction_id === undefined || typeof value.transaction_id === 'string' || value.transaction_id === null) && (value.transaction_status === undefined || typeof value.transaction_status === 'string' || value.transaction_status === null) && (value.transaction_items === undefined || (Array.isArray(value.transaction_items) && value.transaction_items.every(isWorkspacePatchApplyTransactionItemResultSummary))) && hasNoForbiddenRawFields(value);
 }
 
 export function isWorkspacePatchApplyDryRunHistoryEntry(value: unknown): value is WorkspacePatchApplyDryRunHistoryEntry {

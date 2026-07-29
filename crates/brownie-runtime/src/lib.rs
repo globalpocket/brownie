@@ -142,11 +142,11 @@ use brownie_protocol::{
     WorkspacePatchApplyDryRunCheckSummary, WorkspacePatchApplyDryRunHistoryEntry,
     WorkspacePatchApplyDryRunHistorySummary, WorkspacePatchApplyDryRunSummary,
     WorkspacePatchApplyPlanSummary, WorkspacePatchApplyResultCheckSummary,
-    WorkspacePatchApplyResultSummary, WorkspacePatchAuditTrailEntry,
-    WorkspacePatchAuditTrailSummary, WorkspacePatchPreflightSnapshotSummary,
-    WorkspacePatchProposalSummary, WorkspacePatchReadinessCheckSummary,
-    WorkspacePatchReadinessReportSummary, WorkspacePatchReviewBundleSummary,
-    WorkspacePatchReviewQueueDiagnosticsCheckSummary,
+    WorkspacePatchApplyResultSummary, WorkspacePatchApplyTransactionItemResultSummary,
+    WorkspacePatchAuditTrailEntry, WorkspacePatchAuditTrailSummary,
+    WorkspacePatchPreflightSnapshotSummary, WorkspacePatchProposalSummary,
+    WorkspacePatchReadinessCheckSummary, WorkspacePatchReadinessReportSummary,
+    WorkspacePatchReviewBundleSummary, WorkspacePatchReviewQueueDiagnosticsCheckSummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistoryEntrySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestHistorySummary,
     WorkspacePatchReviewQueueDiagnosticsDigestReportHistoryEntrySummary,
@@ -5970,11 +5970,13 @@ fn handle_proposal_apply(id: Value, params: Option<Value>) -> JsonRpcResponse<Va
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    if params.run_id.trim().is_empty() || params.proposal_id.trim().is_empty() {
+    if params.run_id.trim().is_empty()
+        || (params.proposal_id.trim().is_empty() && params.transaction_items.is_none())
+    {
         return error_response(
             id,
             -32602,
-            "invalid params: run_id and proposal_id are required",
+            "invalid params: run_id and proposal_id are required unless transaction_items are provided",
         );
     }
     let store = match BrownieStore::from_env_or_cwd() {
@@ -10246,39 +10248,57 @@ fn record_apply_result(
         .filter(|check| check.status == "Blocked")
         .map(|check| check.name.clone())
         .collect();
+    let mut payload = json!({
+        "proposal_id": proposal_id,
+        "apply_id": &apply_result.apply_id,
+        "apply_status": &apply_result.apply_status,
+        "apply_reason": &apply_result.apply_reason,
+        "authorization_id": &apply_result.authorization_id,
+        "authorization_consumed": apply_result.authorization_consumed,
+        "applied": apply_result.applied,
+        "operation": &apply_result.operation,
+        "atomic_replacement_completed": apply_result.atomic_replacement_completed,
+        "atomic_create_completed": apply_result.atomic_create_completed,
+        "atomic_delete_completed": apply_result.atomic_delete_completed,
+        "path": &apply_result.path,
+        "expected_target_sha256": &apply_result.expected_target_sha256,
+        "expected_target_absent": apply_result.expected_target_absent,
+        "pre_write_target_sha256": &apply_result.pre_write_target_sha256,
+        "pre_write_target_exists": apply_result.pre_write_target_exists,
+        "post_write_sha256": &apply_result.post_write_sha256,
+        "post_delete_target_exists": apply_result.post_delete_target_exists,
+        "content_chars": apply_result.content_chars,
+        "content_bytes": apply_result.content_bytes,
+        "checked_at": &apply_result.checked_at,
+        "applied_at": &apply_result.applied_at,
+        "temp_file_cleaned": apply_result.temp_file_cleaned,
+        "check_count": apply_result.check_count,
+        "failed_checks": &apply_result.failed_checks,
+        "blocked_checks": &apply_result.blocked_checks,
+    });
+    if let Some(transaction_id) = &apply_result.transaction_id {
+        if let Some(payload_object) = payload.as_object_mut() {
+            payload_object.insert("transaction_id".to_string(), json!(transaction_id));
+            payload_object.insert(
+                "transaction_status".to_string(),
+                json!(&apply_result.transaction_status),
+            );
+            payload_object.insert(
+                "transaction_item_count".to_string(),
+                json!(apply_result.transaction_items.len()),
+            );
+            payload_object.insert(
+                "transaction_items".to_string(),
+                json!(&apply_result.transaction_items),
+            );
+        }
+    }
     store
         .tasks()
         .append_task_event_with_payload(
             task,
             LedgerEventKind::WorkspacePatchApplyResultRecorded,
-            Some(json!({
-                "proposal_id": proposal_id,
-                "apply_id": &apply_result.apply_id,
-                "apply_status": &apply_result.apply_status,
-                "apply_reason": &apply_result.apply_reason,
-                "authorization_id": &apply_result.authorization_id,
-                "authorization_consumed": apply_result.authorization_consumed,
-                "applied": apply_result.applied,
-                "operation": &apply_result.operation,
-                "atomic_replacement_completed": apply_result.atomic_replacement_completed,
-                "atomic_create_completed": apply_result.atomic_create_completed,
-                "atomic_delete_completed": apply_result.atomic_delete_completed,
-                "path": &apply_result.path,
-                "expected_target_sha256": &apply_result.expected_target_sha256,
-                "expected_target_absent": apply_result.expected_target_absent,
-                "pre_write_target_sha256": &apply_result.pre_write_target_sha256,
-                "pre_write_target_exists": apply_result.pre_write_target_exists,
-                "post_write_sha256": &apply_result.post_write_sha256,
-                "post_delete_target_exists": apply_result.post_delete_target_exists,
-                "content_chars": apply_result.content_chars,
-                "content_bytes": apply_result.content_bytes,
-                "checked_at": &apply_result.checked_at,
-                "applied_at": &apply_result.applied_at,
-                "temp_file_cleaned": apply_result.temp_file_cleaned,
-                "check_count": apply_result.check_count,
-                "failed_checks": &apply_result.failed_checks,
-                "blocked_checks": &apply_result.blocked_checks,
-            })),
+            Some(payload),
         )
         .map_err(|e| format!("invalid params: {e}"))?;
     Ok((inspect_proposal(store, run_id, proposal_id)?, apply_result))
@@ -10292,15 +10312,33 @@ fn has_consumed_apply_authorization(events: &[LedgerEvent], proposal_id: &str) -
         let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
             return false;
         };
-        payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id)
-            && payload
-                .get("authorization_consumed")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
-            && payload
-                .get("applied")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
+        let consumed = payload
+            .get("authorization_consumed")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let applied = payload
+            .get("applied")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if !consumed || !applied {
+            return false;
+        }
+        if payload.get("proposal_id").and_then(Value::as_str) == Some(proposal_id) {
+            return true;
+        }
+        payload
+            .get("transaction_items")
+            .and_then(Value::as_array)
+            .map(|items| {
+                items.iter().any(|item| {
+                    item.get("proposal_id").and_then(Value::as_str) == Some(proposal_id)
+                        && item
+                            .get("applied")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false)
     })
 }
 
@@ -10415,6 +10453,17 @@ struct AtomicReplaceOutcome {
     failure_reason: Option<&'static str>,
 }
 
+struct PreparedAtomicReplace {
+    temp_path: PathBuf,
+    parent_path: PathBuf,
+}
+
+struct PreparedAtomicReplaceOutcome {
+    prepared: Option<PreparedAtomicReplace>,
+    temp_file_cleaned: bool,
+    failure_reason: Option<&'static str>,
+}
+
 struct AtomicCreateOutcome {
     post_write_sha256: Option<String>,
     temp_file_cleaned: bool,
@@ -10511,12 +10560,22 @@ fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOu
     }
 }
 
-fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
+fn cleanup_atomic_replace_temp(path: &Path) -> bool {
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+fn prepare_atomic_replace_existing_file(
+    target: &Path,
+    replacement_bytes: &[u8],
+) -> PreparedAtomicReplaceOutcome {
     let Some(parent) = target.parent() else {
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: true,
-            atomic_replacement_completed: false,
             failure_reason: Some("Target parent directory is unavailable."),
         };
     };
@@ -10528,13 +10587,6 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
         ".{file_name}.brownie-apply-{}.tmp",
         uuid::Uuid::new_v4().simple()
     ));
-    let cleanup_temp = |path: &Path| -> bool {
-        match std::fs::remove_file(path) {
-            Ok(()) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => false,
-        }
-    };
     let mut temp_file = match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -10542,37 +10594,48 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
     {
         Ok(file) => file,
         Err(_) => {
-            return AtomicReplaceOutcome {
-                post_write_sha256: None,
+            return PreparedAtomicReplaceOutcome {
+                prepared: None,
                 temp_file_cleaned: true,
-                atomic_replacement_completed: false,
                 failure_reason: Some("Temporary sibling file creation failed."),
             }
         }
     };
     if temp_file.write_all(replacement_bytes).is_err() {
         drop(temp_file);
-        let cleaned = cleanup_temp(&temp_path);
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        let cleaned = cleanup_atomic_replace_temp(&temp_path);
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: cleaned,
-            atomic_replacement_completed: false,
             failure_reason: Some("Bounded write to temporary sibling file failed."),
         };
     }
     if temp_file.flush().is_err() || temp_file.sync_all().is_err() {
         drop(temp_file);
-        let cleaned = cleanup_temp(&temp_path);
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        let cleaned = cleanup_atomic_replace_temp(&temp_path);
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: cleaned,
-            atomic_replacement_completed: false,
             failure_reason: Some("Temporary file flush or sync failed."),
         };
     }
     drop(temp_file);
-    if std::fs::rename(&temp_path, target).is_err() {
-        let cleaned = cleanup_temp(&temp_path);
+    PreparedAtomicReplaceOutcome {
+        prepared: Some(PreparedAtomicReplace {
+            temp_path,
+            parent_path: parent.to_path_buf(),
+        }),
+        temp_file_cleaned: false,
+        failure_reason: None,
+    }
+}
+
+fn commit_prepared_atomic_replace(
+    prepared: PreparedAtomicReplace,
+    target: &Path,
+) -> AtomicReplaceOutcome {
+    if std::fs::rename(&prepared.temp_path, target).is_err() {
+        let cleaned = cleanup_atomic_replace_temp(&prepared.temp_path);
         return AtomicReplaceOutcome {
             post_write_sha256: None,
             temp_file_cleaned: cleaned,
@@ -10580,7 +10643,7 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
             failure_reason: Some("Atomic replacement failed."),
         };
     }
-    if let Ok(parent_dir) = std::fs::File::open(parent) {
+    if let Ok(parent_dir) = std::fs::File::open(&prepared.parent_path) {
         let _ = parent_dir.sync_all();
     }
     let post_write_bytes = match std::fs::read(target) {
@@ -10600,6 +10663,19 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
         atomic_replacement_completed: true,
         failure_reason: None,
     }
+}
+
+fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
+    let prepared_outcome = prepare_atomic_replace_existing_file(target, replacement_bytes);
+    let Some(prepared) = prepared_outcome.prepared else {
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: prepared_outcome.temp_file_cleaned,
+            atomic_replacement_completed: false,
+            failure_reason: prepared_outcome.failure_reason,
+        };
+    };
+    commit_prepared_atomic_replace(prepared, target)
 }
 
 fn atomic_delete_existing_file(target: &Path) -> AtomicDeleteOutcome {
@@ -11413,6 +11489,525 @@ fn apply_delete_file_proposal(
     )
 }
 
+struct PreparedReplaceTransactionItem {
+    proposal_id: String,
+    operation: String,
+    path: String,
+    target_path: PathBuf,
+    expected_target_sha256: String,
+    pre_write_target_sha256: String,
+    replacement_bytes: Vec<u8>,
+    content_chars: usize,
+    content_bytes: u64,
+}
+
+fn transaction_item_result(
+    item: &PreparedReplaceTransactionItem,
+    apply_status: &str,
+    apply_reason: &str,
+    post_write_sha256: Option<String>,
+    atomic_replacement_completed: bool,
+    applied: bool,
+    temp_file_cleaned: bool,
+) -> WorkspacePatchApplyTransactionItemResultSummary {
+    WorkspacePatchApplyTransactionItemResultSummary {
+        proposal_id: item.proposal_id.clone(),
+        apply_status: apply_status.to_string(),
+        apply_reason: apply_reason.to_string(),
+        operation: item.operation.clone(),
+        path: item.path.clone(),
+        expected_target_sha256: item.expected_target_sha256.clone(),
+        pre_write_target_sha256: Some(item.pre_write_target_sha256.clone()),
+        post_write_sha256,
+        content_chars: item.content_chars,
+        content_bytes: item.content_bytes,
+        atomic_replacement_completed,
+        applied,
+        temp_file_cleaned,
+    }
+}
+
+fn fallback_transaction_proposal_id(params: &ProposalApplyParams) -> String {
+    if !params.proposal_id.trim().is_empty() {
+        return params.proposal_id.trim().to_string();
+    }
+    params
+        .transaction_items
+        .as_ref()
+        .and_then(|items| items.first())
+        .map(|item| item.proposal_id.clone())
+        .unwrap_or_else(|| "transaction".to_string())
+}
+
+fn apply_replace_file_transaction(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(&params.run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let items = params
+        .transaction_items
+        .as_ref()
+        .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
+    let proposal_id_for_result = fallback_transaction_proposal_id(params);
+    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let mut apply_result = WorkspacePatchApplyResultSummary {
+        proposal_id: proposal_id_for_result.clone(),
+        apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
+        apply_status: "Denied".to_string(),
+        apply_reason: "Transaction apply preconditions were not satisfied.".to_string(),
+        authorization_id: format!("apply_tx_auth_{}", uuid::Uuid::new_v4().simple()),
+        authorization_consumed: false,
+        applied: false,
+        operation: "replace_file_transaction".to_string(),
+        atomic_replacement_completed: false,
+        atomic_create_completed: false,
+        atomic_delete_completed: false,
+        path: "[transaction]".to_string(),
+        expected_target_sha256: None,
+        expected_target_absent: None,
+        pre_write_target_sha256: None,
+        pre_write_target_exists: None,
+        post_write_sha256: None,
+        post_delete_target_exists: None,
+        content_chars: 0,
+        content_bytes: 0,
+        checked_at: now_rfc3339(),
+        applied_at: None,
+        temp_file_cleaned: true,
+        check_count: 0,
+        failed_checks: Vec::new(),
+        blocked_checks: Vec::new(),
+        checklist: vec![apply_result_check(
+            "transaction_request_present",
+            "Pass",
+            None,
+        )],
+        transaction_id: Some(format!("apply_tx_{}", uuid::Uuid::new_v4().simple())),
+        transaction_status: Some("Denied".to_string()),
+        transaction_items: Vec::new(),
+    };
+
+    if !params.authorize {
+        apply_result.checklist.push(apply_result_check(
+            "one_time_transaction_authorization",
+            "Fail",
+            Some("Transaction apply request must explicitly set authorize=true."),
+        ));
+        apply_result.apply_reason =
+            "Transaction apply request must explicitly set authorize=true.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "one_time_transaction_authorization",
+        "Pass",
+        None,
+    ));
+
+    if !(2..=5).contains(&items.len()) {
+        apply_result.checklist.push(apply_result_check(
+            "transaction_item_count_bounded",
+            "Fail",
+            Some("Transaction apply requires between two and five items."),
+        ));
+        apply_result.apply_reason =
+            "Transaction apply requires between two and five items.".to_string();
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_item_count_bounded",
+        "Pass",
+        None,
+    ));
+
+    let events = read_existing_run_events(store, &params.run_id)?;
+    let mut seen_proposals = BTreeSet::new();
+    let mut seen_paths: BTreeSet<String> = BTreeSet::new();
+    let mut prepared_items = Vec::new();
+
+    for item in items {
+        if item.proposal_id.trim().is_empty() || !seen_proposals.insert(item.proposal_id.clone()) {
+            apply_result.checklist.push(apply_result_check(
+                "transaction_proposal_ids_unique",
+                "Fail",
+                Some("Transaction item proposal_id values must be non-empty and unique."),
+            ));
+            apply_result.apply_reason =
+                "Transaction item proposal_id values must be non-empty and unique.".to_string();
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
+
+        let proposal = inspect_proposal(store, &params.run_id, &item.proposal_id)?;
+        let deny_item = |apply_result: WorkspacePatchApplyResultSummary,
+                         check_name: &str,
+                         reason: &str|
+         -> Result<
+            (
+                WorkspacePatchProposalSummary,
+                WorkspacePatchApplyResultSummary,
+            ),
+            String,
+        > {
+            let mut result = apply_result;
+            result
+                .checklist
+                .push(apply_result_check(check_name, "Fail", Some(reason)));
+            result.apply_reason = reason.to_string();
+            result.transaction_status = Some("Denied".to_string());
+            record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                result,
+            )
+        };
+        if proposal.operation != WorkspacePatchOperation::ReplaceFile.as_str() {
+            return deny_item(
+                apply_result,
+                "transaction_replace_file_only",
+                "Transaction apply only supports replace_file proposals.",
+            );
+        }
+        if proposal.validation_status != "Valid" {
+            return deny_item(
+                apply_result,
+                "transaction_proposals_valid",
+                "Every transaction proposal must have validation_status=Valid.",
+            );
+        }
+        if proposal.approval_status != "Approved" {
+            return deny_item(
+                apply_result,
+                "transaction_proposals_approved",
+                "Every transaction proposal must be approved before apply.",
+            );
+        }
+        if let Some(reason) = approval_current_failure_reason(proposal.approved_at.as_deref()) {
+            return deny_item(apply_result, "transaction_approvals_current", reason);
+        }
+        if has_consumed_apply_authorization(&events, &item.proposal_id) {
+            return deny_item(
+                apply_result,
+                "transaction_approvals_unconsumed",
+                "A transaction proposal apply authorization has already been consumed.",
+            );
+        }
+        if item.replacement_content.chars().count() > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
+            return deny_item(
+                apply_result,
+                "transaction_replacement_content_bounded",
+                "Replacement content exceeds the runtime write limit.",
+            );
+        }
+        if scan_text_for_sensitive_content(&item.replacement_content) {
+            return deny_item(
+                apply_result,
+                "transaction_replacement_content_sensitive_scan",
+                "Replacement content contains sensitive-like data.",
+            );
+        }
+        if item.replacement_content.chars().count() != proposal.content_chars
+            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
+                != proposal.content_preview
+        {
+            return deny_item(
+                apply_result,
+                "transaction_replacement_content_matches_proposal",
+                "Replacement content does not match approved proposal metadata.",
+            );
+        }
+        if proposal.diff_redacted
+            || proposal.content_preview == "[redacted]"
+            || proposal.diff_truncated
+            || proposal.diff_preview.is_none()
+        {
+            return deny_item(
+                apply_result,
+                "transaction_proposal_diff_available",
+                "Proposal diff must be available and untruncated for transaction apply.",
+            );
+        }
+        if !is_sha256_fingerprint(&item.expected_target_sha256) {
+            return deny_item(
+                apply_result,
+                "transaction_expected_target_hashes_valid",
+                "Every expected target hash must be a sha256 fingerprint.",
+            );
+        }
+        let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+            return deny_item(
+                apply_result,
+                "transaction_latest_preflight_exists",
+                "Run proposal.preflight for every transaction proposal before applying.",
+            );
+        };
+        let current_snapshot =
+            match capture_preflight_snapshot(store, &proposal, Some(previous_snapshot)) {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    return deny_item(
+                        apply_result,
+                        "transaction_latest_preflight_validation",
+                        "Latest preflight validation failed for a transaction proposal.",
+                    )
+                }
+            };
+        append_preflight_snapshot_event(store, &task, &current_snapshot)?;
+        if current_snapshot.stale {
+            return deny_item(
+                apply_result,
+                "transaction_latest_preflight_validation",
+                "Latest preflight validation found a stale transaction target.",
+            );
+        }
+        let target_path = match resolve_apply_target_path(store, &proposal) {
+            Ok(path) => path,
+            Err(reason) => return deny_item(apply_result, "transaction_target_path_safe", reason),
+        };
+        for seen_path in seen_paths.iter() {
+            if seen_path == &proposal.path
+                || seen_path.starts_with(&format!("{}/", proposal.path))
+                || proposal.path.starts_with(&format!("{seen_path}/"))
+            {
+                return deny_item(
+                    apply_result,
+                    "transaction_target_paths_non_overlapping",
+                    "Transaction target paths must be unique and non-overlapping.",
+                );
+            }
+        }
+        seen_paths.insert(proposal.path.clone());
+        let current_bytes = std::fs::read(&target_path)
+            .map_err(|_| "Target file could not be read before transaction apply.".to_string())?;
+        let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
+        if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
+            || item.expected_target_sha256 != pre_write_hash
+        {
+            return deny_item(
+                apply_result,
+                "transaction_expected_target_hashes_match",
+                "Expected target hash does not match current transaction target file.",
+            );
+        }
+        let current_content = match std::str::from_utf8(&current_bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                return deny_item(
+                    apply_result,
+                    "transaction_targets_utf8",
+                    "Every transaction target file must be UTF-8.",
+                )
+            }
+        };
+        if scan_text_for_sensitive_content(current_content) {
+            return deny_item(
+                apply_result,
+                "transaction_targets_sensitive_scan",
+                "A transaction target file contains sensitive-like data.",
+            );
+        }
+        let current_diff =
+            synthetic_unified_diff(&proposal.path, current_content, &item.replacement_content);
+        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+            return deny_item(
+                apply_result,
+                "transaction_approved_diffs_match_current_targets",
+                "Approved diff does not match a current transaction target and replacement content.",
+            );
+        }
+        let content_chars = item.replacement_content.chars().count();
+        let replacement_bytes = item.replacement_content.as_bytes().to_vec();
+        let content_bytes = replacement_bytes.len() as u64;
+        apply_result.content_chars += content_chars;
+        apply_result.content_bytes += content_bytes;
+        prepared_items.push(PreparedReplaceTransactionItem {
+            proposal_id: item.proposal_id.clone(),
+            operation: proposal.operation,
+            path: proposal.path,
+            target_path,
+            expected_target_sha256: item.expected_target_sha256.clone(),
+            pre_write_target_sha256: pre_write_hash,
+            replacement_bytes,
+            content_chars,
+            content_bytes,
+        });
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_admission_all_items_passed",
+        "Pass",
+        None,
+    ));
+
+    let mut prepared_replacements = Vec::new();
+    for item in &prepared_items {
+        let prepared =
+            prepare_atomic_replace_existing_file(&item.target_path, &item.replacement_bytes);
+        if let Some(prepared) = prepared.prepared {
+            prepared_replacements.push(prepared);
+            continue;
+        }
+        let reason = prepared
+            .failure_reason
+            .unwrap_or("Temporary sibling file preparation failed.");
+        for replacement in prepared_replacements {
+            apply_result.temp_file_cleaned = apply_result.temp_file_cleaned
+                && cleanup_atomic_replace_temp(&replacement.temp_path);
+        }
+        apply_result.transaction_items.push(transaction_item_result(
+            item,
+            "Failed",
+            reason,
+            None,
+            false,
+            false,
+            prepared.temp_file_cleaned,
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = reason.to_string();
+        apply_result.transaction_status = Some("Failed".to_string());
+        apply_result.checklist.push(apply_result_check(
+            "transaction_temporary_sibling_files_created",
+            "Fail",
+            Some(reason),
+        ));
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_temporary_sibling_files_created",
+        "Pass",
+        None,
+    ));
+
+    for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
+        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+        let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
+        apply_result.temp_file_cleaned =
+            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+        if let Some(reason) = outcome.failure_reason {
+            apply_result.transaction_items.push(transaction_item_result(
+                item,
+                "Failed",
+                reason,
+                outcome.post_write_sha256,
+                outcome.atomic_replacement_completed,
+                false,
+                outcome.temp_file_cleaned,
+            ));
+            apply_result.apply_status = "Failed".to_string();
+            apply_result.apply_reason = reason.to_string();
+            apply_result.transaction_status = Some("Failed".to_string());
+            apply_result.checklist.push(apply_result_check(
+                "transaction_atomic_replacements_completed",
+                "Fail",
+                Some(reason),
+            ));
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
+        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+            apply_result.transaction_items.push(transaction_item_result(
+                item,
+                "Failed",
+                "Post-write SHA-256 does not match replacement content.",
+                outcome.post_write_sha256,
+                outcome.atomic_replacement_completed,
+                false,
+                outcome.temp_file_cleaned,
+            ));
+            apply_result.apply_status = "Failed".to_string();
+            apply_result.apply_reason =
+                "Post-write SHA-256 does not match replacement content.".to_string();
+            apply_result.transaction_status = Some("Failed".to_string());
+            apply_result.checklist.push(apply_result_check(
+                "transaction_post_write_sha256_verified",
+                "Fail",
+                Some("Post-write SHA-256 does not match replacement content."),
+            ));
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            );
+        }
+        apply_result.transaction_items.push(transaction_item_result(
+            item,
+            "Applied",
+            "File replaced and post-write SHA-256 verified.",
+            outcome.post_write_sha256.clone(),
+            outcome.atomic_replacement_completed,
+            true,
+            outcome.temp_file_cleaned,
+        ));
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_atomic_replacements_completed",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "transaction_post_write_sha256_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason =
+        "Transaction applied and all post-write SHA-256 values verified.".to_string();
+    apply_result.transaction_status = Some("Applied".to_string());
+    apply_result.atomic_replacement_completed = true;
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        &task,
+        &params.run_id,
+        &proposal_id_for_result,
+        apply_result,
+    )
+    .map(|(_, result)| (first_proposal, result))
+}
+
 fn apply_proposal(
     store: &BrownieStore,
     params: &ProposalApplyParams,
@@ -11423,6 +12018,10 @@ fn apply_proposal(
     ),
     String,
 > {
+    if params.transaction_items.is_some() {
+        return apply_replace_file_transaction(store, params);
+    }
+
     let task = store
         .tasks()
         .get_task_by_run_id(&params.run_id)
@@ -11472,6 +12071,9 @@ fn apply_proposal(
         failed_checks: Vec::new(),
         blocked_checks: Vec::new(),
         checklist: vec![apply_result_check("proposal_exists", "Pass", None)],
+        transaction_id: None,
+        transaction_status: None,
+        transaction_items: Vec::new(),
     };
 
     if !params.authorize {
@@ -15935,6 +16537,10 @@ fn proposal_audit_entry(
                     "checked_at",
                     "applied_at",
                     "temp_file_cleaned",
+                    "transaction_id",
+                    "transaction_status",
+                    "transaction_item_count",
+                    "transaction_items",
                     "check_count",
                     "failed_checks",
                     "blocked_checks",
@@ -18704,6 +19310,10 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "content_bytes",
         "applied_at",
         "temp_file_cleaned",
+        "transaction_id",
+        "transaction_status",
+        "transaction_item_count",
+        "transaction_items",
         "dry_run_id",
         "dry_run_status",
         "dry_run_reason",
@@ -40404,6 +41014,220 @@ mod tests {
         ] {
             assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
         }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_replace_file_transaction_updates_two_files_with_bounded_result() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::fs::write(temp.path().join("NOTES.md"), "original notes").expect("write notes");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement two-file update","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_readme",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_notes",
+            "NOTES.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated notes",
+        );
+
+        for proposal_id in ["proposal_tx_readme", "proposal_tx_notes"] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let readme_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme"}}}}"#
+        ));
+        let readme_hash = readme_preflight.result.expect("readme preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let notes_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_notes"}}}}"#
+        ));
+        let notes_hash = notes_preflight.result.expect("notes preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_readme","expected_target_sha256":"{readme_hash}","replacement_content":"updated README"}},{{"proposal_id":"proposal_tx_notes","expected_target_sha256":"{notes_hash}","replacement_content":"updated notes"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(
+            apply_result["apply_result"]["transaction_status"],
+            "Applied"
+        );
+        assert_eq!(
+            apply_result["apply_result"]["transaction_items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "updated README"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("NOTES.md")).unwrap(),
+            "updated notes"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let apply_event = events
+            .iter()
+            .rev()
+            .find(|event| event["kind"] == "WorkspacePatchApplyResultRecorded")
+            .expect("apply event");
+        assert_eq!(apply_event["payload"]["transaction_item_count"], 2);
+        let serialized_apply_payload =
+            serde_json::to_string(&apply_event["payload"]).expect("serialize apply payload");
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "updated README",
+            "original notes",
+            "updated notes",
+        ] {
+            assert!(!serialized_apply_payload.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+        let replay_apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_readme","expected_target_sha256":"{readme_hash}","replacement_content":"updated README"}},{{"proposal_id":"proposal_tx_notes","expected_target_sha256":"{notes_hash}","replacement_content":"updated notes"}}]}}}}"#
+        ));
+        let replay_result = replay_apply.result.expect("replay apply result");
+        assert_eq!(replay_result["apply_result"]["apply_status"], "Denied");
+        assert!(replay_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "transaction_approvals_unconsumed"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_replace_file_transaction_rejects_hash_mismatch_before_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::fs::write(temp.path().join("NOTES.md"), "original notes").expect("write notes");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Implement two-file update","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_readme_mismatch",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_notes_mismatch",
+            "NOTES.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated notes",
+        );
+
+        for proposal_id in ["proposal_tx_readme_mismatch", "proposal_tx_notes_mismatch"] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let readme_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme_mismatch"}}}}"#
+        ));
+        let readme_hash = readme_preflight.result.expect("readme preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let notes_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_notes_mismatch"}}}}"#
+        ));
+        assert!(notes_preflight.result.is_some());
+
+        let bad_hash = format!("sha256:{}", "0".repeat(64));
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme_mismatch","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_readme_mismatch","expected_target_sha256":"{readme_hash}","replacement_content":"updated README"}},{{"proposal_id":"proposal_tx_notes_mismatch","expected_target_sha256":"{bad_hash}","replacement_content":"updated notes"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("NOTES.md")).unwrap(),
+            "original notes"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
