@@ -10453,6 +10453,17 @@ struct AtomicReplaceOutcome {
     failure_reason: Option<&'static str>,
 }
 
+struct PreparedAtomicReplace {
+    temp_path: PathBuf,
+    parent_path: PathBuf,
+}
+
+struct PreparedAtomicReplaceOutcome {
+    prepared: Option<PreparedAtomicReplace>,
+    temp_file_cleaned: bool,
+    failure_reason: Option<&'static str>,
+}
+
 struct AtomicCreateOutcome {
     post_write_sha256: Option<String>,
     temp_file_cleaned: bool,
@@ -10549,12 +10560,22 @@ fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOu
     }
 }
 
-fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
+fn cleanup_atomic_replace_temp(path: &Path) -> bool {
+    match std::fs::remove_file(path) {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
+        Err(_) => false,
+    }
+}
+
+fn prepare_atomic_replace_existing_file(
+    target: &Path,
+    replacement_bytes: &[u8],
+) -> PreparedAtomicReplaceOutcome {
     let Some(parent) = target.parent() else {
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: true,
-            atomic_replacement_completed: false,
             failure_reason: Some("Target parent directory is unavailable."),
         };
     };
@@ -10566,13 +10587,6 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
         ".{file_name}.brownie-apply-{}.tmp",
         uuid::Uuid::new_v4().simple()
     ));
-    let cleanup_temp = |path: &Path| -> bool {
-        match std::fs::remove_file(path) {
-            Ok(()) => true,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => true,
-            Err(_) => false,
-        }
-    };
     let mut temp_file = match std::fs::OpenOptions::new()
         .write(true)
         .create_new(true)
@@ -10580,37 +10594,48 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
     {
         Ok(file) => file,
         Err(_) => {
-            return AtomicReplaceOutcome {
-                post_write_sha256: None,
+            return PreparedAtomicReplaceOutcome {
+                prepared: None,
                 temp_file_cleaned: true,
-                atomic_replacement_completed: false,
                 failure_reason: Some("Temporary sibling file creation failed."),
             }
         }
     };
     if temp_file.write_all(replacement_bytes).is_err() {
         drop(temp_file);
-        let cleaned = cleanup_temp(&temp_path);
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        let cleaned = cleanup_atomic_replace_temp(&temp_path);
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: cleaned,
-            atomic_replacement_completed: false,
             failure_reason: Some("Bounded write to temporary sibling file failed."),
         };
     }
     if temp_file.flush().is_err() || temp_file.sync_all().is_err() {
         drop(temp_file);
-        let cleaned = cleanup_temp(&temp_path);
-        return AtomicReplaceOutcome {
-            post_write_sha256: None,
+        let cleaned = cleanup_atomic_replace_temp(&temp_path);
+        return PreparedAtomicReplaceOutcome {
+            prepared: None,
             temp_file_cleaned: cleaned,
-            atomic_replacement_completed: false,
             failure_reason: Some("Temporary file flush or sync failed."),
         };
     }
     drop(temp_file);
-    if std::fs::rename(&temp_path, target).is_err() {
-        let cleaned = cleanup_temp(&temp_path);
+    PreparedAtomicReplaceOutcome {
+        prepared: Some(PreparedAtomicReplace {
+            temp_path,
+            parent_path: parent.to_path_buf(),
+        }),
+        temp_file_cleaned: false,
+        failure_reason: None,
+    }
+}
+
+fn commit_prepared_atomic_replace(
+    prepared: PreparedAtomicReplace,
+    target: &Path,
+) -> AtomicReplaceOutcome {
+    if std::fs::rename(&prepared.temp_path, target).is_err() {
+        let cleaned = cleanup_atomic_replace_temp(&prepared.temp_path);
         return AtomicReplaceOutcome {
             post_write_sha256: None,
             temp_file_cleaned: cleaned,
@@ -10618,7 +10643,7 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
             failure_reason: Some("Atomic replacement failed."),
         };
     }
-    if let Ok(parent_dir) = std::fs::File::open(parent) {
+    if let Ok(parent_dir) = std::fs::File::open(&prepared.parent_path) {
         let _ = parent_dir.sync_all();
     }
     let post_write_bytes = match std::fs::read(target) {
@@ -10638,6 +10663,19 @@ fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> Atom
         atomic_replacement_completed: true,
         failure_reason: None,
     }
+}
+
+fn atomic_replace_existing_file(target: &Path, replacement_bytes: &[u8]) -> AtomicReplaceOutcome {
+    let prepared_outcome = prepare_atomic_replace_existing_file(target, replacement_bytes);
+    let Some(prepared) = prepared_outcome.prepared else {
+        return AtomicReplaceOutcome {
+            post_write_sha256: None,
+            temp_file_cleaned: prepared_outcome.temp_file_cleaned,
+            atomic_replacement_completed: false,
+            failure_reason: prepared_outcome.failure_reason,
+        };
+    };
+    commit_prepared_atomic_replace(prepared, target)
 }
 
 fn atomic_delete_existing_file(target: &Path) -> AtomicDeleteOutcome {
@@ -11828,9 +11866,55 @@ fn apply_replace_file_transaction(
         None,
     ));
 
+    let mut prepared_replacements = Vec::new();
     for item in &prepared_items {
+        let prepared =
+            prepare_atomic_replace_existing_file(&item.target_path, &item.replacement_bytes);
+        if let Some(prepared) = prepared.prepared {
+            prepared_replacements.push(prepared);
+            continue;
+        }
+        let reason = prepared
+            .failure_reason
+            .unwrap_or("Temporary sibling file preparation failed.");
+        for replacement in prepared_replacements {
+            apply_result.temp_file_cleaned = apply_result.temp_file_cleaned
+                && cleanup_atomic_replace_temp(&replacement.temp_path);
+        }
+        apply_result.transaction_items.push(transaction_item_result(
+            item,
+            "Failed",
+            reason,
+            None,
+            false,
+            false,
+            prepared.temp_file_cleaned,
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = reason.to_string();
+        apply_result.transaction_status = Some("Failed".to_string());
+        apply_result.checklist.push(apply_result_check(
+            "transaction_temporary_sibling_files_created",
+            "Fail",
+            Some(reason),
+        ));
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_temporary_sibling_files_created",
+        "Pass",
+        None,
+    ));
+
+    for (item, prepared_replacement) in prepared_items.iter().zip(prepared_replacements) {
         let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
-        let outcome = atomic_replace_existing_file(&item.target_path, &item.replacement_bytes);
+        let outcome = commit_prepared_atomic_replace(prepared_replacement, &item.target_path);
         apply_result.temp_file_cleaned =
             apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
         if let Some(reason) = outcome.failure_reason {
