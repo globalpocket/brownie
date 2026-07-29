@@ -670,6 +670,13 @@ pub struct ProposalApplyDryRunParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyTransactionItem {
+    pub proposal_id: String,
+    pub expected_target_sha256: String,
+    pub replacement_content: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalApplyParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -677,6 +684,8 @@ pub struct ProposalApplyParams {
     pub expected_target_absent: Option<bool>,
     pub replacement_content: Option<String>,
     pub authorize: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_items: Option<Vec<ProposalApplyTransactionItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1503,6 +1512,23 @@ pub struct WorkspacePatchApplyDryRunCheckSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchApplyTransactionItemResultSummary {
+    pub proposal_id: String,
+    pub apply_status: String,
+    pub apply_reason: String,
+    pub operation: String,
+    pub path: String,
+    pub expected_target_sha256: String,
+    pub pre_write_target_sha256: Option<String>,
+    pub post_write_sha256: Option<String>,
+    pub content_chars: usize,
+    pub content_bytes: u64,
+    pub atomic_replacement_completed: bool,
+    pub applied: bool,
+    pub temp_file_cleaned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspacePatchApplyResultSummary {
     pub proposal_id: String,
     pub apply_id: String,
@@ -1531,6 +1557,12 @@ pub struct WorkspacePatchApplyResultSummary {
     pub failed_checks: Vec<String>,
     pub blocked_checks: Vec<String>,
     pub checklist: Vec<WorkspacePatchApplyResultCheckSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_status: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transaction_items: Vec<WorkspacePatchApplyTransactionItemResultSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
