@@ -15,6 +15,17 @@ Proposal generation is gated by `WriteWorkspace`. If the active runtime policy d
 
 M8.2 keeps recovery repair proposals inside the same permission boundary. An admitted verification recovery task may create at most one recovery-scoped `WorkspacePatchProposed` event during explicit `task.run`, and only when the recovery task has current source verifier-failure provenance and the `workspace.write` intent is approved by `WriteWorkspace`. The proposal remains non-mutating: review, approval, preflight, and a later explicit `proposal.apply` authorization are still required before any workspace file can change.
 
+M15.1 adds apply-time revalidation to the side-effecting `proposal.apply`
+authority. A single-file apply, multi-file transaction apply, or transaction
+recovery apply must reconstruct the source run's stored mode policy and pass
+`WriteWorkspace` after explicit apply authorization is present but before any
+authorization consumption, temporary sibling file creation, delete, atomic
+replacement, transaction item write, or recovery write. Missing, malformed,
+unknown, or denied mode evidence fails closed and records bounded permission
+evidence without raw file content, raw diffs, raw request bodies, absolute paths,
+canonical paths, prompts, provider responses, command output, environment values,
+secrets, or API keys.
+
 ## Ledger event
 
 Approved write intents append `WorkspacePatchProposed` with metadata only:

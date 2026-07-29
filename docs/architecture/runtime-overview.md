@@ -146,6 +146,22 @@ raw diffs, raw request bodies, raw ledger payloads, absolute paths, canonical
 paths, stdout, stderr, command strings, environment values, provider responses,
 prompts, or secrets.
 
+M15.1 hardens the same side-effecting `proposal.apply` authority with apply-time
+`WriteWorkspace` permission revalidation. After explicit apply authorization is
+present, but before authorization can be consumed or any temporary file, atomic
+replacement, deletion, transaction item, or recovery write can occur, the Rust
+runtime reconstructs the source run's stored mode policy and checks
+`RuntimeAction::WriteWorkspace`. Missing, malformed, unknown, or read-only mode
+evidence fails closed. The runtime records bounded `PermissionChecked` and, on
+denial, `PermissionDenied` evidence with only mode ID, required action, decision,
+reason, apply/proposal identifiers, and operation class.
+
+Apply-time permission revalidation does not add a new RPC, readiness report,
+history, digest, preview, inspection surface, VSIX-owned policy, or new mutation
+operation. It preserves existing approval, preflight, hash, path, file-kind,
+symlink, content-bound, sensitive-scan, transaction, recovery, temporary sibling,
+atomic write, and post-write verification gates after permission passes.
+
 ## Controlled Verification Boundary
 
 M7.1 introduces the first runtime-owned verification execution path. The built-in `verification.cargo_fmt_check` tool is the only executable verifier in this slice: it requires `ExecuteProcess` permission, runs exactly `cargo fmt --check` at the workspace root, rejects caller-supplied command, argv, cwd, environment, stdin, shell, timeout, or unknown fields, and reports bounded status metadata through `tool.execute` and task-scoped `ToolExecution*` ledger events.
