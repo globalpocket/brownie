@@ -677,6 +677,14 @@ pub struct ProposalApplyTransactionItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalApplyTransactionRecoverySource {
+    pub source_run_id: String,
+    pub source_apply_id: String,
+    pub source_transaction_id: String,
+    pub expected_source_transaction_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalApplyParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -686,6 +694,8 @@ pub struct ProposalApplyParams {
     pub authorize: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction_items: Option<Vec<ProposalApplyTransactionItem>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_recovery_source: Option<ProposalApplyTransactionRecoverySource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1529,6 +1539,18 @@ pub struct WorkspacePatchApplyTransactionItemResultSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspacePatchTransactionRecoverySourceSummary {
+    pub source_run_id: String,
+    pub source_apply_id: String,
+    pub source_transaction_id: String,
+    pub source_transaction_fingerprint: String,
+    pub source_transaction_status: String,
+    pub source_item_count: usize,
+    pub source_applied_item_count: usize,
+    pub source_recovery_item_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct WorkspacePatchApplyResultSummary {
     pub proposal_id: String,
     pub apply_id: String,
@@ -1563,6 +1585,10 @@ pub struct WorkspacePatchApplyResultSummary {
     pub transaction_status: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transaction_items: Vec<WorkspacePatchApplyTransactionItemResultSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_recovery_source: Option<WorkspacePatchTransactionRecoverySourceSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_recovery_status: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
