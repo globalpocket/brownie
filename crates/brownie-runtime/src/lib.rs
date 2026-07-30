@@ -2294,6 +2294,47 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_tool_plan_events(&store, &running, &policy) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
+    let provider_selection = match llm_provider_status_from_workspace(store.workspace_root()) {
+        Ok(s) => s,
+        Err(error) => {
+            return error_response(
+                id,
+                -32603,
+                &format!("internal error: {}", redact_secret(&error)),
+            )
+        }
+    };
+    if task_run_requires_access_network_permission(&provider_selection) {
+        let decision = RuntimePermissionGate::check(&policy, RuntimeAction::AccessNetwork);
+        let payload = permission_payload(&policy, &decision);
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            &running,
+            LedgerEventKind::PermissionChecked,
+            Some(payload.clone()),
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if !decision.allowed {
+            if let Err(error) = store.tasks().append_task_event_with_payload(
+                &running,
+                LedgerEventKind::PermissionDenied,
+                Some(payload),
+            ) {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            return fail_llm_request(
+                &store,
+                &running,
+                id,
+                provider_selection,
+                &format!(
+                    "real-provider task.run requires AccessNetwork runtime permission: {}",
+                    decision.reason
+                ),
+                LedgerEventKind::LlmRequestFailed,
+            );
+        }
+    }
     if let Some(selected_context) = selected_index_context.as_ref() {
         if let Err(error) =
             append_codebase_index_prompt_context_materialized(&store, &running, selected_context)
@@ -2329,16 +2370,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     };
     let provider_status = provider.status();
-    let provider_selection = match llm_provider_status_from_workspace(store.workspace_root()) {
-        Ok(s) => s,
-        Err(error) => {
-            return error_response(
-                id,
-                -32603,
-                &format!("internal error: {}", redact_secret(&error)),
-            )
-        }
-    };
     let provider_strict = provider_selection.strict;
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
@@ -4110,6 +4141,9 @@ fn llm_provider_failure_class(reason: &str) -> &'static str {
     if lower.contains("real-provider task.run requires brownie_llm_allow_task_run_network=true") {
         return "network_not_authorized";
     }
+    if lower.contains("real-provider task.run requires accessnetwork runtime permission") {
+        return "network_not_authorized";
+    }
     if lower.contains("prompt sensitive-content guard failed") {
         return "sensitive_prompt_denied";
     }
@@ -4144,6 +4178,14 @@ fn llm_provider_failure_class(reason: &str) -> &'static str {
         return "transport_or_timeout";
     }
     "unknown_provider_failure"
+}
+
+fn task_run_requires_access_network_permission(selection: &RuntimeLlmProviderStatus) -> bool {
+    selection.status.provider == LlmProviderKind::OpenAiCompatible
+        && selection.status.enabled
+        && selection.strict
+        && !selection.will_fallback_to_fake
+        && selection.task_run_network_allowed
 }
 
 fn http_status_from_failure_reason(reason: &str) -> Option<u16> {
@@ -46292,8 +46334,10 @@ mod tests {
             .as_array()
             .expect("modes")
             .clone();
-        assert_eq!(modes.len(), 3);
+        assert_eq!(modes.len(), 4);
         assert!(modes.iter().any(|mode| mode["mode_id"] == "orchestrator"));
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "provider-runner"
+            && mode["permissions"]["network_access"] == true));
 
         let get = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
@@ -46315,7 +46359,7 @@ mod tests {
             .as_array()
             .expect("modes")
             .clone();
-        assert_eq!(modes.len(), 4);
+        assert_eq!(modes.len(), 5);
         assert!(modes.iter().any(|mode| mode["mode_id"] == "reviewer-lite"));
 
         let get = parse_line(
@@ -47470,7 +47514,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "warn");
 
         let start = parse_line(
-            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=sk-test-sensitive-preview","mode_id":"orchestrator"}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Read README with api_key=sk-test-sensitive-preview","mode_id":"provider-runner"}}"#,
         )
         .result
         .unwrap();
@@ -47539,7 +47583,7 @@ content-length: {}
         assert_eq!(status["enabled"], true);
         assert_eq!(status["strict"], true);
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Use mock provider","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Use mock provider","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let run = parse_line(&format!(
@@ -47591,6 +47635,86 @@ content-length: {}
         assert!(serialized.contains("Mock LLM final response after tool feedback"));
     }
 
+    #[test]
+    fn strict_openai_task_run_denies_without_access_network_permission_before_provider_request() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+        write_mock_config(temp.path(), &base_url);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
+        std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
+
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Deny provider request","mode_id":"orchestrator"}}"#).result.unwrap();
+        let task_id = start["task_id"].as_str().unwrap();
+        let run_id = start["run_id"].as_str().unwrap();
+        let first = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(first["status"], "Failed");
+        let failure = &first["llm_provider_failure"];
+        assert_eq!(failure["failure_class"], "network_not_authorized");
+        assert!(failure["reason"]
+            .as_str()
+            .unwrap()
+            .contains("AccessNetwork runtime permission"));
+        match listener.accept() {
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Ok(_) => panic!("provider request reached mock listener despite denied permission"),
+            Err(error) => panic!("unexpected listener error: {error}"),
+        }
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(
+            replay["llm_provider_failure"]["failure_fingerprint"],
+            first["llm_provider_failure"]["failure_fingerprint"]
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        assert!(
+            event_list.iter().any(|event| {
+                event["kind"] == "PermissionDenied"
+                    && event["payload"]["allowed"] == false
+                    && event["payload"]["reason"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("network access"))
+            }),
+            "{serialized_events}"
+        );
+        assert!(event_list
+            .iter()
+            .all(|event| event["kind"] != "LlmRequestCreated"
+                && event["kind"] != "LlmResponseReceived"
+                && event["kind"] != "SecondPassLlmRequestCreated"
+                && event["kind"] != "SecondPassLlmResponseReceived"));
+        assert_eq!(
+            event_list
+                .iter()
+                .filter(|event| event["kind"] == "LlmRequestFailed")
+                .count(),
+            1
+        );
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+        assert!(!serialized.contains("Bearer"));
+    }
+
     fn assert_strict_failure(
         status_line: &str,
         body: &'static str,
@@ -47605,7 +47729,7 @@ content-length: {}
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail strictly","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Fail strictly","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let run = parse_line(&format!(
@@ -47655,7 +47779,7 @@ content-length: {}
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Guard failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Guard failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let run = parse_line(&format!(
@@ -47767,7 +47891,7 @@ content-length: {}
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
         std::env::set_var("BROWNIE_LLM_SENSITIVE_GUARD", "fail");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=sk-test-sensitive-denied","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Inspect README with api_key=sk-test-sensitive-denied","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let run = parse_line(&format!(
@@ -47804,7 +47928,7 @@ content-length: {}
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Replay provider failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Replay provider failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let task_id = start["task_id"].as_str().unwrap();
         let run_id = start["run_id"].as_str().unwrap();
         let first = parse_line(&format!(
@@ -47847,7 +47971,7 @@ content-length: {}
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let source_task_id = start["task_id"].as_str().unwrap().to_string();
         let source_run_id = start["run_id"].as_str().unwrap().to_string();
         let run = parse_line(&format!(
@@ -47877,7 +48001,7 @@ content-length: {}
         std::env::set_var("BROWNIE_TEST_LLM_API_KEY", "test-key");
         std::env::set_var("BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK", "true");
 
-        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider transport failure","mode_id":"orchestrator"}}"#).result.unwrap();
+        let start = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Source provider transport failure","mode_id":"provider-runner"}}"#).result.unwrap();
         let source_task_id = start["task_id"].as_str().unwrap().to_string();
         let source_run_id = start["run_id"].as_str().unwrap().to_string();
         let run = parse_line(&format!(
@@ -47917,7 +48041,7 @@ content-length: {}
   "method": "task.start",
   "params": {{
     "goal": "Retry provider failure",
-    "mode_id": "orchestrator",
+    "mode_id": "provider-runner",
     "llm_provider_failure_retry_source": {{
       "source_task_id": "{source_task_id}",
       "source_run_id": "{source_run_id}",
@@ -47999,7 +48123,7 @@ content-length: {}
   "method": "task.start",
   "params": {{
     "goal": "Retry transport provider failure",
-    "mode_id": "orchestrator",
+    "mode_id": "provider-runner",
     "llm_provider_failure_retry_source": {{
       "source_task_id": "{source_task_id}",
       "source_run_id": "{source_run_id}",
@@ -48058,6 +48182,75 @@ content-length: {}
         let serialized = serde_json::to_string(&events).unwrap();
         assert!(!serialized.contains("test-key"));
         assert!(!serialized.contains("Authorization"));
+    }
+
+    #[test]
+    fn llm_provider_failure_retry_task_run_denies_without_access_network_permission() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+
+        let retry_start = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "task.start",
+  "params": {{
+    "goal": "Retry provider failure without network mode",
+    "mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap();
+        let admission = &retry_start["llm_provider_failure_retry_admission"];
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+
+        let retry_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{retry_task_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(retry_run["status"], "Failed");
+        assert_eq!(
+            retry_run["llm_provider_failure"]["failure_class"],
+            "network_not_authorized"
+        );
+        assert!(retry_run["llm_provider_failure"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("AccessNetwork runtime permission"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        assert!(
+            event_list.iter().any(|event| {
+                event["kind"] == "PermissionDenied"
+                    && event["payload"]["allowed"] == false
+                    && event["payload"]["reason"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("network access"))
+            }),
+            "{serialized_events}"
+        );
+        assert!(event_list
+            .iter()
+            .all(|event| event["kind"] != "LlmRequestCreated"
+                && event["kind"] != "LlmResponseReceived"));
+        assert!(!serialized_events.contains("test-key"));
     }
 
     #[test]

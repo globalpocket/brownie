@@ -109,6 +109,17 @@ request budgets, strict/fallback behavior, and provider selection remain
 unchanged. Replaying a terminal retry task reuses the existing terminal replay
 path without duplicate `TaskRunning` or provider failure events.
 
+M15.2 adds a runtime permission check to that provider boundary. Before strict
+OpenAI-compatible `task.run` may enter real-provider execution, the Rust runtime
+revalidates the running task's resolved mode policy for `AccessNetwork`. The
+process-level task-run network guard, provider configuration, request budget,
+and sensitive prompt guard still apply; the new check binds the external
+provider side effect to runtime mode permission at the point of use. Modes that
+lack `AccessNetwork`, or missing/malformed mode evidence, fail closed with
+bounded provider-failure metadata before provider request/response ledger
+evidence or an external provider hit. Fake-provider and non-strict fallback
+paths remain no-network-compatible.
+
 ## R1 architecture recovery
 
 R1 freezes the Phase 3 diagnostics wrapper chain and redirects follow-up work to diagnostics API consolidation. New phases must not extend the `proposal.reviewQueueDiagnostics...Digest...Report...History` pattern.
