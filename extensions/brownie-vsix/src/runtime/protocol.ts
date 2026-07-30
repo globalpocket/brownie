@@ -291,6 +291,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_retry_source?: VerificationRecoveryRetrySource | null;
   verification_recovery_retry_goal?: string | null;
   verification_recovery_retry_mode_id?: string | null;
+  verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
 }
 
 export interface VerificationRecoverySource {
@@ -310,6 +311,16 @@ export interface VerificationRecoveryRetrySource {
   expected_failure_fingerprint: string;
   expected_apply_fingerprint: string;
   authorize_verification_retry: boolean;
+}
+
+export interface VerificationRecoveryRetryRunTarget {
+  retry_task_id: string;
+  retry_run_id: string;
+  proposal_id: string;
+  apply_id: string;
+  expected_failure_fingerprint: string;
+  expected_apply_fingerprint: string;
+  authorize_verification_retry_run: boolean;
 }
 
 export interface LlmProviderFailureRetrySource {
@@ -4105,7 +4116,7 @@ export function isTaskRunParams(value: unknown): value is TaskRunParams {
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'verification_recovery_retry_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4114,7 +4125,8 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3)) &&
     (value.verification_recovery_retry_source === undefined || value.verification_recovery_retry_source === null || isVerificationRecoveryRetrySource(value.verification_recovery_retry_source)) &&
     (value.verification_recovery_retry_goal === undefined || value.verification_recovery_retry_goal === null || typeof value.verification_recovery_retry_goal === 'string') &&
-    (value.verification_recovery_retry_mode_id === undefined || value.verification_recovery_retry_mode_id === null || typeof value.verification_recovery_retry_mode_id === 'string')
+    (value.verification_recovery_retry_mode_id === undefined || value.verification_recovery_retry_mode_id === null || typeof value.verification_recovery_retry_mode_id === 'string') &&
+    (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target))
   );
 }
 
@@ -4133,6 +4145,22 @@ function isVerificationRecoveryRetrySource(value: unknown): value is Verificatio
     typeof value.expected_apply_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_apply_fingerprint) &&
     value.authorize_verification_retry === true
+  );
+}
+
+function isVerificationRecoveryRetryRunTarget(value: unknown): value is VerificationRecoveryRetryRunTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['retry_task_id', 'retry_run_id', 'proposal_id', 'apply_id', 'expected_failure_fingerprint', 'expected_apply_fingerprint', 'authorize_verification_retry_run']) &&
+    typeof value.retry_task_id === 'string' &&
+    typeof value.retry_run_id === 'string' &&
+    typeof value.proposal_id === 'string' &&
+    typeof value.apply_id === 'string' &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    typeof value.expected_apply_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_apply_fingerprint) &&
+    value.authorize_verification_retry_run === true
   );
 }
 

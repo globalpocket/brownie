@@ -393,6 +393,19 @@ one verification recovery retry task. The response routes the caller to
 retry task, execute verifiers, call providers, mutate files, schedule a loop, or
 move policy into the VSIX.
 
+M16.2 lets that retry route execute under the same continuation contract. A
+caller may include bounded `verification_recovery_retry_run_target` evidence
+with retry task/run IDs, proposal/apply IDs, expected failure and apply
+fingerprints, and `authorize_verification_retry_run = true`. The runtime checks
+current aggregate progress before `TaskRunning`, requires the target to be the
+already-admitted retry task with matching provenance, and delegates to the
+existing `task.run` retry execution path. The response returns the bounded
+`verification_recovery_retry` outcome and next route. Replay returns the same
+terminal retry outcome without duplicate continuation decisions, `TaskRunning`,
+verifier request, or terminal tool evidence. M16.2 does not create another
+retry task, apply proposals, mutate files, run providers, start recovery
+automatically, schedule a loop, or move policy into the VSIX.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or
