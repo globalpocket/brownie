@@ -109,6 +109,14 @@ The runtime stops at stale progress, no eligible task, a still-running selected
 task, explicit recovery/apply/verifier/parent-join boundaries, or budget
 exhaustion.
 
+M16.1 lets the same headless continuation contract cross one post-apply
+verification boundary without running another task. `headless.continue_once` may
+accept explicit verification retry authorization plus the existing
+source/recovery/proposal/apply fingerprint envelope and create or replay exactly
+one verification recovery retry task. The next action is to run that retry task
+explicitly through `task.run`; M16.1 does not execute verifiers, apply patches,
+call providers, start a scheduler, or move routing policy into the VSIX.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

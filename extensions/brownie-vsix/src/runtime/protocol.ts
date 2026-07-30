@@ -288,6 +288,9 @@ export interface HeadlessContinueOnceParams {
   expected_aggregate_sequence: number;
   continuation_id?: string | null;
   max_steps?: number | null;
+  verification_recovery_retry_source?: VerificationRecoveryRetrySource | null;
+  verification_recovery_retry_goal?: string | null;
+  verification_recovery_retry_mode_id?: string | null;
 }
 
 export interface VerificationRecoverySource {
@@ -388,6 +391,7 @@ export type HeadlessContinueRouteKind =
   | 'review_and_authorize_recovery_proposal'
   | 'apply_approved_recovery_proposal_explicitly'
   | 'start_verification_retry_explicitly'
+  | 'run_verification_retry_task_explicitly'
   | 'run_parent_task_explicitly'
   | 'no_eligible_task'
   | 'refresh_progress_overview';
@@ -4101,13 +4105,34 @@ export function isTaskRunParams(value: unknown): value is TaskRunParams {
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
     isNonNegativeInteger(value.expected_aggregate_sequence) &&
     (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id)) &&
-    (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3))
+    (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3)) &&
+    (value.verification_recovery_retry_source === undefined || value.verification_recovery_retry_source === null || isVerificationRecoveryRetrySource(value.verification_recovery_retry_source)) &&
+    (value.verification_recovery_retry_goal === undefined || value.verification_recovery_retry_goal === null || typeof value.verification_recovery_retry_goal === 'string') &&
+    (value.verification_recovery_retry_mode_id === undefined || value.verification_recovery_retry_mode_id === null || typeof value.verification_recovery_retry_mode_id === 'string')
+  );
+}
+
+function isVerificationRecoveryRetrySource(value: unknown): value is VerificationRecoveryRetrySource {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['source_task_id', 'source_run_id', 'recovery_task_id', 'recovery_run_id', 'proposal_id', 'apply_id', 'expected_failure_fingerprint', 'expected_apply_fingerprint', 'authorize_verification_retry']) &&
+    typeof value.source_task_id === 'string' &&
+    typeof value.source_run_id === 'string' &&
+    typeof value.recovery_task_id === 'string' &&
+    typeof value.recovery_run_id === 'string' &&
+    typeof value.proposal_id === 'string' &&
+    typeof value.apply_id === 'string' &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    typeof value.expected_apply_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_apply_fingerprint) &&
+    value.authorize_verification_retry === true
   );
 }
 
@@ -4306,7 +4331,7 @@ function isHeadlessContinuationId(value: unknown): value is string {
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
-  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
 }
 
 function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute {

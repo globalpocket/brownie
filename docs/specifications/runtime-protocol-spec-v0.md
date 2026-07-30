@@ -672,7 +672,8 @@ kinds are limited to `inspect_progress_overview`,
 `start_verification_recovery_explicitly`,
 `review_and_authorize_recovery_proposal`,
 `apply_approved_recovery_proposal_explicitly`,
-`start_verification_retry_explicitly`, `run_parent_task_explicitly`,
+`start_verification_retry_explicitly`,
+`run_verification_retry_task_explicitly`, `run_parent_task_explicitly`,
 `no_eligible_task`, and `refresh_progress_overview`.
 
 M11.3 adds optional bounded continuation-budget fields to the same method.
@@ -687,6 +688,29 @@ next action. The method stops at stale progress, no eligible task,
 or parent join, missing post-run progress, or budget exhaustion. It does not add
 another RPC, a report surface, scheduler, background loop, or automatic
 execution beyond explicit task continuation.
+
+M16.1 adds optional post-apply verification retry admission fields to the same
+method: `verification_recovery_retry_source`, optional
+`verification_recovery_retry_goal`, and optional
+`verification_recovery_retry_mode_id`. The source shape is the existing
+`VerificationRecoveryRetrySource` and requires
+`authorize_verification_retry = true`, source/recovery/proposal/apply handles,
+the expected failed-verifier fingerprint, and the expected successful apply
+fingerprint. These fields cannot be combined with `max_steps > 1`.
+
+When the expected aggregate progress fingerprint and sequence are current, the
+runtime reuses the existing M8.3 retry admission validator. A valid request
+creates or replays one `Created` verification recovery retry task, records
+bounded headless decision evidence when a new task is admitted, and returns
+`status = task_in_progress`, selected retry task/run handles, no
+`task_run_result`, and `next_route.kind =
+run_verification_retry_task_explicitly`. Missing authorization, stale progress,
+stale source failure evidence, stale apply evidence, or malformed source fields
+fail before retry task creation. M16.1 does not run `proposal.apply`, mutate the
+workspace, run verifier tools, append `TaskRunning` for the retry task, call
+providers, run shell/git/network/service actions, or expose raw prompts,
+provider responses, file content, diffs, commands, stdout/stderr, environment
+values, secrets, absolute paths, or canonical paths.
 
 ## Phase 1.10 run inspection methods
 
