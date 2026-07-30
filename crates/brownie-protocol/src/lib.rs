@@ -414,6 +414,12 @@ pub struct HeadlessContinueOnceParams {
     pub continuation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_retry_source: Option<VerificationRecoveryRetrySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_retry_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_retry_mode_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1015,6 +1021,7 @@ pub enum HeadlessContinueRouteKind {
     ReviewAndAuthorizeRecoveryProposal,
     ApplyApprovedRecoveryProposalExplicitly,
     StartVerificationRetryExplicitly,
+    RunVerificationRetryTaskExplicitly,
     RunParentTaskExplicitly,
     NoEligibleTask,
     RefreshProgressOverview,

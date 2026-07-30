@@ -382,6 +382,17 @@ review a recovery proposal, start verification retry, or run a parent task. The
 route is metadata only and never executes recovery, apply, verifier, parent
 join, shell, git, network, service, scheduler, or loop actions.
 
+M16.1 extends the same headless continuation authority across one post-apply
+verification boundary. A caller may include bounded
+`verification_recovery_retry_source` evidence, `authorize_verification_retry =
+true`, and current aggregate progress handles in `headless.continue_once`. The
+runtime rejects stale progress before any retry admission, reuses the existing
+M8.3 source/recovery/proposal/apply validation, and creates or replays exactly
+one verification recovery retry task. The response routes the caller to
+`run_verification_retry_task_explicitly`; it does not apply proposals, run the
+retry task, execute verifiers, call providers, mutate files, schedule a loop, or
+move policy into the VSIX.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or
