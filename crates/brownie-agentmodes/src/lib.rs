@@ -93,7 +93,7 @@ pub struct BuiltinModeRegistry;
 
 impl BuiltinModeRegistry {
     pub fn list() -> Vec<CompiledModePolicy> {
-        vec![orchestrator(), implementer(), verifier()]
+        vec![orchestrator(), implementer(), verifier(), provider_runner()]
     }
 
     pub fn get(mode_id: &str) -> Option<CompiledModePolicy> {
@@ -168,6 +168,30 @@ fn verifier() -> CompiledModePolicy {
     }
 }
 
+fn provider_runner() -> CompiledModePolicy {
+    CompiledModePolicy {
+        mode_id: "provider-runner".to_string(),
+        display_name: "Provider Runner".to_string(),
+        role_definition:
+            "Run configured LLM provider tasks without workspace writes or process execution."
+                .to_string(),
+        permissions: ModePermissions {
+            read_only: true,
+            workspace_write: false,
+            process_exec: false,
+            network_access: true,
+            service_control: false,
+            destructive: false,
+            can_spawn_subtasks: false,
+            codebase_index: false,
+        },
+        allowed_handoff_targets: None,
+        completion_rules: vec![
+            "Stop after configured provider execution completes or fails.".to_string(),
+        ],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,7 +202,10 @@ mod tests {
             .into_iter()
             .map(|policy| policy.mode_id)
             .collect();
-        assert_eq!(ids, vec!["orchestrator", "implementer", "verifier"]);
+        assert_eq!(
+            ids,
+            vec!["orchestrator", "implementer", "verifier", "provider-runner"]
+        );
     }
 
     #[test]
@@ -225,5 +252,16 @@ mod tests {
         assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::WriteWorkspace).allowed);
         assert!(RuntimePermissionGate::check(&verifier, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(&verifier, RuntimeAction::IndexCodebase).allowed);
+
+        let provider_runner = BuiltinModeRegistry::get("provider-runner").expect("provider-runner");
+        assert!(
+            RuntimePermissionGate::check(&provider_runner, RuntimeAction::AccessNetwork).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&provider_runner, RuntimeAction::WriteWorkspace).allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&provider_runner, RuntimeAction::ExecuteProcess).allowed
+        );
     }
 }
