@@ -328,6 +328,17 @@ pub struct VerificationRecoveryRetrySource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationRecoveryRetryRunTarget {
+    pub retry_task_id: String,
+    pub retry_run_id: String,
+    pub proposal_id: String,
+    pub apply_id: String,
+    pub expected_failure_fingerprint: String,
+    pub expected_apply_fingerprint: String,
+    pub authorize_verification_retry_run: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LlmProviderFailureRetrySource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -420,6 +431,8 @@ pub struct HeadlessContinueOnceParams {
     pub verification_recovery_retry_goal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_mode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_retry_run_target: Option<VerificationRecoveryRetryRunTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

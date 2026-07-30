@@ -117,6 +117,16 @@ one verification recovery retry task. The next action is to run that retry task
 explicitly through `task.run`; M16.1 does not execute verifiers, apply patches,
 call providers, start a scheduler, or move routing policy into the VSIX.
 
+M16.2 lets `headless.continue_once` run one already-admitted verification
+recovery retry task when the caller supplies the retry task/run handles,
+proposal/apply handles, expected failure and apply fingerprints, and
+`authorize_verification_retry_run = true`. The runtime checks current aggregate
+progress and matching retry provenance before entering `TaskRunning`, then
+delegates to the existing retry `task.run` path. Replay returns the same bounded
+retry outcome without duplicate running or verifier evidence. M16.2 does not
+admit another retry task, apply patches, run providers, start recovery
+automatically, schedule a loop, or add a new RPC.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

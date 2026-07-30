@@ -712,6 +712,32 @@ providers, run shell/git/network/service actions, or expose raw prompts,
 provider responses, file content, diffs, commands, stdout/stderr, environment
 values, secrets, absolute paths, or canonical paths.
 
+M16.2 adds optional targeted retry-run fields to the same method:
+`verification_recovery_retry_run_target`. The target includes retry task/run
+handles, proposal/apply handles, expected failed-verifier fingerprint, expected
+successful apply fingerprint, and `authorize_verification_retry_run = true`.
+These fields cannot be combined with `max_steps > 1` or
+`verification_recovery_retry_source`.
+
+When the expected aggregate progress fingerprint and sequence are current, the
+runtime requires the targeted retry task/run to exist in `Created` or `Queued`
+state and to carry matching `verification_recovery_retry_provenance`. A valid
+request delegates to the existing retry `task.run` execution path, records a
+bounded headless decision after successful admission, and returns `status =
+task_executed`, selected retry task/run handles, bounded
+`verification_recovery_retry` outcome metadata, and a next route derived from
+the retry result. Replaying the same `continuation_id` returns the same terminal
+retry outcome without duplicate `HeadlessContinuationDecisionRecorded`,
+`TaskRunning`, verifier request, or terminal tool evidence. Stale progress,
+missing authorization, wrong task/run handles, non-runnable status, missing
+retry provenance, stale proposal/apply handles, stale fingerprints, or malformed
+target fields fail before `TaskRunning`. M16.2 does not create another retry
+task, run `proposal.apply`, mutate the workspace, call providers, run
+shell/git/network/service actions beyond controlled verifier execution, start
+recovery automatically, schedule a loop, or expose raw prompts, provider
+responses, file content, diffs, commands, stdout/stderr, environment values,
+secrets, absolute paths, or canonical paths.
+
 ## Phase 1.10 run inspection methods
 
 The runtime exposes read-only `run.events`, `run.inspect`, and `task.inspect` JSON-RPC methods. They return sanitized ledger previews and run summaries only; full file content and raw tool output are not returned through inspection responses. Unknown run or task IDs return `-32602 invalid params`.
