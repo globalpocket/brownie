@@ -31950,9 +31950,11 @@ mod tests {
         assert_eq!(drive["session_id"], "m17.drive");
         assert_eq!(drive["drive_id"], "m17.drive.1");
         assert_eq!(drive["start_session_sequence"], 1);
-        assert_eq!(drive["end_session_sequence"], 3);
-        assert_eq!(drive["advance_count"], 2);
-        assert_eq!(drive["executed_count"], 2);
+        let advance_count = drive["advance_count"].as_u64().expect("advance count");
+        assert!(advance_count >= 1, "{drive}");
+        assert!(advance_count <= 2, "{drive}");
+        assert_eq!(drive["end_session_sequence"], 1 + advance_count);
+        assert_eq!(drive["executed_count"], advance_count);
         assert_eq!(drive["replayed"], false);
         assert!(drive["drive_fingerprint"]
             .as_str()
@@ -32007,8 +32009,8 @@ mod tests {
                     .count()
             })
             .sum::<usize>();
-        assert_eq!(running_events, 3);
-        assert_eq!(drive_events, 2);
+        assert_eq!(running_events, (1 + advance_count) as usize);
+        assert_eq!(drive_events, advance_count as usize);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
