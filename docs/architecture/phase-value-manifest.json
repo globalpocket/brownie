@@ -93,15 +93,16 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M17.1 updates the deterministic current phase manifest. Review must confirm actual run session checkpoint persistence and replay-safe execution, not a headless status wrapper.",
+    "review_intent": "M17.2 updates the deterministic current phase manifest. Review must confirm actual bounded drive execution and replay-safe persistence, not a headless status wrapper.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m17.1.json",
+      "docs/architecture/phase-value-manifest.m17.2.json",
       "crates/brownie-protocol/src/lib.rs",
       "crates/brownie-store/src/lib.rs",
       "crates/brownie-runtime/src/lib.rs",
       "extensions/brownie-vsix/src/runtime/protocol.ts",
       "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
+      "extensions/brownie-vsix/src/test/runtimeClient.test.ts",
       "docs/architecture/runtime-overview.md",
       "docs/specifications/agent-loop-spec-v0.md",
       "docs/specifications/runtime-protocol-spec-v0.md"
