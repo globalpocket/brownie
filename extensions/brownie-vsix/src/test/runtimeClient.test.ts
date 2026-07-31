@@ -601,6 +601,22 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 0 })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 4 })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, command: 'cargo test' })).toBe(false);
+    const verificationRecoverySource = {
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      expected_failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+      authorize_recovery: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_source: verificationRecoverySource,
+      verification_recovery_goal: 'Recover failed verification',
+      verification_recovery_mode_id: 'implementer',
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_source: { ...verificationRecoverySource, authorize_recovery: false },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,
@@ -664,6 +680,25 @@ describe('protocol validation', () => {
         aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
         next_action: 'inspect_progress_overview',
       },
+    })).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      status: 'task_in_progress',
+      selected_task_id: 'task_recovery',
+      selected_run_id: 'run_recovery',
+      replayed: false,
+      task_run_result: null,
+      next_route: {
+        kind: 'run_recovery_task_explicitly',
+        reason: 'Recovery task admitted; run explicitly.',
+        task_id: 'task_recovery',
+        run_id: 'run_recovery',
+        failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+        progress_fingerprint: `sha256:${'e'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'run_recovery_task_explicitly',
+      },
+      next_action: 'run_recovery_task_explicitly',
     })).toBe(true);
     expect(isHeadlessContinueOnceResult({
       ...headlessResult,
@@ -1877,6 +1912,57 @@ describe('RuntimeClient', () => {
         next_action: 'inspect_progress_overview',
       }],
       next_action: 'inspect_progress_overview',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.continueOnceHeadless(params)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.continue_once', params }]);
+  });
+
+  it('creates a headless.continue_once verification recovery admission request', async () => {
+    const fingerprint = `sha256:${'d'.repeat(64)}`;
+    const params = {
+      authorize: true as const,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      continuation_id: 'continue.once:recovery',
+      verification_recovery_source: {
+        source_task_id: 'task_source',
+        source_run_id: 'run_source',
+        expected_failure_fingerprint: fingerprint,
+        authorize_recovery: true,
+      },
+      verification_recovery_goal: 'Recover failed verification',
+      verification_recovery_mode_id: 'implementer',
+    };
+    const result = {
+      status: 'task_in_progress',
+      decision_id: `headless_decision_${'b'.repeat(32)}`,
+      continuation_id: 'continue.once:recovery',
+      selected_task_id: 'task_recovery',
+      selected_run_id: 'run_recovery',
+      candidate_count: 1,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      post_progress_fingerprint: `sha256:${'e'.repeat(64)}`,
+      post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      stale: false,
+      replayed: false,
+      task_run_result: null,
+      next_route: {
+        kind: 'run_recovery_task_explicitly',
+        reason: 'Recovery task admitted; run explicitly.',
+        task_id: 'task_recovery',
+        run_id: 'run_recovery',
+        failure_fingerprint: fingerprint,
+        progress_fingerprint: `sha256:${'e'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'run_recovery_task_explicitly',
+      },
+      next_action: 'run_recovery_task_explicitly',
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
