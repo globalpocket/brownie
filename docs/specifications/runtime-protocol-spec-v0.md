@@ -1394,3 +1394,24 @@ returns the persisted checkpoint with `replayed=true`; it does not duplicate
 worker, automatic apply/recovery, provider execution expansion, shell/git/
 network/service expansion, VSIX policy decision, or raw prompt/provider/file/
 command/output/environment/path exposure.
+
+## M17.2 headless run session drive
+
+`headless.run.drive` accepts `authorize=true`, `session_id`, optional
+`drive_id`, `expected_start_session_sequence`, optional `max_advances` from 1
+to 3, and optional `max_steps_per_advance` from 1 to 3. A drive requires an
+existing M17.1 session checkpoint at the expected start sequence. The runtime
+derives subsequent session sequences and delegates to existing
+`headless.run.advance` / `headless.continue_once` behavior; callers do not
+provide per-advance progress handles or next sequence values.
+
+A successful drive persists a `HeadlessRunSessionDriveCheckpoint` and returns
+`HeadlessRunDriveResult` with bounded session/drive handles, start/end session
+sequence, replay flag, budget counts, execution/replay counts, stop reason,
+drive fingerprint, start/post progress handles, next route, bounded per-advance
+summaries, and next action. Repeating a committed drive id returns the persisted
+drive result with `replayed=true`; it does not duplicate task execution,
+`HeadlessRunSessionAdvanced`, or drive evidence. The method adds no scheduler,
+background worker, automatic apply/recovery, provider execution expansion,
+shell/git/network/service expansion, VSIX policy decision, or raw
+prompt/provider/file/command/output/environment/path exposure.

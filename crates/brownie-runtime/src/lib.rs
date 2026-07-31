@@ -31,13 +31,14 @@ use brownie_protocol::{
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
-    HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunProgressCheckpoint,
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
-    LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
-    LlmProviderFailureRetryProvenance, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunDriveParams,
+    HeadlessRunDriveResult, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
+    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
     ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
@@ -212,7 +213,7 @@ use brownie_protocol::{
 };
 use brownie_store::{
     BrownieStore, ChildTaskStartParams, HeadlessContinuationDecisionLookup,
-    HeadlessRunSessionCheckpoint, LedgerEvent, LedgerEventKind,
+    HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ParentJoinContinuationRunAdmission,
     VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
@@ -253,7 +254,9 @@ const METHOD_TASK_INSPECT: &str = "task.inspect";
 const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_HEADLESS_CONTINUE_ONCE: &str = "headless.continue_once";
 const METHOD_HEADLESS_RUN_ADVANCE: &str = "headless.run.advance";
+const METHOD_HEADLESS_RUN_DRIVE: &str = "headless.run.drive";
 const HEADLESS_CONTINUE_MAX_BUDGET_STEPS: u8 = 3;
+const HEADLESS_RUN_DRIVE_MAX_ADVANCES: u8 = 3;
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -417,6 +420,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TASK_LIST => handle_task_list(request.id),
         METHOD_HEADLESS_CONTINUE_ONCE => handle_headless_continue_once(request.id, request.params),
         METHOD_HEADLESS_RUN_ADVANCE => handle_headless_run_advance(request.id, request.params),
+        METHOD_HEADLESS_RUN_DRIVE => handle_headless_run_drive(request.id, request.params),
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
@@ -8128,6 +8132,216 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
     result_response(id, json!(result))
 }
 
+fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: HeadlessRunDriveParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize {
+        return error_response(id, -32602, "invalid params: authorize must be true");
+    }
+    if !is_valid_headless_run_id(&params.session_id) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: session_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
+        );
+    }
+    if params.expected_start_session_sequence == 0 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_start_session_sequence must be greater than zero",
+        );
+    }
+    let drive_id = params
+        .drive_id
+        .clone()
+        .unwrap_or_else(|| format!("drive.{}", params.expected_start_session_sequence));
+    if !is_valid_headless_run_id(&drive_id) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: drive_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
+        );
+    }
+    let max_advances = params.max_advances.unwrap_or(1);
+    if max_advances == 0 || max_advances > HEADLESS_RUN_DRIVE_MAX_ADVANCES {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: max_advances must be between 1 and 3",
+        );
+    }
+    let max_steps_per_advance = params
+        .max_steps_per_advance
+        .unwrap_or(HEADLESS_CONTINUE_MAX_BUDGET_STEPS);
+    if max_steps_per_advance == 0 || max_steps_per_advance > HEADLESS_CONTINUE_MAX_BUDGET_STEPS {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: max_steps_per_advance must be between 1 and 3",
+        );
+    }
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Ok(Some(checkpoint)) = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&params.session_id, &drive_id)
+    {
+        if checkpoint.start_session_sequence != params.expected_start_session_sequence {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: drive_id conflicts with persisted start session sequence",
+            );
+        }
+        let mut result = checkpoint.result;
+        result.replayed = true;
+        return result_response(id, json!(result));
+    }
+
+    let start_checkpoint = match store
+        .tasks()
+        .read_headless_run_session_checkpoint(&params.session_id)
+    {
+        Ok(Some(checkpoint)) => checkpoint,
+        Ok(None) => {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: existing session checkpoint is required",
+            )
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if start_checkpoint.session_sequence != params.expected_start_session_sequence {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_start_session_sequence must match the current session checkpoint",
+        );
+    }
+    let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: persisted session checkpoint is missing post progress",
+        );
+    };
+
+    let mut advances = Vec::new();
+    let mut stop_reason = "drive_budget_exhausted".to_string();
+    let mut next_action = "inspect_progress_overview".to_string();
+    let mut next_route = None;
+    let mut post_progress = Some(start_progress.clone());
+    for index in 0..max_advances {
+        let session_sequence = params.expected_start_session_sequence + u64::from(index) + 1;
+        let advance_id = format!("{}.{}", drive_id, session_sequence);
+        let response = handle_headless_run_advance(
+            id.clone(),
+            Some(json!({
+                "authorize": true,
+                "session_id": params.session_id,
+                "advance_id": advance_id,
+                "expected_session_sequence": session_sequence,
+                "max_steps": max_steps_per_advance
+            })),
+        );
+        let Some(result_value) = response.result else {
+            return JsonRpcResponse {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id,
+                result: None,
+                error: response.error,
+            };
+        };
+        let advance: HeadlessRunAdvanceResult = match serde_json::from_value(result_value) {
+            Ok(result) => result,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        stop_reason = advance.stop_reason.clone();
+        next_action = advance.next_action.clone();
+        next_route = advance.next_route.clone();
+        post_progress = advance.post_progress.clone();
+        let should_continue = advance.status == HeadlessContinueOnceStatus::TaskExecuted
+            && advance
+                .next_route
+                .as_ref()
+                .map(|route| route.kind == HeadlessContinueRouteKind::InspectProgressOverview)
+                .unwrap_or(false)
+            && advance.post_progress.is_some();
+        advances.push(advance);
+        if !should_continue {
+            break;
+        }
+    }
+
+    let executed_count = advances.iter().map(|advance| advance.executed_count).sum();
+    let replayed_count = advances.iter().map(|advance| advance.replayed_count).sum();
+    let end_session_sequence = advances
+        .last()
+        .map(|advance| advance.session_sequence)
+        .unwrap_or(params.expected_start_session_sequence);
+    let status = advances
+        .last()
+        .map(|advance| advance.status.clone())
+        .unwrap_or(HeadlessContinueOnceStatus::NoEligibleTask);
+    let drive_seed = json!({
+        "session_id": params.session_id,
+        "drive_id": drive_id,
+        "start_session_sequence": params.expected_start_session_sequence,
+        "end_session_sequence": end_session_sequence,
+        "max_advances": max_advances,
+        "max_steps_per_advance": max_steps_per_advance,
+        "advance_count": advances.len(),
+        "executed_count": executed_count,
+        "replayed_count": replayed_count,
+        "stop_reason": stop_reason,
+        "next_action": next_action
+    });
+    let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
+    let result = HeadlessRunDriveResult {
+        status,
+        session_id: params.session_id.clone(),
+        drive_id: drive_id.clone(),
+        start_session_sequence: params.expected_start_session_sequence,
+        end_session_sequence,
+        replayed: false,
+        max_advances,
+        max_steps_per_advance,
+        advance_count: advances.len(),
+        executed_count,
+        replayed_count,
+        stop_reason,
+        drive_fingerprint,
+        start_progress,
+        post_progress,
+        next_route,
+        advances,
+        next_action,
+    };
+    let checkpoint = HeadlessRunSessionDriveCheckpoint {
+        session_id: params.session_id,
+        drive_id,
+        start_session_sequence: params.expected_start_session_sequence,
+        result: result.clone(),
+    };
+    if let Err(error) = store
+        .tasks()
+        .write_headless_run_session_drive_checkpoint(&checkpoint)
+    {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Err(error) = append_headless_run_session_drive_completed_events(&store, &result) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    result_response(id, json!(result))
+}
+
 fn handle_headless_continue_verification_recovery_retry_admission(
     id: Value,
     store: &BrownieStore,
@@ -9202,6 +9416,50 @@ fn append_headless_run_session_advanced_events(
                 "reason": "Headless run session advanced through bounded runtime-owned continuation execution."
             })),
         )?;
+    }
+    Ok(())
+}
+
+fn append_headless_run_session_drive_completed_events(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+) -> anyhow::Result<()> {
+    for advance in &result.advances {
+        for step in advance.steps.iter().filter(|step| {
+            step.status == HeadlessContinueOnceStatus::TaskExecuted && !step.replayed
+        }) {
+            let Some(task_id) = step.selected_task_id.as_deref() else {
+                continue;
+            };
+            let Some(run_id) = step.selected_run_id.as_deref() else {
+                continue;
+            };
+            let Some(record) = store.tasks().get_task(task_id)? else {
+                continue;
+            };
+            if record.run_id != run_id {
+                continue;
+            }
+            store.tasks().append_task_event_with_payload(
+                &record,
+                LedgerEventKind::HeadlessRunSessionDriveCompleted,
+                Some(json!({
+                    "session_id": result.session_id,
+                    "drive_id": result.drive_id,
+                    "start_session_sequence": result.start_session_sequence,
+                    "end_session_sequence": result.end_session_sequence,
+                    "advance_id": advance.advance_id,
+                    "session_sequence": advance.session_sequence,
+                    "step_index": step.step_index,
+                    "selected_task_id": task_id,
+                    "selected_run_id": run_id,
+                    "drive_fingerprint": result.drive_fingerprint,
+                    "stop_reason": result.stop_reason,
+                    "next_action": result.next_action,
+                    "reason": "Headless run session drive completed through bounded runtime-owned continuation execution."
+                })),
+            )?;
+        }
     }
     Ok(())
 }
@@ -31646,6 +31904,146 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| event.kind != LedgerEventKind::HeadlessRunSessionAdvanced));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_advances_from_checkpoint_replays_and_records_drive_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        for goal in ["Drive first", "Drive second", "Drive third"] {
+            store
+                .tasks()
+                .start_task(TaskStartParams {
+                    goal: goal.to_string(),
+                    mode_id: Some("orchestrator".to_string()),
+                    verification_recovery_source: None,
+                    verification_recovery_retry_source: None,
+                    llm_provider_failure_retry_source: None,
+                })
+                .expect("start task");
+        }
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let first_request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m17.drive","advance_id":"m17.drive.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        );
+        let seed = parse_line(&first_request)
+            .result
+            .unwrap_or_else(|| panic!("seed advance failed"));
+        assert_eq!(seed["session_sequence"], 1);
+
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#;
+        let drive = parse_line(drive_request)
+            .result
+            .unwrap_or_else(|| panic!("drive failed"));
+        assert_eq!(drive["session_id"], "m17.drive");
+        assert_eq!(drive["drive_id"], "m17.drive.1");
+        assert_eq!(drive["start_session_sequence"], 1);
+        assert_eq!(drive["end_session_sequence"], 3);
+        assert_eq!(drive["advance_count"], 2);
+        assert_eq!(drive["executed_count"], 2);
+        assert_eq!(drive["replayed"], false);
+        assert!(drive["drive_fingerprint"]
+            .as_str()
+            .expect("drive fingerprint")
+            .starts_with("sha256:"));
+
+        let replay = parse_line(drive_request)
+            .result
+            .unwrap_or_else(|| panic!("drive replay failed"));
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["drive_fingerprint"], drive["drive_fingerprint"]);
+
+        let selected_run_ids = seed["steps"]
+            .as_array()
+            .expect("seed steps")
+            .iter()
+            .chain(
+                drive["advances"]
+                    .as_array()
+                    .expect("advances")
+                    .iter()
+                    .flat_map(|advance| advance["steps"].as_array().expect("advance steps").iter()),
+            )
+            .map(|step| {
+                step["selected_run_id"]
+                    .as_str()
+                    .expect("run id")
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        let running_events = selected_run_ids
+            .iter()
+            .map(|run_id| {
+                store
+                    .tasks()
+                    .read_ledger_events(run_id)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                    .count()
+            })
+            .sum::<usize>();
+        let drive_events = selected_run_ids
+            .iter()
+            .map(|run_id| {
+                store
+                    .tasks()
+                    .read_ledger_events(run_id)
+                    .expect("events")
+                    .into_iter()
+                    .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
+                    .count()
+            })
+            .sum::<usize>();
+        assert_eq!(running_events, 3);
+        assert_eq!(drive_events, 2);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_rejects_missing_checkpoint_before_execution() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Drive missing checkpoint".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start task");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.missing","drive_id":"m17.missing.1","expected_start_session_sequence":1,"max_advances":2}}"#,
+        );
+        assert_eq!(response.error.expect("missing checkpoint").code, -32602);
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::HeadlessRunSessionDriveCompleted));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
