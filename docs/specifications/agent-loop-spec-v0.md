@@ -142,7 +142,19 @@ Stale starting progress and wrong session sequence fail before task execution.
 This remains explicit caller-driven work: no scheduler, background worker,
 automatic apply, automatic recovery, provider expansion, shell/git/network/
 service expansion, VSIX policy, raw prompts, provider responses, file content,
-commands, stdout/stderr, environment values, or raw paths are introduced.
+commands, stdout, stderr, environment values, secrets, or raw paths.
+
+M17.2 adds `headless.run.drive` for bounded run-control from an existing
+session checkpoint. The caller supplies `authorize=true`, a bounded `session_id`
+and `drive_id`, the expected current session sequence, and small drive budgets.
+The runtime requires an existing M17.1 checkpoint, derives later session
+sequences, executes repeated existing session advances, persists a bounded drive
+checkpoint, and stops at a safe existing route boundary or budget limit.
+Repeating the same drive id returns the persisted drive result with
+`replayed=true` and does not duplicate task execution or run-session evidence.
+This is not a scheduler or background loop and does not add automatic apply,
+automatic recovery, provider, shell, git, network, service, or VSIX-owned policy
+behavior.
 
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 

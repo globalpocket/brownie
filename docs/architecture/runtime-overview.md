@@ -421,6 +421,19 @@ background worker, automatic apply/recovery, provider execution expansion,
 shell/git/network/service expansion, VSIX-owned policy, or raw prompt/provider/
 file/command/output/environment/path exposure.
 
+M17.2 adds `headless.run.drive` as a bounded drive-to-stop-boundary primitive
+for an existing M17.1 session checkpoint. A caller explicitly authorizes one
+`drive_id`, names the session, supplies the expected current session sequence,
+and sets a small `max_advances` and per-advance step budget. The Rust runtime
+derives subsequent session sequences, invokes existing `headless.run.advance`
+behavior, persists a replay-safe drive checkpoint, and stops when the drive
+budget is exhausted or when the next route leaves the safe progress overview
+continuation boundary. Replaying the same drive id returns the persisted drive
+result without duplicating `TaskRunning`, `HeadlessRunSessionAdvanced`, or drive
+evidence. This remains explicit caller-driven work and does not add a
+scheduler, background worker, automatic recovery/apply, provider expansion,
+shell/git/network/service expansion, VSIX policy, or raw data exposure.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

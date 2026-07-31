@@ -453,6 +453,20 @@ pub struct HeadlessRunAdvanceParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct HeadlessRunDriveParams {
+    pub authorize: bool,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drive_id: Option<String>,
+    pub expected_start_session_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_advances: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps_per_advance: Option<u8>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunSelectedIndexContext {
     pub query_id: String,
     pub selection_id: String,
@@ -1157,6 +1171,31 @@ pub struct HeadlessRunAdvanceResult {
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<HeadlessContinueStepResult>,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunDriveResult {
+    pub status: HeadlessContinueOnceStatus,
+    pub session_id: String,
+    pub drive_id: String,
+    pub start_session_sequence: u64,
+    pub end_session_sequence: u64,
+    pub replayed: bool,
+    pub max_advances: u8,
+    pub max_steps_per_advance: u8,
+    pub advance_count: usize,
+    pub executed_count: usize,
+    pub replayed_count: usize,
+    pub stop_reason: String,
+    pub drive_fingerprint: String,
+    pub start_progress: HeadlessRunProgressCheckpoint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_progress: Option<HeadlessRunProgressCheckpoint>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_route: Option<HeadlessContinueRoute>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub advances: Vec<HeadlessRunAdvanceResult>,
     pub next_action: String,
 }
 

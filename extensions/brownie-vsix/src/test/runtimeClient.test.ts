@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
+import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
@@ -744,6 +744,41 @@ describe('protocol validation', () => {
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, checkpoint_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, step_count: 2 })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, stdout: 'raw output' })).toBe(false);
+    const headlessRunDriveParams = {
+      authorize: true,
+      session_id: 'm17.session',
+      drive_id: 'm17.drive.1',
+      expected_start_session_sequence: 1,
+      max_advances: 2,
+      max_steps_per_advance: 1,
+    };
+    const headlessRunDriveResult = {
+      status: 'task_executed',
+      session_id: 'm17.session',
+      drive_id: 'm17.drive.1',
+      start_session_sequence: 1,
+      end_session_sequence: 2,
+      replayed: false,
+      max_advances: 2,
+      max_steps_per_advance: 1,
+      advance_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'budget_exhausted',
+      drive_fingerprint: `sha256:${'f'.repeat(64)}`,
+      start_progress: headlessRunAdvanceResult.start_progress,
+      post_progress: headlessRunAdvanceResult.post_progress,
+      next_route: headlessBudgetResult.next_route,
+      advances: [headlessRunAdvanceResult],
+      next_action: 'inspect_progress_overview',
+    };
+    expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
+    expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, absolute_path: '/tmp/file' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -1902,6 +1937,78 @@ describe('RuntimeClient', () => {
 
     await expect(client.advanceHeadlessRun(params)).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.run.advance', params }]);
+  });
+
+  it('creates a headless.run.drive request', async () => {
+    const advance = {
+      status: 'task_executed',
+      session_id: 'm17.session',
+      advance_id: 'm17.drive.1.2',
+      session_sequence: 2,
+      replayed: false,
+      start_progress: {
+        progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      },
+      post_progress: {
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      },
+      max_steps: 1,
+      step_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'budget_exhausted',
+      checkpoint_fingerprint: `sha256:${'e'.repeat(64)}`,
+      steps: [{
+        step_index: 1,
+        status: 'task_executed',
+        decision_id: `headless_decision_${'a'.repeat(32)}`,
+        continuation_id: 'run.m17.session.2',
+        selected_task_id: 'task_1',
+        selected_run_id: 'run_1',
+        candidate_count: 1,
+        current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+        post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        replayed: false,
+        next_action: 'inspect_progress_overview',
+      }],
+      next_action: 'inspect_progress_overview',
+    };
+    const params = {
+      authorize: true as const,
+      session_id: 'm17.session',
+      drive_id: 'm17.drive.1',
+      expected_start_session_sequence: 1,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+    };
+    const result = {
+      status: 'task_executed',
+      session_id: 'm17.session',
+      drive_id: 'm17.drive.1',
+      start_session_sequence: 1,
+      end_session_sequence: 2,
+      replayed: false,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      advance_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'budget_exhausted',
+      drive_fingerprint: `sha256:${'f'.repeat(64)}`,
+      start_progress: advance.start_progress,
+      post_progress: advance.post_progress,
+      advances: [advance],
+      next_action: 'inspect_progress_overview',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.driveHeadlessRun(params)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.run.drive', params }]);
   });
 
   it('creates a task.run request with selected index context', async () => {
