@@ -103,8 +103,7 @@
       "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
       "docs/architecture/runtime-overview.md",
       "docs/specifications/agent-loop-spec-v0.md",
-      "docs/specifications/runtime-protocol-spec-v0.md",
-      "docs/architecture/phase-value-manifest.m16.2.json"
+      "docs/specifications/runtime-protocol-spec-v0.md"
     ],
     "required_checks": [
       "pnpm guard:diagnostics",

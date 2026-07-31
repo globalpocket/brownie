@@ -437,6 +437,22 @@ pub struct HeadlessContinueOnceParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct HeadlessRunAdvanceParams {
+    pub authorize: bool,
+    pub session_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub advance_id: Option<String>,
+    pub expected_session_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_steps: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_progress_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_aggregate_sequence: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct TaskRunSelectedIndexContext {
     pub query_id: String,
     pub selection_id: String,
@@ -1112,6 +1128,35 @@ pub struct HeadlessContinueStepResult {
     pub post_aggregate_sequence: Option<u64>,
     pub replayed: bool,
     pub next_route: Option<HeadlessContinueRoute>,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunProgressCheckpoint {
+    pub progress_fingerprint: String,
+    pub aggregate_sequence: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunAdvanceResult {
+    pub status: HeadlessContinueOnceStatus,
+    pub session_id: String,
+    pub advance_id: String,
+    pub session_sequence: u64,
+    pub replayed: bool,
+    pub start_progress: HeadlessRunProgressCheckpoint,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_progress: Option<HeadlessRunProgressCheckpoint>,
+    pub max_steps: u8,
+    pub step_count: usize,
+    pub executed_count: usize,
+    pub replayed_count: usize,
+    pub stop_reason: String,
+    pub checkpoint_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_route: Option<HeadlessContinueRoute>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<HeadlessContinueStepResult>,
     pub next_action: String,
 }
 

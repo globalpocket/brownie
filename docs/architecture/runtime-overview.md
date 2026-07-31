@@ -406,6 +406,21 @@ verifier request, or terminal tool evidence. M16.2 does not create another
 retry task, apply proposals, mutate files, run providers, start recovery
 automatically, schedule a loop, or move policy into the VSIX.
 
+M17.1 adds `headless.run.advance` for runtime-owned headless run sessions. A
+caller supplies `authorize=true`, a bounded `session_id`, expected session
+sequence, optional `advance_id`, and for the first sequence the current
+`task.list.progress_overview` fingerprint and aggregate sequence. The runtime
+derives per-step continuation IDs, executes up to three existing
+`headless.continue_once` steps, writes bounded `HeadlessRunSessionAdvanced`
+evidence for executed steps, persists a session checkpoint, and lets the next
+sequence advance from that checkpoint without caller-reconstructed raw progress
+handles. Repeating a committed sequence returns the checkpoint with
+`replayed=true` and does not duplicate `TaskRunning` or run-session evidence.
+The method remains explicit caller-driven work: it adds no scheduler,
+background worker, automatic apply/recovery, provider execution expansion,
+shell/git/network/service expansion, VSIX-owned policy, or raw prompt/provider/
+file/command/output/environment/path exposure.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

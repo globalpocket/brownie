@@ -1372,3 +1372,25 @@ Accepted parent-join envelopes with `parent_join_admission_id` fail materializat
 Direct child `task.inspect` returns the field on `task.recovery_cycle_provenance`. Parent `run.inspect` and parent `task.inspect` return the same bounded object on the matching `child_tasks[].recovery_cycle_provenance` summary. Existing persisted `TaskRecord` state remains backward compatible because missing `recovery_cycle_provenance` deserializes as `null`.
 
 M5.25 does not expose raw child prompts, raw provider responses, raw file content, command strings, stdout, stderr, environment values, raw tool input objects, serialized request bodies, raw failure payloads, or unbounded error text. It adds no scheduler handoff, child auto-run, external worker, process execution expansion, network bypass, service control, patch apply, direct workspace mutation path, diagnostics wrapper RPC, or blocked summary wrapper.
+## M17.1 headless run session advance
+
+`headless.run.advance` accepts `authorize=true`, `session_id`, optional
+`advance_id`, `expected_session_sequence`, optional `max_steps` from 1 to 3,
+and initial `expected_progress_fingerprint` / `expected_aggregate_sequence` for
+new sessions. Session IDs and advance IDs are bounded ASCII handles. A new
+session must start at sequence 1 and must match current progress. Existing
+sessions must use the next sequence; the runtime derives the starting progress
+guard from the prior persisted checkpoint rather than accepting caller-supplied
+raw progress.
+
+A successful call delegates to existing `headless.continue_once` behavior using
+runtime-derived continuation IDs, persists a `HeadlessRunSessionCheckpoint`, and
+returns `HeadlessRunAdvanceResult` with bounded session sequence, replay flag,
+start/post progress handles, step counts, stop reason, checkpoint fingerprint,
+next route, per-step summaries, and next action. Repeating a committed sequence
+returns the persisted checkpoint with `replayed=true`; it does not duplicate
+`TaskRunning`, `HeadlessContinuationDecisionRecorded`, or
+`HeadlessRunSessionAdvanced` evidence. The method adds no scheduler, background
+worker, automatic apply/recovery, provider execution expansion, shell/git/
+network/service expansion, VSIX policy decision, or raw prompt/provider/file/
+command/output/environment/path exposure.

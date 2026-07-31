@@ -8,9 +8,9 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
-    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, LlmProviderFailureRetryProvenance,
-    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
+    LlmProviderFailureRetryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -20,6 +20,7 @@ pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
+const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
@@ -77,6 +78,14 @@ pub struct HeadlessContinuationDecisionLookup {
     pub expected_aggregate_sequence: u64,
     pub candidate_count: usize,
     pub policy_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunSessionCheckpoint {
+    pub session_id: String,
+    pub advance_id: String,
+    pub session_sequence: u64,
+    pub result: HeadlessRunAdvanceResult,
 }
 
 impl CodebaseIndexStore {
@@ -1298,6 +1307,47 @@ impl TaskStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_run_session_checkpoint(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<HeadlessRunSessionCheckpoint>> {
+        let path = self.headless_run_session_current_path(session_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_run_session_checkpoint(
+        &self,
+        checkpoint: &HeadlessRunSessionCheckpoint,
+    ) -> Result<()> {
+        let current_path = self.headless_run_session_current_path(&checkpoint.session_id);
+        if let Some(existing) = self.read_headless_run_session_checkpoint(&checkpoint.session_id)? {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            if existing.session_sequence >= checkpoint.session_sequence {
+                bail!(
+                    "conflicting headless run session checkpoint for {} sequence {}",
+                    checkpoint.session_id,
+                    checkpoint.session_sequence
+                );
+            }
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless run session checkpoint")?;
+        let sequence_path = self.headless_run_session_sequence_path(
+            &checkpoint.session_id,
+            checkpoint.session_sequence,
+        );
+        write_file_atomically(&sequence_path, body.as_bytes())?;
+        write_file_atomically(&current_path, body.as_bytes())
+    }
+
     fn append_task_events_with_payloads(
         &self,
         record: &TaskRecord,
@@ -1360,6 +1410,22 @@ impl TaskStore {
             .join(WORKSPACE_STATE_DIR)
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("{continuation_id}.json"))
+    }
+
+    fn headless_run_session_current_path(&self, session_id: &str) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_RUN_SESSIONS_DIR)
+            .join(session_id)
+            .join("current.json")
+    }
+
+    fn headless_run_session_sequence_path(&self, session_id: &str, sequence: u64) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_RUN_SESSIONS_DIR)
+            .join(session_id)
+            .join(format!("sequence-{sequence}.json"))
     }
 
     pub fn workspace_root(&self) -> &std::path::Path {
@@ -1557,6 +1623,7 @@ pub enum LedgerEventKind {
     WorkspacePatchApplyResultRecorded,
     WorkspacePatchReadinessReportCreated,
     HeadlessContinuationDecisionRecorded,
+    HeadlessRunSessionAdvanced,
     TaskRunning,
     AgentLoopStarted,
     AgentLoopCompleted,

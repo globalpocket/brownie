@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
+import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
 import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
@@ -702,6 +702,48 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceResult({ ...headlessResult, command: 'cargo test' })).toBe(false);
     expect(isHeadlessContinueOnceResult({ ...headlessResult, env: { TOKEN: 'secret' } })).toBe(false);
     expect(isHeadlessContinueOnceResult({ ...headlessResult, absolute_path: '/tmp/file' })).toBe(false);
+    const headlessRunAdvanceParams = {
+      authorize: true,
+      session_id: 'm17.session',
+      advance_id: 'm17.advance.1',
+      expected_session_sequence: 1,
+      max_steps: 2,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+    };
+    const headlessRunAdvanceResult = {
+      status: 'task_executed',
+      session_id: 'm17.session',
+      advance_id: 'm17.advance.1',
+      session_sequence: 1,
+      replayed: false,
+      start_progress: {
+        progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      },
+      post_progress: {
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      },
+      max_steps: 2,
+      step_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'explicit_verification_recovery_boundary',
+      checkpoint_fingerprint: `sha256:${'e'.repeat(64)}`,
+      next_route: headlessBudgetResult.next_route,
+      steps: headlessBudgetResult.steps,
+      next_action: 'start_verification_recovery_explicitly',
+    };
+    expect(isHeadlessRunAdvanceParams(headlessRunAdvanceParams)).toBe(true);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, authorize: false })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, session_id: 'x'.repeat(49) })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, expected_session_sequence: 0 })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, max_steps: 4 })).toBe(false);
+    expect(isHeadlessRunAdvanceResult(headlessRunAdvanceResult)).toBe(true);
+    expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, checkpoint_fingerprint: 'not-a-fingerprint' })).toBe(false);
+    expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, step_count: 2 })).toBe(false);
+    expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, stdout: 'raw output' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
       task_id: 'task_1',
@@ -1806,6 +1848,60 @@ describe('RuntimeClient', () => {
 
     await expect(client.continueOnceHeadless(params)).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.continue_once', params }]);
+  });
+
+  it('creates a headless.run.advance request', async () => {
+    const params = {
+      authorize: true as const,
+      session_id: 'm17.session',
+      advance_id: 'm17.advance.1',
+      expected_session_sequence: 1,
+      max_steps: 1,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+    };
+    const result = {
+      status: 'task_executed',
+      session_id: 'm17.session',
+      advance_id: 'm17.advance.1',
+      session_sequence: 1,
+      replayed: false,
+      start_progress: {
+        progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      },
+      post_progress: {
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      },
+      max_steps: 1,
+      step_count: 1,
+      executed_count: 1,
+      replayed_count: 0,
+      stop_reason: 'budget_exhausted',
+      checkpoint_fingerprint: `sha256:${'e'.repeat(64)}`,
+      steps: [{
+        step_index: 1,
+        status: 'task_executed',
+        decision_id: `headless_decision_${'a'.repeat(32)}`,
+        continuation_id: 'run.m17.session.1',
+        selected_task_id: 'task_1',
+        selected_run_id: 'run_1',
+        candidate_count: 1,
+        current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+        current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+        post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        replayed: false,
+        next_action: 'inspect_progress_overview',
+      }],
+      next_action: 'inspect_progress_overview',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.advanceHeadlessRun(params)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.run.advance', params }]);
   });
 
   it('creates a task.run request with selected index context', async () => {
