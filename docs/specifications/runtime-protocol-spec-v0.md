@@ -96,6 +96,8 @@ The runtime admits this request only when the source task exists, its run ID mat
 
 Successful admission creates or replays exactly one recovery task/run for the source failure fingerprint. The response includes `verification_recovery_admission` with source IDs, recovery IDs, `failure_fingerprint`, `recovery_running_enabled: false`, `next_action: "run_recovery_task_explicitly"`, and `replayed`. Admission does not run the recovery task, invoke an LLM, execute a verifier, mutate the workspace, or enable generic `process.exec`.
 
+M18.1 also allows `headless.continue_once` to perform that same recovery admission after fresh progress validation. The request may include `verification_recovery_source`, optional `verification_recovery_goal`, and optional `verification_recovery_mode_id`; it must not combine recovery admission with `max_steps > 1` or verification retry fields. A valid call creates or replays one `Created` recovery task/run, returns `status:"task_in_progress"`, selected recovery handles, `task_run_result:null`, and `next_route.kind:"run_recovery_task_explicitly"`. Invalid or stale evidence fails before task creation. The response remains bounded and does not expose raw prompts, provider output, raw verifier output, file content, environment values, commands, or raw request bodies.
+
 M8.2/R3.2 extends `task.run` responses for admitted verification recovery tasks with bounded repair proposal gate metadata:
 
 ```json

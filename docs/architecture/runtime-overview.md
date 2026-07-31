@@ -189,6 +189,8 @@ M8.3 lets the caller continue after an approved recovery proposal has been appli
 
 R3.3 makes failed `verification.cargo_check` recovery actionable without raw log exposure. The controlled verifier runs Cargo with structured JSON output, keeps captured stdout/stderr internal to the verifier, and emits at most five `bounded_cargo_diagnostics` entries with tool ID, check ID, diagnostic kind, severity, optional code, normalized workspace-relative path, line, column, and truncation state. The runtime sanitizes those entries before ledger insertion, includes them on failed verification completion gates and `VerificationRecoveryProvenance`, and materializes them into recovery prompts. It must not persist raw stdout/stderr, rendered compiler diagnostics, source snippets, commands, environment values, absolute or canonical paths, file content, provider responses, or raw prompt text.
 
+M18.1 extends `headless.continue_once` across the failed-verifier recovery admission boundary. A headless caller may provide bounded `verification_recovery_source` evidence with `authorize_recovery=true`; the runtime still rejects stale progress first, reuses the existing M8.1 recovery admission validator, creates or replays exactly one recovery task, records a bounded continuation decision, and returns `next_route.kind=run_recovery_task_explicitly`. The continuation does not run the admitted recovery task, create proposals, apply patches, execute verifiers, call providers, mutate workspace files, schedule background work, or move policy into the VSIX.
+
 ## Runtime Codebase Indexing Boundary
 
 M9.1 introduces `codebase.index.build`, the first runtime-owned codebase
