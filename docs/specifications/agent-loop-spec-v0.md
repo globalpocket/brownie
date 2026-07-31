@@ -127,6 +127,23 @@ retry outcome without duplicate running or verifier evidence. M16.2 does not
 admit another retry task, apply patches, run providers, start recovery
 automatically, schedule a loop, or add a new RPC.
 
+M17.1 adds `headless.run.advance` as a runtime-owned run-control session
+primitive. A caller explicitly authorizes one named `session_id`, supplies the
+expected session sequence, and for a new session supplies current
+`task.list.progress_overview` fingerprint and aggregate sequence. The runtime
+executes at most three existing `headless.continue_once` steps, derives per-step
+continuation IDs from the session and sequence, persists a bounded session
+checkpoint with start/post progress handles, and records bounded
+`HeadlessRunSessionAdvanced` evidence for executed steps. Repeating an already
+committed sequence returns the persisted checkpoint with `replayed=true` without
+duplicate `TaskRunning` or run-session evidence. The next sequence starts from
+the prior checkpoint, so the caller does not reconstruct raw progress handles.
+Stale starting progress and wrong session sequence fail before task execution.
+This remains explicit caller-driven work: no scheduler, background worker,
+automatic apply, automatic recovery, provider expansion, shell/git/network/
+service expansion, VSIX policy, raw prompts, provider responses, file content,
+commands, stdout/stderr, environment values, or raw paths are introduced.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

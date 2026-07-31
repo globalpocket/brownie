@@ -294,6 +294,16 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
 }
 
+export interface HeadlessRunAdvanceParams {
+  authorize: true;
+  session_id: string;
+  advance_id?: string | null;
+  expected_session_sequence: number;
+  max_steps?: number | null;
+  expected_progress_fingerprint?: string | null;
+  expected_aggregate_sequence?: number | null;
+}
+
 export interface VerificationRecoverySource {
   source_task_id: string;
   source_run_id: string;
@@ -461,6 +471,30 @@ export interface HeadlessContinueStepResult {
   post_aggregate_sequence?: number | null;
   replayed: boolean;
   next_route?: HeadlessContinueRoute | null;
+  next_action: string;
+}
+
+export interface HeadlessRunProgressCheckpoint {
+  progress_fingerprint: string;
+  aggregate_sequence: number;
+}
+
+export interface HeadlessRunAdvanceResult {
+  status: HeadlessContinueOnceStatus;
+  session_id: string;
+  advance_id: string;
+  session_sequence: number;
+  replayed: boolean;
+  start_progress: HeadlessRunProgressCheckpoint;
+  post_progress?: HeadlessRunProgressCheckpoint | null;
+  max_steps: number;
+  step_count: number;
+  executed_count: number;
+  replayed_count: number;
+  stop_reason: string;
+  checkpoint_fingerprint: string;
+  next_route?: HeadlessContinueRoute | null;
+  steps?: HeadlessContinueStepResult[];
   next_action: string;
 }
 
@@ -4130,6 +4164,21 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
   );
 }
 
+export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRunAdvanceParams {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'expected_progress_fingerprint', 'expected_aggregate_sequence']) &&
+    value.authorize === true &&
+    isHeadlessRunId(value.session_id) &&
+    (value.advance_id === undefined || value.advance_id === null || isHeadlessRunId(value.advance_id)) &&
+    isNonNegativeInteger(value.expected_session_sequence) &&
+    value.expected_session_sequence >= 1 &&
+    (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3)) &&
+    (value.expected_progress_fingerprint === undefined || value.expected_progress_fingerprint === null || (typeof value.expected_progress_fingerprint === 'string' && isSha256Fingerprint(value.expected_progress_fingerprint))) &&
+    (value.expected_aggregate_sequence === undefined || value.expected_aggregate_sequence === null || isNonNegativeInteger(value.expected_aggregate_sequence))
+  );
+}
+
 function isVerificationRecoveryRetrySource(value: unknown): value is VerificationRecoveryRetrySource {
   return (
     isRecord(value) &&
@@ -4350,12 +4399,74 @@ function isHeadlessContinueStepResult(value: unknown): value is HeadlessContinue
   );
 }
 
+function isHeadlessRunProgressCheckpoint(value: unknown): value is HeadlessRunProgressCheckpoint {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['progress_fingerprint', 'aggregate_sequence']) &&
+    typeof value.progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.progress_fingerprint) &&
+    isNonNegativeInteger(value.aggregate_sequence)
+  );
+}
+
+export function isHeadlessRunAdvanceResult(value: unknown): value is HeadlessRunAdvanceResult {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'status',
+      'session_id',
+      'advance_id',
+      'session_sequence',
+      'replayed',
+      'start_progress',
+      'post_progress',
+      'max_steps',
+      'step_count',
+      'executed_count',
+      'replayed_count',
+      'stop_reason',
+      'checkpoint_fingerprint',
+      'next_route',
+      'steps',
+      'next_action',
+    ]) &&
+    isHeadlessContinueOnceStatus(value.status) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.advance_id) &&
+    isNonNegativeInteger(value.session_sequence) &&
+    value.session_sequence >= 1 &&
+    typeof value.replayed === 'boolean' &&
+    isHeadlessRunProgressCheckpoint(value.start_progress) &&
+    (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
+    isNonNegativeInteger(value.max_steps) &&
+    value.max_steps >= 1 &&
+    value.max_steps <= 3 &&
+    isNonNegativeInteger(value.step_count) &&
+    isNonNegativeInteger(value.executed_count) &&
+    isNonNegativeInteger(value.replayed_count) &&
+    value.executed_count <= value.step_count &&
+    value.replayed_count <= value.step_count &&
+    typeof value.stop_reason === 'string' &&
+    value.stop_reason.length > 0 &&
+    value.stop_reason.length <= 120 &&
+    typeof value.checkpoint_fingerprint === 'string' &&
+    isSha256Fingerprint(value.checkpoint_fingerprint) &&
+    (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
+    (value.steps === undefined || (Array.isArray(value.steps) && value.steps.length === value.step_count && value.steps.every(isHeadlessContinueStepResult))) &&
+    typeof value.next_action === 'string'
+  );
+}
+
 function isHeadlessContinueOnceStatus(value: unknown): value is HeadlessContinueOnceStatus {
   return value === 'stale_progress' || value === 'no_eligible_task' || value === 'task_in_progress' || value === 'task_executed';
 }
 
 function isHeadlessContinuationId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,96}$/.test(value);
+}
+
+function isHeadlessRunId(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,48}$/.test(value);
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
