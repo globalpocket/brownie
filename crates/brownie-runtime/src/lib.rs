@@ -5587,6 +5587,26 @@ fn validate_task_run_context_budget(
     }))
 }
 
+fn validate_headless_context_budget_bounds(
+    budget: Option<&TaskRunContextBudget>,
+) -> Result<(), &'static str> {
+    let Some(budget) = budget else {
+        return Ok(());
+    };
+    if !(TASK_RUN_CONTEXT_BUDGET_MIN_PROMPT_CHARS..=TASK_RUN_CONTEXT_BUDGET_MAX_PROMPT_CHARS)
+        .contains(&budget.max_prompt_chars)
+    {
+        return Err("invalid params: context_budget.max_prompt_chars is out of range");
+    }
+    if budget.max_ledger_events > TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS {
+        return Err("invalid params: context_budget.max_ledger_events is out of range");
+    }
+    if budget.max_selected_index_chars > TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS {
+        return Err("invalid params: context_budget.max_selected_index_chars is out of range");
+    }
+    Ok(())
+}
+
 fn task_run_context_budget_summary(
     context_budget: &ContextBudgetSummary,
 ) -> Option<TaskRunContextBudgetSummary> {
@@ -7804,6 +7824,9 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: verification_recovery_source cannot be combined with verification retry fields",
         );
     }
+    if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
+        return error_response(id, -32602, message);
+    }
     if let Some(max_steps) = params.max_steps {
         if max_steps == 0 || max_steps > HEADLESS_CONTINUE_MAX_BUDGET_STEPS {
             return error_response(
@@ -7829,6 +7852,19 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             }
             return handle_headless_continue_budget(id, params);
         }
+    }
+    if params.context_budget.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
     }
 
     let store = match BrownieStore::from_env_or_cwd() {
@@ -8023,6 +8059,18 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             }),
         );
     }
+    if let Err(rejection) =
+        validate_task_run_context_budget(&selected_record, params.context_budget.as_ref())
+    {
+        return match rejection {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                error_response(id, -32602, message)
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    }
 
     let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
     let policy_version = "headless_continue_once_v1";
@@ -8066,6 +8114,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         id.clone(),
         Some(json!({
             "task_id": selected_record.task_id,
+            "context_budget": params.context_budget.clone(),
         })),
     );
     let Some(task_run_value) = task_run_response.result else {
@@ -8158,6 +8207,9 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             -32602,
             "invalid params: max_steps must be between 1 and 3",
         );
+    }
+    if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
+        return error_response(id, -32602, message);
     }
     if params.expected_session_sequence == 0 {
         return error_response(
@@ -8263,7 +8315,8 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "expected_progress_fingerprint": start_fingerprint,
             "expected_aggregate_sequence": start_sequence,
             "continuation_id": continuation_id,
-            "max_steps": max_steps
+            "max_steps": max_steps,
+            "context_budget": params.context_budget.clone()
         })),
     );
     let Some(result_value) = response.result else {
@@ -8315,6 +8368,10 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             post_progress_fingerprint: continue_result.post_progress_fingerprint.clone(),
             post_aggregate_sequence: continue_result.post_aggregate_sequence,
             replayed: continue_result.replayed,
+            context_budget: continue_result
+                .task_run_result
+                .as_ref()
+                .and_then(|result| result.context_budget.clone()),
             next_route: continue_result.next_route.clone(),
             next_action: continue_result.next_action.clone(),
         }]
@@ -8434,6 +8491,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: max_steps_per_advance must be between 1 and 3",
         );
     }
+    if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
+        return error_response(id, -32602, message);
+    }
 
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
@@ -8499,7 +8559,8 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 "session_id": params.session_id,
                 "advance_id": advance_id,
                 "expected_session_sequence": session_sequence,
-                "max_steps": max_steps_per_advance
+                "max_steps": max_steps_per_advance,
+                "context_budget": params.context_budget.clone()
             })),
         );
         let Some(result_value) = response.result else {
@@ -9408,7 +9469,8 @@ fn handle_headless_continue_budget(
                 "authorize": true,
                 "expected_progress_fingerprint": expected_progress_fingerprint,
                 "expected_aggregate_sequence": expected_aggregate_sequence,
-                "continuation_id": step_continuation_id
+                "continuation_id": step_continuation_id,
+                "context_budget": params.context_budget.clone()
             })),
         );
         let Some(result_value) = response.result else {
@@ -9443,6 +9505,10 @@ fn handle_headless_continue_budget(
             post_progress_fingerprint: result.post_progress_fingerprint.clone(),
             post_aggregate_sequence: result.post_aggregate_sequence,
             replayed: result.replayed,
+            context_budget: result
+                .task_run_result
+                .as_ref()
+                .and_then(|task_run_result| task_run_result.context_budget.clone()),
             next_route: result.next_route.clone(),
             next_action: result.next_action.clone(),
         });
@@ -32959,7 +33025,7 @@ mod tests {
             .expect("list result")["progress_overview"]
             .clone();
         let response = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.1","max_steps":2}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.1","max_steps":2,"context_budget":{{"max_prompt_chars":4096,"max_ledger_events":1,"max_selected_index_chars":0}}}}}}"#,
             progress["source_fingerprint"]
                 .as_str()
                 .expect("fingerprint"),
@@ -32984,6 +33050,10 @@ mod tests {
         assert_eq!(steps[1]["continuation_id"], "continue.budget.1.step.2");
         assert_eq!(steps[1]["status"], "task_executed");
         assert_ne!(steps[0]["selected_task_id"], steps[1]["selected_task_id"]);
+        assert_eq!(steps[0]["context_budget"]["requested"], true);
+        assert_eq!(steps[0]["context_budget"]["max_ledger_events"], 1);
+        assert_eq!(steps[1]["context_budget"]["requested"], true);
+        assert_eq!(steps[1]["context_budget"]["max_selected_index_chars"], 0);
 
         let selected_run_ids = steps
             .iter()
@@ -33171,6 +33241,14 @@ mod tests {
             progress["aggregate_sequence"].as_u64().expect("sequence")
         ));
         assert_eq!(too_large.error.expect("error").code, -32602);
+        let invalid_context_budget = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"continue.budget.invalid.context","context_budget":{{"max_prompt_chars":127,"max_ledger_events":1,"max_selected_index_chars":0}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert_eq!(invalid_context_budget.error.expect("error").code, -32602);
         let events = store
             .tasks()
             .read_ledger_events(&task.run_id)

@@ -460,6 +460,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_source: Option<VerificationRecoverySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_goal: Option<String>,
@@ -490,6 +492,8 @@ pub struct HeadlessRunAdvanceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_aggregate_sequence: Option<u64>,
@@ -507,6 +511,8 @@ pub struct HeadlessRunDriveParams {
     pub max_advances: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps_per_advance: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1190,6 +1196,8 @@ pub struct HeadlessContinueStepResult {
     pub post_progress_fingerprint: Option<String>,
     pub post_aggregate_sequence: Option<u64>,
     pub replayed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudgetSummary>,
     pub next_route: Option<HeadlessContinueRoute>,
     pub next_action: String,
 }

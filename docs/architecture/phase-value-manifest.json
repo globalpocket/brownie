@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "M19.1",
+  "phase": "M19.2",
   "current_milestone": "m19_runtime_context_budget_management",
   "milestone": "M19 Runtime Context Budget Management",
   "target_capability": "context_management",
-  "concrete_capability_transition": "task_run_materializes_runtime_context_under_explicit_caller_budget",
+  "concrete_capability_transition": "headless_continuation_reuses_runtime_context_budget_envelope_for_task_run_steps",
   "forbidden_pattern": "new_rpc_report_digest_history_readiness_inspection_only_route_status_wrapper_background_scheduler_daemon_automatic_apply_verifier_retry_execution_vsix_owned_policy_provider_shell_git_network_service_expansion_raw_prompt_provider_response_file_content_diff_command_stdout_stderr_environment_secret_path",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "context_management",
-      "relationship": "The Rust runtime now honors caller-provided task-run context budgets while building the actual provider prompt, including ledger-window and selected-index-context bounds."
-    },
-    {
-      "capability": "persistent_structured_ledger",
-      "relationship": "PromptBuilt events record bounded budget metadata and truncation decisions without storing raw selected file content or prompt text."
+      "relationship": "Existing headless continuation methods carry an optional runtime context budget envelope into the task.run steps they execute."
     },
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Headless callers can bound context materialization deterministically and inspect compact execution evidence to decide the next continuation step."
+      "relationship": "Headless callers can advance or drive multiple task steps while preserving deterministic context ceilings without caller-side per-step task.run reconstruction."
+    },
+    {
+      "capability": "persistent_structured_ledger",
+      "relationship": "Continuation, advance, drive, and PromptBuilt evidence expose only bounded numeric/boolean budget metadata and replay it without raw prompt or file content."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances context_management with supporting persistent_structured_ledger and headless_autonomous_development.",
-      "new_capability": "Existing task.run accepts an optional context_budget and Rust materialization applies max_prompt_chars, max_ledger_events, and max_selected_index_chars before provider execution.",
-      "why_existing_functionality_is_insufficient": "Provider max_prompt_chars only truncated final messages globally; callers could not bound ledger events or selected-index context at materialization time with structured replay evidence.",
-      "product_gap_if_skipped": "Long-running headless work could over-admit runtime context, making continuation behavior less predictable and forcing callers to rely on provider-level truncation instead of runtime-owned context policy.",
-      "non_duplicative": "Yes. M18.1-M18.3 advanced recovery-loop continuation boundaries; M19.1 changes task-run prompt materialization and budgeted context evidence.",
-      "no_new_rpc": "Yes. The existing task.run request/result contract is extended; no new JSON-RPC method is added.",
-      "no_new_summary": "Yes. The returned context_budget is execution evidence for task.run, not a standalone report/history/readiness surface.",
-      "runtime_behavior_change": "task.run now validates explicit context budgets, bounds ledger context, truncates selected-index prompt content, fails closed when protected prompt content cannot fit, and returns bounded budget evidence.",
-      "headless_autonomous_contribution": "Headless callers can choose deterministic context ceilings and decide whether to continue, split, or retry based on compact budget evidence.",
-      "milestone_progress": "Establishes the first M19 runtime-owned context budgeting slice for task execution."
+      "strategic_capabilities": "Advances context_management with supporting headless_autonomous_development and persistent_structured_ledger.",
+      "new_capability": "headless.continue_once, headless.run.advance, and headless.run.drive accept an optional context_budget envelope and apply it to normal task.run steps they execute.",
+      "why_existing_functionality_is_insufficient": "M19.1 direct task.run budgets do not affect task.run calls invoked internally by headless continuation, so headless drive loops could not prove a consistent runtime-owned context policy.",
+      "product_gap_if_skipped": "Long-running headless execution still depends on external controllers to reconstruct and pass context budgets per task step, or else risks unbounded context materialization.",
+      "non_duplicative": "Yes. M18.2/M18.3 handled recovery-loop execution/apply boundaries and M19.1 handled direct task.run budget materialization; M19.2 carries that budget into existing headless execution paths.",
+      "no_new_rpc": "Yes. The existing headless methods are extended; no JSON-RPC method is added.",
+      "no_new_summary": "Yes. Budget metadata is execution evidence attached to existing task-run and headless step results, not a standalone report/history/readiness surface.",
+      "runtime_behavior_change": "Normal headless continuation task execution forwards the context budget into task.run after validation and returns bounded per-step context budget evidence.",
+      "headless_autonomous_contribution": "Scheduled/headless callers can authorize bounded multi-step continuation without switching to direct task.run or duplicating policy outside Rust.",
+      "milestone_progress": "Combines direct task-run budget materialization with headless budget envelope reuse, the second core M19 context-management slice."
     },
     "questions": [
       {
@@ -85,25 +85,22 @@
       "report_only",
       "inspection_only_without_runtime_behavior_change",
       "new_json_rpc_method_for_context_budget_status",
-      "budget_result_without_prompt_materialization_behavior_change",
+      "budget_result_without_headless_task_run_materialization_behavior_change",
       "vsix_owned_routing_or_policy",
       "raw_prompt_provider_response_file_content_diff_command_output_environment_or_path_exposure",
       "source_file_token_presence_only_acceptance"
     ],
-    "review_intent": "M19.1 updates the deterministic current phase manifest. Review must confirm actual task.run context materialization behavior changes and no raw context leakage."
+    "review_intent": "Review must confirm the PR changes headless-executed task.run context materialization and preserves replay safety without raw context leakage."
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M19.1 updates the deterministic current phase manifest. Review must confirm actual task.run context materialization behavior changes and no raw context leakage.",
+    "review_intent": "M19.2 updates the deterministic current phase manifest. Review must confirm actual headless task-run budget behavior and no raw context leakage.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m18.3.json",
       "docs/architecture/phase-value-manifest.m19.1.json",
       "crates/brownie-protocol/src/lib.rs",
-      "crates/brownie-context/src/lib.rs",
-      "crates/brownie-agent-loop/src/lib.rs",
       "crates/brownie-runtime/src/lib.rs",
       "extensions/brownie-vsix/src/runtime/protocol.ts",
       "extensions/brownie-vsix/src/test/runtimeClient.test.ts"
@@ -114,27 +111,28 @@
     ]
   },
   "exit_criteria": [
-    "task.run accepts optional context_budget without adding a new RPC",
-    "invalid context_budget values are rejected before TaskRunning",
-    "max_ledger_events bounds the materialized ledger context window used for prompt construction",
-    "max_selected_index_chars truncates selected-index prompt content while result and ledger evidence remain summary-only",
-    "max_prompt_chars is enforced against the built prompt and impossible protected context budgets fail closed before provider execution",
-    "PromptBuilt records bounded budget metadata without raw prompt, provider response, file content, path, stdout, stderr, command, environment, or secret values",
-    "VSIX protocol types and validators accept valid context_budget request/result payloads and reject malformed or raw-content-bearing payloads",
-    "no new diagnostics wrapper, readiness report, history, digest, scheduler, provider/shell/git/network/service expansion, or VSIX-owned policy is introduced"
+    "headless.continue_once accepts optional context_budget for normal task continuation and rejects unsupported recovery/apply specialized combinations",
+    "headless.run.advance forwards context_budget into the continuation step it executes and replays bounded evidence",
+    "headless.run.drive forwards context_budget into each advance it executes and replays bounded evidence",
+    "invalid context_budget values are rejected before headless decision/task-running mutation",
+    "headless step results expose bounded context_budget evidence without raw prompt, selected-index content, file content, ledger payload, command output, environment, path, request body, or secrets",
+    "behavior tests prove the envelope changes task.run materialization behavior under headless execution"
   ],
-  "source_evidence": {
-    "runtime": [
-      "TaskRunContextBudget",
-      "ContextMaterializerInput.context_budget",
-      "PromptBuilt.context_budget_requested",
-      "task_run_applies_explicit_context_budget_to_materialized_context"
-    ],
-    "tests": [
-      "context materializer budget tests",
-      "task.run context budget runtime behavior tests",
-      "VSIX task.run context budget validator tests"
-    ]
-  },
-  "next_phase_candidate_notes": "After M19.1 merge, consider M19.2 for persisted resumable context-budget recommendations only if it changes headless continuation behavior; reject standalone context reports or budget histories."
+  "non_goals": [
+    "new JSON-RPC method",
+    "context budget report, digest, history, readiness, verdict, or inspection endpoint",
+    "provider policy expansion",
+    "workspace mutation",
+    "shell, git, test, network, or service execution expansion",
+    "automatic scheduler or background daemon",
+    "VSIX-owned context policy",
+    "raw prompt, provider response, file content, selected-index content, ledger payload, stdout, stderr, command, environment, path, request body, secret, or API key exposure"
+  ],
+  "tests": [
+    "headless_continue_once_budget_runs_bounded_sequential_created_tasks",
+    "headless_continue_once_budget_validates_budget_authorization_bounds",
+    "headless_run_advance_persists_checkpoint_replays_and_advances_from_checkpoint",
+    "headless_run_drive_advances_from_checkpoint_replays_and_records_drive_evidence",
+    "runtimeClient protocol guards accept context_budget on headless params and bounded step results"
+  ]
 }
