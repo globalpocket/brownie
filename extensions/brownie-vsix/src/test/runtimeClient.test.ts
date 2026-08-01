@@ -567,6 +567,27 @@ describe('protocol validation', () => {
       status: 'Completed',
       agent_loop: { final_state: 'Completed', completion_summary: 'done' },
     };
+    const contextBudget = {
+      max_prompt_chars: 4096,
+      max_ledger_events: 1,
+      max_selected_index_chars: 0,
+    };
+    const contextBudgetSummary = {
+      requested: true,
+      max_prompt_chars: 4096,
+      max_ledger_events: 1,
+      max_selected_index_chars: 0,
+      total_events: 4,
+      included_events: 1,
+      omitted_events: 3,
+      selected_index_context_present: false,
+      selected_index_content_chars: 0,
+      selected_index_materialized_chars: 0,
+      selected_index_truncated: false,
+      protected_context_chars: 256,
+      prompt_chars: 512,
+      prompt_within_budget: true,
+    };
     const headlessResult = {
       status: 'task_executed',
       decision_id: `headless_decision_${'a'.repeat(32)}`,
@@ -596,6 +617,8 @@ describe('protocol validation', () => {
     };
     expect(isHeadlessContinueOnceParams(headlessParams)).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 2 })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: contextBudget })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, authorize: false })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, expected_progress_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 0 })).toBe(false);
@@ -678,6 +701,7 @@ describe('protocol validation', () => {
         post_progress_fingerprint: `sha256:${'c'.repeat(64)}`,
         post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
         replayed: false,
+        context_budget: contextBudgetSummary,
         next_route: {
           kind: 'start_verification_recovery_explicitly',
           reason: 'Selected task failed verifier completion.',
@@ -782,6 +806,7 @@ describe('protocol validation', () => {
       advance_id: 'm17.advance.1',
       expected_session_sequence: 1,
       max_steps: 2,
+      context_budget: contextBudget,
       expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
       expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
     };
@@ -810,6 +835,7 @@ describe('protocol validation', () => {
       next_action: 'start_verification_recovery_explicitly',
     };
     expect(isHeadlessRunAdvanceParams(headlessRunAdvanceParams)).toBe(true);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, authorize: false })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, session_id: 'x'.repeat(49) })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, expected_session_sequence: 0 })).toBe(false);
@@ -825,6 +851,7 @@ describe('protocol validation', () => {
       expected_start_session_sequence: 1,
       max_advances: 2,
       max_steps_per_advance: 1,
+      context_budget: contextBudget,
     };
     const headlessRunDriveResult = {
       status: 'task_executed',
@@ -847,6 +874,7 @@ describe('protocol validation', () => {
       next_action: 'inspect_progress_overview',
     };
     expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
