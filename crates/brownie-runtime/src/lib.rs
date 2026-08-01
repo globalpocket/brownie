@@ -33349,7 +33349,7 @@ mod tests {
             .expect("list result")["progress_overview"]
             .clone();
         let first_request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m17.session","advance_id":"m17.advance.1","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":2}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m17.session","advance_id":"m17.advance.1","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":2,"context_budget":{{"max_prompt_chars":4096,"max_ledger_events":1,"max_selected_index_chars":0}}}}}}"#,
             progress["source_fingerprint"]
                 .as_str()
                 .expect("fingerprint"),
@@ -33377,6 +33377,22 @@ mod tests {
             first_result["steps"][1]["continuation_id"],
             "run.m17.session.1.step.2"
         );
+        assert_eq!(
+            first_result["steps"][0]["context_budget"]["requested"],
+            true
+        );
+        assert_eq!(
+            first_result["steps"][0]["context_budget"]["max_ledger_events"],
+            1
+        );
+        assert_eq!(
+            first_result["steps"][1]["context_budget"]["requested"],
+            true
+        );
+        assert_eq!(
+            first_result["steps"][1]["context_budget"]["max_selected_index_chars"],
+            0
+        );
 
         let replay_response = parse_line(&first_request);
         let replay_result = replay_response
@@ -33386,6 +33402,10 @@ mod tests {
         assert_eq!(
             replay_result["checkpoint_fingerprint"],
             first_result["checkpoint_fingerprint"]
+        );
+        assert_eq!(
+            replay_result["steps"][0]["context_budget"],
+            first_result["steps"][0]["context_budget"]
         );
 
         let second_response = parse_line(
@@ -33540,7 +33560,7 @@ mod tests {
             .unwrap_or_else(|| panic!("seed advance failed"));
         assert_eq!(seed["session_sequence"], 1);
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":1,"max_selected_index_chars":0}}}"#;
         let drive = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive failed"));
@@ -33557,12 +33577,23 @@ mod tests {
             .as_str()
             .expect("drive fingerprint")
             .starts_with("sha256:"));
+        let drive_advances = drive["advances"].as_array().expect("drive advances");
+        assert!(drive_advances
+            .iter()
+            .all(|advance| advance["steps"][0]["context_budget"]["requested"] == true));
+        assert!(drive_advances
+            .iter()
+            .all(|advance| advance["steps"][0]["context_budget"]["max_selected_index_chars"] == 0));
 
         let replay = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive replay failed"));
         assert_eq!(replay["replayed"], true);
         assert_eq!(replay["drive_fingerprint"], drive["drive_fingerprint"]);
+        assert_eq!(
+            replay["advances"][0]["steps"][0]["context_budget"],
+            drive["advances"][0]["steps"][0]["context_budget"]
+        );
 
         let selected_run_ids = seed["steps"]
             .as_array()
