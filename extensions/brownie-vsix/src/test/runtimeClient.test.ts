@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
-import { isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
+import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -1123,6 +1123,8 @@ describe('protocol validation', () => {
       file_kind: 'Rust',
       bytes_read: 21,
       content_char_count: 21,
+      materialized_content_char_count: 12,
+      content_truncated_for_prompt: true,
       content_sha256: selectedContext.content_sha256,
       prompt_preview_redacted: true,
       next_action: 'continue_task_execution_with_materialized_context',
@@ -1130,6 +1132,8 @@ describe('protocol validation', () => {
 
     expect(isTaskRunParams({ task_id: 'task_1' })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 4096, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 127, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: { ...selectedContext, content: 'changed' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext, raw_input: 'nope' })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary(summary)).toBe(true);
@@ -1139,7 +1143,39 @@ describe('protocol validation', () => {
       status: 'Completed',
       agent_loop: { final_state: 'Completed', completion_summary: 'done' },
       selected_index_prompt_context: summary,
+      context_budget: {
+        requested: true,
+        max_prompt_chars: 4096,
+        max_ledger_events: 4,
+        max_selected_index_chars: 1024,
+        total_events: 9,
+        included_events: 4,
+        omitted_events: 5,
+        selected_index_context_present: true,
+        selected_index_content_chars: 21,
+        selected_index_materialized_chars: 12,
+        selected_index_truncated: true,
+        protected_context_chars: 512,
+        prompt_chars: 2048,
+        prompt_within_budget: true,
+      },
     })).toBe(true);
+    expect(isTaskRunContextBudgetSummary({
+      requested: true,
+      max_prompt_chars: 4096,
+      max_ledger_events: 4,
+      max_selected_index_chars: 1024,
+      total_events: 9,
+      included_events: 4,
+      omitted_events: 5,
+      selected_index_context_present: true,
+      selected_index_content_chars: 21,
+      selected_index_materialized_chars: 22,
+      selected_index_truncated: true,
+      protected_context_chars: 512,
+      prompt_chars: 2048,
+      prompt_within_budget: true,
+    })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, content: selectedContext.content })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, path: selectedContext.path })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, prompt_preview_redacted: false })).toBe(false);
@@ -2252,6 +2288,8 @@ describe('RuntimeClient', () => {
         file_kind: 'Rust',
         bytes_read: 21,
         content_char_count: 21,
+        materialized_content_char_count: 21,
+        content_truncated_for_prompt: false,
         content_sha256: selectedIndexContext.content_sha256,
         prompt_preview_redacted: true,
         next_action: 'continue_task_execution_with_materialized_context',

@@ -194,7 +194,7 @@ fn prompt_role_to_llm_role(role: &PromptRole) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use brownie_context::{ContextWindowSummary, MAX_LEDGER_CONTEXT_EVENTS};
+    use brownie_context::{ContextBudgetSummary, ContextWindowSummary, MAX_LEDGER_CONTEXT_EVENTS};
     use brownie_llm::FAKE_LLM_MODEL;
 
     #[test]
@@ -212,6 +212,14 @@ mod tests {
 
     #[test]
     fn run_with_fake_llm_returns_completed_and_response() {
+        let context_window = ContextWindowSummary {
+            total_events: 2,
+            included_events: 2,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: Some("TaskStarted".into()),
+            last_included_event: Some("TaskRunning".into()),
+        };
         let result = AgentLoop::run_with_fake_llm(PromptBuildInput {
             task_id: "task_1".into(),
             run_id: "run_1".into(),
@@ -225,14 +233,8 @@ mod tests {
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
             selected_index_context: None,
-            context_window: ContextWindowSummary {
-                total_events: 2,
-                included_events: 2,
-                omitted_events: 0,
-                max_events: MAX_LEDGER_CONTEXT_EVENTS,
-                first_included_event: Some("TaskStarted".into()),
-                last_included_event: Some("TaskRunning".into()),
-            },
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            context_window,
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -250,6 +252,14 @@ mod tests {
     }
     #[test]
     fn run_second_pass_with_fake_llm_returns_completed_and_final_response() {
+        let context_window = ContextWindowSummary {
+            total_events: 1,
+            included_events: 1,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: Some("ToolExecutionCompleted".into()),
+            last_included_event: Some("ToolExecutionCompleted".into()),
+        };
         let result = AgentLoop::run_second_pass_with_fake_llm(PromptBuildInput {
             task_id: "task_1".into(),
             run_id: "run_1".into(),
@@ -265,14 +275,8 @@ mod tests {
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
             selected_index_context: None,
-            context_window: ContextWindowSummary {
-                total_events: 1,
-                included_events: 1,
-                omitted_events: 0,
-                max_events: MAX_LEDGER_CONTEXT_EVENTS,
-                first_included_event: Some("ToolExecutionCompleted".into()),
-                last_included_event: Some("ToolExecutionCompleted".into()),
-            },
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
+            context_window,
             ledger_summary: vec!["ToolExecutionCompleted".into()],
         });
 
