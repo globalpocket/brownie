@@ -295,6 +295,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_retry_goal?: string | null;
   verification_recovery_retry_mode_id?: string | null;
   verification_recovery_run_target?: VerificationRecoveryRunTarget | null;
+  verification_recovery_apply_target?: VerificationRecoveryApplyTarget | null;
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
 }
 
@@ -353,6 +354,19 @@ export interface VerificationRecoveryRunTarget {
   source_run_id: string;
   expected_failure_fingerprint: string;
   authorize_recovery_run: boolean;
+}
+
+export interface VerificationRecoveryApplyTarget {
+  source_task_id: string;
+  source_run_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  proposal_id: string;
+  expected_failure_fingerprint: string;
+  expected_target_sha256?: string | null;
+  expected_target_absent?: boolean | null;
+  replacement_content?: string | null;
+  authorize_recovery_apply: boolean;
 }
 
 export interface LlmProviderFailureRetrySource {
@@ -470,6 +484,7 @@ export interface HeadlessContinueOnceResult {
   stale: boolean;
   replayed: boolean;
   task_run_result?: TaskRunResult | null;
+  proposal_apply_result?: ProposalApplyResult | null;
   next_route?: HeadlessContinueRoute | null;
   max_steps?: number | null;
   step_count?: number | null;
@@ -4194,7 +4209,7 @@ export function isTaskRunParams(value: unknown): value is TaskRunParams {
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_retry_run_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4208,6 +4223,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.verification_recovery_retry_goal === undefined || value.verification_recovery_retry_goal === null || typeof value.verification_recovery_retry_goal === 'string') &&
     (value.verification_recovery_retry_mode_id === undefined || value.verification_recovery_retry_mode_id === null || typeof value.verification_recovery_retry_mode_id === 'string') &&
     (value.verification_recovery_run_target === undefined || value.verification_recovery_run_target === null || isVerificationRecoveryRunTarget(value.verification_recovery_run_target)) &&
+    (value.verification_recovery_apply_target === undefined || value.verification_recovery_apply_target === null || isVerificationRecoveryApplyTarget(value.verification_recovery_apply_target)) &&
     (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target))
   );
 }
@@ -4301,6 +4317,24 @@ function isVerificationRecoveryRunTarget(value: unknown): value is VerificationR
   );
 }
 
+function isVerificationRecoveryApplyTarget(value: unknown): value is VerificationRecoveryApplyTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['source_task_id', 'source_run_id', 'recovery_task_id', 'recovery_run_id', 'proposal_id', 'expected_failure_fingerprint', 'expected_target_sha256', 'expected_target_absent', 'replacement_content', 'authorize_recovery_apply']) &&
+    typeof value.source_task_id === 'string' &&
+    typeof value.source_run_id === 'string' &&
+    typeof value.recovery_task_id === 'string' &&
+    typeof value.recovery_run_id === 'string' &&
+    typeof value.proposal_id === 'string' &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    (value.expected_target_sha256 === undefined || value.expected_target_sha256 === null || (typeof value.expected_target_sha256 === 'string' && isSha256Fingerprint(value.expected_target_sha256))) &&
+    (value.expected_target_absent === undefined || value.expected_target_absent === null || typeof value.expected_target_absent === 'boolean') &&
+    (value.replacement_content === undefined || value.replacement_content === null || typeof value.replacement_content === 'string') &&
+    value.authorize_recovery_apply === true
+  );
+}
+
 export function isTaskRunResult(value: unknown): value is TaskRunResult {
   return (
     isRecord(value) &&
@@ -4369,6 +4403,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'stale',
       'replayed',
       'task_run_result',
+      'proposal_apply_result',
       'next_route',
       'max_steps',
       'step_count',
@@ -4396,6 +4431,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     typeof value.stale !== 'boolean' ||
     typeof value.replayed !== 'boolean' ||
     (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
+    (value.proposal_apply_result !== undefined && value.proposal_apply_result !== null && !isProposalApplyResult(value.proposal_apply_result)) ||
     (value.next_route !== undefined && value.next_route !== null && !isHeadlessContinueRoute(value.next_route)) ||
     (value.max_steps !== undefined && value.max_steps !== null && (!isNonNegativeInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 3)) ||
     (value.step_count !== undefined && value.step_count !== null && !isNonNegativeInteger(value.step_count)) ||
