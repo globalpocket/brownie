@@ -617,6 +617,22 @@ describe('protocol validation', () => {
       ...headlessParams,
       verification_recovery_source: { ...verificationRecoverySource, authorize_recovery: false },
     })).toBe(false);
+    const verificationRecoveryRunTarget = {
+      recovery_task_id: 'task_recovery',
+      recovery_run_id: 'run_recovery',
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      expected_failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+      authorize_recovery_run: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_run_target: verificationRecoveryRunTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_run_target: { ...verificationRecoveryRunTarget, authorize_recovery_run: false },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,
@@ -1963,6 +1979,77 @@ describe('RuntimeClient', () => {
         next_action: 'run_recovery_task_explicitly',
       },
       next_action: 'run_recovery_task_explicitly',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.continueOnceHeadless(params)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'headless.continue_once', params }]);
+  });
+
+  it('creates a headless.continue_once verification recovery run request', async () => {
+    const fingerprint = `sha256:${'d'.repeat(64)}`;
+    const params = {
+      authorize: true as const,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      continuation_id: 'continue.once:recovery.run',
+      verification_recovery_run_target: {
+        recovery_task_id: 'task_recovery',
+        recovery_run_id: 'run_recovery',
+        source_task_id: 'task_source',
+        source_run_id: 'run_source',
+        expected_failure_fingerprint: fingerprint,
+        authorize_recovery_run: true,
+      },
+    };
+    const result = {
+      status: 'task_executed',
+      decision_id: `headless_decision_${'c'.repeat(32)}`,
+      continuation_id: 'continue.once:recovery.run',
+      selected_task_id: 'task_recovery',
+      selected_run_id: 'run_recovery',
+      candidate_count: 1,
+      expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      current_progress_fingerprint: taskListProgressOverview.source_fingerprint,
+      current_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      post_progress_fingerprint: `sha256:${'f'.repeat(64)}`,
+      post_aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+      stale: false,
+      replayed: false,
+      task_run_result: {
+        task_id: 'task_recovery',
+        run_id: 'run_recovery',
+        status: 'Completed',
+        agent_loop: { final_state: 'Completed', completion_summary: 'recovery proposal created' },
+        verification_recovery_repair: {
+          source_task_id: 'task_source',
+          source_run_id: 'run_source',
+          recovery_task_id: 'task_recovery',
+          recovery_run_id: 'run_recovery',
+          failure_fingerprint: fingerprint,
+          failed_verifier_tool_ids: ['verification.cargo_fmt_check'],
+          gate_status: 'Passed',
+          proposal_id: 'proposal_recovery_1',
+          proposal_count: 1,
+          apply_enabled: false,
+          next_action: 'review_and_authorize_recovery_proposal',
+          replayed: false,
+        },
+      },
+      next_route: {
+        kind: 'review_and_authorize_recovery_proposal',
+        reason: 'Recovery repair produced one bounded proposal; review and authorize it explicitly.',
+        task_id: 'task_recovery',
+        run_id: 'run_recovery',
+        proposal_id: 'proposal_recovery_1',
+        failure_fingerprint: fingerprint,
+        progress_fingerprint: `sha256:${'f'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'review_and_authorize_recovery_proposal',
+      },
+      next_action: 'review_and_authorize_recovery_proposal',
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);

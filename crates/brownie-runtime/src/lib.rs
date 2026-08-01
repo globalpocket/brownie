@@ -139,7 +139,7 @@ use brownie_protocol::{
     ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
     VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
     VerificationRecoveryRetryProvenance, VerificationRecoveryRetryRunTarget,
-    VerificationRecoveryRetrySource, VerificationRecoverySource,
+    VerificationRecoveryRetrySource, VerificationRecoveryRunTarget, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
     WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
     WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
@@ -7571,6 +7571,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: verification_recovery_source cannot be combined with max_steps greater than 1",
         );
     }
+    if params.verification_recovery_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_retry_run_target.is_some() && params.max_steps.unwrap_or(1) > 1
     {
         return error_response(
@@ -7586,6 +7593,25 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: verification_recovery_retry_source and verification_recovery_retry_run_target cannot be combined",
+        );
+    }
+    if params.verification_recovery_source.is_some()
+        && params.verification_recovery_run_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_source and verification_recovery_run_target cannot be combined",
+        );
+    }
+    if params.verification_recovery_run_target.is_some()
+        && (params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_run_target cannot be combined with verification retry fields",
         );
     }
     if params.verification_recovery_source.is_some()
@@ -7703,6 +7729,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.verification_recovery_retry_source.is_some() {
         return handle_headless_continue_verification_recovery_retry_admission(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.verification_recovery_run_target.is_some() {
+        return handle_headless_continue_verification_recovery_run(
             id,
             &store,
             &progress_overview,
@@ -8772,6 +8806,157 @@ fn handle_headless_continue_verification_recovery_retry_run(
             "apply_fingerprint": target.expected_apply_fingerprint.clone(),
             "next_action": "inspect_progress_overview",
             "reason": "Headless continue-once ran one targeted verification retry task from bounded route evidence."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: post_run_record.task_id.clone(),
+                selected_run_id: post_run_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &post_run_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(task_run_result.task_id.clone()),
+            selected_run_id: Some(task_run_result.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: Some(task_run_result),
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn handle_headless_continue_verification_recovery_run(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.verification_recovery_run_target.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing verification recovery run target",
+        );
+    };
+    let selected_record = match verification_recovery_record_for_headless_run_target(store, target)
+    {
+        Ok(record) => record,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+
+    let task_run_response = handle_task_run(
+        id.clone(),
+        Some(json!({
+            "task_id": selected_record.task_id.clone(),
+        })),
+    );
+    let Some(task_run_value) = task_run_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: task_run_response.error,
+        };
+    };
+    let task_run_result: TaskRunResult = match serde_json::from_value(task_run_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_run_record = match store.tasks().get_task(&selected_record.task_id) {
+        Ok(Some(record)) if record.run_id == selected_record.run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: verification recovery run task/run mismatch after execution",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: verification recovery run task not found after execution",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &post_run_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": post_run_record.task_id.clone(),
+            "selected_run_id": post_run_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_recovery_run": true,
+            "source_task_id": target.source_task_id.clone(),
+            "source_run_id": target.source_run_id.clone(),
+            "failure_fingerprint": target.expected_failure_fingerprint.clone(),
+            "next_action": "review_and_authorize_recovery_proposal",
+            "reason": "Headless continue-once ran one targeted verification recovery task from bounded route evidence."
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -23015,6 +23200,83 @@ fn verification_recovery_retry_record_for_headless_run_target(
     Ok(record)
 }
 
+fn verification_recovery_record_for_headless_run_target(
+    store: &BrownieStore,
+    target: &VerificationRecoveryRunTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.recovery_task_id.as_str(),
+        target.recovery_run_id.as_str(),
+        target.source_task_id.as_str(),
+        target.source_run_id.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: verification_recovery_run_target fields must not be empty",
+            ));
+        }
+    }
+    if !target.authorize_recovery_run {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.authorize_recovery_run must be true"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.expected_failure_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.recovery_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: verification_recovery_run_target.recovery_task_id was not found"
+                    .into(),
+            )
+        })?;
+    if record.run_id != target.recovery_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.recovery_run_id does not match recovery task"
+                .into(),
+        ));
+    }
+    if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification recovery run target task must be Created or Queued"
+                .into(),
+        ));
+    }
+    let Some(provenance) = record.verification_recovery_provenance.as_ref() else {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification recovery run target task has no recovery provenance"
+                .into(),
+        ));
+    };
+    if provenance.source_task_id != target.source_task_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.source_task_id is stale".into(),
+        ));
+    }
+    if provenance.source_run_id != target.source_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.source_run_id is stale".into(),
+        ));
+    }
+    if provenance.failure_fingerprint != target.expected_failure_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_run_target.expected_failure_fingerprint is stale"
+                .into(),
+        ));
+    }
+    revalidate_verification_recovery_task_for_run(store, &record)?;
+    Ok(record)
+}
+
 fn latest_recovery_apply_evidence(
     store: &BrownieStore,
     recovery_run_id: &str,
@@ -30410,6 +30672,183 @@ mod tests {
             .read_ledger_events(&recovery_run_id)
             .expect("recovery events after replay");
         assert_eq!(events_after_replay.len(), events_after_first.len());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_runs_targeted_verification_recovery_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("readme");
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"m18_2_headless_recovery_run\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("manifest");
+        std::fs::write(
+            temp.path().join("src/lib.rs"),
+            "pub fn raw_m18_2_fmt_failure_marker( )->i32{1}\n",
+        )
+        .expect("src");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+            );
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let admit = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "expected_progress_fingerprint": progress["source_fingerprint"],
+                    "expected_aggregate_sequence": progress["aggregate_sequence"],
+                    "continuation_id": "m18.2.recovery.admit",
+                    "verification_recovery_goal": "Implement recovery edit",
+                    "verification_recovery_mode_id": "implementer",
+                    "verification_recovery_source": {
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "authorize_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(admit.error.is_none());
+        let admit_result = admit.result.expect("admit result");
+        let recovery_task_id = admit_result["selected_task_id"]
+            .as_str()
+            .expect("recovery task")
+            .to_string();
+        let recovery_run_id = admit_result["selected_run_id"]
+            .as_str()
+            .expect("recovery run")
+            .to_string();
+        let run_progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
+            .result
+            .expect("task list after admit")["progress_overview"]
+            .clone();
+        let run_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "expected_progress_fingerprint": run_progress["source_fingerprint"],
+                "expected_aggregate_sequence": run_progress["aggregate_sequence"],
+                "continuation_id": "m18.2.recovery.run",
+                "verification_recovery_run_target": {
+                    "recovery_task_id": recovery_task_id,
+                    "recovery_run_id": recovery_run_id,
+                    "source_task_id": source_task_id,
+                    "source_run_id": source_run_id,
+                    "expected_failure_fingerprint": fingerprint,
+                    "authorize_recovery_run": true
+                }
+            }
+        });
+
+        let missing_auth = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "expected_progress_fingerprint": run_progress["source_fingerprint"],
+                    "expected_aggregate_sequence": run_progress["aggregate_sequence"],
+                    "verification_recovery_run_target": {
+                        "recovery_task_id": recovery_task_id,
+                        "recovery_run_id": recovery_run_id,
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "authorize_recovery_run": false
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            missing_auth
+                .error
+                .as_ref()
+                .expect("missing auth error")
+                .code,
+            -32602
+        );
+
+        let store = BrownieStore::new(temp.path());
+        let events_before_valid_run = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events before valid run");
+        assert_eq!(
+            events_before_valid_run
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            0
+        );
+
+        let run = parse_line(&run_request.to_string());
+        assert!(run.error.is_none(), "recovery run error: {:?}", run.error);
+        let run_result = run.result.expect("headless recovery run result");
+        assert_eq!(run_result["status"], "task_executed");
+        assert_eq!(run_result["selected_task_id"], recovery_task_id);
+        assert_eq!(run_result["task_run_result"]["task_id"], recovery_task_id);
+        assert!(
+            run_result["task_run_result"]["verification_recovery_repair"]
+                .as_object()
+                .is_some()
+        );
+        assert_eq!(
+            run_result["next_route"]["next_action"],
+            "review_and_authorize_recovery_proposal"
+        );
+        let decision_count = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events")
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .count();
+
+        let replay = parse_line(&run_request.to_string())
+            .result
+            .expect("headless replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["status"], "task_executed");
+        assert_eq!(replay["selected_task_id"], recovery_task_id);
+        let events_after_replay = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events after replay");
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            decision_count
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
