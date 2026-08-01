@@ -437,6 +437,16 @@ pub struct TaskRunParams {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_index_context: Option<TaskRunSelectedIndexContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRunContextBudget {
+    pub max_prompt_chars: usize,
+    pub max_ledger_events: usize,
+    pub max_selected_index_chars: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1068,6 +1078,8 @@ pub struct TaskRunResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_budget: Option<TaskRunContextBudgetSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_completion_gate: Option<TaskRunVerificationCompletionGate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_repair: Option<TaskRunVerificationRecoveryRepairOutcome>,
@@ -1252,9 +1264,29 @@ pub struct TaskRunSelectedIndexPromptContextSummary {
     pub file_kind: String,
     pub bytes_read: usize,
     pub content_char_count: usize,
+    pub materialized_content_char_count: usize,
+    pub content_truncated_for_prompt: bool,
     pub content_sha256: String,
     pub prompt_preview_redacted: bool,
     pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunContextBudgetSummary {
+    pub requested: bool,
+    pub max_prompt_chars: usize,
+    pub max_ledger_events: usize,
+    pub max_selected_index_chars: usize,
+    pub total_events: usize,
+    pub included_events: usize,
+    pub omitted_events: usize,
+    pub selected_index_context_present: bool,
+    pub selected_index_content_chars: usize,
+    pub selected_index_materialized_chars: usize,
+    pub selected_index_truncated: bool,
+    pub protected_context_chars: usize,
+    pub prompt_chars: usize,
+    pub prompt_within_budget: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

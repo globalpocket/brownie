@@ -8,7 +8,8 @@ use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
 };
 use brownie_context::{
-    ContextMaterializer, ContextMaterializerInput, ContextWindowSummary, SelectedIndexPromptContext,
+    ContextBudget, ContextBudgetSummary, ContextMaterializer, ContextMaterializerInput,
+    ContextWindowSummary, SelectedIndexPromptContext,
 };
 use brownie_indexer::{
     build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexError,
@@ -128,19 +129,19 @@ use brownie_protocol::{
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListProgressBlockedSet, TaskListProgressNextActionSet, TaskListProgressOverview,
     TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode,
-    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunParams,
-    TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
-    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
-    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
-    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
-    VerificationRecoveryApplyTarget, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
-    VerificationRecoveryRetryRunTarget, VerificationRecoveryRetrySource,
-    VerificationRecoveryRunTarget, VerificationRecoverySource,
+    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunContextBudget,
+    TaskRunContextBudgetSummary, TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult,
+    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
+    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
+    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
+    TaskStatusCounts, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
+    VerificationRecoveryRetryProvenance, VerificationRecoveryRetryRunTarget,
+    VerificationRecoveryRetrySource, VerificationRecoveryRunTarget, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
     WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
     WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
@@ -258,6 +259,10 @@ const METHOD_HEADLESS_RUN_ADVANCE: &str = "headless.run.advance";
 const METHOD_HEADLESS_RUN_DRIVE: &str = "headless.run.drive";
 const HEADLESS_CONTINUE_MAX_BUDGET_STEPS: u8 = 3;
 const HEADLESS_RUN_DRIVE_MAX_ADVANCES: u8 = 3;
+const TASK_RUN_CONTEXT_BUDGET_MIN_PROMPT_CHARS: usize = 128;
+const TASK_RUN_CONTEXT_BUDGET_MAX_PROMPT_CHARS: usize = 1_000_000;
+const TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS: usize = 64;
+const TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS: usize = MAX_WORKSPACE_READ_BYTES;
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -2022,6 +2027,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let context_budget =
+        match validate_task_run_context_budget(&record, params.context_budget.as_ref()) {
+            Ok(budget) => budget,
+            Err(rejection) => {
+                return match rejection {
+                    TaskRunAdmissionRejection::InvalidParams(message) => {
+                        error_response(id, -32602, message)
+                    }
+                    TaskRunAdmissionRejection::Internal(message) => {
+                        error_response(id, -32603, &format!("internal error: {message}"))
+                    }
+                }
+            }
+        };
 
     match verification_recovery_repair_outcome_for_replay(&store, &record) {
         Ok(Some((agent_loop, verification_recovery_repair))) => {
@@ -2034,6 +2053,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
                     verification_recovery_retry: None,
@@ -2058,6 +2078,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
                     verification_recovery_retry: Some(verification_recovery_retry),
@@ -2079,6 +2100,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 "invalid params: selected_index_context is not supported for verification recovery retry tasks",
             );
         }
+        if params.context_budget.is_some() {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: context_budget is not supported for verification recovery retry tasks",
+            );
+        }
         return handle_verification_recovery_retry_task_run(id, store, record);
     }
 
@@ -2093,6 +2121,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2117,6 +2146,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2141,6 +2171,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2165,6 +2196,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     agent_loop,
                     llm_provider_failure: Some(llm_provider_failure),
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
                     verification_recovery_retry: None,
@@ -2199,6 +2231,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 id,
                 -32602,
                 "invalid params: selected_index_context is not supported for LLM provider failure retry tasks",
+            );
+        }
+        if params.context_budget.is_some() {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: context_budget is not supported for LLM provider failure retry tasks",
             );
         }
         if let Err(rejection) = revalidate_llm_provider_failure_retry_task_for_run(&store, &record)
@@ -2364,8 +2403,28 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         selected_index_context: selected_index_context
             .as_ref()
             .map(|context| context.prompt_context.clone()),
+        context_budget,
     });
     let prompt_context_window = prompt_input.context_window.clone();
+    let prompt_context_budget = prompt_input.context_budget.clone();
+    let context_budget_result = task_run_context_budget_summary(&prompt_context_budget);
+    let selected_index_prompt_context_result = selected_index_context.as_ref().map(|context| {
+        let mut summary = context.summary.clone();
+        summary.materialized_content_char_count =
+            prompt_context_budget.selected_index_materialized_chars;
+        summary.content_truncated_for_prompt = prompt_context_budget.selected_index_truncated;
+        summary
+    });
+    if !prompt_context_budget.prompt_within_budget {
+        return fail_llm_request(
+            &store,
+            &running,
+            id,
+            provider_selection.clone(),
+            "context_budget max_prompt_chars exceeded during prompt materialization",
+            LedgerEventKind::LlmRequestFailed,
+        );
+    }
     let provider = match llm_provider_from_workspace_for_task_run(store.workspace_root()) {
         Ok(provider) => provider,
         Err(error) => {
@@ -2443,6 +2502,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             provider_selection.budget.max_prompt_chars,
             &result.sensitive_scan,
             &prompt_context_window,
+            &prompt_context_budget,
             selected_index_context.is_some(),
         )),
     ) {
@@ -2563,8 +2623,30 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             selected_index_context: selected_index_context
                 .as_ref()
                 .map(|context| context.prompt_context.clone()),
+            context_budget,
         });
         let second_pass_context_window = second_pass_prompt_input.context_window.clone();
+        let second_pass_context_budget = second_pass_prompt_input.context_budget.clone();
+        if !second_pass_context_budget.prompt_within_budget {
+            return fail_llm_request(
+                &store,
+                &running,
+                id,
+                RuntimeLlmProviderStatus {
+                    status: provider_status.clone(),
+                    strict: provider_strict,
+                    will_fallback_to_fake: false,
+                    config_source: provider_selection.config_source.clone(),
+                    active_profile: provider_selection.active_profile.clone(),
+                    task_run_network_allowed: provider_selection.task_run_network_allowed,
+                    budget: provider_selection.budget.clone(),
+                    sensitive_guard_mode: provider_selection.sensitive_guard_mode.clone(),
+                    sensitive_guard_invalid: provider_selection.sensitive_guard_invalid.clone(),
+                },
+                "context_budget max_prompt_chars exceeded during second-pass prompt materialization",
+                LedgerEventKind::SecondPassLlmRequestFailed,
+            );
+        }
         let second_pass = match AgentLoop::run_second_pass_with_llm(
             second_pass_prompt_input,
             provider.as_ref(),
@@ -2616,6 +2698,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 provider_selection.budget.max_prompt_chars,
                 &second_pass.sensitive_scan,
                 &second_pass_context_window,
+                &second_pass_context_budget,
                 selected_index_context.is_some(),
             )),
         ) {
@@ -2735,9 +2818,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         completion_summary: agent_loop_completion_summary,
                     },
                     llm_provider_failure: None,
-                    selected_index_prompt_context: selected_index_context
-                        .as_ref()
-                        .map(|context| context.summary.clone()),
+                    selected_index_prompt_context: selected_index_prompt_context_result,
+                    context_budget: context_budget_result,
                     verification_completion_gate,
                     verification_recovery_repair,
                     verification_recovery_retry: None,
@@ -2925,6 +3007,7 @@ fn handle_verification_recovery_retry_task_run(
                     },
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
                     verification_recovery_retry,
@@ -4048,6 +4131,7 @@ fn fail_llm_request(
                         agent_loop: llm_provider_failed_agent_loop_summary(),
                         llm_provider_failure: Some(outcome),
                         selected_index_prompt_context: None,
+                        context_budget: None,
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
                         verification_recovery_retry: None,
@@ -4069,6 +4153,7 @@ fn fail_llm_request(
                 agent_loop: llm_provider_failed_agent_loop_summary(),
                 llm_provider_failure: Some(outcome),
                 selected_index_prompt_context: None,
+                context_budget: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
                 verification_recovery_retry: None,
@@ -5425,6 +5510,8 @@ fn validate_task_run_selected_index_context(
         file_kind: context.file_kind.clone(),
         bytes_read: context.bytes_read,
         content_char_count: context.content.chars().count(),
+        materialized_content_char_count: context.content.chars().count(),
+        content_truncated_for_prompt: false,
         content_sha256: context.content_sha256.clone(),
         prompt_preview_redacted: true,
         next_action: CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION.to_string(),
@@ -5440,6 +5527,9 @@ fn validate_task_run_selected_index_context(
         file_kind: context.file_kind.clone(),
         bytes_read: context.bytes_read,
         content_sha256: context.content_sha256.clone(),
+        content_char_count: context.content.chars().count(),
+        materialized_content_char_count: context.content.chars().count(),
+        content_truncated_for_prompt: false,
         content: context.content.clone(),
     };
     let event_payload =
@@ -5448,6 +5538,76 @@ fn validate_task_run_selected_index_context(
         prompt_context,
         summary,
         event_payload,
+    })
+}
+
+fn validate_task_run_context_budget(
+    record: &brownie_protocol::TaskRecord,
+    budget: Option<&TaskRunContextBudget>,
+) -> Result<Option<ContextBudget>, TaskRunAdmissionRejection> {
+    let Some(budget) = budget else {
+        return Ok(None);
+    };
+    if !(TASK_RUN_CONTEXT_BUDGET_MIN_PROMPT_CHARS..=TASK_RUN_CONTEXT_BUDGET_MAX_PROMPT_CHARS)
+        .contains(&budget.max_prompt_chars)
+    {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: context_budget.max_prompt_chars is out of range".into(),
+        ));
+    }
+    if budget.max_ledger_events > TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: context_budget.max_ledger_events is out of range".into(),
+        ));
+    }
+    if budget.max_selected_index_chars > TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: context_budget.max_selected_index_chars is out of range".into(),
+        ));
+    }
+    let protected_chars = record.task_id.chars().count()
+        + record.run_id.chars().count()
+        + record.goal.chars().count()
+        + record
+            .mode_id
+            .as_deref()
+            .unwrap_or("<none>")
+            .chars()
+            .count()
+        + 128;
+    if protected_chars > budget.max_prompt_chars {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: context_budget cannot fit protected task context".into(),
+        ));
+    }
+    Ok(Some(ContextBudget {
+        max_prompt_chars: budget.max_prompt_chars,
+        max_ledger_events: budget.max_ledger_events,
+        max_selected_index_chars: budget.max_selected_index_chars,
+    }))
+}
+
+fn task_run_context_budget_summary(
+    context_budget: &ContextBudgetSummary,
+) -> Option<TaskRunContextBudgetSummary> {
+    if !context_budget.requested {
+        return None;
+    }
+    Some(TaskRunContextBudgetSummary {
+        requested: true,
+        max_prompt_chars: context_budget.max_prompt_chars,
+        max_ledger_events: context_budget.max_ledger_events,
+        max_selected_index_chars: context_budget.max_selected_index_chars,
+        total_events: context_budget.total_events,
+        included_events: context_budget.included_events,
+        omitted_events: context_budget.omitted_events,
+        selected_index_context_present: context_budget.selected_index_context_present,
+        selected_index_content_chars: context_budget.selected_index_content_chars,
+        selected_index_materialized_chars: context_budget.selected_index_materialized_chars,
+        selected_index_truncated: context_budget.selected_index_truncated,
+        protected_context_chars: context_budget.protected_context_chars,
+        prompt_chars: context_budget.prompt_chars,
+        prompt_within_budget: context_budget.prompt_within_budget,
     })
 }
 
@@ -9735,6 +9895,7 @@ fn task_run_result_for_headless_replay(
                 agent_loop,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: Some(verification_recovery_repair),
                 verification_recovery_retry: None,
@@ -9756,6 +9917,7 @@ fn task_run_result_for_headless_replay(
                 agent_loop,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate,
                 verification_recovery_repair: None,
                 verification_recovery_retry: Some(verification_recovery_retry),
@@ -9777,6 +9939,7 @@ fn task_run_result_for_headless_replay(
                 agent_loop,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
                 verification_recovery_retry: None,
@@ -9798,6 +9961,7 @@ fn task_run_result_for_headless_replay(
                 agent_loop,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
                 verification_recovery_retry: None,
@@ -9819,6 +9983,7 @@ fn task_run_result_for_headless_replay(
                 agent_loop,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
                 verification_recovery_retry: None,
@@ -9850,6 +10015,7 @@ fn task_run_result_for_headless_replay(
         agent_loop,
         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
         selected_index_prompt_context: None,
+        context_budget: task_run_context_budget_summary_from_events(&events),
         verification_completion_gate,
         verification_recovery_repair: None,
         verification_recovery_retry: None,
@@ -9857,6 +10023,71 @@ fn task_run_result_for_headless_replay(
         child_orchestration_outcome: None,
         parent_join_readiness_outcome: None,
     }))
+}
+
+fn task_run_context_budget_summary_for_record(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<TaskRunContextBudgetSummary>, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    Ok(task_run_context_budget_summary_from_events(&events))
+}
+
+fn task_run_context_budget_summary_from_events(
+    events: &[LedgerEvent],
+) -> Option<TaskRunContextBudgetSummary> {
+    let payload = events
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::SecondPassPromptBuilt | LedgerEventKind::PromptBuilt
+            )
+        })?
+        .payload
+        .as_ref()?;
+    if payload
+        .get("context_budget_requested")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return None;
+    }
+    Some(TaskRunContextBudgetSummary {
+        requested: true,
+        max_prompt_chars: payload_usize(payload, "context_budget_max_prompt_chars")?,
+        max_ledger_events: payload_usize(payload, "context_budget_max_ledger_events")?,
+        max_selected_index_chars: payload_usize(
+            payload,
+            "context_budget_max_selected_index_chars",
+        )?,
+        total_events: payload_usize(payload, "context_total_events")?,
+        included_events: payload_usize(payload, "context_included_events")?,
+        omitted_events: payload_usize(payload, "context_omitted_events")?,
+        selected_index_context_present: payload
+            .get("context_budget_selected_index_context_present")
+            .and_then(Value::as_bool)?,
+        selected_index_content_chars: payload_usize(
+            payload,
+            "context_budget_selected_index_content_chars",
+        )?,
+        selected_index_materialized_chars: payload_usize(
+            payload,
+            "context_budget_selected_index_materialized_chars",
+        )?,
+        selected_index_truncated: payload
+            .get("context_budget_selected_index_truncated")
+            .and_then(Value::as_bool)?,
+        protected_context_chars: payload_usize(payload, "context_budget_protected_context_chars")?,
+        prompt_chars: payload_usize(payload, "context_budget_prompt_chars")?,
+        prompt_within_budget: payload
+            .get("context_budget_prompt_within_budget")
+            .and_then(Value::as_bool)?,
+    })
 }
 
 fn headless_continue_next_route(
@@ -27108,6 +27339,7 @@ fn prompt_built_payload(
     max_prompt_chars: usize,
     sensitive_scan: &PromptSensitiveScanResult,
     context_window: &ContextWindowSummary,
+    context_budget: &ContextBudgetSummary,
     selected_index_context_present: bool,
 ) -> Value {
     let mut payload = serde_json::Map::new();
@@ -27138,6 +27370,49 @@ fn prompt_built_payload(
     }
     if let Some(last) = context_window.last_included_event.as_deref() {
         payload.insert("context_last_included_event".to_string(), json!(last));
+    }
+    if context_budget.requested {
+        payload.insert("context_budget_requested".to_string(), json!(true));
+        payload.insert(
+            "context_budget_max_prompt_chars".to_string(),
+            json!(context_budget.max_prompt_chars),
+        );
+        payload.insert(
+            "context_budget_max_ledger_events".to_string(),
+            json!(context_budget.max_ledger_events),
+        );
+        payload.insert(
+            "context_budget_max_selected_index_chars".to_string(),
+            json!(context_budget.max_selected_index_chars),
+        );
+        payload.insert(
+            "context_budget_prompt_chars".to_string(),
+            json!(context_budget.prompt_chars),
+        );
+        payload.insert(
+            "context_budget_protected_context_chars".to_string(),
+            json!(context_budget.protected_context_chars),
+        );
+        payload.insert(
+            "context_budget_prompt_within_budget".to_string(),
+            json!(context_budget.prompt_within_budget),
+        );
+        payload.insert(
+            "context_budget_selected_index_context_present".to_string(),
+            json!(context_budget.selected_index_context_present),
+        );
+        payload.insert(
+            "context_budget_selected_index_content_chars".to_string(),
+            json!(context_budget.selected_index_content_chars),
+        );
+        payload.insert(
+            "context_budget_selected_index_materialized_chars".to_string(),
+            json!(context_budget.selected_index_materialized_chars),
+        );
+        payload.insert(
+            "context_budget_selected_index_truncated".to_string(),
+            json!(context_budget.selected_index_truncated),
+        );
     }
     if selected_index_context_present {
         payload.insert("prompt_preview_redacted".to_string(), json!(true));
@@ -28059,6 +28334,102 @@ mod tests {
         let ledger_json = serde_json::to_string(&events).expect("ledger json");
         assert!(!ledger_json.contains(selected_content));
         assert!(!ledger_json.contains("src/runtime/query.rs"));
+    }
+
+    #[test]
+    fn task_run_applies_explicit_context_budget_to_materialized_context() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let selected_content = "pub fn selected_context_budget() { let marker = 42; }\n";
+        let (store, selected_context) =
+            prepared_selected_index_context(temp.path(), selected_content);
+        let start = handle_task_start(
+            json!(3),
+            Some(json!({
+                "goal": "Use a bounded selected runtime context",
+                "mode_id": "orchestrator"
+            })),
+        )
+        .result
+        .expect("task start result");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = handle_task_run(
+            json!(4),
+            Some(json!({
+                "task_id": task_id,
+                "selected_index_context": selected_context.clone(),
+                "context_budget": {
+                    "max_prompt_chars": 20000,
+                    "max_ledger_events": 1,
+                    "max_selected_index_chars": 12
+                }
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        assert!(run.error.is_none());
+        let result = run.result.expect("task run result");
+        assert_eq!(result["status"], "Completed");
+        let context_budget = &result["context_budget"];
+        assert_eq!(context_budget["requested"], true);
+        assert_eq!(context_budget["max_ledger_events"], 1);
+        assert_eq!(context_budget["included_events"], 1);
+        assert_eq!(context_budget["selected_index_context_present"], true);
+        assert_eq!(context_budget["selected_index_content_chars"], 54);
+        assert_eq!(context_budget["selected_index_materialized_chars"], 12);
+        assert_eq!(context_budget["selected_index_truncated"], true);
+        assert_eq!(context_budget["prompt_within_budget"], true);
+        let summary = &result["selected_index_prompt_context"];
+        assert_eq!(summary["content_char_count"], 54);
+        assert_eq!(summary["materialized_content_char_count"], 12);
+        assert_eq!(summary["content_truncated_for_prompt"], true);
+        let result_json = serde_json::to_string(&result).expect("result json");
+        assert!(!result_json.contains(selected_content));
+
+        let events = store
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("task events");
+        let prompt_built = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .expect("prompt built event");
+        let prompt_payload = prompt_built.payload.as_ref().expect("prompt payload");
+        assert_eq!(prompt_payload["context_budget_requested"], true);
+        assert_eq!(prompt_payload["context_budget_max_ledger_events"], 1);
+        assert_eq!(
+            prompt_payload["context_budget_selected_index_context_present"],
+            true
+        );
+        assert_eq!(
+            prompt_payload["context_budget_selected_index_content_chars"],
+            54
+        );
+        assert_eq!(
+            prompt_payload["context_budget_selected_index_materialized_chars"],
+            12
+        );
+        assert_eq!(
+            prompt_payload["context_budget_selected_index_truncated"],
+            true
+        );
+        assert!(prompt_payload.get("prompt_preview").is_none());
+
+        let record = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task record");
+        let replay = task_run_result_for_headless_replay(&store, &record)
+            .expect("replay result")
+            .expect("terminal replay");
+        let replay_budget = replay.context_budget.expect("replay context budget");
+        assert_eq!(replay_budget.max_ledger_events, 1);
+        assert_eq!(replay_budget.selected_index_content_chars, 54);
+        assert_eq!(replay_budget.selected_index_materialized_chars, 12);
+        assert_eq!(replay_budget.selected_index_truncated, true);
     }
 
     #[test]

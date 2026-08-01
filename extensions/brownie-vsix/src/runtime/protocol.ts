@@ -277,9 +277,16 @@ export interface TaskStartParams {
 
 export type TaskRunSelectedIndexContext = CodebaseIndexSelectionReadResult;
 
+export interface TaskRunContextBudget {
+  max_prompt_chars: number;
+  max_ledger_events: number;
+  max_selected_index_chars: number;
+}
+
 export interface TaskRunParams {
   task_id: string;
   selected_index_context?: TaskRunSelectedIndexContext | null;
+  context_budget?: TaskRunContextBudget | null;
 }
 
 export interface HeadlessContinueOnceParams {
@@ -431,6 +438,7 @@ export interface TaskRunResult {
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
   selected_index_prompt_context?: TaskRunSelectedIndexPromptContextSummary | null;
+  context_budget?: TaskRunContextBudgetSummary | null;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
   verification_recovery_repair?: TaskRunVerificationRecoveryRepairOutcome | null;
   verification_recovery_retry?: TaskRunVerificationRecoveryRetryOutcome | null;
@@ -572,9 +580,28 @@ export interface TaskRunSelectedIndexPromptContextSummary {
   file_kind: CodebaseIndexFileEntry['file_kind'];
   bytes_read: number;
   content_char_count: number;
+  materialized_content_char_count: number;
+  content_truncated_for_prompt: boolean;
   content_sha256: string;
   prompt_preview_redacted: true;
   next_action: 'continue_task_execution_with_materialized_context';
+}
+
+export interface TaskRunContextBudgetSummary {
+  requested: boolean;
+  max_prompt_chars: number;
+  max_ledger_events: number;
+  max_selected_index_chars: number;
+  total_events: number;
+  included_events: number;
+  omitted_events: number;
+  selected_index_context_present: boolean;
+  selected_index_content_chars: number;
+  selected_index_materialized_chars: number;
+  selected_index_truncated: boolean;
+  protected_context_chars: number;
+  prompt_chars: number;
+  prompt_within_budget: boolean;
 }
 
 export interface AgentLoopRunSummary {
@@ -4199,10 +4226,25 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
 export function isTaskRunParams(value: unknown): value is TaskRunParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['task_id', 'selected_index_context']) &&
+    hasOnlyFields(value, ['task_id', 'selected_index_context', 'context_budget']) &&
     typeof value.task_id === 'string' &&
     value.task_id.trim().length > 0 &&
-    (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context))
+    (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
+    (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget))
+  );
+}
+
+export function isTaskRunContextBudget(value: unknown): value is TaskRunContextBudget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['max_prompt_chars', 'max_ledger_events', 'max_selected_index_chars']) &&
+    isNonNegativeInteger(value.max_prompt_chars) &&
+    value.max_prompt_chars >= 128 &&
+    value.max_prompt_chars <= 1000000 &&
+    isNonNegativeInteger(value.max_ledger_events) &&
+    value.max_ledger_events <= 64 &&
+    isNonNegativeInteger(value.max_selected_index_chars) &&
+    value.max_selected_index_chars <= 65536
   );
 }
 
@@ -4343,6 +4385,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
     (value.selected_index_prompt_context === undefined || value.selected_index_prompt_context === null || isTaskRunSelectedIndexPromptContextSummary(value.selected_index_prompt_context)) &&
+    (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudgetSummary(value.context_budget)) &&
     (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
     (value.verification_recovery_repair === undefined || value.verification_recovery_repair === null || isTaskRunVerificationRecoveryRepairOutcome(value.verification_recovery_repair)) &&
     (value.verification_recovery_retry === undefined || value.verification_recovery_retry === null || isTaskRunVerificationRecoveryRetryOutcome(value.verification_recovery_retry)) &&
@@ -4691,6 +4734,8 @@ export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): valu
       'file_kind',
       'bytes_read',
       'content_char_count',
+      'materialized_content_char_count',
+      'content_truncated_for_prompt',
       'content_sha256',
       'prompt_preview_redacted',
       'next_action',
@@ -4721,10 +4766,52 @@ export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): valu
     value.bytes_read <= 65536 &&
     isNonNegativeInteger(value.content_char_count) &&
     value.content_char_count <= 65536 &&
+    isNonNegativeInteger(value.materialized_content_char_count) &&
+    value.materialized_content_char_count <= value.content_char_count &&
+    typeof value.content_truncated_for_prompt === 'boolean' &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
     value.prompt_preview_redacted === true &&
     value.next_action === 'continue_task_execution_with_materialized_context'
+  );
+}
+
+export function isTaskRunContextBudgetSummary(value: unknown): value is TaskRunContextBudgetSummary {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'requested',
+      'max_prompt_chars',
+      'max_ledger_events',
+      'max_selected_index_chars',
+      'total_events',
+      'included_events',
+      'omitted_events',
+      'selected_index_context_present',
+      'selected_index_content_chars',
+      'selected_index_materialized_chars',
+      'selected_index_truncated',
+      'protected_context_chars',
+      'prompt_chars',
+      'prompt_within_budget',
+    ]) &&
+    typeof value.requested === 'boolean' &&
+    isNonNegativeInteger(value.max_prompt_chars) &&
+    isNonNegativeInteger(value.max_ledger_events) &&
+    isNonNegativeInteger(value.max_selected_index_chars) &&
+    isNonNegativeInteger(value.total_events) &&
+    isNonNegativeInteger(value.included_events) &&
+    isNonNegativeInteger(value.omitted_events) &&
+    value.included_events <= value.total_events &&
+    value.omitted_events <= value.total_events &&
+    typeof value.selected_index_context_present === 'boolean' &&
+    isNonNegativeInteger(value.selected_index_content_chars) &&
+    isNonNegativeInteger(value.selected_index_materialized_chars) &&
+    value.selected_index_materialized_chars <= value.selected_index_content_chars &&
+    typeof value.selected_index_truncated === 'boolean' &&
+    isNonNegativeInteger(value.protected_context_chars) &&
+    isNonNegativeInteger(value.prompt_chars) &&
+    typeof value.prompt_within_budget === 'boolean'
   );
 }
 

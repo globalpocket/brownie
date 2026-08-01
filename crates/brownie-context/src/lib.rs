@@ -31,6 +31,7 @@ pub struct PromptView {
 }
 
 pub const MAX_LEDGER_CONTEXT_EVENTS: usize = 12;
+pub const DEFAULT_MAX_SELECTED_INDEX_CONTEXT_CHARS: usize = usize::MAX;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContextWindowSummary {
@@ -40,6 +41,81 @@ pub struct ContextWindowSummary {
     pub max_events: usize,
     pub first_included_event: Option<String>,
     pub last_included_event: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ContextBudget {
+    pub max_prompt_chars: usize,
+    pub max_ledger_events: usize,
+    pub max_selected_index_chars: usize,
+}
+
+impl ContextBudget {
+    pub fn default_for_prompt(max_prompt_chars: usize) -> Self {
+        Self {
+            max_prompt_chars,
+            max_ledger_events: MAX_LEDGER_CONTEXT_EVENTS,
+            max_selected_index_chars: DEFAULT_MAX_SELECTED_INDEX_CONTEXT_CHARS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContextBudgetSummary {
+    pub requested: bool,
+    pub max_prompt_chars: usize,
+    pub max_ledger_events: usize,
+    pub max_selected_index_chars: usize,
+    pub total_events: usize,
+    pub included_events: usize,
+    pub omitted_events: usize,
+    pub selected_index_context_present: bool,
+    pub selected_index_content_chars: usize,
+    pub selected_index_materialized_chars: usize,
+    pub selected_index_truncated: bool,
+    pub protected_context_chars: usize,
+    pub prompt_chars: usize,
+    pub prompt_within_budget: bool,
+}
+
+impl ContextBudgetSummary {
+    pub fn unrequested(
+        context_window: &ContextWindowSummary,
+        selected_index_context: Option<&SelectedIndexPromptContext>,
+        max_prompt_chars: usize,
+    ) -> Self {
+        let (
+            selected_index_context_present,
+            selected_index_content_chars,
+            selected_index_materialized_chars,
+            selected_index_truncated,
+        ) = selected_index_context
+            .map(|context| {
+                (
+                    true,
+                    context.content_char_count,
+                    context.materialized_content_char_count,
+                    context.content_truncated_for_prompt,
+                )
+            })
+            .unwrap_or((false, 0, 0, false));
+        Self {
+            requested: false,
+            max_prompt_chars,
+            max_ledger_events: context_window.max_events,
+            max_selected_index_chars: DEFAULT_MAX_SELECTED_INDEX_CONTEXT_CHARS,
+            total_events: context_window.total_events,
+            included_events: context_window.included_events,
+            omitted_events: context_window.omitted_events,
+            selected_index_context_present,
+            selected_index_content_chars,
+            selected_index_materialized_chars,
+            selected_index_truncated,
+            protected_context_chars: 0,
+            prompt_chars: 0,
+            prompt_within_budget: true,
+        }
+    }
 }
 
 impl ContextWindowSummary {
@@ -71,6 +147,7 @@ pub struct PromptBuildInput {
     #[serde(default, skip_serializing, skip_deserializing)]
     pub selected_index_context: Option<SelectedIndexPromptContext>,
     pub context_window: ContextWindowSummary,
+    pub context_budget: ContextBudgetSummary,
     pub ledger_summary: Vec<String>,
 }
 
@@ -85,6 +162,9 @@ pub struct SelectedIndexPromptContext {
     pub path: String,
     pub file_kind: String,
     pub bytes_read: usize,
+    pub content_char_count: usize,
+    pub materialized_content_char_count: usize,
+    pub content_truncated_for_prompt: bool,
     pub content_sha256: String,
     pub content: String,
 }
@@ -95,6 +175,7 @@ pub struct ContextMaterializerInput {
     pub ledger_events: Vec<LedgerEvent>,
     pub child_completion_summaries: Vec<String>,
     pub selected_index_context: Option<SelectedIndexPromptContext>,
+    pub context_budget: Option<ContextBudget>,
 }
 
 pub struct ContextMaterializer;
@@ -123,9 +204,16 @@ impl ContextMaterializer {
             .extend(format_subtask_orchestration_summary(&input.ledger_events));
         let verification_recovery_diagnostics_summary =
             format_verification_recovery_diagnostics_summary(&input.task);
-        let (ledger_summary, context_window) = format_ledger_context_window(&input.ledger_events);
+        let budget = input
+            .context_budget
+            .unwrap_or_else(|| ContextBudget::default_for_prompt(usize::MAX));
+        let (ledger_summary, context_window) =
+            format_ledger_context_window(&input.ledger_events, budget.max_ledger_events);
+        let selected_index_context = input.selected_index_context.map(|context| {
+            materialize_selected_index_context(context, budget.max_selected_index_chars)
+        });
 
-        PromptBuildInput {
+        let mut prompt_input = PromptBuildInput {
             task_id: input.task.task_id,
             run_id: input.task.run_id,
             goal: input.task.goal,
@@ -137,16 +225,53 @@ impl ContextMaterializer {
             tool_execution_summary,
             subtask_orchestration_summary,
             verification_recovery_diagnostics_summary,
-            selected_index_context: input.selected_index_context,
+            selected_index_context,
             context_window,
+            context_budget: ContextBudgetSummary {
+                requested: input.context_budget.is_some(),
+                max_prompt_chars: budget.max_prompt_chars,
+                max_ledger_events: budget.max_ledger_events,
+                max_selected_index_chars: budget.max_selected_index_chars,
+                total_events: 0,
+                included_events: 0,
+                omitted_events: 0,
+                selected_index_context_present: false,
+                selected_index_content_chars: 0,
+                selected_index_materialized_chars: 0,
+                selected_index_truncated: false,
+                protected_context_chars: 0,
+                prompt_chars: 0,
+                prompt_within_budget: true,
+            },
             ledger_summary,
+        };
+        prompt_input.context_budget.total_events = prompt_input.context_window.total_events;
+        prompt_input.context_budget.included_events = prompt_input.context_window.included_events;
+        prompt_input.context_budget.omitted_events = prompt_input.context_window.omitted_events;
+        if let Some(context) = prompt_input.selected_index_context.as_ref() {
+            prompt_input.context_budget.selected_index_context_present = true;
+            prompt_input.context_budget.selected_index_content_chars = context.content_char_count;
+            prompt_input
+                .context_budget
+                .selected_index_materialized_chars = context.materialized_content_char_count;
+            prompt_input.context_budget.selected_index_truncated =
+                context.content_truncated_for_prompt;
         }
+        let prompt = PromptBuilder::build(prompt_input.clone());
+        prompt_input.context_budget.prompt_chars = prompt_char_count(&prompt);
+        prompt_input.context_budget.protected_context_chars = protected_prompt_char_count(&prompt);
+        prompt_input.context_budget.prompt_within_budget =
+            prompt_input.context_budget.prompt_chars <= budget.max_prompt_chars;
+        prompt_input
     }
 }
 
-fn format_ledger_context_window(events: &[LedgerEvent]) -> (Vec<String>, ContextWindowSummary) {
+fn format_ledger_context_window(
+    events: &[LedgerEvent],
+    max_events: usize,
+) -> (Vec<String>, ContextWindowSummary) {
     let total_events = events.len();
-    let start = total_events.saturating_sub(MAX_LEDGER_CONTEXT_EVENTS);
+    let start = total_events.saturating_sub(max_events);
     let included = &events[start..];
     let ledger_summary = included
         .iter()
@@ -160,11 +285,28 @@ fn format_ledger_context_window(events: &[LedgerEvent]) -> (Vec<String>, Context
             total_events,
             included_events: included.len(),
             omitted_events: start,
-            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            max_events,
             first_included_event,
             last_included_event,
         },
     )
+}
+
+fn materialize_selected_index_context(
+    mut context: SelectedIndexPromptContext,
+    max_selected_index_chars: usize,
+) -> SelectedIndexPromptContext {
+    context.content_char_count = context.content.chars().count();
+    if context.content_char_count > max_selected_index_chars {
+        context.content = context
+            .content
+            .chars()
+            .take(max_selected_index_chars)
+            .collect();
+        context.content_truncated_for_prompt = true;
+    }
+    context.materialized_content_char_count = context.content.chars().count();
+    context
 }
 
 fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
@@ -962,6 +1104,26 @@ impl SlidingWindowTruncator {
     }
 }
 
+fn prompt_char_count(prompt: &PromptView) -> usize {
+    prompt
+        .messages
+        .iter()
+        .map(|message| message.content.chars().count())
+        .sum()
+}
+
+fn protected_prompt_char_count(prompt: &PromptView) -> usize {
+    prompt
+        .messages
+        .iter()
+        .filter(|message| {
+            matches!(message.role, PromptRole::System)
+                || (matches!(message.role, PromptRole::User) && message.content.contains("Goal:\n"))
+        })
+        .map(|message| message.content.chars().count())
+        .sum()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -991,6 +1153,14 @@ mod tests {
 
     #[test]
     fn prompt_builder_builds_deterministic_messages() {
+        let context_window = ContextWindowSummary {
+            total_events: 2,
+            included_events: 2,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: Some("TaskStarted".into()),
+            last_included_event: Some("TaskRunning".into()),
+        };
         let prompt = PromptBuilder::build(PromptBuildInput {
             task_id: "task_1".into(),
             run_id: "run_1".into(),
@@ -1004,14 +1174,8 @@ mod tests {
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
             selected_index_context: None,
-            context_window: ContextWindowSummary {
-                total_events: 2,
-                included_events: 2,
-                omitted_events: 0,
-                max_events: MAX_LEDGER_CONTEXT_EVENTS,
-                first_included_event: Some("TaskStarted".into()),
-                last_included_event: Some("TaskRunning".into()),
-            },
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -1029,6 +1193,30 @@ mod tests {
 
     #[test]
     fn prompt_builder_includes_selected_index_context_when_provided() {
+        let selected_index_context = SelectedIndexPromptContext {
+            prompt_context_id: "ctx_0123456789abcdef".into(),
+            source_event_id: "event_9".into(),
+            query_id: "query_0123456789abcdef".into(),
+            selection_id: "selection_0123456789abcdef".into(),
+            selection_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            snapshot_fingerprint: format!("sha256:{}", "b".repeat(64)),
+            path: "src/runtime/query.rs".into(),
+            file_kind: "Rust".into(),
+            bytes_read: 25,
+            content_char_count: 21,
+            materialized_content_char_count: 21,
+            content_truncated_for_prompt: false,
+            content_sha256: format!("sha256:{}", "c".repeat(64)),
+            content: "pub fn selected() {}\n".into(),
+        };
+        let context_window = ContextWindowSummary {
+            total_events: 2,
+            included_events: 2,
+            omitted_events: 0,
+            max_events: MAX_LEDGER_CONTEXT_EVENTS,
+            first_included_event: Some("TaskStarted".into()),
+            last_included_event: Some("TaskRunning".into()),
+        };
         let prompt = PromptBuilder::build(PromptBuildInput {
             task_id: "task_1".into(),
             run_id: "run_1".into(),
@@ -1041,27 +1229,13 @@ mod tests {
             tool_execution_summary: vec![],
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
-            selected_index_context: Some(SelectedIndexPromptContext {
-                prompt_context_id: "ctx_0123456789abcdef".into(),
-                source_event_id: "event_9".into(),
-                query_id: "query_0123456789abcdef".into(),
-                selection_id: "selection_0123456789abcdef".into(),
-                selection_fingerprint: format!("sha256:{}", "a".repeat(64)),
-                snapshot_fingerprint: format!("sha256:{}", "b".repeat(64)),
-                path: "src/runtime/query.rs".into(),
-                file_kind: "Rust".into(),
-                bytes_read: 25,
-                content_sha256: format!("sha256:{}", "c".repeat(64)),
-                content: "pub fn selected() {}\n".into(),
-            }),
-            context_window: ContextWindowSummary {
-                total_events: 2,
-                included_events: 2,
-                omitted_events: 0,
-                max_events: MAX_LEDGER_CONTEXT_EVENTS,
-                first_included_event: Some("TaskStarted".into()),
-                last_included_event: Some("TaskRunning".into()),
-            },
+            selected_index_context: Some(selected_index_context.clone()),
+            context_window: context_window.clone(),
+            context_budget: ContextBudgetSummary::unrequested(
+                &context_window,
+                Some(&selected_index_context),
+                usize::MAX,
+            ),
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
         });
 
@@ -1091,6 +1265,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1135,6 +1310,7 @@ mod tests {
             ledger_events: vec![],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         });
 
         assert_eq!(
@@ -1186,6 +1362,7 @@ mod tests {
                 .collect(),
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1237,6 +1414,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1266,6 +1444,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1306,6 +1485,7 @@ mod tests {
             ],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1335,6 +1515,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1538,6 +1719,7 @@ mod tests {
             ],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
@@ -1618,6 +1800,7 @@ mod tests {
                 "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done".into(),
             ],
             selected_index_context: None,
+            context_budget: None,
         };
 
         let materialized = ContextMaterializer::materialize(input);
