@@ -338,6 +338,20 @@ pub struct VerificationRecoveryRunTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerificationRecoveryApplyTarget {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub proposal_id: String,
+    pub expected_failure_fingerprint: String,
+    pub expected_target_sha256: Option<String>,
+    pub expected_target_absent: Option<bool>,
+    pub replacement_content: Option<String>,
+    pub authorize_recovery_apply: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryRunTarget {
     pub retry_task_id: String,
     pub retry_run_id: String,
@@ -449,6 +463,8 @@ pub struct HeadlessContinueOnceParams {
     pub verification_recovery_retry_mode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_apply_target: Option<VerificationRecoveryApplyTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_run_target: Option<VerificationRecoveryRetryRunTarget>,
 }
@@ -1129,6 +1145,8 @@ pub struct HeadlessContinueOnceResult {
     pub stale: bool,
     pub replayed: bool,
     pub task_run_result: Option<TaskRunResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_apply_result: Option<ProposalApplyResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]

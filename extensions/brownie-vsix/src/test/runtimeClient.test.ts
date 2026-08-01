@@ -633,6 +633,29 @@ describe('protocol validation', () => {
       ...headlessParams,
       verification_recovery_run_target: { ...verificationRecoveryRunTarget, authorize_recovery_run: false },
     })).toBe(false);
+    const verificationRecoveryApplyTarget = {
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      recovery_task_id: 'task_recovery',
+      recovery_run_id: 'run_recovery',
+      proposal_id: 'proposal_recovery_1',
+      expected_failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+      expected_target_sha256: `sha256:${'e'.repeat(64)}`,
+      replacement_content: 'bounded replacement',
+      authorize_recovery_apply: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_apply_target: verificationRecoveryApplyTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_apply_target: { ...verificationRecoveryApplyTarget, authorize_recovery_apply: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_apply_target: { ...verificationRecoveryApplyTarget, expected_target_sha256: 'not-a-fingerprint' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,
