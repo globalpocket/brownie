@@ -474,6 +474,12 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_mode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_source: Option<LlmProviderFailureRetrySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_mode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_apply_target: Option<VerificationRecoveryApplyTarget>,
@@ -1118,6 +1124,7 @@ pub enum HeadlessContinueRouteKind {
     ApplyApprovedRecoveryProposalExplicitly,
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
+    RunLlmProviderRetryTaskExplicitly,
     RunParentTaskExplicitly,
     NoEligibleTask,
     RefreshProgressOverview,
@@ -1165,6 +1172,8 @@ pub struct HeadlessContinueOnceResult {
     pub task_run_result: Option<TaskRunResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposal_apply_result: Option<ProposalApplyResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -679,6 +679,26 @@ describe('protocol validation', () => {
       ...headlessParams,
       verification_recovery_apply_target: { ...verificationRecoveryApplyTarget, expected_target_sha256: 'not-a-fingerprint' },
     })).toBe(false);
+    const llmProviderFailureRetrySource = {
+      source_task_id: 'task_provider_source',
+      source_run_id: 'run_provider_source',
+      expected_failure_fingerprint: `sha256:${'f'.repeat(64)}`,
+      authorize_provider_failure_retry: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_source: llmProviderFailureRetrySource,
+      llm_provider_failure_retry_goal: 'Retry provider failure',
+      llm_provider_failure_retry_mode_id: 'provider-runner',
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_source: { ...llmProviderFailureRetrySource, authorize_provider_failure_retry: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_source: { ...llmProviderFailureRetrySource, raw_provider_response: 'secret body' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,
@@ -763,6 +783,53 @@ describe('protocol validation', () => {
       },
       next_action: 'run_recovery_task_explicitly',
     })).toBe(true);
+    const llmProviderFailureRetryAdmission = {
+      source_task_id: 'task_provider_source',
+      source_run_id: 'run_provider_source',
+      retry_task_id: 'task_provider_retry',
+      retry_run_id: 'run_provider_retry',
+      failure_fingerprint: `sha256:${'f'.repeat(64)}`,
+      failure_class: 'http_status',
+      retryable: true,
+      retry_running_enabled: false,
+      next_action: 'run_llm_provider_retry_task_explicitly',
+      replayed: false,
+    };
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      status: 'task_in_progress',
+      selected_task_id: 'task_provider_retry',
+      selected_run_id: 'run_provider_retry',
+      replayed: false,
+      task_run_result: null,
+      llm_provider_failure_retry_admission: llmProviderFailureRetryAdmission,
+      next_route: {
+        kind: 'run_llm_provider_retry_task_explicitly',
+        reason: 'Provider retry task admitted; run explicitly.',
+        task_id: 'task_provider_retry',
+        run_id: 'run_provider_retry',
+        failure_fingerprint: `sha256:${'f'.repeat(64)}`,
+        progress_fingerprint: `sha256:${'e'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'run_llm_provider_retry_task_explicitly',
+      },
+      next_action: 'run_llm_provider_retry_task_explicitly',
+    })).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      status: 'task_in_progress',
+      task_run_result: null,
+      llm_provider_failure_retry_admission: { ...llmProviderFailureRetryAdmission, raw_prompt: 'do not expose' },
+      next_route: {
+        kind: 'run_llm_provider_retry_task_explicitly',
+        reason: 'Provider retry task admitted; run explicitly.',
+        task_id: 'task_provider_retry',
+        run_id: 'run_provider_retry',
+        failure_fingerprint: `sha256:${'f'.repeat(64)}`,
+        next_action: 'run_llm_provider_retry_task_explicitly',
+      },
+      next_action: 'run_llm_provider_retry_task_explicitly',
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult({
       ...headlessResult,
       next_route: { ...headlessResult.next_route, kind: 'run_shell' },
