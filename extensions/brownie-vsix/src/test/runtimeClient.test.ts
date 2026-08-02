@@ -1261,6 +1261,17 @@ describe('protocol validation', () => {
       run_id: 'run_1',
       status: 'Completed',
       agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+      completion_evidence: {
+        final_state: 'Completed',
+        task_status: 'Completed',
+        completion_result_fingerprint: `sha256:${'a'.repeat(64)}`,
+        completion_summary_preview: 'done',
+        completion_summary_chars: 4,
+        completion_summary_truncated: false,
+        final_response_present: true,
+        final_response_chars: 12,
+        replayed: false,
+      },
       selected_index_prompt_context: summary,
       context_budget: {
         requested: true,
@@ -1279,6 +1290,23 @@ describe('protocol validation', () => {
         prompt_within_budget: true,
       },
     })).toBe(true);
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+      completion_evidence: {
+        final_state: 'Completed',
+        task_status: 'Completed',
+        completion_result_fingerprint: 'not-a-fingerprint',
+        completion_summary_preview: 'done',
+        completion_summary_chars: 4,
+        completion_summary_truncated: false,
+        final_response_present: true,
+        final_response_chars: 12,
+        replayed: false,
+      },
+    })).toBe(false);
     expect(isTaskRunContextBudgetSummary({
       requested: true,
       max_prompt_chars: 4096,

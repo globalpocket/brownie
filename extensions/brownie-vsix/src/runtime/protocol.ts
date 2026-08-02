@@ -453,6 +453,7 @@ export interface TaskRunResult {
   run_id: string;
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
+  completion_evidence?: TaskRunCompletionEvidence | null;
   selected_index_prompt_context?: TaskRunSelectedIndexPromptContextSummary | null;
   context_budget?: TaskRunContextBudgetSummary | null;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
@@ -462,6 +463,18 @@ export interface TaskRunResult {
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
   parent_join_readiness_outcome?: TaskRunParentJoinReadinessOutcome | null;
   llm_provider_failure?: LlmProviderFailureOutcome | null;
+}
+
+export interface TaskRunCompletionEvidence {
+  final_state: string;
+  task_status: TaskStatus;
+  completion_result_fingerprint: string;
+  completion_summary_preview: string;
+  completion_summary_chars: number;
+  completion_summary_truncated: boolean;
+  final_response_present: boolean;
+  final_response_chars: number;
+  replayed: boolean;
 }
 
 export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_in_progress' | 'task_executed';
@@ -4436,6 +4449,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     typeof value.run_id === 'string' &&
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
+    (value.completion_evidence === undefined || value.completion_evidence === null || isTaskRunCompletionEvidence(value.completion_evidence)) &&
     (value.selected_index_prompt_context === undefined || value.selected_index_prompt_context === null || isTaskRunSelectedIndexPromptContextSummary(value.selected_index_prompt_context)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudgetSummary(value.context_budget)) &&
     (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
@@ -4445,6 +4459,22 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome)) &&
     (value.llm_provider_failure === undefined || value.llm_provider_failure === null || isLlmProviderFailureOutcome(value.llm_provider_failure))
+  );
+}
+
+export function isTaskRunCompletionEvidence(value: unknown): value is TaskRunCompletionEvidence {
+  return (
+    isRecord(value) &&
+    typeof value.final_state === 'string' &&
+    isTaskStatus(value.task_status) &&
+    typeof value.completion_result_fingerprint === 'string' &&
+    value.completion_result_fingerprint.startsWith('sha256:') &&
+    typeof value.completion_summary_preview === 'string' &&
+    typeof value.completion_summary_chars === 'number' &&
+    typeof value.completion_summary_truncated === 'boolean' &&
+    typeof value.final_response_present === 'boolean' &&
+    typeof value.final_response_chars === 'number' &&
+    typeof value.replayed === 'boolean'
   );
 }
 
