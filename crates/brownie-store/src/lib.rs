@@ -1641,6 +1641,7 @@ pub enum LedgerEventKind {
     TaskStarted,
     ModeResolved,
     ExternalModePackChildProvenanceDenied,
+    ExternalModePackTaskProvenanceDenied,
     PermissionChecked,
     PermissionDenied,
     ToolPlanned,

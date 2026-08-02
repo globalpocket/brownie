@@ -240,6 +240,7 @@ use std::{
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
 const EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION: &str = "external_modepack_child_provenance_v1";
+const EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION: &str = "external_modepack_task_provenance_v1";
 const EXTERNAL_MODEPACK_POLICY_FINGERPRINT_VERSION: &str =
     "external_modepack_policy_fingerprint_v1";
 
@@ -1811,11 +1812,9 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
             }) {
             Ok(admission) => {
                 if !admission.replayed {
-                    if let Err(error) = store.tasks().append_task_event_with_payload(
-                        &admission.record,
-                        LedgerEventKind::ModeResolved,
-                        Some(mode_resolved_payload(&policy)),
-                    ) {
+                    if let Err(error) =
+                        append_mode_resolved_event(&store, &admission.record, &policy)
+                    {
                         return error_response(id, -32603, &format!("internal error: {error}"));
                     }
                 }
@@ -1863,11 +1862,9 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         ) {
             Ok(admission) => {
                 if !admission.replayed {
-                    if let Err(error) = store.tasks().append_task_event_with_payload(
-                        &admission.record,
-                        LedgerEventKind::ModeResolved,
-                        Some(mode_resolved_payload(&policy)),
-                    ) {
+                    if let Err(error) =
+                        append_mode_resolved_event(&store, &admission.record, &policy)
+                    {
                         return error_response(id, -32603, &format!("internal error: {error}"));
                     }
                 }
@@ -1923,11 +1920,9 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         ) {
             Ok(admission) => {
                 if !admission.replayed {
-                    if let Err(error) = store.tasks().append_task_event_with_payload(
-                        &admission.record,
-                        LedgerEventKind::ModeResolved,
-                        Some(mode_resolved_payload(&policy)),
-                    ) {
+                    if let Err(error) =
+                        append_mode_resolved_event(&store, &admission.record, &policy)
+                    {
                         return error_response(id, -32603, &format!("internal error: {error}"));
                     }
                 }
@@ -1969,11 +1964,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
 
         match store.tasks().start_task(params) {
             Ok(record) => {
-                if let Err(error) = store.tasks().append_task_event_with_payload(
-                    &record,
-                    LedgerEventKind::ModeResolved,
-                    Some(mode_resolved_payload(&policy)),
-                ) {
+                if let Err(error) = append_mode_resolved_event(&store, &record, &policy) {
                     return error_response(id, -32603, &format!("internal error: {error}"));
                 }
                 result_response(
@@ -2251,6 +2242,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 }
             };
         }
+    }
+
+    if let Err(rejection) = revalidate_external_modepack_task_provenance_for_run(&store, &record) {
+        return match rejection {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                error_response(id, -32602, message)
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
     }
 
     let selected_index_context = match params.selected_index_context.as_ref() {
@@ -22844,6 +22846,24 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
     })
 }
 
+fn append_mode_resolved_event(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    policy: &CompiledModePolicy,
+) -> anyhow::Result<()> {
+    let mut payload = mode_resolved_payload(policy);
+    if let Some(provenance) = external_modepack_task_provenance_payload(store, &policy.mode_id)
+        .map_err(anyhow::Error::msg)?
+    {
+        payload["external_modepack_task_provenance"] = provenance;
+    }
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ModeResolved,
+        Some(payload),
+    )
+}
+
 fn resolve_policy_for_task_run(
     record: &brownie_protocol::TaskRecord,
     store: &BrownieStore,
@@ -22949,6 +22969,200 @@ fn external_modepack_policy_fingerprint(
         }
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn external_modepack_task_provenance_payload(
+    store: &BrownieStore,
+    mode_id: &str,
+) -> Result<Option<Value>, String> {
+    let Some(snapshot) = load_workspace_modepack(store.workspace_root())
+        .map_err(|error| format!("modepack load failed: {error}"))?
+    else {
+        return Ok(None);
+    };
+    let Some(policy) = snapshot
+        .modes
+        .iter()
+        .find(|policy| policy.mode_id == mode_id)
+    else {
+        return Ok(None);
+    };
+    let policy_fingerprint =
+        external_modepack_policy_fingerprint(&snapshot.name, snapshot.schema_version, policy);
+    Ok(Some(json!({
+        "version": EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION,
+        "source_kind": "workspace_modepack",
+        "modepack_name": snapshot.name,
+        "schema_version": snapshot.schema_version,
+        "source_path": WORKSPACE_MODEPACK_PATH,
+        "mode_id": policy.mode_id,
+        "policy_fingerprint": policy_fingerprint,
+    })))
+}
+
+fn external_modepack_task_provenance_from_mode_resolved(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<Value>, TaskRunAdmissionRejection> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    Ok(events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("external_modepack_task_provenance"))
+        .cloned())
+}
+
+fn direct_external_modepack_task_requires_provenance(record: &TaskRecord) -> bool {
+    record.parent_run_id.is_none()
+        && record.parent_task_id.is_none()
+        && record
+            .mode_id
+            .as_deref()
+            .is_some_and(|mode_id| BuiltinModeRegistry::get(mode_id).is_none())
+}
+
+fn revalidate_external_modepack_task_provenance_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<(), TaskRunAdmissionRejection> {
+    if record.parent_run_id.is_some() || record.parent_task_id.is_some() {
+        return Ok(());
+    }
+
+    let provenance = external_modepack_task_provenance_from_mode_resolved(store, record)?;
+    let Some(provenance) = provenance else {
+        if direct_external_modepack_task_requires_provenance(record) {
+            return external_modepack_task_provenance_denied(
+                record,
+                store,
+                "missing_external_modepack_task_provenance",
+                "invalid params: external Mode Pack task provenance is missing",
+            );
+        }
+        return Ok(());
+    };
+
+    let Some(mode_id) = record.mode_id.as_deref() else {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "missing_task_mode_id",
+            "invalid params: external Mode Pack task provenance is invalid",
+        );
+    };
+    if provenance.get("version").and_then(Value::as_str)
+        != Some(EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION)
+        || provenance.get("source_kind").and_then(Value::as_str) != Some("workspace_modepack")
+        || provenance.get("source_path").and_then(Value::as_str) != Some(WORKSPACE_MODEPACK_PATH)
+        || provenance.get("mode_id").and_then(Value::as_str) != Some(mode_id)
+    {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "malformed_external_modepack_task_provenance",
+            "invalid params: external Mode Pack task provenance is invalid",
+        );
+    }
+    let Some(captured_fingerprint) = provenance
+        .get("policy_fingerprint")
+        .and_then(Value::as_str)
+        .filter(|value| value.starts_with("sha256:") && value.len() == "sha256:".len() + 64)
+    else {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "malformed_external_modepack_policy_fingerprint",
+            "invalid params: external Mode Pack task provenance is invalid",
+        );
+    };
+    let current = match external_modepack_task_provenance_payload(store, mode_id) {
+        Ok(current) => current,
+        Err(_) => {
+            return external_modepack_task_provenance_denied(
+                record,
+                store,
+                "malformed_external_modepack_task_policy",
+                "invalid params: external Mode Pack task provenance is stale",
+            );
+        }
+    };
+    let Some(current) = current else {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "stale_external_modepack_task_policy_missing",
+            "invalid params: external Mode Pack task provenance is stale",
+        );
+    };
+    for key in [
+        "modepack_name",
+        "schema_version",
+        "source_path",
+        "mode_id",
+        "policy_fingerprint",
+    ] {
+        if provenance.get(key) != current.get(key) {
+            return external_modepack_task_provenance_denied(
+                record,
+                store,
+                "stale_external_modepack_task_policy_mismatch",
+                "invalid params: external Mode Pack task provenance is stale",
+            );
+        }
+    }
+    if current.get("policy_fingerprint").and_then(Value::as_str) != Some(captured_fingerprint) {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "stale_external_modepack_task_policy_mismatch",
+            "invalid params: external Mode Pack task provenance is stale",
+        );
+    }
+    Ok(())
+}
+
+fn external_modepack_task_provenance_denied(
+    record: &TaskRecord,
+    store: &BrownieStore,
+    reason: &'static str,
+    message: &'static str,
+) -> Result<(), TaskRunAdmissionRejection> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    if !events.iter().any(|event| {
+        event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("reason"))
+                .and_then(Value::as_str)
+                == Some(reason)
+    }) {
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::ExternalModePackTaskProvenanceDenied,
+                Some(json!({
+                    "status": "Denied",
+                    "reason": reason,
+                    "task_id": record.task_id,
+                    "run_id": record.run_id,
+                    "mode_id": record.mode_id,
+                    "source_kind": "workspace_modepack",
+                    "source_path": WORKSPACE_MODEPACK_PATH,
+                })),
+            )
+            .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    }
+    Err(TaskRunAdmissionRejection::InvalidParams(message))
 }
 
 fn external_modepack_child_provenance_payload(
@@ -28131,6 +28345,16 @@ mod tests {
     pub(super) fn parse_line(line: &str) -> JsonRpcResponse<Value> {
         serde_json::from_str(&handle_jsonrpc_input_line(line).expect("response line"))
             .expect("valid response")
+    }
+
+    fn store_events(
+        workspace_root: &std::path::Path,
+        run_id: &str,
+    ) -> Vec<brownie_store::LedgerEvent> {
+        BrownieStore::new(workspace_root)
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("ledger events")
     }
 
     #[cfg(unix)]
@@ -50664,7 +50888,7 @@ mod tests {
     }
 
     #[test]
-    fn task_start_uses_local_modepack_snapshot_for_task_run() {
+    fn task_start_records_local_modepack_provenance_for_matching_task_run() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         write_test_modepack(temp.path());
@@ -50680,7 +50904,6 @@ mod tests {
             .expect("task id")
             .to_string();
         let run_id = start_result["run_id"].as_str().expect("run id").to_string();
-        std::fs::remove_file(temp.path().join(".brownie/modepack.json")).expect("remove modepack");
 
         let run = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
@@ -50709,10 +50932,190 @@ mod tests {
             payload["role_definition"],
             "Review local changes without writing files."
         );
+        let provenance = &payload["external_modepack_task_provenance"];
+        assert_eq!(
+            provenance["version"],
+            "external_modepack_task_provenance_v1"
+        );
+        assert_eq!(provenance["source_kind"], "workspace_modepack");
+        assert_eq!(provenance["source_path"], ".brownie/modepack.json");
+        assert_eq!(provenance["mode_id"], "reviewer-lite");
+        assert!(provenance["policy_fingerprint"]
+            .as_str()
+            .expect("policy fingerprint")
+            .starts_with("sha256:"));
         assert_eq!(payload["permissions"]["can_spawn_subtasks"], false);
         assert!(events
             .iter()
             .any(|event| event.kind == LedgerEventKind::AgentLoopCompleted));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_deleted_external_modepack_before_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use local mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json")).expect("remove modepack");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let error = run.error.expect("stale modepack error");
+        assert_eq!(error.code, -32602);
+        assert_eq!(
+            error.message,
+            "invalid params: external Mode Pack task provenance is stale"
+        );
+
+        let events = store_events(temp.path(), &run_id);
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        let denial = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(
+            denial["reason"],
+            "stale_external_modepack_task_policy_missing"
+        );
+        assert_eq!(denial["mode_id"], "reviewer-lite");
+        assert_eq!(denial["source_path"], ".brownie/modepack.json");
+        let serialized = denial.to_string();
+        assert!(!serialized.contains("Review local changes without writing files."));
+        assert!(!serialized.contains(temp.path().to_string_lossy().as_ref()));
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert_eq!(replay.error.expect("replay error").code, -32602);
+        let replay_events = store_events(temp.path(), &run_id);
+        assert_eq!(
+            replay_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied
+                })
+                .count(),
+            1
+        );
+        assert!(replay_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_changed_external_modepack_before_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use local mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        write_changed_test_handoff_modepack(temp.path());
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let error = run.error.expect("stale modepack error");
+        assert_eq!(error.code, -32602);
+        assert_eq!(
+            error.message,
+            "invalid params: external Mode Pack task provenance is stale"
+        );
+
+        let events = store_events(temp.path(), &run_id);
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        let denial = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(
+            denial["reason"],
+            "stale_external_modepack_task_policy_mismatch"
+        );
+        let serialized = denial.to_string();
+        assert!(!serialized.contains("Changed reviewer role"));
+        assert!(!serialized.contains("Review local changes without writing files."));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_rejects_malformed_external_modepack_before_task_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use local mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        std::fs::write(
+            temp.path().join(".brownie/modepack.json"),
+            r#"{"name":"broken-agentmodes","modes":["raw malformed marker"]"#,
+        )
+        .expect("malformed modepack");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let error = run.error.expect("malformed modepack error");
+        assert_eq!(error.code, -32602);
+        assert_eq!(
+            error.message,
+            "invalid params: external Mode Pack task provenance is stale"
+        );
+
+        let events = store_events(temp.path(), &run_id);
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        let denial = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("denial payload");
+        assert_eq!(denial["reason"], "malformed_external_modepack_task_policy");
+        let serialized = denial.to_string();
+        assert!(!serialized.contains("raw malformed marker"));
+        assert!(!serialized.contains("broken-agentmodes"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
