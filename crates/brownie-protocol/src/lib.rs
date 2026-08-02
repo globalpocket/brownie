@@ -1098,6 +1098,8 @@ pub struct TaskRunResult {
     pub status: TaskStatus,
     pub agent_loop: TaskRunAgentLoopSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_evidence: Option<TaskRunCompletionEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure: Option<LlmProviderFailureOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
@@ -1322,6 +1324,19 @@ pub struct TaskRunContextBudgetSummary {
 pub struct TaskRunAgentLoopSummary {
     pub final_state: String,
     pub completion_summary: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunCompletionEvidence {
+    pub final_state: String,
+    pub task_status: TaskStatus,
+    pub completion_result_fingerprint: String,
+    pub completion_summary_preview: String,
+    pub completion_summary_chars: usize,
+    pub completion_summary_truncated: bool,
+    pub final_response_present: bool,
+    pub final_response_chars: usize,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

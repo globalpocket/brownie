@@ -501,3 +501,19 @@ Direct controlled child task.inspect can expose a child-scoped `parent_join_read
 Consumed parent-join direct child task.inspect can also expose `consumed_parent_join_recovery_summary` when the inspected controlled child is part of a terminal child result set that was already consumed by an explicit parent task.run, or when the inspected child was materialized from that consumed join. The summary reports only bounded parent task/run ids, inspected child task/run ids/status, `parent_join_consumed=true`, the consumed terminal controlled child count, continuation controlled child counts, runnable continuation child task ids, non-runnable continuation child task ids, terminal continuation child count, `parent_running_enabled=false`, and one next explicit action. It reports `run_continuation_child_tasks_explicitly` only when continuation children are runnable, `inspect_non_runnable_continuation_child_tasks` when any continuation child is `Running` or `Cancelled`, and `inspect_parent_task` when the consumed join has no recoverable continuation child handles. It never reports `run_parent_task_explicitly` from the consumed summary, never exposes stale continuation child handles from older cycles, and remains read-only: it appends no TaskRunning event, consumes no parent join state, records no handoff envelope, creates no child TaskRecord, runs no child task, exposes no raw child or parent data, and adds no diagnostics RPC or scheduler handoff behavior.
 
 Parent run.inspect and parent task.inspect can expose the same consumed parent-join recovery through the nested `run.consumed_parent_join_recovery_summary` when a completed parent run has already consumed a terminal controlled child result set. The parent-scoped summary omits inspected-child fields and reports only bounded parent task/run ids, `parent_join_consumed=true`, consumed terminal controlled child count, continuation runnable/non-runnable/terminal counts, continuation child task ids, `parent_running_enabled=false`, and one next explicit action. It reports `run_continuation_child_tasks_explicitly` only for runnable continuation handles, `inspect_non_runnable_continuation_child_tasks` when any continuation child is `Running` or `Cancelled`, and `inspect_parent_task` when no continuation handles are recoverable from the latest consumed join. Parent inspection never reports `run_parent_task_explicitly` from the consumed summary, scopes continuation handles to the latest relevant consumed join, and remains read-only: it appends no TaskRunning event, consumes no parent join state, records no handoff envelope, creates no child TaskRecord, runs no parent or child task, exposes no raw child or parent data, and adds no diagnostics RPC or scheduler handoff behavior.
+
+## Task-Run Completion Evidence
+
+M22.1 makes terminal agent-loop completion evidence a first-class `task.run`
+contract. Terminal task-run results that reach `AgentLoopCompleted` include
+bounded `completion_evidence` with final state, terminal task status, the stable
+completion result fingerprint, summary preview/truncation metadata,
+final-response presence/count metadata, and whether the response was reconstructed
+from replay. The same evidence is persisted on terminal task events so a
+headless caller can prove the accepted completion without scanning raw ledger
+shape or trusting provider text. Replaying a terminal task reconstructs that
+evidence from runtime-owned ledger events and returns it without appending
+duplicate `TaskRunning`, `AgentLoopCompleted`, or terminal task events. The
+evidence never includes raw prompts, provider responses, final response content,
+file content, stdout/stderr, commands, environment values, secrets, or absolute
+or canonical paths.

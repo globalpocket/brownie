@@ -129,19 +129,20 @@ use brownie_protocol::{
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
     TaskListProgressBlockedSet, TaskListProgressNextActionSet, TaskListProgressOverview,
     TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode,
-    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunContextBudget,
-    TaskRunContextBudgetSummary, TaskRunParams, TaskRunParentJoinReadinessOutcome, TaskRunResult,
-    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
-    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
-    TaskStatusCounts, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
-    VerificationRecoveryRetryProvenance, VerificationRecoveryRetryRunTarget,
-    VerificationRecoveryRetrySource, VerificationRecoveryRunTarget, VerificationRecoverySource,
+    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
+    TaskRunCompletionEvidence, TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
+    TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
+    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
+    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
+    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
+    VerificationRecoveryApplyTarget, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
+    VerificationRecoveryRetryRunTarget, VerificationRecoveryRetrySource,
+    VerificationRecoveryRunTarget, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
     WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
     WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
@@ -381,6 +382,7 @@ const MAX_DIFF_PREVIEW_CHARS: usize = 20000;
 const MAX_DRY_RUN_HISTORY_ENTRIES: usize = 10;
 const MAX_PROPOSAL_AUDIT_TRAIL_ENTRIES: usize = 50;
 const MAX_PROPOSAL_REVIEW_REPORT_AUDIT_EVENTS: usize = 5;
+const TASK_RUN_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
 const CHILD_COMPLETION_SUMMARY_PREVIEW_CHARS: usize = 512;
 const CHILD_FAILURE_SUMMARY_PREVIEW_CHARS: usize = 512;
 const LLM_FAILURE_REASON_PREVIEW_CHARS: usize = 1024;
@@ -2032,6 +2034,11 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 }
             }
         };
+    let replay_completion_evidence =
+        match task_run_completion_evidence_for_record(&store, &record, true) {
+            Ok(evidence) => evidence,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
 
     match verification_recovery_repair_outcome_for_replay(&store, &record) {
         Ok(Some((agent_loop, verification_recovery_repair))) => {
@@ -2042,6 +2049,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2067,6 +2075,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2110,6 +2119,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2135,6 +2145,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2160,6 +2171,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2185,6 +2197,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     run_id: record.run_id,
                     status: record.status,
                     agent_loop,
+                    completion_evidence: None,
                     llm_provider_failure: Some(llm_provider_failure),
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -2199,6 +2212,63 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
         Ok(None) => {}
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    if matches!(
+        record.status,
+        TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+    ) {
+        if matches!(
+            validate_task_run_admission(&record, &store),
+            Ok(TaskRunAdmission::ParentJoinContinuation(_))
+        ) {
+            // Parent joins intentionally reuse task.run on a terminal parent after
+            // controlled children finish; let the admission path below consume it.
+        } else {
+            let events = match store.tasks().read_ledger_events(&record.run_id) {
+                Ok(events) => events,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            if !events
+                .iter()
+                .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            {
+                let Some(agent_loop) = task_run_agent_loop_summary_from_events(&events) else {
+                    return error_response(
+                        id,
+                        -32603,
+                        "internal error: missing agent loop completion evidence for terminal task replay",
+                    );
+                };
+                let runtime_requirement = runtime_verification_requirement_for_record(&record);
+                let verification_completion_gate =
+                    verification_completion_gate_for_run_with_requirement(
+                        &events,
+                        runtime_requirement.as_ref(),
+                    );
+                return result_response(
+                    id,
+                    json!(TaskRunResult {
+                        task_id: record.task_id,
+                        run_id: record.run_id,
+                        status: record.status,
+                        agent_loop,
+                        completion_evidence: replay_completion_evidence,
+                        llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
+                        selected_index_prompt_context: None,
+                        context_budget: task_run_context_budget_summary_from_events(&events),
+                        verification_completion_gate,
+                        verification_recovery_repair: None,
+                        verification_recovery_retry: None,
+                        recovery_cycle_budget_outcome: None,
+                        child_orchestration_outcome: None,
+                        parent_join_readiness_outcome: None,
+                    }),
+                );
+            }
+        }
     }
 
     let is_verification_recovery_task =
@@ -2754,17 +2824,20 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
+    let completion_result_fingerprint_value = completion_result_fingerprint(
+        agent_loop_final_state,
+        &agent_loop_completion_summary,
+        &agent_loop_final_response_content,
+    );
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::AgentLoopCompleted,
         Some(json!({
             "final_state": agent_loop_state_name(agent_loop_final_state),
             "completion_summary": agent_loop_completion_summary.clone(),
-            "completion_result_fingerprint": completion_result_fingerprint(
-                agent_loop_final_state,
-                &agent_loop_completion_summary,
-                &agent_loop_final_response_content,
-            ),
+            "completion_result_fingerprint": completion_result_fingerprint_value.clone(),
+            "final_response_present": !agent_loop_final_response_content.is_empty(),
+            "final_response_chars": agent_loop_final_response_content.chars().count(),
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2790,7 +2863,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Ok(outcome) => outcome,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
+    let completion_evidence = task_run_completion_evidence(
+        agent_loop_final_state,
+        final_status.clone(),
+        completion_result_fingerprint_value,
+        &agent_loop_completion_summary,
+        &agent_loop_final_response_content,
+        false,
+    );
     let terminal_payload = task_run_terminal_payload(
+        Some(&completion_evidence),
         verification_completion_gate.as_ref(),
         verification_recovery_repair.as_ref(),
     );
@@ -2819,6 +2901,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    completion_evidence: Some(completion_evidence),
                     llm_provider_failure: None,
                     selected_index_prompt_context: selected_index_prompt_context_result,
                     context_budget: context_budget_result,
@@ -2949,17 +3032,17 @@ fn handle_verification_recovery_retry_task_run(
         None => "Verification recovery retry failed: missing verifier completion gate.".to_string(),
     };
 
+    let completion_result_fingerprint_value =
+        completion_result_fingerprint(agent_loop_final_state, &agent_loop_completion_summary, "");
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &running,
         LedgerEventKind::AgentLoopCompleted,
         Some(json!({
             "final_state": agent_loop_state_name(agent_loop_final_state),
             "completion_summary": agent_loop_completion_summary.clone(),
-            "completion_result_fingerprint": completion_result_fingerprint(
-                agent_loop_final_state,
-                &agent_loop_completion_summary,
-                "",
-            ),
+            "completion_result_fingerprint": completion_result_fingerprint_value.clone(),
+            "final_response_present": false,
+            "final_response_chars": 0,
             "verification_recovery_retry": true,
         })),
     ) {
@@ -2976,9 +3059,19 @@ fn handle_verification_recovery_retry_task_run(
         TaskStatus::Cancelled => LedgerEventKind::TaskCancelled,
         _ => LedgerEventKind::TaskFailed,
     };
-    let terminal_payload = verification_completion_gate
-        .as_ref()
-        .map(verification_completion_gate_payload);
+    let completion_evidence = task_run_completion_evidence(
+        agent_loop_final_state,
+        final_status.clone(),
+        completion_result_fingerprint_value,
+        &agent_loop_completion_summary,
+        "",
+        false,
+    );
+    let terminal_payload = task_run_terminal_payload(
+        Some(&completion_evidence),
+        verification_completion_gate.as_ref(),
+        None,
+    );
     match store.tasks().update_task_status_with_payload(
         &running.task_id,
         final_status,
@@ -3007,6 +3100,7 @@ fn handle_verification_recovery_retry_task_run(
                         final_state: agent_loop_state_name(agent_loop_final_state).to_string(),
                         completion_summary: agent_loop_completion_summary,
                     },
+                    completion_evidence: Some(completion_evidence),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     context_budget: None,
@@ -4131,6 +4225,7 @@ fn fail_llm_request(
                         run_id: record.run_id,
                         status: record.status,
                         agent_loop: llm_provider_failed_agent_loop_summary(),
+                        completion_evidence: None,
                         llm_provider_failure: Some(outcome),
                         selected_index_prompt_context: None,
                         context_budget: None,
@@ -4153,6 +4248,7 @@ fn fail_llm_request(
                 run_id: record.run_id,
                 status: record.status,
                 agent_loop: llm_provider_failed_agent_loop_summary(),
+                completion_evidence: None,
                 llm_provider_failure: Some(outcome),
                 selected_index_prompt_context: None,
                 context_budget: None,
@@ -10370,6 +10466,7 @@ fn task_run_result_for_headless_replay(
     ) {
         return Ok(None);
     }
+    let completion_evidence = task_run_completion_evidence_for_record(store, record, true)?;
 
     match llm_provider_failure_outcome_for_replay(store, record) {
         Ok(Some((agent_loop, llm_provider_failure))) => {
@@ -10378,6 +10475,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: Some(llm_provider_failure),
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10400,6 +10498,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10422,6 +10521,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10444,6 +10544,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10466,6 +10567,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10488,6 +10590,7 @@ fn task_run_result_for_headless_replay(
                 run_id: record.run_id.clone(),
                 status: record.status.clone(),
                 agent_loop,
+                completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
@@ -10520,6 +10623,7 @@ fn task_run_result_for_headless_replay(
         run_id: record.run_id.clone(),
         status: record.status.clone(),
         agent_loop,
+        completion_evidence,
         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
         selected_index_prompt_context: None,
         context_budget: task_run_context_budget_summary_from_events(&events),
@@ -20415,6 +20519,33 @@ fn completion_result_fingerprint(
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
+fn task_run_completion_evidence(
+    final_state: AgentLoopState,
+    task_status: TaskStatus,
+    completion_result_fingerprint: String,
+    completion_summary: &str,
+    final_response_content: &str,
+    replayed: bool,
+) -> TaskRunCompletionEvidence {
+    let completion_summary_preview = preview_with_limit(
+        completion_summary,
+        TASK_RUN_COMPLETION_SUMMARY_PREVIEW_CHARS,
+    );
+    let completion_summary_chars = completion_summary.chars().count();
+    TaskRunCompletionEvidence {
+        final_state: agent_loop_state_name(final_state).to_string(),
+        task_status,
+        completion_result_fingerprint,
+        completion_summary_preview,
+        completion_summary_chars,
+        completion_summary_truncated: completion_summary_chars
+            > TASK_RUN_COMPLETION_SUMMARY_PREVIEW_CHARS,
+        final_response_present: !final_response_content.is_empty(),
+        final_response_chars: final_response_content.chars().count(),
+        replayed,
+    }
+}
+
 fn system_time_unix_ms(time: std::time::SystemTime) -> Option<i64> {
     time.duration_since(std::time::UNIX_EPOCH)
         .ok()
@@ -21076,6 +21207,82 @@ fn task_run_agent_loop_summary_from_events(
             .unwrap_or_default()
             .to_string(),
     })
+}
+
+fn task_run_completion_evidence_from_events(
+    events: &[LedgerEvent],
+    record: &TaskRecord,
+    replayed: bool,
+) -> Option<TaskRunCompletionEvidence> {
+    for event in events.iter().rev() {
+        if !matches!(
+            event.kind,
+            LedgerEventKind::TaskCompleted
+                | LedgerEventKind::TaskFailed
+                | LedgerEventKind::TaskCancelled
+        ) {
+            continue;
+        }
+        let payload = event.payload.as_ref()?;
+        if let Some(evidence) = payload.get("completion_evidence").and_then(|value| {
+            serde_json::from_value::<TaskRunCompletionEvidence>(value.clone()).ok()
+        }) {
+            return Some(TaskRunCompletionEvidence {
+                replayed,
+                ..evidence
+            });
+        }
+    }
+
+    let payload = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::AgentLoopCompleted)?
+        .payload
+        .as_ref()?;
+    let final_state = non_empty_payload_string(payload, "final_state")?;
+    let completion_summary = payload
+        .get("completion_summary")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let completion_result_fingerprint = payload
+        .get("completion_result_fingerprint")
+        .and_then(Value::as_str)?
+        .to_string();
+    let completion_summary_preview = preview_with_limit(
+        completion_summary,
+        TASK_RUN_COMPLETION_SUMMARY_PREVIEW_CHARS,
+    );
+    let completion_summary_chars = completion_summary.chars().count();
+    Some(TaskRunCompletionEvidence {
+        final_state,
+        task_status: record.status.clone(),
+        completion_result_fingerprint,
+        completion_summary_preview,
+        completion_summary_chars,
+        completion_summary_truncated: completion_summary_chars
+            > TASK_RUN_COMPLETION_SUMMARY_PREVIEW_CHARS,
+        final_response_present: payload
+            .get("final_response_present")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        final_response_chars: payload_usize(payload, "final_response_chars").unwrap_or(0),
+        replayed,
+    })
+}
+
+fn task_run_completion_evidence_for_record(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    replayed: bool,
+) -> Result<Option<TaskRunCompletionEvidence>, String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    Ok(task_run_completion_evidence_from_events(
+        &events, record, replayed,
+    ))
 }
 
 fn llm_provider_failure_outcome_for_replay(
@@ -23850,10 +24057,14 @@ fn verification_recovery_repair_payload(
 }
 
 fn task_run_terminal_payload(
+    completion_evidence: Option<&TaskRunCompletionEvidence>,
     verification_completion_gate: Option<&TaskRunVerificationCompletionGate>,
     verification_recovery_repair: Option<&TaskRunVerificationRecoveryRepairOutcome>,
 ) -> Option<Value> {
     let mut payload = json!({});
+    if let Some(evidence) = completion_evidence {
+        merge_json_object(&mut payload, json!({ "completion_evidence": evidence }));
+    }
     if let Some(gate) = verification_completion_gate {
         merge_json_object(&mut payload, verification_completion_gate_payload(gate));
     }
@@ -30793,6 +31004,18 @@ mod tests {
             .as_str()
             .expect("summary")
             .contains("Verification completion gate failed"));
+        let completion_evidence = &run_result["completion_evidence"];
+        assert_eq!(completion_evidence["final_state"], "Failed");
+        assert_eq!(completion_evidence["task_status"], "Failed");
+        assert!(completion_evidence["completion_result_fingerprint"]
+            .as_str()
+            .expect("completion fingerprint")
+            .starts_with("sha256:"));
+        assert!(completion_evidence["completion_summary_preview"]
+            .as_str()
+            .expect("summary preview")
+            .contains("Verification completion gate failed"));
+        assert_eq!(completion_evidence["final_response_present"], false);
 
         let ledger = std::fs::read_to_string(
             temp.path()
@@ -30822,6 +31045,10 @@ mod tests {
         assert_eq!(
             failed_payload["verification_completion_gate_status"],
             "Failed"
+        );
+        assert_eq!(
+            failed_payload["completion_evidence"]["completion_result_fingerprint"],
+            completion_evidence["completion_result_fingerprint"]
         );
         assert!(!ledger.contains("pub fn bad"));
         assert!(!ledger.contains("stdout"));
@@ -37191,6 +37418,20 @@ mod tests {
             .as_str()
             .expect("completion summary")
             .contains(&task_id));
+        let completion_evidence = &result["completion_evidence"];
+        assert_eq!(completion_evidence["final_state"], "Completed");
+        assert_eq!(completion_evidence["task_status"], "Completed");
+        assert!(completion_evidence["completion_result_fingerprint"]
+            .as_str()
+            .expect("completion fingerprint")
+            .starts_with("sha256:"));
+        assert!(completion_evidence["completion_summary_preview"]
+            .as_str()
+            .expect("summary preview")
+            .contains(&task_id));
+        assert_eq!(completion_evidence["completion_summary_truncated"], false);
+        assert_eq!(completion_evidence["final_response_present"], true);
+        assert_eq!(completion_evidence["replayed"], false);
 
         let get = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.get","params":{{"task_id":"{task_id}"}}}}"#
@@ -37243,6 +37484,18 @@ mod tests {
             .as_str()
             .expect("completion summary")
             .contains(&task_id));
+        let terminal_event = ledger_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskCompleted)
+            .expect("task completed event");
+        let terminal_payload = terminal_event
+            .payload
+            .as_ref()
+            .expect("task completed payload");
+        assert_eq!(
+            terminal_payload["completion_evidence"]["completion_result_fingerprint"],
+            completion_evidence["completion_result_fingerprint"]
+        );
         let queued_event = ledger_events
             .iter()
             .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
@@ -50748,7 +51001,7 @@ mod tests {
     }
 
     #[test]
-    fn task_run_completed_task_returns_invalid_params() {
+    fn task_run_completed_task_replays_completion_evidence_without_duplicate_events() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -50764,12 +51017,37 @@ mod tests {
             r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
         assert!(first.error.is_none());
+        let first_result = first.result.expect("first result");
+        let first_evidence = first_result["completion_evidence"].clone();
+        let run_id = first_result["run_id"].as_str().expect("run id").to_string();
+        let before_events = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger before");
 
         let second = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
         ));
-        assert!(second.result.is_none());
-        assert_eq!(second.error.expect("error").code, -32602);
+        assert!(second.error.is_none());
+        let second_result = second.result.expect("second result");
+        let second_evidence = &second_result["completion_evidence"];
+        assert_eq!(
+            second_evidence["completion_result_fingerprint"],
+            first_evidence["completion_result_fingerprint"]
+        );
+        assert_eq!(second_evidence["replayed"], true);
+        assert_eq!(second_evidence["final_state"], "Completed");
+        let after_events = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger after");
+        assert_eq!(after_events, before_events);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
