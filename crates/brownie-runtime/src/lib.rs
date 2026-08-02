@@ -36,10 +36,10 @@ use brownie_protocol::{
     HeadlessRunDriveResult, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
     JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
-    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePermissionsSummary, ModeSummary, PermissionCheckParams,
-    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
+    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
+    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
     ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
@@ -7752,6 +7752,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: llm_provider_failure_retry_source cannot be combined with max_steps greater than 1",
         );
     }
+    if params.llm_provider_failure_retry_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: llm_provider_failure_retry_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -7791,6 +7798,15 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         );
     }
     if params.llm_provider_failure_retry_source.is_some()
+        && params.llm_provider_failure_retry_run_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: llm_provider_failure_retry_source and llm_provider_failure_retry_run_target cannot be combined",
+        );
+    }
+    if params.llm_provider_failure_retry_source.is_some()
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.verification_recovery_run_target.is_some()
@@ -7801,6 +7817,19 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: llm_provider_failure_retry_source cannot be combined with verification recovery fields",
+        );
+    }
+    if params.llm_provider_failure_retry_run_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: llm_provider_failure_retry_run_target cannot be combined with verification recovery fields",
         );
     }
     if params.verification_recovery_source.is_some()
@@ -7877,6 +7906,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
             || params.verification_recovery_run_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
@@ -8000,6 +8030,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.verification_recovery_retry_run_target.is_some() {
         return handle_headless_continue_verification_recovery_retry_run(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.llm_provider_failure_retry_run_target.is_some() {
+        return handle_headless_continue_llm_provider_failure_retry_run(
             id,
             &store,
             &progress_overview,
@@ -9171,6 +9209,161 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
     )
 }
 
+fn handle_headless_continue_llm_provider_failure_retry_run(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.llm_provider_failure_retry_run_target.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing LLM provider failure retry run target",
+        );
+    };
+    let selected_record =
+        match llm_provider_failure_retry_record_for_headless_run_target(store, target) {
+            Ok(record) => record,
+            Err(rejection) => {
+                return match rejection {
+                    TaskRunAdmissionRejection::InvalidParams(message) => {
+                        error_response(id, -32602, message)
+                    }
+                    TaskRunAdmissionRejection::Internal(message) => {
+                        error_response(id, -32603, &format!("internal error: {message}"))
+                    }
+                }
+            }
+        };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+
+    let task_run_response = handle_task_run(
+        id.clone(),
+        Some(json!({
+            "task_id": selected_record.task_id.clone(),
+        })),
+    );
+    let Some(task_run_value) = task_run_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: task_run_response.error,
+        };
+    };
+    let task_run_result: TaskRunResult = match serde_json::from_value(task_run_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_run_record = match store.tasks().get_task(&selected_record.task_id) {
+        Ok(Some(record)) if record.run_id == selected_record.run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: LLM provider retry run task/run mismatch after execution",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: LLM provider retry run task not found after execution",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &post_run_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": post_run_record.task_id.clone(),
+            "selected_run_id": post_run_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_provider_failure_retry_run": true,
+            "source_task_id": target.source_task_id.clone(),
+            "source_run_id": target.source_run_id.clone(),
+            "retry_task_id": target.retry_task_id.clone(),
+            "retry_run_id": target.retry_run_id.clone(),
+            "failure_fingerprint": target.expected_failure_fingerprint.clone(),
+            "next_action": "inspect_progress_overview",
+            "reason": "Headless continue-once ran one targeted LLM provider retry task from bounded route evidence."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: post_run_record.task_id.clone(),
+                selected_run_id: post_run_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &post_run_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(task_run_result.task_id.clone()),
+            selected_run_id: Some(task_run_result.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: Some(task_run_result),
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
 fn handle_headless_continue_verification_recovery_retry_run(
     id: Value,
     store: &BrownieStore,
@@ -10174,6 +10367,28 @@ fn task_run_result_for_headless_replay(
         TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
     ) {
         return Ok(None);
+    }
+
+    match llm_provider_failure_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, llm_provider_failure))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                llm_provider_failure: Some(llm_provider_failure),
+                selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error),
     }
 
     match verification_recovery_repair_outcome_for_replay(store, record) {
@@ -24067,6 +24282,83 @@ fn verification_recovery_retry_record_for_headless_run_target(
         ));
     }
     revalidate_verification_recovery_retry_task_for_run(store, &record)?;
+    Ok(record)
+}
+
+fn llm_provider_failure_retry_record_for_headless_run_target(
+    store: &BrownieStore,
+    target: &LlmProviderFailureRetryRunTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.retry_task_id.as_str(),
+        target.retry_run_id.as_str(),
+        target.source_task_id.as_str(),
+        target.source_run_id.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: llm_provider_failure_retry_run_target fields must not be empty",
+            ));
+        }
+    }
+    if !target.authorize_provider_failure_retry_run {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.authorize_provider_failure_retry_run must be true"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.retry_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: llm_provider_failure_retry_run_target.retry_task_id was not found"
+                    .into(),
+            )
+        })?;
+    if record.run_id != target.retry_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.retry_run_id does not match retry task"
+                .into(),
+        ));
+    }
+    if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: LLM provider failure retry run target task must be Created or Queued"
+                .into(),
+        ));
+    }
+    let Some(provenance) = record.llm_provider_failure_retry_provenance.as_ref() else {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: LLM provider failure retry run target task has no retry provenance"
+                .into(),
+        ));
+    };
+    if provenance.source_task_id != target.source_task_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.source_task_id is stale".into(),
+        ));
+    }
+    if provenance.source_run_id != target.source_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.source_run_id is stale".into(),
+        ));
+    }
+    if provenance.failure_fingerprint != target.expected_failure_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: llm_provider_failure_retry_run_target.expected_failure_fingerprint is stale"
+                .into(),
+        ));
+    }
+    revalidate_llm_provider_failure_retry_task_for_run(store, &record)?;
     Ok(record)
 }
 
@@ -52295,6 +52587,369 @@ content-length: {}
             .list_tasks()
             .unwrap();
         assert_eq!(tasks.len(), 1);
+    }
+
+    #[test]
+    fn headless_llm_provider_failure_retry_task_run_executes_and_replays() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_transport_provider_task();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let expected_progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let expected_aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+
+        let admission_request = format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{expected_progress_fingerprint}",
+    "expected_aggregate_sequence": {expected_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.admit",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        );
+        let admission_result = parse_line(&admission_request).result.unwrap();
+        let admission = &admission_result["llm_provider_failure_retry_admission"];
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+
+        let run_progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let run_progress_fingerprint = run_progress["source_fingerprint"].as_str().unwrap();
+        let run_aggregate_sequence = run_progress["aggregate_sequence"].as_u64().unwrap();
+        let run_request = format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{run_progress_fingerprint}",
+    "expected_aggregate_sequence": {run_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.run",
+    "llm_provider_failure_retry_run_target": {{
+      "retry_task_id": "{retry_task_id}",
+      "retry_run_id": "{retry_run_id}",
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry_run": true
+    }}
+  }}
+}}"#
+        );
+        let first = parse_line(&run_request).result.unwrap();
+        assert_eq!(first["status"], "task_executed");
+        assert_eq!(first["replayed"], false);
+        assert_eq!(first["selected_task_id"], retry_task_id);
+        assert_eq!(first["selected_run_id"], retry_run_id);
+        assert_eq!(first["task_run_result"]["status"], "Failed");
+        assert_eq!(
+            first["task_run_result"]["llm_provider_failure"]["failure_class"],
+            "transport_or_timeout"
+        );
+        assert!(first["llm_provider_failure_retry_admission"].is_null());
+
+        let second = parse_line(&run_request).result.unwrap();
+        assert_eq!(second["status"], "task_executed");
+        assert_eq!(second["replayed"], true);
+        assert_eq!(second["decision_id"], first["decision_id"]);
+        assert_eq!(
+            second["task_run_result"]["llm_provider_failure"]["failure_fingerprint"],
+            first["task_run_result"]["llm_provider_failure"]["failure_fingerprint"]
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        assert_eq!(
+            event_list
+                .iter()
+                .filter(|event| event["kind"] == "TaskRunning")
+                .count(),
+            1
+        );
+        assert_eq!(
+            event_list
+                .iter()
+                .filter(|event| event["kind"] == "LlmRequestFailed")
+                .count(),
+            1
+        );
+        assert_eq!(
+            event_list
+                .iter()
+                .filter(|event| event["kind"] == "HeadlessContinuationDecisionRecorded")
+                .count(),
+            2
+        );
+        let serialized = serde_json::to_string(&events).unwrap();
+        assert!(!serialized.contains("test-key"));
+        assert!(!serialized.contains("Authorization"));
+        assert!(!serialized.contains("raw_provider_response"));
+    }
+
+    #[test]
+    fn headless_llm_provider_failure_retry_task_run_rejects_stale_and_invalid_inputs_before_running(
+    ) {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let expected_progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let expected_aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+        let admission = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{expected_progress_fingerprint}",
+    "expected_aggregate_sequence": {expected_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.invalid.admit",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap()["llm_provider_failure_retry_admission"]
+            .clone();
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+        let current_progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let current_aggregate_sequence = current_progress["aggregate_sequence"].as_u64().unwrap();
+
+        let stale = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "expected_aggregate_sequence": {current_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.stale.run",
+    "llm_provider_failure_retry_run_target": {{
+      "retry_task_id": "{retry_task_id}",
+      "retry_run_id": "{retry_run_id}",
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry_run": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(stale["status"], "stale_progress");
+        assert_eq!(stale["next_action"], "refresh_progress_overview");
+
+        let current_progress_fingerprint = current_progress["source_fingerprint"].as_str().unwrap();
+        let missing_auth = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 7,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{current_progress_fingerprint}",
+    "expected_aggregate_sequence": {current_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.missing.auth",
+    "llm_provider_failure_retry_run_target": {{
+      "retry_task_id": "{retry_task_id}",
+      "retry_run_id": "{retry_run_id}",
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry_run": false
+    }}
+  }}
+}}"#
+        ));
+        assert!(missing_auth.error.unwrap().message.contains(
+            "llm_provider_failure_retry_run_target.authorize_provider_failure_retry_run must be true"
+        ));
+
+        let stale_source = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 8,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{current_progress_fingerprint}",
+    "expected_aggregate_sequence": {current_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.stale.source",
+    "llm_provider_failure_retry_run_target": {{
+      "retry_task_id": "{retry_task_id}",
+      "retry_run_id": "{retry_run_id}",
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "authorize_provider_failure_retry_run": true
+    }}
+  }}
+}}"#
+        ));
+        assert!(stale_source
+            .error
+            .unwrap()
+            .message
+            .contains("expected_failure_fingerprint is stale"));
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":9,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        assert!(events["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|event| event["kind"] != "TaskRunning"
+                && event["kind"] != "LlmRequestCreated"
+                && event["kind"] != "LlmRequestFailed"));
+        let tasks = brownie_store::BrownieStore::new(temp.path())
+            .tasks()
+            .list_tasks()
+            .unwrap();
+        assert_eq!(tasks.len(), 2);
+    }
+
+    #[test]
+    fn headless_llm_provider_failure_retry_task_run_denies_without_access_network_permission() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let (_temp, _run, source_task_id, source_run_id, failure_fingerprint) =
+            failed_retryable_provider_task();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let expected_progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let expected_aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+
+        let admission = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{expected_progress_fingerprint}",
+    "expected_aggregate_sequence": {expected_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.network.admit",
+    "llm_provider_failure_retry_mode_id": "orchestrator",
+    "llm_provider_failure_retry_source": {{
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap()["llm_provider_failure_retry_admission"]
+            .clone();
+        let retry_task_id = admission["retry_task_id"].as_str().unwrap();
+        let retry_run_id = admission["retry_run_id"].as_str().unwrap();
+        let run_progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
+            .result
+            .unwrap()["progress_overview"]
+            .clone();
+        let run_progress_fingerprint = run_progress["source_fingerprint"].as_str().unwrap();
+        let run_aggregate_sequence = run_progress["aggregate_sequence"].as_u64().unwrap();
+
+        let retry_run = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 6,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{run_progress_fingerprint}",
+    "expected_aggregate_sequence": {run_aggregate_sequence},
+    "continuation_id": "m20.2.provider.retry.network.run",
+    "llm_provider_failure_retry_run_target": {{
+      "retry_task_id": "{retry_task_id}",
+      "retry_run_id": "{retry_run_id}",
+      "source_task_id": "{source_task_id}",
+      "source_run_id": "{source_run_id}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_provider_failure_retry_run": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .unwrap();
+        assert_eq!(retry_run["status"], "task_executed");
+        assert_eq!(
+            retry_run["task_run_result"]["llm_provider_failure"]["failure_class"],
+            "network_not_authorized"
+        );
+        assert!(
+            retry_run["task_run_result"]["llm_provider_failure"]["reason"]
+                .as_str()
+                .unwrap()
+                .contains("AccessNetwork runtime permission")
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":7,"method":"run.events","params":{{"run_id":"{retry_run_id}"}}}}"#
+        ))
+        .result
+        .unwrap();
+        let event_list = events["events"].as_array().unwrap();
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        assert!(
+            event_list.iter().any(|event| {
+                event["kind"] == "PermissionDenied"
+                    && event["payload"]["allowed"] == false
+                    && event["payload"]["reason"]
+                        .as_str()
+                        .is_some_and(|reason| reason.contains("network access"))
+            }),
+            "{serialized_events}"
+        );
+        assert!(event_list
+            .iter()
+            .all(|event| event["kind"] != "LlmRequestCreated"
+                && event["kind"] != "LlmResponseReceived"));
+        assert!(!serialized_events.contains("test-key"));
     }
 
     #[test]

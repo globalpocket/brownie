@@ -308,6 +308,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_run_target?: VerificationRecoveryRunTarget | null;
   verification_recovery_apply_target?: VerificationRecoveryApplyTarget | null;
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
+  llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
 }
 
 export interface HeadlessRunAdvanceParams {
@@ -387,6 +388,15 @@ export interface LlmProviderFailureRetrySource {
   source_run_id: string;
   expected_failure_fingerprint: string;
   authorize_provider_failure_retry: boolean;
+}
+
+export interface LlmProviderFailureRetryRunTarget {
+  retry_task_id: string;
+  retry_run_id: string;
+  source_task_id: string;
+  source_run_id: string;
+  expected_failure_fingerprint: string;
+  authorize_provider_failure_retry_run: boolean;
 }
 
 export interface TaskStartResult {
@@ -4260,7 +4270,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4279,7 +4289,8 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.llm_provider_failure_retry_mode_id === undefined || value.llm_provider_failure_retry_mode_id === null || typeof value.llm_provider_failure_retry_mode_id === 'string') &&
     (value.verification_recovery_run_target === undefined || value.verification_recovery_run_target === null || isVerificationRecoveryRunTarget(value.verification_recovery_run_target)) &&
     (value.verification_recovery_apply_target === undefined || value.verification_recovery_apply_target === null || isVerificationRecoveryApplyTarget(value.verification_recovery_apply_target)) &&
-    (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target))
+    (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target)) &&
+    (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target))
   );
 }
 
@@ -4353,6 +4364,20 @@ function isLlmProviderFailureRetrySource(value: unknown): value is LlmProviderFa
     typeof value.expected_failure_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_failure_fingerprint) &&
     value.authorize_provider_failure_retry === true
+  );
+}
+
+function isLlmProviderFailureRetryRunTarget(value: unknown): value is LlmProviderFailureRetryRunTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['retry_task_id', 'retry_run_id', 'source_task_id', 'source_run_id', 'expected_failure_fingerprint', 'authorize_provider_failure_retry_run']) &&
+    typeof value.retry_task_id === 'string' &&
+    typeof value.retry_run_id === 'string' &&
+    typeof value.source_task_id === 'string' &&
+    typeof value.source_run_id === 'string' &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    value.authorize_provider_failure_retry_run === true
   );
 }
 
