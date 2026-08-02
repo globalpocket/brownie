@@ -699,6 +699,30 @@ describe('protocol validation', () => {
       ...headlessParams,
       llm_provider_failure_retry_source: { ...llmProviderFailureRetrySource, raw_provider_response: 'secret body' },
     })).toBe(false);
+    const llmProviderFailureRetryRunTarget = {
+      retry_task_id: 'task_provider_retry',
+      retry_run_id: 'run_provider_retry',
+      source_task_id: 'task_provider_source',
+      source_run_id: 'run_provider_source',
+      expected_failure_fingerprint: `sha256:${'f'.repeat(64)}`,
+      authorize_provider_failure_retry_run: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_run_target: llmProviderFailureRetryRunTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_run_target: { ...llmProviderFailureRetryRunTarget, authorize_provider_failure_retry_run: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_run_target: { ...llmProviderFailureRetryRunTarget, expected_failure_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      llm_provider_failure_retry_run_target: { ...llmProviderFailureRetryRunTarget, raw_prompt: 'do not expose' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,
