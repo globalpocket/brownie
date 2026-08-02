@@ -299,6 +299,18 @@ malformed, stale, or mismatched provenance is denied before LLM/provider/tool
 work. Built-in parent/child behavior remains compatible when no external Mode
 Pack handoff provenance is required.
 
+M21.1 extends execution-time policy revalidation to direct tasks started from a
+workspace Mode Pack mode. `task.start` records bounded
+`external_modepack_task_provenance` in the `ModeResolved` event for direct
+external modes, including only the source kind, modepack name, schema version,
+`.brownie/modepack.json` source token, mode id, and policy fingerprint. Before
+`task.run` can append `TaskRunning`, the runtime re-reads the current workspace
+Mode Pack and requires the captured policy fingerprint to match. Deleted,
+malformed, or changed Mode Pack policy is denied with bounded
+`ExternalModePackTaskProvenanceDenied` evidence before provider, tool,
+workspace, or child-materialization behavior. Built-in mode tasks and M12.2
+external child provenance remain on their existing paths.
+
 ## Runtime Progress Visualization Boundary
 
 M10.1 adds the first runtime-owned progress visualization model. Existing
