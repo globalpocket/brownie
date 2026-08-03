@@ -138,6 +138,13 @@ Controlled apply must not run shell or git commands, use network access, create 
 
 M14.1 adds the first bounded multi-file mutation path to the same
 `proposal.apply` authority for two to five approved `replace_file` proposals.
+M23.1 extends that transaction boundary to two to five approved `create_file`
+proposals. The Rust runtime admits only homogeneous create transactions, requires
+per-item `expected_target_absent=true`, revalidates latest absence preflights and
+safe existing parents, rejects symlinks and overlaps, prepares temporary sibling
+files before target creation, uses no-overwrite atomic create, verifies per-item
+post-write SHA-256 values, and records bounded transaction result evidence
+without raw file content or raw diffs.
 M14.2 adds bounded recovery for that transaction path. A caller may include
 `transaction_recovery_source` with source run, apply, transaction, and expected
 source fingerprint fields plus a recovery `transaction_items` set. The Rust

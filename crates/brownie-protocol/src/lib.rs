@@ -789,7 +789,10 @@ pub struct ProposalApplyDryRunParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalApplyTransactionItem {
     pub proposal_id: String,
-    pub expected_target_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_target_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_target_absent: Option<bool>,
     pub replacement_content: String,
 }
 
@@ -1751,12 +1754,15 @@ pub struct WorkspacePatchApplyTransactionItemResultSummary {
     pub apply_reason: String,
     pub operation: String,
     pub path: String,
-    pub expected_target_sha256: String,
+    pub expected_target_sha256: Option<String>,
+    pub expected_target_absent: Option<bool>,
     pub pre_write_target_sha256: Option<String>,
+    pub pre_write_target_exists: Option<bool>,
     pub post_write_sha256: Option<String>,
     pub content_chars: usize,
     pub content_bytes: u64,
     pub atomic_replacement_completed: bool,
+    pub atomic_create_completed: bool,
     pub applied: bool,
     pub temp_file_cleaned: bool,
 }
