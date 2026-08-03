@@ -8541,12 +8541,23 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 .task_run_result
                 .as_ref()
                 .and_then(|result| result.context_budget.clone()),
+            terminal_completion_evidence: continue_result
+                .task_run_result
+                .as_ref()
+                .and_then(|result| result.completion_evidence.clone()),
             next_route: continue_result.next_route.clone(),
             next_action: continue_result.next_action.clone(),
         }]
     } else {
         continue_result.steps.clone()
     };
+    let terminal_completion_evidence = headless_terminal_completion_evidence_from_steps(
+        &advance_steps,
+        continue_result
+            .task_run_result
+            .as_ref()
+            .and_then(|result| result.completion_evidence.as_ref()),
+    );
     let step_count = continue_result.step_count.unwrap_or(advance_steps.len());
     let executed_count = continue_result.executed_count.unwrap_or_else(|| {
         usize::from(continue_result.status == HeadlessContinueOnceStatus::TaskExecuted)
@@ -8565,6 +8576,7 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
         "executed_count": executed_count,
         "replayed_count": replayed_count,
         "stop_reason": continue_result.stop_reason.clone().unwrap_or_else(|| headless_continue_budget_stop_reason(&continue_result, 1, max_steps)),
+        "terminal_completion_evidence": terminal_completion_evidence,
         "next_action": continue_result.next_action,
     });
     let checkpoint_fingerprint = format!(
@@ -8587,6 +8599,7 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             headless_continue_budget_stop_reason(&continue_result, 1, max_steps)
         }),
         checkpoint_fingerprint,
+        terminal_completion_evidence,
         next_route: continue_result.next_route.clone(),
         steps: advance_steps,
         next_action: continue_result.next_action.clone(),
@@ -8763,6 +8776,10 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
 
     let executed_count = advances.iter().map(|advance| advance.executed_count).sum();
     let replayed_count = advances.iter().map(|advance| advance.replayed_count).sum();
+    let terminal_completion_evidence = advances
+        .iter()
+        .rev()
+        .find_map(|advance| advance.terminal_completion_evidence.clone());
     let end_session_sequence = advances
         .last()
         .map(|advance| advance.session_sequence)
@@ -8782,6 +8799,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "executed_count": executed_count,
         "replayed_count": replayed_count,
         "stop_reason": stop_reason,
+        "terminal_completion_evidence": terminal_completion_evidence,
         "next_action": next_action
     });
     let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
@@ -8799,6 +8817,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         replayed_count,
         stop_reason,
         drive_fingerprint,
+        terminal_completion_evidence,
         start_progress,
         post_progress,
         next_route,
@@ -9999,6 +10018,10 @@ fn handle_headless_continue_budget(
                 .task_run_result
                 .as_ref()
                 .and_then(|task_run_result| task_run_result.context_budget.clone()),
+            terminal_completion_evidence: result
+                .task_run_result
+                .as_ref()
+                .and_then(|task_run_result| task_run_result.completion_evidence.clone()),
             next_route: result.next_route.clone(),
             next_action: result.next_action.clone(),
         });
@@ -10127,6 +10150,17 @@ fn headless_continue_budget_stop_reason(
             }
         }
     }
+}
+
+fn headless_terminal_completion_evidence_from_steps(
+    steps: &[HeadlessContinueStepResult],
+    fallback: Option<&TaskRunCompletionEvidence>,
+) -> Option<TaskRunCompletionEvidence> {
+    steps
+        .iter()
+        .rev()
+        .find_map(|step| step.terminal_completion_evidence.clone())
+        .or_else(|| fallback.cloned())
 }
 
 fn headless_continue_once_replay_result(
@@ -10989,6 +11023,7 @@ fn append_headless_run_session_advanced_events(
                 "post_aggregate_sequence": result.post_progress.as_ref().map(|progress| progress.aggregate_sequence),
                 "checkpoint_fingerprint": result.checkpoint_fingerprint,
                 "stop_reason": result.stop_reason,
+                "terminal_completion_evidence": step.terminal_completion_evidence,
                 "next_action": result.next_action,
                 "reason": "Headless run session advanced through bounded runtime-owned continuation execution."
             })),
@@ -11032,6 +11067,7 @@ fn append_headless_run_session_drive_completed_events(
                     "selected_run_id": run_id,
                     "drive_fingerprint": result.drive_fingerprint,
                     "stop_reason": result.stop_reason,
+                    "terminal_completion_evidence": step.terminal_completion_evidence,
                     "next_action": result.next_action,
                     "reason": "Headless run session drive completed through bounded runtime-owned continuation execution."
                 })),
@@ -34376,6 +34412,26 @@ mod tests {
             first_result["steps"][1]["context_budget"]["max_selected_index_chars"],
             0
         );
+        let first_terminal_evidence = &first_result["terminal_completion_evidence"];
+        assert_eq!(first_terminal_evidence["final_state"], "Completed");
+        assert_eq!(first_terminal_evidence["task_status"], "Completed");
+        assert!(first_terminal_evidence["completion_result_fingerprint"]
+            .as_str()
+            .expect("advance terminal completion fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(
+            first_result["steps"][1]["terminal_completion_evidence"]
+                ["completion_result_fingerprint"],
+            first_terminal_evidence["completion_result_fingerprint"]
+        );
+        assert_eq!(
+            first_result["steps"][0]["terminal_completion_evidence"]["final_response_present"],
+            true
+        );
+        assert!(first_result["steps"][0].get("prompt").is_none());
+        assert!(first_result["steps"][0].get("provider_response").is_none());
+        assert!(first_terminal_evidence.get("final_response").is_none());
+        assert!(first_terminal_evidence.get("absolute_path").is_none());
 
         let replay_response = parse_line(&first_request);
         let replay_result = replay_response
@@ -34389,6 +34445,14 @@ mod tests {
         assert_eq!(
             replay_result["steps"][0]["context_budget"],
             first_result["steps"][0]["context_budget"]
+        );
+        assert_eq!(
+            replay_result["terminal_completion_evidence"],
+            first_result["terminal_completion_evidence"]
+        );
+        assert_eq!(
+            replay_result["steps"][1]["terminal_completion_evidence"],
+            first_result["steps"][1]["terminal_completion_evidence"]
         );
 
         let second_response = parse_line(
@@ -34404,6 +34468,11 @@ mod tests {
         assert_eq!(
             second_result["start_progress"],
             first_result["post_progress"]
+        );
+        assert_eq!(
+            second_result["steps"][0]["terminal_completion_evidence"]
+                ["completion_result_fingerprint"],
+            second_result["terminal_completion_evidence"]["completion_result_fingerprint"]
         );
 
         let selected_run_ids = first_result["steps"]
@@ -34567,6 +34636,19 @@ mod tests {
         assert!(drive_advances
             .iter()
             .all(|advance| advance["steps"][0]["context_budget"]["max_selected_index_chars"] == 0));
+        assert_eq!(
+            drive["terminal_completion_evidence"]["completion_result_fingerprint"],
+            drive_advances.last().expect("last drive advance")["terminal_completion_evidence"]
+                ["completion_result_fingerprint"]
+        );
+        assert_eq!(
+            drive_advances[0]["steps"][0]["terminal_completion_evidence"]["final_state"],
+            "Completed"
+        );
+        assert!(drive["terminal_completion_evidence"]
+            .get("final_response")
+            .is_none());
+        assert!(drive.get("provider_response").is_none());
 
         let replay = parse_line(drive_request)
             .result
@@ -34576,6 +34658,14 @@ mod tests {
         assert_eq!(
             replay["advances"][0]["steps"][0]["context_budget"],
             drive["advances"][0]["steps"][0]["context_budget"]
+        );
+        assert_eq!(
+            replay["terminal_completion_evidence"],
+            drive["terminal_completion_evidence"]
+        );
+        assert_eq!(
+            replay["advances"][0]["terminal_completion_evidence"],
+            drive["advances"][0]["terminal_completion_evidence"]
         );
 
         let selected_run_ids = seed["steps"]

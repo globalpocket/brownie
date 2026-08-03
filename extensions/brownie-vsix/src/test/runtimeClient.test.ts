@@ -901,6 +901,21 @@ describe('protocol validation', () => {
       expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
       expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
     };
+    const terminalCompletionEvidence = {
+      final_state: 'Completed',
+      task_status: 'Completed',
+      completion_result_fingerprint: `sha256:${'9'.repeat(64)}`,
+      completion_summary_preview: 'Completed task task_1',
+      completion_summary_chars: 21,
+      completion_summary_truncated: false,
+      final_response_present: true,
+      final_response_chars: 21,
+      replayed: false,
+    };
+    const headlessStepWithCompletionEvidence = {
+      ...headlessBudgetResult.steps[0],
+      terminal_completion_evidence: terminalCompletionEvidence,
+    };
     const headlessRunAdvanceResult = {
       status: 'task_executed',
       session_id: 'm17.session',
@@ -921,8 +936,9 @@ describe('protocol validation', () => {
       replayed_count: 0,
       stop_reason: 'explicit_verification_recovery_boundary',
       checkpoint_fingerprint: `sha256:${'e'.repeat(64)}`,
+      terminal_completion_evidence: terminalCompletionEvidence,
       next_route: headlessBudgetResult.next_route,
-      steps: headlessBudgetResult.steps,
+      steps: [headlessStepWithCompletionEvidence],
       next_action: 'start_verification_recovery_explicitly',
     };
     expect(isHeadlessRunAdvanceParams(headlessRunAdvanceParams)).toBe(true);
@@ -934,6 +950,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunAdvanceResult(headlessRunAdvanceResult)).toBe(true);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, checkpoint_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, step_count: 2 })).toBe(false);
+    expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, terminal_completion_evidence: { ...terminalCompletionEvidence, final_response: 'raw final response' } })).toBe(false);
+    expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, steps: [{ ...headlessStepWithCompletionEvidence, terminal_completion_evidence: { ...terminalCompletionEvidence, provider_response: 'raw provider response' } }] })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, stdout: 'raw output' })).toBe(false);
     const headlessRunDriveParams = {
       authorize: true,
@@ -958,6 +976,7 @@ describe('protocol validation', () => {
       replayed_count: 0,
       stop_reason: 'budget_exhausted',
       drive_fingerprint: `sha256:${'f'.repeat(64)}`,
+      terminal_completion_evidence: terminalCompletionEvidence,
       start_progress: headlessRunAdvanceResult.start_progress,
       post_progress: headlessRunAdvanceResult.post_progress,
       next_route: headlessBudgetResult.next_route,
@@ -971,6 +990,7 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, absolute_path: '/tmp/file' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',

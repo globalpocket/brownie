@@ -517,3 +517,17 @@ duplicate `TaskRunning`, `AgentLoopCompleted`, or terminal task events. The
 evidence never includes raw prompts, provider responses, final response content,
 file content, stdout/stderr, commands, environment values, secrets, or absolute
 or canonical paths.
+
+M22.2 routes that completion evidence through the existing headless run-control
+surface. `headless.run.advance` now includes optional terminal completion
+evidence on each executed step and on the advance result when a task-run step
+reaches a terminal `Completed`, `Failed`, or `Cancelled` boundary.
+`headless.run.drive` carries the same bounded evidence as its terminal stop
+evidence when it stops because the selected task reached that boundary. The
+fingerprint matches the direct `task.run` completion evidence, and replayed
+advance/drive calls return the persisted evidence without duplicate task or
+headless ledger mutation. Budget, stale-progress, and no-runnable-work stops do
+not invent terminal completion evidence. These headless results remain bounded
+and expose no raw prompt, provider response, final response content, file
+content, stdout/stderr, command, environment value, secret, absolute path, or
+canonical path.

@@ -1221,6 +1221,8 @@ pub struct HeadlessContinueStepResult {
     pub replayed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudgetSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
     pub next_route: Option<HeadlessContinueRoute>,
     pub next_action: String,
 }
@@ -1248,6 +1250,8 @@ pub struct HeadlessRunAdvanceResult {
     pub stop_reason: String,
     pub checkpoint_fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub steps: Vec<HeadlessContinueStepResult>,
@@ -1269,6 +1273,8 @@ pub struct HeadlessRunDriveResult {
     pub replayed_count: usize,
     pub stop_reason: String,
     pub drive_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,
