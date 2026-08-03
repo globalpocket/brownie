@@ -548,6 +548,7 @@ export interface HeadlessContinueStepResult {
   post_aggregate_sequence?: number | null;
   replayed: boolean;
   context_budget?: TaskRunContextBudgetSummary | null;
+  terminal_completion_evidence?: TaskRunCompletionEvidence | null;
   next_route?: HeadlessContinueRoute | null;
   next_action: string;
 }
@@ -571,6 +572,7 @@ export interface HeadlessRunAdvanceResult {
   replayed_count: number;
   stop_reason: string;
   checkpoint_fingerprint: string;
+  terminal_completion_evidence?: TaskRunCompletionEvidence | null;
   next_route?: HeadlessContinueRoute | null;
   steps?: HeadlessContinueStepResult[];
   next_action: string;
@@ -590,6 +592,7 @@ export interface HeadlessRunDriveResult {
   replayed_count: number;
   stop_reason: string;
   drive_fingerprint: string;
+  terminal_completion_evidence?: TaskRunCompletionEvidence | null;
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
@@ -4465,6 +4468,17 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
 export function isTaskRunCompletionEvidence(value: unknown): value is TaskRunCompletionEvidence {
   return (
     isRecord(value) &&
+    hasOnlyFields(value, [
+      'final_state',
+      'task_status',
+      'completion_result_fingerprint',
+      'completion_summary_preview',
+      'completion_summary_chars',
+      'completion_summary_truncated',
+      'final_response_present',
+      'final_response_chars',
+      'replayed',
+    ]) &&
     typeof value.final_state === 'string' &&
     isTaskStatus(value.task_status) &&
     typeof value.completion_result_fingerprint === 'string' &&
@@ -4629,6 +4643,7 @@ function isHeadlessContinueStepResult(value: unknown): value is HeadlessContinue
       'post_aggregate_sequence',
       'replayed',
       'context_budget',
+      'terminal_completion_evidence',
       'next_route',
       'next_action',
     ]) &&
@@ -4647,6 +4662,7 @@ function isHeadlessContinueStepResult(value: unknown): value is HeadlessContinue
     (value.post_aggregate_sequence === undefined || value.post_aggregate_sequence === null || isNonNegativeInteger(value.post_aggregate_sequence)) &&
     typeof value.replayed === 'boolean' &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudgetSummary(value.context_budget)) &&
+    (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
     typeof value.next_action === 'string'
   );
@@ -4679,6 +4695,7 @@ export function isHeadlessRunAdvanceResult(value: unknown): value is HeadlessRun
       'replayed_count',
       'stop_reason',
       'checkpoint_fingerprint',
+      'terminal_completion_evidence',
       'next_route',
       'steps',
       'next_action',
@@ -4704,6 +4721,7 @@ export function isHeadlessRunAdvanceResult(value: unknown): value is HeadlessRun
     value.stop_reason.length <= 120 &&
     typeof value.checkpoint_fingerprint === 'string' &&
     isSha256Fingerprint(value.checkpoint_fingerprint) &&
+    (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
     (value.steps === undefined || (Array.isArray(value.steps) && value.steps.length === value.step_count && value.steps.every(isHeadlessContinueStepResult))) &&
     typeof value.next_action === 'string'
@@ -4727,6 +4745,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'replayed_count',
       'stop_reason',
       'drive_fingerprint',
+      'terminal_completion_evidence',
       'start_progress',
       'post_progress',
       'next_route',
@@ -4755,6 +4774,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     value.stop_reason.length <= 120 &&
     typeof value.drive_fingerprint === 'string' &&
     isSha256Fingerprint(value.drive_fingerprint) &&
+    (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
