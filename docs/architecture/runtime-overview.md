@@ -145,6 +145,13 @@ safe existing parents, rejects symlinks and overlaps, prepares temporary sibling
 files before target creation, uses no-overwrite atomic create, verifies per-item
 post-write SHA-256 values, and records bounded transaction result evidence
 without raw file content or raw diffs.
+M24.1 extends the same transaction boundary to two to five approved
+`delete_file` proposals. The Rust runtime admits only homogeneous delete
+transactions, requires per-item expected target SHA-256 values, revalidates
+latest preflights and current regular UTF-8 non-symlink targets, rejects unsafe
+or overlapping paths, deletes only approved targets, syncs parent directories
+where possible, verifies post-delete absence per item, and records bounded
+transaction evidence without raw file content or raw diffs.
 M14.2 adds bounded recovery for that transaction path. A caller may include
 `transaction_recovery_source` with source run, apply, transaction, and expected
 source fingerprint fields plus a recovery `transaction_items` set. The Rust

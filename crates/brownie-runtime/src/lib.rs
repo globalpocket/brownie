@@ -14323,6 +14323,15 @@ struct PreparedCreateTransactionItem {
     content_bytes: u64,
 }
 
+struct PreparedDeleteTransactionItem {
+    proposal_id: String,
+    operation: String,
+    path: String,
+    target_path: PathBuf,
+    expected_target_sha256: String,
+    pre_write_target_sha256: String,
+}
+
 fn transaction_item_result(
     item: &PreparedReplaceTransactionItem,
     apply_status: &str,
@@ -14343,10 +14352,12 @@ fn transaction_item_result(
         pre_write_target_sha256: Some(item.pre_write_target_sha256.clone()),
         pre_write_target_exists: Some(true),
         post_write_sha256,
+        post_delete_target_exists: None,
         content_chars: item.content_chars,
         content_bytes: item.content_bytes,
         atomic_replacement_completed,
         atomic_create_completed: false,
+        atomic_delete_completed: None,
         applied,
         temp_file_cleaned,
     }
@@ -14372,10 +14383,43 @@ fn create_transaction_item_result(
         pre_write_target_sha256: None,
         pre_write_target_exists: Some(false),
         post_write_sha256,
+        post_delete_target_exists: None,
         content_chars: item.content_chars,
         content_bytes: item.content_bytes,
         atomic_replacement_completed: false,
         atomic_create_completed,
+        atomic_delete_completed: None,
+        applied,
+        temp_file_cleaned,
+    }
+}
+
+fn delete_transaction_item_result(
+    item: &PreparedDeleteTransactionItem,
+    apply_status: &str,
+    apply_reason: &str,
+    post_delete_target_exists: Option<bool>,
+    atomic_delete_completed: bool,
+    applied: bool,
+    temp_file_cleaned: bool,
+) -> WorkspacePatchApplyTransactionItemResultSummary {
+    WorkspacePatchApplyTransactionItemResultSummary {
+        proposal_id: item.proposal_id.clone(),
+        apply_status: apply_status.to_string(),
+        apply_reason: apply_reason.to_string(),
+        operation: item.operation.clone(),
+        path: item.path.clone(),
+        expected_target_sha256: Some(item.expected_target_sha256.clone()),
+        expected_target_absent: None,
+        pre_write_target_sha256: Some(item.pre_write_target_sha256.clone()),
+        pre_write_target_exists: Some(true),
+        post_write_sha256: None,
+        post_delete_target_exists,
+        content_chars: 0,
+        content_bytes: 0,
+        atomic_replacement_completed: false,
+        atomic_create_completed: false,
+        atomic_delete_completed: Some(atomic_delete_completed),
         applied,
         temp_file_cleaned,
     }
@@ -16701,6 +16745,415 @@ fn apply_create_file_transaction(
     .map(|(_, result)| (first_proposal, result))
 }
 
+fn apply_delete_file_transaction(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(&params.run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let items = params
+        .transaction_items
+        .as_ref()
+        .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
+    let proposal_id_for_result = fallback_transaction_proposal_id(params);
+    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let mut apply_result = WorkspacePatchApplyResultSummary {
+        proposal_id: proposal_id_for_result.clone(),
+        apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
+        apply_status: "Denied".to_string(),
+        apply_reason: "Delete-file transaction apply preconditions were not satisfied.".to_string(),
+        authorization_id: format!("apply_tx_auth_{}", uuid::Uuid::new_v4().simple()),
+        authorization_consumed: false,
+        applied: false,
+        operation: "delete_file_transaction".to_string(),
+        atomic_replacement_completed: false,
+        atomic_create_completed: false,
+        atomic_delete_completed: false,
+        path: "[transaction]".to_string(),
+        expected_target_sha256: None,
+        expected_target_absent: None,
+        pre_write_target_sha256: None,
+        pre_write_target_exists: None,
+        post_write_sha256: None,
+        post_delete_target_exists: None,
+        content_chars: 0,
+        content_bytes: 0,
+        checked_at: now_rfc3339(),
+        applied_at: None,
+        temp_file_cleaned: true,
+        check_count: 0,
+        failed_checks: Vec::new(),
+        blocked_checks: Vec::new(),
+        checklist: vec![apply_result_check(
+            "transaction_request_present",
+            "Pass",
+            None,
+        )],
+        transaction_id: Some(format!("apply_tx_{}", uuid::Uuid::new_v4().simple())),
+        transaction_status: Some("Denied".to_string()),
+        transaction_items: Vec::new(),
+        transaction_recovery_source: None,
+        transaction_recovery_status: None,
+    };
+
+    let deny = |mut result: WorkspacePatchApplyResultSummary,
+                check_name: &str,
+                reason: &str|
+     -> Result<
+        (
+            WorkspacePatchProposalSummary,
+            WorkspacePatchApplyResultSummary,
+        ),
+        String,
+    > {
+        result
+            .checklist
+            .push(apply_result_check(check_name, "Fail", Some(reason)));
+        result.apply_reason = reason.to_string();
+        result.transaction_status = Some("Denied".to_string());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            result,
+        )
+        .map(|(_, result)| (first_proposal.clone(), result))
+    };
+
+    if !params.authorize {
+        return deny(
+            apply_result,
+            "one_time_transaction_authorization",
+            "Transaction apply request must explicitly set authorize=true.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "one_time_transaction_authorization",
+        "Pass",
+        None,
+    ));
+    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+        apply_result.transaction_status = Some("Denied".to_string());
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (first_proposal, result));
+    }
+
+    if !(2..=5).contains(&items.len()) {
+        return deny(
+            apply_result,
+            "transaction_item_count_bounded",
+            "Delete-file transaction apply requires between two and five items.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_item_count_bounded",
+        "Pass",
+        None,
+    ));
+
+    let events = read_existing_run_events(store, &params.run_id)?;
+    let mut seen_proposals = BTreeSet::new();
+    let mut seen_paths: BTreeSet<String> = BTreeSet::new();
+    let mut prepared_items = Vec::new();
+
+    for item in items {
+        if item.proposal_id.trim().is_empty() || !seen_proposals.insert(item.proposal_id.clone()) {
+            return deny(
+                apply_result,
+                "transaction_proposal_ids_unique",
+                "Transaction item proposal_id values must be non-empty and unique.",
+            );
+        }
+        if !item.replacement_content.is_empty() {
+            return deny(
+                apply_result,
+                "transaction_replacement_content_omitted_for_delete",
+                "Delete-file transaction items must use empty replacement_content.",
+            );
+        }
+        if item.expected_target_absent.is_some() {
+            return deny(
+                apply_result,
+                "transaction_delete_target_absence_omitted",
+                "Delete-file transaction items must omit expected_target_absent.",
+            );
+        }
+
+        let proposal = inspect_proposal(store, &params.run_id, &item.proposal_id)?;
+        if proposal.operation != WorkspacePatchOperation::DeleteFile.as_str() {
+            return deny(
+                apply_result,
+                "transaction_delete_file_only",
+                "Delete-file transaction apply only supports delete_file proposals.",
+            );
+        }
+        if proposal.validation_status != "Valid" {
+            return deny(
+                apply_result,
+                "transaction_proposals_valid",
+                "Every transaction proposal must have validation_status=Valid.",
+            );
+        }
+        if proposal.approval_status != "Approved" {
+            return deny(
+                apply_result,
+                "transaction_proposals_approved",
+                "Every transaction proposal must be approved before apply.",
+            );
+        }
+        if let Some(reason) = approval_current_failure_reason(proposal.approved_at.as_deref()) {
+            return deny(apply_result, "transaction_approvals_current", reason);
+        }
+        if has_consumed_apply_authorization(&events, &item.proposal_id) {
+            return deny(
+                apply_result,
+                "transaction_approvals_unconsumed",
+                "A transaction proposal apply authorization has already been consumed.",
+            );
+        }
+        if proposal.content_chars != 0 || !proposal.content_preview.is_empty() {
+            return deny(
+                apply_result,
+                "transaction_delete_proposal_has_no_replacement_content",
+                "Delete-file proposals must not carry replacement content metadata.",
+            );
+        }
+        if proposal.diff_redacted
+            || proposal.content_preview == "[redacted]"
+            || proposal.diff_truncated
+            || proposal.diff_preview.is_none()
+        {
+            return deny(
+                apply_result,
+                "transaction_proposal_diff_available",
+                "Proposal diff must be available and untruncated for transaction apply.",
+            );
+        }
+        let Some(expected_target_sha256) = item.expected_target_sha256.as_deref() else {
+            return deny(
+                apply_result,
+                "transaction_expected_target_hashes_valid",
+                "Every expected target hash must be provided.",
+            );
+        };
+        if !is_sha256_fingerprint(expected_target_sha256) {
+            return deny(
+                apply_result,
+                "transaction_expected_target_hashes_valid",
+                "Every expected target hash must be a sha256 fingerprint.",
+            );
+        }
+        let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+            return deny(
+                apply_result,
+                "transaction_latest_preflight_exists",
+                "Run proposal.preflight for every transaction proposal before applying.",
+            );
+        };
+        let current_snapshot =
+            match capture_preflight_snapshot(store, &proposal, Some(previous_snapshot)) {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    return deny(
+                        apply_result,
+                        "transaction_latest_preflight_validation",
+                        "Latest preflight validation failed for a transaction proposal.",
+                    )
+                }
+            };
+        append_preflight_snapshot_event(store, &task, &current_snapshot)?;
+        if current_snapshot.stale {
+            return deny(
+                apply_result,
+                "transaction_latest_preflight_validation",
+                "Latest preflight validation found a stale transaction target.",
+            );
+        }
+        if !current_snapshot.file_exists {
+            return deny(
+                apply_result,
+                "transaction_target_file_exists",
+                "Every delete-file transaction target must exist.",
+            );
+        }
+        if current_snapshot.file_kind == "Symlink" {
+            return deny(
+                apply_result,
+                "transaction_target_file_not_symlink",
+                "Every delete-file transaction target must not be a symlink.",
+            );
+        }
+        if current_snapshot.file_kind != "File" {
+            return deny(
+                apply_result,
+                "transaction_target_file_regular",
+                "Every delete-file transaction target must be a regular file.",
+            );
+        }
+        let target_path = match resolve_apply_target_path(store, &proposal) {
+            Ok(path) => path,
+            Err(reason) => return deny(apply_result, "transaction_target_path_safe", reason),
+        };
+        for seen_path in seen_paths.iter() {
+            if seen_path == &proposal.path
+                || seen_path.starts_with(&format!("{}/", proposal.path))
+                || proposal.path.starts_with(&format!("{seen_path}/"))
+            {
+                return deny(
+                    apply_result,
+                    "transaction_target_paths_non_overlapping",
+                    "Transaction target paths must be unique and non-overlapping.",
+                );
+            }
+        }
+        seen_paths.insert(proposal.path.clone());
+        let current_bytes = std::fs::read(&target_path)
+            .map_err(|_| "Target file could not be read before transaction apply.".to_string())?;
+        let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
+        if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
+            || expected_target_sha256 != pre_write_hash
+        {
+            return deny(
+                apply_result,
+                "transaction_expected_target_hashes_match",
+                "Expected target hash does not match current transaction target file.",
+            );
+        }
+        let current_content = match std::str::from_utf8(&current_bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                return deny(
+                    apply_result,
+                    "transaction_targets_utf8",
+                    "Every transaction target file must be UTF-8.",
+                )
+            }
+        };
+        if scan_text_for_sensitive_content(current_content) {
+            return deny(
+                apply_result,
+                "transaction_targets_sensitive_scan",
+                "A transaction target file contains sensitive-like data.",
+            );
+        }
+        let current_diff = synthetic_unified_diff(&proposal.path, current_content, "");
+        if proposal.diff_preview.as_deref() != Some(current_diff.as_str()) {
+            return deny(
+                apply_result,
+                "transaction_approved_diffs_match_current_targets",
+                "Approved diff does not match a current transaction target deletion.",
+            );
+        }
+        prepared_items.push(PreparedDeleteTransactionItem {
+            proposal_id: item.proposal_id.clone(),
+            operation: proposal.operation,
+            path: proposal.path,
+            target_path,
+            expected_target_sha256: expected_target_sha256.to_string(),
+            pre_write_target_sha256: pre_write_hash,
+        });
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_admission_all_items_passed",
+        "Pass",
+        None,
+    ));
+
+    for item in &prepared_items {
+        let outcome = atomic_delete_existing_file(&item.target_path);
+        apply_result.atomic_delete_completed =
+            apply_result.atomic_delete_completed || outcome.atomic_delete_completed;
+        apply_result.post_delete_target_exists = outcome.post_delete_target_exists;
+        if let Some(reason) = outcome.failure_reason {
+            apply_result
+                .transaction_items
+                .push(delete_transaction_item_result(
+                    item,
+                    "Failed",
+                    reason,
+                    outcome.post_delete_target_exists,
+                    outcome.atomic_delete_completed,
+                    false,
+                    true,
+                ));
+            apply_result.apply_status = "Failed".to_string();
+            apply_result.apply_reason = reason.to_string();
+            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
+                "PartialFailed".to_string()
+            } else {
+                "Failed".to_string()
+            });
+            apply_result.checklist.push(apply_result_check(
+                "transaction_atomic_deletes_completed",
+                "Fail",
+                Some(reason),
+            ));
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            )
+            .map(|(_, result)| (first_proposal, result));
+        }
+        apply_result
+            .transaction_items
+            .push(delete_transaction_item_result(
+                item,
+                "Applied",
+                "File deleted and post-delete absence verified.",
+                outcome.post_delete_target_exists,
+                outcome.atomic_delete_completed,
+                true,
+                true,
+            ));
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_atomic_deletes_completed",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "transaction_post_delete_absence_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason =
+        "Delete-file transaction applied and all post-delete absence checks passed.".to_string();
+    apply_result.transaction_status = Some("Applied".to_string());
+    apply_result.atomic_delete_completed = true;
+    apply_result.post_delete_target_exists = Some(false);
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        &task,
+        &params.run_id,
+        &proposal_id_for_result,
+        apply_result,
+    )
+    .map(|(_, result)| (first_proposal, result))
+}
+
 fn apply_proposal(
     store: &BrownieStore,
     params: &ProposalApplyParams,
@@ -16728,6 +17181,11 @@ fn apply_proposal(
             && operations.contains(WorkspacePatchOperation::CreateFile.as_str())
         {
             return apply_create_file_transaction(store, params);
+        }
+        if operations.len() == 1
+            && operations.contains(WorkspacePatchOperation::DeleteFile.as_str())
+        {
+            return apply_delete_file_transaction(store, params);
         }
         return apply_replace_file_transaction(store, params);
     }
@@ -48670,6 +49128,389 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(temp.path().join("NOTES.md")).unwrap(),
             "original notes"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_delete_file_transaction_deletes_two_files_with_bounded_result() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("obsolete-a.md"), "obsolete a\n").expect("write a");
+        std::fs::write(temp.path().join("obsolete-b.md"), "obsolete b\n").expect("write b");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Delete two files","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_a",
+            "obsolete-a.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_b",
+            "obsolete-b.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+
+        for proposal_id in ["proposal_delete_tx_a", "proposal_delete_tx_b"] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let a_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_a"}}}}"#
+        ));
+        let a_hash = a_preflight.result.expect("a preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_b"}}}}"#
+        ));
+        let b_hash = b_preflight.result.expect("b preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_a","authorize":true,"transaction_items":[{{"proposal_id":"proposal_delete_tx_a","expected_target_sha256":"{a_hash}","replacement_content":""}},{{"proposal_id":"proposal_delete_tx_b","expected_target_sha256":"{b_hash}","replacement_content":""}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(
+            apply_result["apply_result"]["operation"],
+            "delete_file_transaction"
+        );
+        assert_eq!(
+            apply_result["apply_result"]["transaction_status"],
+            "Applied"
+        );
+        assert_eq!(
+            apply_result["apply_result"]["atomic_delete_completed"],
+            true
+        );
+        assert_eq!(
+            apply_result["apply_result"]["post_delete_target_exists"],
+            false
+        );
+        let items = apply_result["apply_result"]["transaction_items"]
+            .as_array()
+            .unwrap();
+        assert_eq!(items.len(), 2);
+        for item in items {
+            assert_eq!(item["apply_status"], "Applied");
+            assert_eq!(item["operation"], "delete_file");
+            assert_eq!(item["atomic_delete_completed"], true);
+            assert_eq!(item["post_delete_target_exists"], false);
+            assert_eq!(item["pre_write_target_exists"], true);
+        }
+        assert!(!temp.path().join("obsolete-a.md").exists());
+        assert!(!temp.path().join("obsolete-b.md").exists());
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let serialized_events =
+            serde_json::to_string(&events.result.expect("events")["events"]).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "obsolete a",
+            "obsolete b",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_delete_file_transaction_rejects_hash_mismatch_before_deleting() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("obsolete-a.md"), "obsolete a\n").expect("write a");
+        std::fs::write(temp.path().join("obsolete-b.md"), "obsolete b\n").expect("write b");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Delete two files","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_mismatch_a",
+            "obsolete-a.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_mismatch_b",
+            "obsolete-b.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        for proposal_id in [
+            "proposal_delete_tx_mismatch_a",
+            "proposal_delete_tx_mismatch_b",
+        ] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let a_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mismatch_a"}}}}"#
+        ));
+        let a_hash = a_preflight.result.expect("a preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mismatch_b"}}}}"#
+        ));
+        assert!(b_preflight.result.is_some());
+        let bad_hash = format!("sha256:{}", "0".repeat(64));
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mismatch_a","authorize":true,"transaction_items":[{{"proposal_id":"proposal_delete_tx_mismatch_a","expected_target_sha256":"{a_hash}","replacement_content":""}},{{"proposal_id":"proposal_delete_tx_mismatch_b","expected_target_sha256":"{bad_hash}","replacement_content":""}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["transaction_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "transaction_expected_target_hashes_match"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("obsolete-a.md")).unwrap(),
+            "obsolete a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("obsolete-b.md")).unwrap(),
+            "obsolete b\n"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_delete_file_transaction_rejects_consumed_item_before_deleting() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("obsolete-a.md"), "obsolete a\n").expect("write a");
+        std::fs::write(temp.path().join("obsolete-b.md"), "obsolete b\n").expect("write b");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Delete two files","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_consumed_a",
+            "obsolete-a.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_consumed_b",
+            "obsolete-b.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        for proposal_id in [
+            "proposal_delete_tx_consumed_a",
+            "proposal_delete_tx_consumed_b",
+        ] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let a_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_consumed_a"}}}}"#
+        ));
+        let a_hash = a_preflight.result.expect("a preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let b_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_consumed_b"}}}}"#
+        ));
+        let b_hash = b_preflight.result.expect("b preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let single_apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_consumed_a","expected_target_sha256":"{a_hash}","authorize":true}}}}"#
+        ));
+        assert_eq!(
+            single_apply.result.expect("single apply")["apply_result"]["apply_status"],
+            "Applied"
+        );
+        std::fs::write(temp.path().join("obsolete-a.md"), "replacement a\n")
+            .expect("restore consumed target");
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_consumed_a","authorize":true,"transaction_items":[{{"proposal_id":"proposal_delete_tx_consumed_a","expected_target_sha256":"{a_hash}","replacement_content":""}},{{"proposal_id":"proposal_delete_tx_consumed_b","expected_target_sha256":"{b_hash}","replacement_content":""}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "transaction_approvals_unconsumed"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("obsolete-b.md")).unwrap(),
+            "obsolete b\n"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_delete_file_transaction_rejects_mixed_operation_before_deleting() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("obsolete.md"), "obsolete\n").expect("write obsolete");
+        std::fs::write(temp.path().join("notes.md"), "notes\n").expect("write notes");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Reject mixed transaction","mode_id":"implementer"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_mixed_delete",
+            "obsolete.md",
+            WorkspacePatchOperation::DeleteFile.as_str(),
+            "",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_delete_tx_mixed_replace",
+            "notes.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated notes\n",
+        );
+        for proposal_id in [
+            "proposal_delete_tx_mixed_delete",
+            "proposal_delete_tx_mixed_replace",
+        ] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let delete_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mixed_delete"}}}}"#
+        ));
+        let delete_hash = delete_preflight.result.expect("delete preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let replace_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mixed_replace"}}}}"#
+        ));
+        let replace_hash = replace_preflight.result.expect("replace preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_delete_tx_mixed_delete","authorize":true,"transaction_items":[{{"proposal_id":"proposal_delete_tx_mixed_delete","expected_target_sha256":"{delete_hash}","replacement_content":""}},{{"proposal_id":"proposal_delete_tx_mixed_replace","expected_target_sha256":"{replace_hash}","replacement_content":"updated notes\n"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("obsolete.md")).unwrap(),
+            "obsolete\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes.md")).unwrap(),
+            "notes\n"
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
