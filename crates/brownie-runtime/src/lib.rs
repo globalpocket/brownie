@@ -13177,6 +13177,18 @@ struct AtomicCreateOutcome {
     failure_reason: Option<&'static str>,
 }
 
+struct PreparedAtomicCreate {
+    temp_file: tempfile::NamedTempFile,
+    parent_path: PathBuf,
+    target_path: PathBuf,
+}
+
+struct PreparedAtomicCreateOutcome {
+    prepared: Option<PreparedAtomicCreate>,
+    temp_file_cleaned: bool,
+    failure_reason: Option<&'static str>,
+}
+
 struct AtomicDeleteOutcome {
     post_delete_target_exists: Option<bool>,
     atomic_delete_completed: bool,
@@ -13248,6 +13260,100 @@ fn atomic_create_new_file(target: &Path, content_bytes: &[u8]) -> AtomicCreateOu
         let _ = parent_dir.sync_all();
     }
     let post_write_bytes = match std::fs::read(target) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: true,
+                atomic_create_completed: true,
+                failure_reason: Some("Post-write verification read failed."),
+            }
+        }
+    };
+    AtomicCreateOutcome {
+        post_write_sha256: Some(format!("sha256:{}", hex_sha256(&post_write_bytes))),
+        temp_file_cleaned: true,
+        atomic_create_completed: true,
+        failure_reason: None,
+    }
+}
+
+fn prepare_atomic_create_new_file(
+    target: &Path,
+    content_bytes: &[u8],
+) -> PreparedAtomicCreateOutcome {
+    let Some(parent) = target.parent() else {
+        return PreparedAtomicCreateOutcome {
+            prepared: None,
+            temp_file_cleaned: true,
+            failure_reason: Some("Target parent directory is unavailable."),
+        };
+    };
+    let mut temp_file = match tempfile::NamedTempFile::new_in(parent) {
+        Ok(file) => file,
+        Err(_) => {
+            return PreparedAtomicCreateOutcome {
+                prepared: None,
+                temp_file_cleaned: true,
+                failure_reason: Some("Temporary sibling file creation failed."),
+            }
+        }
+    };
+    if temp_file.write_all(content_bytes).is_err() {
+        let cleaned = temp_file.close().is_ok();
+        return PreparedAtomicCreateOutcome {
+            prepared: None,
+            temp_file_cleaned: cleaned,
+            failure_reason: Some("Bounded write to temporary sibling file failed."),
+        };
+    }
+    if temp_file.flush().is_err() || temp_file.as_file().sync_all().is_err() {
+        let cleaned = temp_file.close().is_ok();
+        return PreparedAtomicCreateOutcome {
+            prepared: None,
+            temp_file_cleaned: cleaned,
+            failure_reason: Some("Temporary file flush or sync failed."),
+        };
+    }
+    PreparedAtomicCreateOutcome {
+        prepared: Some(PreparedAtomicCreate {
+            temp_file,
+            parent_path: parent.to_path_buf(),
+            target_path: target.to_path_buf(),
+        }),
+        temp_file_cleaned: false,
+        failure_reason: None,
+    }
+}
+
+fn commit_prepared_atomic_create(prepared: PreparedAtomicCreate) -> AtomicCreateOutcome {
+    match prepared.temp_file.persist_noclobber(&prepared.target_path) {
+        Ok(persisted_file) => {
+            let _ = persisted_file.sync_all();
+        }
+        Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let cleaned = error.file.close().is_ok();
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: cleaned,
+                atomic_create_completed: false,
+                failure_reason: Some("Target path already exists."),
+            };
+        }
+        Err(error) => {
+            let cleaned = error.file.close().is_ok();
+            return AtomicCreateOutcome {
+                post_write_sha256: None,
+                temp_file_cleaned: cleaned,
+                atomic_create_completed: false,
+                failure_reason: Some("Atomic create failed."),
+            };
+        }
+    }
+    if let Ok(parent_dir) = std::fs::File::open(&prepared.parent_path) {
+        let _ = parent_dir.sync_all();
+    }
+    let post_write_bytes = match std::fs::read(&prepared.target_path) {
         Ok(bytes) => bytes,
         Err(_) => {
             return AtomicCreateOutcome {
@@ -14207,6 +14313,16 @@ struct PreparedReplaceTransactionItem {
     content_bytes: u64,
 }
 
+struct PreparedCreateTransactionItem {
+    proposal_id: String,
+    operation: String,
+    path: String,
+    target_path: PathBuf,
+    replacement_bytes: Vec<u8>,
+    content_chars: usize,
+    content_bytes: u64,
+}
+
 fn transaction_item_result(
     item: &PreparedReplaceTransactionItem,
     apply_status: &str,
@@ -14222,12 +14338,44 @@ fn transaction_item_result(
         apply_reason: apply_reason.to_string(),
         operation: item.operation.clone(),
         path: item.path.clone(),
-        expected_target_sha256: item.expected_target_sha256.clone(),
+        expected_target_sha256: Some(item.expected_target_sha256.clone()),
+        expected_target_absent: None,
         pre_write_target_sha256: Some(item.pre_write_target_sha256.clone()),
+        pre_write_target_exists: Some(true),
         post_write_sha256,
         content_chars: item.content_chars,
         content_bytes: item.content_bytes,
         atomic_replacement_completed,
+        atomic_create_completed: false,
+        applied,
+        temp_file_cleaned,
+    }
+}
+
+fn create_transaction_item_result(
+    item: &PreparedCreateTransactionItem,
+    apply_status: &str,
+    apply_reason: &str,
+    post_write_sha256: Option<String>,
+    atomic_create_completed: bool,
+    applied: bool,
+    temp_file_cleaned: bool,
+) -> WorkspacePatchApplyTransactionItemResultSummary {
+    WorkspacePatchApplyTransactionItemResultSummary {
+        proposal_id: item.proposal_id.clone(),
+        apply_status: apply_status.to_string(),
+        apply_reason: apply_reason.to_string(),
+        operation: item.operation.clone(),
+        path: item.path.clone(),
+        expected_target_sha256: None,
+        expected_target_absent: Some(true),
+        pre_write_target_sha256: None,
+        pre_write_target_exists: Some(false),
+        post_write_sha256,
+        content_chars: item.content_chars,
+        content_bytes: item.content_bytes,
+        atomic_replacement_completed: false,
+        atomic_create_completed,
         applied,
         temp_file_cleaned,
     }
@@ -14302,6 +14450,20 @@ fn has_recovered_transaction(
             && source.get("source_transaction_id").and_then(Value::as_str)
                 == Some(source_transaction_id)
     })
+}
+
+fn transaction_proposal_operations(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<BTreeSet<String>, String> {
+    let mut operations = BTreeSet::new();
+    if let Some(items) = params.transaction_items.as_ref() {
+        for item in items {
+            let proposal = inspect_proposal(store, &params.run_id, &item.proposal_id)?;
+            operations.insert(proposal.operation);
+        }
+    }
+    Ok(operations)
 }
 
 fn current_sha256_for_workspace_path(
@@ -14679,7 +14841,14 @@ fn apply_replace_file_transaction_recovery(
                 "Replacement content does not match approved proposal metadata.",
             );
         }
-        if !is_sha256_fingerprint(&item.expected_target_sha256) {
+        let Some(expected_target_sha256) = item.expected_target_sha256.as_deref() else {
+            return deny(
+                apply_result,
+                "transaction_recovery_expected_target_hashes_valid",
+                "Every recovery expected target hash must be provided.",
+            );
+        };
+        if !is_sha256_fingerprint(expected_target_sha256) {
             return deny(
                 apply_result,
                 "transaction_recovery_expected_target_hashes_valid",
@@ -14740,7 +14909,7 @@ fn apply_replace_file_transaction_recovery(
         })?;
         let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
         if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
-            || item.expected_target_sha256 != pre_write_hash
+            || expected_target_sha256 != pre_write_hash
         {
             return deny(
                 apply_result,
@@ -14784,7 +14953,7 @@ fn apply_replace_file_transaction_recovery(
             operation: proposal.operation,
             path: proposal.path,
             target_path,
-            expected_target_sha256: item.expected_target_sha256.clone(),
+            expected_target_sha256: expected_target_sha256.to_string(),
             pre_write_target_sha256: pre_write_hash,
             replacement_bytes,
             content_chars,
@@ -15171,7 +15340,14 @@ fn apply_replace_file_transaction(
                 "Proposal diff must be available and untruncated for transaction apply.",
             );
         }
-        if !is_sha256_fingerprint(&item.expected_target_sha256) {
+        let Some(expected_target_sha256) = item.expected_target_sha256.as_deref() else {
+            return deny_item(
+                apply_result,
+                "transaction_expected_target_hashes_valid",
+                "Every expected target hash must be provided.",
+            );
+        };
+        if !is_sha256_fingerprint(expected_target_sha256) {
             return deny_item(
                 apply_result,
                 "transaction_expected_target_hashes_valid",
@@ -15225,7 +15401,7 @@ fn apply_replace_file_transaction(
             .map_err(|_| "Target file could not be read before transaction apply.".to_string())?;
         let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
         if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
-            || item.expected_target_sha256 != pre_write_hash
+            || expected_target_sha256 != pre_write_hash
         {
             return deny_item(
                 apply_result,
@@ -15269,7 +15445,7 @@ fn apply_replace_file_transaction(
             operation: proposal.operation,
             path: proposal.path,
             target_path,
-            expected_target_sha256: item.expected_target_sha256.clone(),
+            expected_target_sha256: expected_target_sha256.to_string(),
             pre_write_target_sha256: pre_write_hash,
             replacement_bytes,
             content_chars,
@@ -15424,6 +15600,461 @@ fn apply_replace_file_transaction(
     .map(|(_, result)| (first_proposal, result))
 }
 
+fn apply_create_file_transaction(
+    store: &BrownieStore,
+    params: &ProposalApplyParams,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    let task = store
+        .tasks()
+        .get_task_by_run_id(&params.run_id)
+        .map_err(|e| format!("invalid params: {e}"))?
+        .ok_or_else(|| "invalid params: run not found".to_string())?;
+    let items = params
+        .transaction_items
+        .as_ref()
+        .ok_or_else(|| "invalid params: transaction_items are required".to_string())?;
+    let proposal_id_for_result = fallback_transaction_proposal_id(params);
+    let first_proposal = inspect_proposal(store, &params.run_id, &proposal_id_for_result)?;
+    let mut apply_result = WorkspacePatchApplyResultSummary {
+        proposal_id: proposal_id_for_result.clone(),
+        apply_id: format!("apply_{}", uuid::Uuid::new_v4().simple()),
+        apply_status: "Denied".to_string(),
+        apply_reason: "Create-file transaction apply preconditions were not satisfied.".to_string(),
+        authorization_id: format!("apply_tx_auth_{}", uuid::Uuid::new_v4().simple()),
+        authorization_consumed: false,
+        applied: false,
+        operation: "create_file_transaction".to_string(),
+        atomic_replacement_completed: false,
+        atomic_create_completed: false,
+        atomic_delete_completed: false,
+        path: "[transaction]".to_string(),
+        expected_target_sha256: None,
+        expected_target_absent: Some(true),
+        pre_write_target_sha256: None,
+        pre_write_target_exists: None,
+        post_write_sha256: None,
+        post_delete_target_exists: None,
+        content_chars: 0,
+        content_bytes: 0,
+        checked_at: now_rfc3339(),
+        applied_at: None,
+        temp_file_cleaned: true,
+        check_count: 0,
+        failed_checks: Vec::new(),
+        blocked_checks: Vec::new(),
+        checklist: vec![apply_result_check(
+            "transaction_request_present",
+            "Pass",
+            None,
+        )],
+        transaction_id: Some(format!("apply_tx_{}", uuid::Uuid::new_v4().simple())),
+        transaction_status: Some("Denied".to_string()),
+        transaction_items: Vec::new(),
+        transaction_recovery_source: None,
+        transaction_recovery_status: None,
+    };
+
+    let deny = |mut result: WorkspacePatchApplyResultSummary,
+                check_name: &str,
+                reason: &str|
+     -> Result<
+        (
+            WorkspacePatchProposalSummary,
+            WorkspacePatchApplyResultSummary,
+        ),
+        String,
+    > {
+        result
+            .checklist
+            .push(apply_result_check(check_name, "Fail", Some(reason)));
+        result.apply_reason = reason.to_string();
+        result.transaction_status = Some("Denied".to_string());
+        record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            result,
+        )
+        .map(|(_, result)| (first_proposal.clone(), result))
+    };
+
+    if !params.authorize {
+        return deny(
+            apply_result,
+            "one_time_transaction_authorization",
+            "Transaction apply request must explicitly set authorize=true.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "one_time_transaction_authorization",
+        "Pass",
+        None,
+    ));
+    if !append_apply_write_permission_check(store, &task, &mut apply_result)? {
+        apply_result.transaction_status = Some("Denied".to_string());
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (first_proposal, result));
+    }
+
+    if !(2..=5).contains(&items.len()) {
+        return deny(
+            apply_result,
+            "transaction_item_count_bounded",
+            "Create-file transaction apply requires between two and five items.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_item_count_bounded",
+        "Pass",
+        None,
+    ));
+
+    let events = read_existing_run_events(store, &params.run_id)?;
+    let mut seen_proposals = BTreeSet::new();
+    let mut seen_paths: BTreeSet<String> = BTreeSet::new();
+    let mut prepared_items = Vec::new();
+
+    for item in items {
+        if item.proposal_id.trim().is_empty() || !seen_proposals.insert(item.proposal_id.clone()) {
+            return deny(
+                apply_result,
+                "transaction_proposal_ids_unique",
+                "Transaction item proposal_id values must be non-empty and unique.",
+            );
+        }
+        if item.expected_target_absent != Some(true) {
+            return deny(
+                apply_result,
+                "transaction_expected_target_absent_confirmed",
+                "Every create-file transaction item requires expected_target_absent=true.",
+            );
+        }
+        if item.expected_target_sha256.is_some() {
+            return deny(
+                apply_result,
+                "transaction_create_target_hash_omitted",
+                "Create-file transaction items must omit expected_target_sha256.",
+            );
+        }
+        let proposal = inspect_proposal(store, &params.run_id, &item.proposal_id)?;
+        if proposal.operation != WorkspacePatchOperation::CreateFile.as_str() {
+            return deny(
+                apply_result,
+                "transaction_create_file_only",
+                "Create-file transaction apply only supports create_file proposals.",
+            );
+        }
+        if proposal.validation_status != "Valid" {
+            return deny(
+                apply_result,
+                "transaction_proposals_valid",
+                "Every transaction proposal must have validation_status=Valid.",
+            );
+        }
+        if proposal.approval_status != "Approved" {
+            return deny(
+                apply_result,
+                "transaction_proposals_approved",
+                "Every transaction proposal must be approved before apply.",
+            );
+        }
+        if let Some(reason) = approval_current_failure_reason(proposal.approved_at.as_deref()) {
+            return deny(apply_result, "transaction_approvals_current", reason);
+        }
+        if has_consumed_apply_authorization(&events, &item.proposal_id) {
+            return deny(
+                apply_result,
+                "transaction_approvals_unconsumed",
+                "A transaction proposal apply authorization has already been consumed.",
+            );
+        }
+        if item.replacement_content.chars().count() > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
+            return deny(
+                apply_result,
+                "transaction_replacement_content_bounded",
+                "Replacement content exceeds the runtime write limit.",
+            );
+        }
+        if scan_text_for_sensitive_content(&item.replacement_content) {
+            return deny(
+                apply_result,
+                "transaction_replacement_content_sensitive_scan",
+                "Replacement content contains sensitive-like data.",
+            );
+        }
+        if item.replacement_content.chars().count() != proposal.content_chars
+            || preview_with_limit(&item.replacement_content, DEFAULT_PROPOSAL_PREVIEW_CHARS)
+                != proposal.content_preview
+        {
+            return deny(
+                apply_result,
+                "transaction_replacement_content_matches_proposal",
+                "Replacement content does not match approved proposal metadata.",
+            );
+        }
+        if proposal.diff_redacted
+            || proposal.content_preview == "[redacted]"
+            || proposal.diff_truncated
+            || proposal.diff_preview.is_none()
+        {
+            return deny(
+                apply_result,
+                "transaction_proposal_diff_available",
+                "Proposal diff must be available and untruncated for transaction apply.",
+            );
+        }
+        let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+            return deny(
+                apply_result,
+                "transaction_latest_preflight_exists",
+                "Run proposal.preflight for every transaction proposal before applying.",
+            );
+        };
+        let current_snapshot =
+            match capture_preflight_snapshot(store, &proposal, Some(previous_snapshot)) {
+                Ok(snapshot) => snapshot,
+                Err(_) => {
+                    return deny(
+                        apply_result,
+                        "transaction_latest_preflight_validation",
+                        "Latest preflight validation failed for a transaction proposal.",
+                    )
+                }
+            };
+        append_preflight_snapshot_event(store, &task, &current_snapshot)?;
+        if current_snapshot.stale {
+            return deny(
+                apply_result,
+                "transaction_latest_preflight_validation",
+                "Latest preflight validation found a stale transaction target.",
+            );
+        }
+        if current_snapshot.file_exists {
+            return deny(
+                apply_result,
+                "transaction_targets_absent_current",
+                "A create-file transaction target already exists.",
+            );
+        }
+        let target_path = match resolve_create_apply_target_path(store, &proposal) {
+            Ok(path) => path,
+            Err(reason) => return deny(apply_result, "transaction_target_path_safe", reason),
+        };
+        for seen_path in seen_paths.iter() {
+            if seen_path == &proposal.path
+                || seen_path.starts_with(&format!("{}/", proposal.path))
+                || proposal.path.starts_with(&format!("{seen_path}/"))
+            {
+                return deny(
+                    apply_result,
+                    "transaction_target_paths_non_overlapping",
+                    "Transaction target paths must be unique and non-overlapping.",
+                );
+            }
+        }
+        seen_paths.insert(proposal.path.clone());
+        let create_diff = synthetic_unified_diff(&proposal.path, "", &item.replacement_content);
+        if proposal.diff_preview.as_deref() != Some(create_diff.as_str()) {
+            return deny(
+                apply_result,
+                "transaction_approved_diffs_match_absent_targets",
+                "Approved diff does not match an absent transaction target and replacement content.",
+            );
+        }
+        let content_chars = item.replacement_content.chars().count();
+        let replacement_bytes = item.replacement_content.as_bytes().to_vec();
+        let content_bytes = replacement_bytes.len() as u64;
+        apply_result.content_chars += content_chars;
+        apply_result.content_bytes += content_bytes;
+        prepared_items.push(PreparedCreateTransactionItem {
+            proposal_id: item.proposal_id.clone(),
+            operation: proposal.operation,
+            path: proposal.path,
+            target_path,
+            replacement_bytes,
+            content_chars,
+            content_bytes,
+        });
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_admission_all_items_passed",
+        "Pass",
+        None,
+    ));
+
+    let mut prepared_creates = Vec::new();
+    for item in &prepared_items {
+        let prepared = prepare_atomic_create_new_file(&item.target_path, &item.replacement_bytes);
+        if let Some(prepared) = prepared.prepared {
+            prepared_creates.push(prepared);
+            continue;
+        }
+        let reason = prepared
+            .failure_reason
+            .unwrap_or("Temporary sibling file preparation failed.");
+        apply_result
+            .transaction_items
+            .push(create_transaction_item_result(
+                item,
+                "Failed",
+                reason,
+                None,
+                false,
+                false,
+                prepared.temp_file_cleaned,
+            ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = reason.to_string();
+        apply_result.transaction_status = Some("Failed".to_string());
+        apply_result.checklist.push(apply_result_check(
+            "transaction_temporary_sibling_files_created",
+            "Fail",
+            Some(reason),
+        ));
+        return record_apply_result(
+            store,
+            &task,
+            &params.run_id,
+            &proposal_id_for_result,
+            apply_result,
+        )
+        .map(|(_, result)| (first_proposal, result));
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_temporary_sibling_files_created",
+        "Pass",
+        None,
+    ));
+
+    for (item, prepared_create) in prepared_items.iter().zip(prepared_creates) {
+        let expected_post_write_hash = format!("sha256:{}", hex_sha256(&item.replacement_bytes));
+        let outcome = commit_prepared_atomic_create(prepared_create);
+        apply_result.temp_file_cleaned =
+            apply_result.temp_file_cleaned && outcome.temp_file_cleaned;
+        if let Some(reason) = outcome.failure_reason {
+            apply_result
+                .transaction_items
+                .push(create_transaction_item_result(
+                    item,
+                    if reason == "Target path already exists." {
+                        "Denied"
+                    } else {
+                        "Failed"
+                    },
+                    reason,
+                    outcome.post_write_sha256,
+                    outcome.atomic_create_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+            apply_result.apply_status = if reason == "Target path already exists." {
+                "Denied".to_string()
+            } else {
+                "Failed".to_string()
+            };
+            apply_result.apply_reason = reason.to_string();
+            apply_result.transaction_status = Some(if apply_result.transaction_items.len() > 1 {
+                "PartialFailed".to_string()
+            } else {
+                apply_result.apply_status.clone()
+            });
+            apply_result.checklist.push(apply_result_check(
+                "transaction_atomic_creates_completed",
+                "Fail",
+                Some(reason),
+            ));
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            )
+            .map(|(_, result)| (first_proposal, result));
+        }
+        if outcome.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+            apply_result
+                .transaction_items
+                .push(create_transaction_item_result(
+                    item,
+                    "Failed",
+                    "Post-write SHA-256 does not match replacement content.",
+                    outcome.post_write_sha256,
+                    outcome.atomic_create_completed,
+                    false,
+                    outcome.temp_file_cleaned,
+                ));
+            apply_result.apply_status = "Failed".to_string();
+            apply_result.apply_reason =
+                "Post-write SHA-256 does not match replacement content.".to_string();
+            apply_result.transaction_status = Some("PartialFailed".to_string());
+            apply_result.checklist.push(apply_result_check(
+                "transaction_post_write_sha256_verified",
+                "Fail",
+                Some("Post-write SHA-256 does not match replacement content."),
+            ));
+            return record_apply_result(
+                store,
+                &task,
+                &params.run_id,
+                &proposal_id_for_result,
+                apply_result,
+            )
+            .map(|(_, result)| (first_proposal, result));
+        }
+        apply_result
+            .transaction_items
+            .push(create_transaction_item_result(
+                item,
+                "Applied",
+                "File created and post-write SHA-256 verified.",
+                outcome.post_write_sha256.clone(),
+                outcome.atomic_create_completed,
+                true,
+                outcome.temp_file_cleaned,
+            ));
+    }
+    apply_result.checklist.push(apply_result_check(
+        "transaction_atomic_creates_completed",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "transaction_post_write_sha256_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason =
+        "Create-file transaction applied and all post-write SHA-256 values verified.".to_string();
+    apply_result.transaction_status = Some("Applied".to_string());
+    apply_result.atomic_create_completed = true;
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        &task,
+        &params.run_id,
+        &proposal_id_for_result,
+        apply_result,
+    )
+    .map(|(_, result)| (first_proposal, result))
+}
+
 fn apply_proposal(
     store: &BrownieStore,
     params: &ProposalApplyParams,
@@ -15438,6 +16069,12 @@ fn apply_proposal(
         return apply_replace_file_transaction_recovery(store, params);
     }
     if params.transaction_items.is_some() {
+        let operations = transaction_proposal_operations(store, params)?;
+        if operations.len() == 1
+            && operations.contains(WorkspacePatchOperation::CreateFile.as_str())
+        {
+            return apply_create_file_transaction(store, params);
+        }
         return apply_replace_file_transaction(store, params);
     }
 
@@ -48209,6 +48846,206 @@ mod tests {
         ] {
             assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
         }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_create_file_transaction_creates_two_files_after_approval() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create bounded files".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_create_a",
+            "notes/a.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created a\n",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_create_b",
+            "notes/b.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created b\n",
+        );
+        for proposal_id in ["proposal_create_a", "proposal_create_b"] {
+            assert!(parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ))
+            .error
+            .is_none());
+            let preflight = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+            ));
+            assert_eq!(
+                preflight.result.expect("preflight result")["snapshot"]["file_exists"],
+                false
+            );
+        }
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": "proposal_create_a",
+                "authorize": true,
+                "transaction_items": [
+                    {
+                        "proposal_id": "proposal_create_a",
+                        "expected_target_absent": true,
+                        "replacement_content": "created a\n"
+                    },
+                    {
+                        "proposal_id": "proposal_create_b",
+                        "expected_target_absent": true,
+                        "replacement_content": "created b\n"
+                    }
+                ]
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(
+            apply_result["apply_result"]["operation"],
+            "create_file_transaction"
+        );
+        assert_eq!(apply_result["apply_result"]["authorization_consumed"], true);
+        assert_eq!(
+            apply_result["apply_result"]["atomic_create_completed"],
+            true
+        );
+        assert_eq!(
+            apply_result["apply_result"]["transaction_items"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        for item in apply_result["apply_result"]["transaction_items"]
+            .as_array()
+            .unwrap()
+        {
+            assert_eq!(item["apply_status"], "Applied");
+            assert_eq!(item["expected_target_sha256"], Value::Null);
+            assert_eq!(item["expected_target_absent"], true);
+            assert_eq!(item["pre_write_target_exists"], false);
+            assert_eq!(item["atomic_create_completed"], true);
+        }
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/a.md")).unwrap(),
+            "created a\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/b.md")).unwrap(),
+            "created b\n"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_create_file_transaction_denies_existing_target_without_writing_other_file() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("notes")).expect("notes dir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "create bounded files".into(),
+                mode_id: Some("implementer".into()),
+                verification_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("task");
+        let run_id = record.run_id.clone();
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_create_a",
+            "notes/a.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created a\n",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_create_b",
+            "notes/b.md",
+            WorkspacePatchOperation::CreateFile.as_str(),
+            "created b\n",
+        );
+        for proposal_id in ["proposal_create_a", "proposal_create_b"] {
+            assert!(parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ))
+            .error
+            .is_none());
+            let _ = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+            ));
+        }
+        std::fs::write(temp.path().join("notes/a.md"), "already here\n").expect("existing");
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": "proposal_create_a",
+                "authorize": true,
+                "transaction_items": [
+                    {
+                        "proposal_id": "proposal_create_a",
+                        "expected_target_absent": true,
+                        "replacement_content": "created a\n"
+                    },
+                    {
+                        "proposal_id": "proposal_create_b",
+                        "expected_target_absent": true,
+                        "replacement_content": "created b\n"
+                    }
+                ]
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("notes/a.md")).unwrap(),
+            "already here\n"
+        );
+        assert!(!temp.path().join("notes/b.md").exists());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();

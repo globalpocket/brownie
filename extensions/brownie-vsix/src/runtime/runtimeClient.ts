@@ -297,6 +297,16 @@ export class RuntimeClient {
     return result;
   }
 
+  async applyCreateFileTransaction(runId: string, transactionItems: Array<{ proposal_id: string; expected_target_absent: true; replacement_content: string }>, authorize = true): Promise<ProposalApplyResult> {
+    const result = await this.call<ProposalApplyResult>('proposal.apply', { run_id: runId, proposal_id: transactionItems[0]?.proposal_id ?? '', transaction_items: transactionItems, authorize });
+
+    if (!isProposalApplyResult(result)) {
+      throw new RuntimeProtocolError('proposal.apply returned an invalid create_file transaction result');
+    }
+
+    return result;
+  }
+
   async applyCreateFileProposal(runId: string, proposalId: string, content: string, authorize = true): Promise<ProposalApplyResult> {
     const result = await this.call<ProposalApplyResult>('proposal.apply', { run_id: runId, proposal_id: proposalId, expected_target_absent: true, replacement_content: content, authorize });
 
