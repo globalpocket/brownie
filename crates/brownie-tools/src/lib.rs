@@ -1225,23 +1225,64 @@ pub fn preflight_workspace_write_input_with_limit(
         if object.contains_key("content") {
             return Err("workspace.write input.content must be omitted for patch_file.");
         }
-        let Some(old_text) = object.get("old_text") else {
-            return Err("workspace.write input.old_text is required for patch_file.");
-        };
-        let Some(old_text) = old_text.as_str() else {
-            return Err("workspace.write input.old_text must be a string.");
-        };
-        let Some(new_text) = object.get("new_text") else {
-            return Err("workspace.write input.new_text is required for patch_file.");
-        };
-        let Some(new_text) = new_text.as_str() else {
-            return Err("workspace.write input.new_text must be a string.");
-        };
-        if old_text.is_empty() {
-            return Err("workspace.write input.old_text must not be empty for patch_file.");
-        }
-        if old_text.chars().count() + new_text.chars().count() > max_content_chars {
-            return Err("workspace.write patch hunk exceeds parser length limit.");
+        if let Some(hunks) = object.get("hunks") {
+            if object.contains_key("old_text") || object.contains_key("new_text") {
+                return Err("workspace.write input.hunks cannot be combined with old_text or new_text for patch_file.");
+            }
+            let Some(hunks) = hunks.as_array() else {
+                return Err("workspace.write input.hunks must be an array for patch_file.");
+            };
+            if !(2..=5).contains(&hunks.len()) {
+                return Err(
+                    "workspace.write input.hunks must contain 2 to 5 hunks for patch_file.",
+                );
+            }
+            let mut hunk_chars = 0usize;
+            for hunk in hunks {
+                let Some(hunk) = hunk.as_object() else {
+                    return Err(
+                        "workspace.write input.hunks entries must be objects for patch_file.",
+                    );
+                };
+                let Some(old_text) = hunk.get("old_text").and_then(|value| value.as_str()) else {
+                    return Err(
+                        "workspace.write input.hunks[].old_text is required for patch_file.",
+                    );
+                };
+                let Some(new_text) = hunk.get("new_text").and_then(|value| value.as_str()) else {
+                    return Err(
+                        "workspace.write input.hunks[].new_text is required for patch_file.",
+                    );
+                };
+                if old_text.is_empty() {
+                    return Err(
+                        "workspace.write input.hunks[].old_text must not be empty for patch_file.",
+                    );
+                }
+                hunk_chars += old_text.chars().count() + new_text.chars().count();
+            }
+            if hunk_chars > max_content_chars {
+                return Err("workspace.write patch hunks exceed parser length limit.");
+            }
+        } else {
+            let Some(old_text) = object.get("old_text") else {
+                return Err("workspace.write input.old_text is required for patch_file.");
+            };
+            let Some(old_text) = old_text.as_str() else {
+                return Err("workspace.write input.old_text must be a string.");
+            };
+            let Some(new_text) = object.get("new_text") else {
+                return Err("workspace.write input.new_text is required for patch_file.");
+            };
+            let Some(new_text) = new_text.as_str() else {
+                return Err("workspace.write input.new_text must be a string.");
+            };
+            if old_text.is_empty() {
+                return Err("workspace.write input.old_text must not be empty for patch_file.");
+            }
+            if old_text.chars().count() + new_text.chars().count() > max_content_chars {
+                return Err("workspace.write patch hunk exceeds parser length limit.");
+            }
         }
         return Ok(());
     }

@@ -44,10 +44,11 @@ use brownie_protocol::{
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPreflightParams,
-    ProposalPreflightResult, ProposalReadinessParams, ProposalReadinessResult,
-    ProposalRejectParams, ProposalRejectResult, ProposalReviewBundleParams,
-    ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
+    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
+    ProposalReviewBundleParams, ProposalReviewBundleResult,
+    ProposalReviewQueueDiagnosticsDigestHistoryParams,
     ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryParams,
     ProposalReviewQueueDiagnosticsDigestReportHistoryResult,
@@ -9672,6 +9673,7 @@ fn handle_headless_continue_verification_recovery_apply(
             replacement_content: target.replacement_content.clone(),
             patch_old_text: None,
             patch_new_text: None,
+            patch_hunks: None,
             authorize: true,
             transaction_items: None,
             transaction_recovery_source: None,
@@ -14363,29 +14365,21 @@ fn apply_patch_file_proposal(
             "Patch-file apply must omit replacement_content.",
         );
     }
-    let Some(patch_old_text) = params.patch_old_text.as_deref() else {
-        return deny_patch_file_apply(
-            store,
-            task,
-            params,
-            apply_result,
-            "patch_hunk_required",
-            "Fail",
-            "Patch-file apply requires patch_old_text.",
-        );
+    let hunks = match patch_hunks_from_apply_params(params) {
+        Ok(hunks) => hunks,
+        Err(reason) => {
+            return deny_patch_file_apply(
+                store,
+                task,
+                params,
+                apply_result,
+                "patch_hunk_required",
+                "Fail",
+                reason,
+            )
+        }
     };
-    let Some(patch_new_text) = params.patch_new_text.as_deref() else {
-        return deny_patch_file_apply(
-            store,
-            task,
-            params,
-            apply_result,
-            "patch_hunk_required",
-            "Fail",
-            "Patch-file apply requires patch_new_text.",
-        );
-    };
-    if patch_old_text.is_empty() {
+    if hunks.iter().any(|hunk| hunk.old_text.is_empty()) {
         return deny_patch_file_apply(
             store,
             task,
@@ -14400,10 +14394,15 @@ fn apply_patch_file_proposal(
         .checklist
         .push(apply_result_check("patch_hunk_required", "Pass", None));
 
-    let hunk_chars = patch_old_text.chars().count() + patch_new_text.chars().count();
+    let hunk_chars: usize = hunks
+        .iter()
+        .map(|hunk| hunk.old_text.chars().count() + hunk.new_text.chars().count())
+        .sum();
     apply_result.content_chars = hunk_chars;
-    apply_result.content_bytes =
-        patch_old_text.as_bytes().len() as u64 + patch_new_text.as_bytes().len() as u64;
+    apply_result.content_bytes = hunks
+        .iter()
+        .map(|hunk| hunk.old_text.as_bytes().len() as u64 + hunk.new_text.as_bytes().len() as u64)
+        .sum();
     if hunk_chars > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
         return deny_patch_file_apply(
             store,
@@ -14418,9 +14417,10 @@ fn apply_patch_file_proposal(
     apply_result
         .checklist
         .push(apply_result_check("patch_hunk_bounded", "Pass", None));
-    if scan_text_for_sensitive_content(patch_old_text)
-        || scan_text_for_sensitive_content(patch_new_text)
-    {
+    if hunks.iter().any(|hunk| {
+        scan_text_for_sensitive_content(&hunk.old_text)
+            || scan_text_for_sensitive_content(&hunk.new_text)
+    }) {
         return deny_patch_file_apply(
             store,
             task,
@@ -14437,8 +14437,8 @@ fn apply_patch_file_proposal(
         None,
     ));
 
-    let hunk_fingerprint = patch_hunk_fingerprint(patch_old_text, patch_new_text);
-    if proposal.hunk_count != Some(1)
+    let hunk_fingerprint = patch_hunks_fingerprint(&hunks);
+    if proposal.hunk_count != Some(hunks.len())
         || proposal.hunk_fingerprint.as_deref() != Some(hunk_fingerprint.as_str())
     {
         return deny_patch_file_apply(
@@ -14483,18 +14483,36 @@ fn apply_patch_file_proposal(
         .checklist
         .push(apply_result_check("proposal_diff_available", "Pass", None));
 
-    let expected_preview = format!(
-        "[patch_file single_hunk old_chars={} new_chars={}]",
-        patch_old_text.chars().count(),
-        patch_new_text.chars().count()
-    );
-    let expected_diff = format!(
-        "--- a/{}\n+++ b/{}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
-        proposal.path,
-        proposal.path,
-        patch_old_text.chars().count(),
-        patch_new_text.chars().count()
-    );
+    let expected_preview = if hunks.len() == 1 {
+        format!(
+            "[patch_file single_hunk old_chars={} new_chars={}]",
+            hunks[0].old_text.chars().count(),
+            hunks[0].new_text.chars().count()
+        )
+    } else {
+        format!(
+            "[patch_file multi_hunk count={} total_chars={}]",
+            hunks.len(),
+            hunk_chars
+        )
+    };
+    let expected_diff = if hunks.len() == 1 {
+        format!(
+            "--- a/{}\n+++ b/{}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
+            proposal.path,
+            proposal.path,
+            hunks[0].old_text.chars().count(),
+            hunks[0].new_text.chars().count()
+        )
+    } else {
+        format!(
+            "--- a/{}\n+++ b/{}\n@@ patch_file multi_hunk count={} total_chars={} @@\n[patch hunks elided]\n",
+            proposal.path,
+            proposal.path,
+            hunks.len(),
+            hunk_chars
+        )
+    };
     if proposal.content_preview != expected_preview
         || proposal.diff_preview.as_deref() != Some(expected_diff.as_str())
     {
@@ -14692,21 +14710,20 @@ fn apply_patch_file_proposal(
         None,
     ));
 
-    let replacement_content =
-        match apply_single_text_hunk(current_content, patch_old_text, patch_new_text) {
-            Ok(content) => content,
-            Err(reason) => {
-                return deny_patch_file_apply(
-                    store,
-                    task,
-                    params,
-                    apply_result,
-                    "patch_hunk_context_matches",
-                    "Fail",
-                    reason,
-                )
-            }
-        };
+    let replacement_content = match apply_text_hunks(current_content, &hunks) {
+        Ok(content) => content,
+        Err(reason) => {
+            return deny_patch_file_apply(
+                store,
+                task,
+                params,
+                apply_result,
+                "patch_hunk_context_matches",
+                "Fail",
+                reason,
+            )
+        }
+    };
     apply_result.checklist.push(apply_result_check(
         "patch_hunk_context_matches",
         "Pass",
@@ -14812,7 +14829,7 @@ fn apply_patch_file_proposal(
     ));
     apply_result.apply_status = "Applied".to_string();
     apply_result.apply_reason =
-        "Patch-file hunk applied and post-write SHA-256 verified.".to_string();
+        "Patch-file hunks applied and post-write SHA-256 verified.".to_string();
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
@@ -18363,36 +18380,59 @@ fn apply_proposal(
     let content_chars = if operation == WorkspacePatchOperation::DeleteFile.as_str() {
         0
     } else if operation == WorkspacePatchOperation::PatchFile.as_str() {
-        params
-            .patch_old_text
-            .as_deref()
-            .unwrap_or("")
-            .chars()
-            .count()
-            + params
-                .patch_new_text
-                .as_deref()
-                .unwrap_or("")
-                .chars()
-                .count()
+        params.patch_hunks.as_ref().map_or_else(
+            || {
+                params
+                    .patch_old_text
+                    .as_deref()
+                    .unwrap_or("")
+                    .chars()
+                    .count()
+                    + params
+                        .patch_new_text
+                        .as_deref()
+                        .unwrap_or("")
+                        .chars()
+                        .count()
+            },
+            |hunks| {
+                hunks
+                    .iter()
+                    .map(|hunk| hunk.old_text.chars().count() + hunk.new_text.chars().count())
+                    .sum()
+            },
+        )
     } else {
         replacement_content_for_counts.chars().count()
     };
     let content_bytes = if operation == WorkspacePatchOperation::DeleteFile.as_str() {
         0
     } else if operation == WorkspacePatchOperation::PatchFile.as_str() {
-        params
-            .patch_old_text
-            .as_deref()
-            .unwrap_or("")
-            .as_bytes()
-            .len() as u64
-            + params
-                .patch_new_text
-                .as_deref()
-                .unwrap_or("")
-                .as_bytes()
-                .len() as u64
+        params.patch_hunks.as_ref().map_or_else(
+            || {
+                params
+                    .patch_old_text
+                    .as_deref()
+                    .unwrap_or("")
+                    .as_bytes()
+                    .len() as u64
+                    + params
+                        .patch_new_text
+                        .as_deref()
+                        .unwrap_or("")
+                        .as_bytes()
+                        .len() as u64
+            },
+            |hunks| {
+                hunks
+                    .iter()
+                    .map(|hunk| {
+                        hunk.old_text.as_bytes().len() as u64
+                            + hunk.new_text.as_bytes().len() as u64
+                    })
+                    .sum()
+            },
+        )
     } else {
         replacement_content_for_counts.as_bytes().len() as u64
     };
@@ -30957,27 +30997,159 @@ fn patch_hunk_fingerprint(old_text: &str, new_text: &str) -> String {
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
-fn apply_single_text_hunk(
-    current_content: &str,
-    old_text: &str,
-    new_text: &str,
-) -> Result<String, &'static str> {
-    if old_text.is_empty() {
-        return Err("Patch old_text must not be empty.");
+#[derive(Debug, Clone)]
+struct PatchTextHunk {
+    old_text: String,
+    new_text: String,
+}
+
+fn patch_hunks_fingerprint(hunks: &[PatchTextHunk]) -> String {
+    if hunks.len() == 1 {
+        return patch_hunk_fingerprint(&hunks[0].old_text, &hunks[0].new_text);
     }
-    let mut matches = current_content.match_indices(old_text);
-    let Some((start, _)) = matches.next() else {
-        return Err("Patch old_text was not found in the current target.");
+    let canonical_hunks = hunks
+        .iter()
+        .map(|hunk| {
+            json!({
+                "old_text_chars": hunk.old_text.chars().count(),
+                "old_text_sha256": format!("sha256:{}", hex_sha256(hunk.old_text.as_bytes())),
+                "new_text_chars": hunk.new_text.chars().count(),
+                "new_text_sha256": format!("sha256:{}", hex_sha256(hunk.new_text.as_bytes())),
+            })
+        })
+        .collect::<Vec<_>>();
+    let canonical = json!({
+        "version": "patch_file_multi_hunk_v1",
+        "hunks": canonical_hunks,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn patch_hunks_from_input(input: &Value) -> Result<Vec<PatchTextHunk>, &'static str> {
+    if let Some(hunks_value) = input.get("hunks") {
+        if input.get("old_text").is_some() || input.get("new_text").is_some() {
+            return Err("patch_file hunks cannot be combined with old_text or new_text");
+        }
+        let Some(hunks) = hunks_value.as_array() else {
+            return Err("patch_file hunks must be an array");
+        };
+        if !(2..=5).contains(&hunks.len()) {
+            return Err("patch_file hunks must contain 2 to 5 entries");
+        }
+        return hunks
+            .iter()
+            .map(|hunk| {
+                let Some(hunk) = hunk.as_object() else {
+                    return Err("patch_file hunk must be an object");
+                };
+                let Some(old_text) = hunk.get("old_text").and_then(Value::as_str) else {
+                    return Err("patch_file hunk old_text is required");
+                };
+                let Some(new_text) = hunk.get("new_text").and_then(Value::as_str) else {
+                    return Err("patch_file hunk new_text is required");
+                };
+                if old_text.is_empty() {
+                    return Err("patch_file hunk old_text must not be empty");
+                }
+                Ok(PatchTextHunk {
+                    old_text: old_text.to_string(),
+                    new_text: new_text.to_string(),
+                })
+            })
+            .collect();
+    }
+    let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
+        return Err("patch_file old_text is required");
     };
-    if matches.next().is_some() {
-        return Err("Patch old_text appears more than once in the current target.");
+    let Some(new_text) = input.get("new_text").and_then(Value::as_str) else {
+        return Err("patch_file new_text is required");
+    };
+    if old_text.is_empty() {
+        return Err("patch_file old_text must not be empty");
     }
-    let end = start + old_text.len();
-    let mut replacement =
-        String::with_capacity(current_content.len() - old_text.len() + new_text.len());
-    replacement.push_str(&current_content[..start]);
-    replacement.push_str(new_text);
-    replacement.push_str(&current_content[end..]);
+    Ok(vec![PatchTextHunk {
+        old_text: old_text.to_string(),
+        new_text: new_text.to_string(),
+    }])
+}
+
+fn patch_hunks_from_apply_params(
+    params: &ProposalApplyParams,
+) -> Result<Vec<PatchTextHunk>, &'static str> {
+    if let Some(hunks) = params.patch_hunks.as_ref() {
+        if params.patch_old_text.is_some() || params.patch_new_text.is_some() {
+            return Err("Patch-file apply patch_hunks cannot be combined with patch_old_text or patch_new_text.");
+        }
+        if !(2..=5).contains(&hunks.len()) {
+            return Err("Patch-file apply patch_hunks must contain 2 to 5 hunks.");
+        }
+        return hunks
+            .iter()
+            .map(|hunk: &ProposalPatchHunk| {
+                if hunk.old_text.is_empty() {
+                    return Err("Patch-file apply hunk old text must not be empty.");
+                }
+                Ok(PatchTextHunk {
+                    old_text: hunk.old_text.clone(),
+                    new_text: hunk.new_text.clone(),
+                })
+            })
+            .collect();
+    }
+    let Some(patch_old_text) = params.patch_old_text.as_deref() else {
+        return Err("Patch-file apply requires patch_old_text or patch_hunks.");
+    };
+    let Some(patch_new_text) = params.patch_new_text.as_deref() else {
+        return Err("Patch-file apply requires patch_new_text when patch_old_text is used.");
+    };
+    if patch_old_text.is_empty() {
+        return Err("Patch-file old text must not be empty.");
+    }
+    Ok(vec![PatchTextHunk {
+        old_text: patch_old_text.to_string(),
+        new_text: patch_new_text.to_string(),
+    }])
+}
+
+fn apply_text_hunks(
+    current_content: &str,
+    hunks: &[PatchTextHunk],
+) -> Result<String, &'static str> {
+    if hunks.is_empty() {
+        return Err("Patch hunks must not be empty.");
+    }
+    let mut ranges = Vec::with_capacity(hunks.len());
+    for (index, hunk) in hunks.iter().enumerate() {
+        if hunk.old_text.is_empty() {
+            return Err("Patch old_text must not be empty.");
+        }
+        let mut matches = current_content.match_indices(&hunk.old_text);
+        let Some((start, _)) = matches.next() else {
+            return Err("Patch old_text was not found in the current target.");
+        };
+        if matches.next().is_some() {
+            return Err("Patch old_text appears more than once in the current target.");
+        }
+        ranges.push((start, start + hunk.old_text.len(), index));
+    }
+    ranges.sort_by_key(|(start, _, _)| *start);
+    let mut cursor = 0usize;
+    let mut replacement = String::with_capacity(
+        current_content.len()
+            + hunks
+                .iter()
+                .map(|hunk| hunk.new_text.len().saturating_sub(hunk.old_text.len()))
+                .sum::<usize>(),
+    );
+    for (start, end, index) in ranges {
+        if start < cursor {
+            return Err("Patch hunks overlap in the current target.");
+        }
+        replacement.push_str(&current_content[cursor..start]);
+        replacement.push_str(&hunks[index].new_text);
+        cursor = end;
+    }
+    replacement.push_str(&current_content[cursor..]);
     Ok(replacement)
 }
 
@@ -31037,41 +31209,46 @@ fn build_workspace_patch_proposal_from_input(
             result.validation_reason = Some("patch_file operation must not include content");
             return result;
         }
-        let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
-            result.validation_status = "Invalid";
-            result.validation_reason = Some("patch_file old_text is required");
-            return result;
+        let hunks = match patch_hunks_from_input(input) {
+            Ok(hunks) => hunks,
+            Err(reason) => {
+                result.validation_status = "Invalid";
+                result.validation_reason = Some(reason);
+                return result;
+            }
         };
-        let Some(new_text) = input.get("new_text").and_then(Value::as_str) else {
-            result.validation_status = "Invalid";
-            result.validation_reason = Some("patch_file new_text is required");
-            return result;
-        };
-        result.content_chars = old_text.chars().count() + new_text.chars().count();
+        result.content_chars = hunks
+            .iter()
+            .map(|hunk| hunk.old_text.chars().count() + hunk.new_text.chars().count())
+            .sum();
         result.truncated = false;
-        result.content_preview = format!(
-            "[patch_file single_hunk old_chars={} new_chars={}]",
-            old_text.chars().count(),
-            new_text.chars().count()
-        );
-        result.hunk_count = Some(1);
-        result.hunk_fingerprint = Some(patch_hunk_fingerprint(old_text, new_text));
-        if old_text.is_empty() {
+        if hunks.len() == 1 {
+            result.content_preview = format!(
+                "[patch_file single_hunk old_chars={} new_chars={}]",
+                hunks[0].old_text.chars().count(),
+                hunks[0].new_text.chars().count()
+            );
+        } else {
+            result.content_preview = format!(
+                "[patch_file multi_hunk count={} total_chars={}]",
+                hunks.len(),
+                result.content_chars
+            );
+        }
+        result.hunk_count = Some(hunks.len());
+        result.hunk_fingerprint = Some(patch_hunks_fingerprint(&hunks));
+        if result.content_chars > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
             result.validation_status = "Invalid";
-            result.validation_reason = Some("patch_file old_text must not be empty");
+            result.validation_reason = Some("patch_file hunks exceed runtime write limit");
             return result;
         }
-        if old_text.chars().count() + new_text.chars().count()
-            > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS
-        {
-            result.validation_status = "Invalid";
-            result.validation_reason = Some("patch_file hunk exceeds runtime write limit");
-            return result;
-        }
-        if scan_text_for_sensitive_content(old_text) || scan_text_for_sensitive_content(new_text) {
+        if hunks.iter().any(|hunk| {
+            scan_text_for_sensitive_content(&hunk.old_text)
+                || scan_text_for_sensitive_content(&hunk.new_text)
+        }) {
             result.content_preview = "[redacted]".to_string();
             result.validation_status = "Blocked";
-            result.validation_reason = Some("patch_file hunk contains sensitive-like data");
+            result.validation_reason = Some("patch_file hunks contain sensitive-like data");
             result.diff_redacted = true;
             return result;
         }
@@ -31112,16 +31289,24 @@ fn build_workspace_patch_proposal_from_input(
             result.diff_redacted = true;
             return result;
         }
-        if let Err(reason) = apply_single_text_hunk(&existing, old_text, new_text) {
+        if let Err(reason) = apply_text_hunks(&existing, &hunks) {
             result.validation_status = "Invalid";
             result.validation_reason = Some(reason);
             return result;
         }
-        let diff = format!(
-            "--- a/{path}\n+++ b/{path}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
-            old_text.chars().count(),
-            new_text.chars().count()
-        );
+        let diff = if hunks.len() == 1 {
+            format!(
+                "--- a/{path}\n+++ b/{path}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
+                hunks[0].old_text.chars().count(),
+                hunks[0].new_text.chars().count()
+            )
+        } else {
+            format!(
+                "--- a/{path}\n+++ b/{path}\n@@ patch_file multi_hunk count={} total_chars={} @@\n[patch hunks elided]\n",
+                hunks.len(),
+                result.content_chars
+            )
+        };
         result.diff_truncated =
             diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
         result.diff_preview = Some(preview_with_limit(
@@ -33472,6 +33657,54 @@ mod tests {
                 Some(payload),
             )
             .expect("append patch hunk proposal");
+    }
+
+    fn append_generated_patch_hunks_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        hunks: Vec<(&str, &str)>,
+    ) {
+        let proposal_hunks = hunks
+            .iter()
+            .map(|(old_text, new_text)| json!({ "old_text": old_text, "new_text": new_text }))
+            .collect::<Vec<_>>();
+        let proposal = build_workspace_patch_proposal_from_input(
+            store,
+            path,
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({ "hunks": proposal_hunks }),
+        );
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(payload),
+            )
+            .expect("append patch hunks proposal");
     }
 
     fn partial_transaction_source_payload(
@@ -50261,6 +50494,115 @@ mod tests {
         assert!(!serialized_events.contains("delta\n"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn proposal_apply_patch_file_replaces_multiple_hunks_after_approval_and_current_hash() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\nomega\n")
+            .expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README hunks","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .unwrap()
+            .expect("task");
+        let proposal_id = "patch_multi_hunk_proposal";
+        append_generated_patch_hunks_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "README.md",
+            vec![("beta\n", "delta\n"), ("omega\n", "theta\n")],
+        );
+
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"patch hunks apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        let expected_hash = preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "patch_hunks": [
+                    { "old_text": "beta\n", "new_text": "delta\n" },
+                    { "old_text": "omega\n", "new_text": "theta\n" }
+                ],
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["proposal"]["operation"], "patch_file");
+        assert_eq!(apply_result["proposal"]["hunk_count"], 2);
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\ndelta\ngamma\ntheta\n"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let serialized_events =
+            serde_json::to_string(&events.result.expect("events result")["events"]).unwrap();
+        for forbidden in ["beta\n", "delta\n", "omega\n", "theta\n"] {
+            assert!(!serialized_events.contains(forbidden));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_file_proposal_rejects_overlapping_multi_hunk_context_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\n")
+            .expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "hunks": [
+                    { "old_text": "alpha\nbeta\n", "new_text": "alpha\ndelta\n" },
+                    { "old_text": "beta\n", "new_text": "epsilon\n" }
+                ],
+            }),
+        );
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch hunks overlap in the current target.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\ngamma\n"
+        );
     }
 
     #[test]

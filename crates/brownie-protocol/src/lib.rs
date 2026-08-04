@@ -805,6 +805,12 @@ pub struct ProposalApplyTransactionRecoverySource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProposalPatchHunk {
+    pub old_text: String,
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProposalApplyParams {
     pub run_id: String,
     pub proposal_id: String,
@@ -815,6 +821,8 @@ pub struct ProposalApplyParams {
     pub patch_old_text: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hunks: Option<Vec<ProposalPatchHunk>>,
     pub authorize: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction_items: Option<Vec<ProposalApplyTransactionItem>>,

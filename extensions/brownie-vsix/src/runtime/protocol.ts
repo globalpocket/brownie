@@ -1136,6 +1136,11 @@ export interface TaskInspectResult {
   consumed_parent_join_recovery_summary?: ChildInspectConsumedParentJoinRecoverySummary | null;
 }
 
+export interface ProposalPatchHunk {
+  old_text: string;
+  new_text: string;
+}
+
 export interface WorkspacePatchProposalSummary {
   proposal_id: string;
   path: string;
