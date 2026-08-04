@@ -545,3 +545,17 @@ not invent terminal completion evidence. These headless results remain bounded
 and expose no raw prompt, provider response, final response content, file
 content, stdout/stderr, command, environment value, secret, absolute path, or
 canonical path.
+
+M24.2 extends the existing `proposal.apply` transaction recovery path for
+partial `delete_file_transaction` evidence. A recovery call supplies
+`transaction_recovery_source` plus one to five delete recovery items; the Rust
+runtime validates the source run, apply id, transaction id, fingerprint,
+partial-failed delete operation, unrecovered source state, and absence of
+already-applied source delete items before it admits any remaining targets.
+Eligible recovery targets are current approved unconsumed `delete_file`
+proposals with fresh preflight, expected target hash matches, regular UTF-8
+files, safe workspace-relative paths, no symlinks, and matching approved
+deletion diffs. Successful recovery deletes the remaining files, verifies
+post-delete absence, consumes authorization, and records bounded
+`delete_file_transaction_recovery` evidence with no raw file content, raw diffs,
+commands, environment values, secrets, absolute paths, or canonical paths.
