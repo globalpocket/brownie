@@ -9670,6 +9670,8 @@ fn handle_headless_continue_verification_recovery_apply(
             expected_target_sha256: target.expected_target_sha256.clone(),
             expected_target_absent: target.expected_target_absent,
             replacement_content: target.replacement_content.clone(),
+            patch_old_text: None,
+            patch_new_text: None,
             authorize: true,
             transaction_items: None,
             transaction_recovery_source: None,
@@ -12035,6 +12037,14 @@ fn list_proposals(
                     .map(ToString::to_string),
                 diff_truncated: payload.get("diff_truncated")?.as_bool()?,
                 diff_redacted: payload.get("diff_redacted")?.as_bool()?,
+                hunk_count: payload
+                    .get("hunk_count")
+                    .and_then(Value::as_u64)
+                    .and_then(|value| usize::try_from(value).ok()),
+                hunk_fingerprint: payload
+                    .get("hunk_fingerprint")
+                    .and_then(Value::as_str)
+                    .map(ToString::to_string),
                 approval_status: approval.approval_status,
                 approval_reason: approval.approval_reason,
                 approval_reason_redacted: approval.approval_reason_redacted,
@@ -14289,6 +14299,520 @@ fn apply_delete_file_proposal(
     ));
     apply_result.apply_status = "Applied".to_string();
     apply_result.apply_reason = "File deleted and post-delete absence verified.".to_string();
+    apply_result.authorization_consumed = true;
+    apply_result.applied = true;
+    apply_result.applied_at = Some(now_rfc3339());
+    record_apply_result(
+        store,
+        task,
+        &params.run_id,
+        &params.proposal_id,
+        apply_result,
+    )
+}
+
+fn deny_patch_file_apply(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    params: &ProposalApplyParams,
+    mut apply_result: WorkspacePatchApplyResultSummary,
+    check_name: &str,
+    status: &str,
+    reason: &str,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    apply_result
+        .checklist
+        .push(apply_result_check(check_name, status, Some(reason)));
+    apply_result.apply_reason = reason.to_string();
+    record_apply_result(
+        store,
+        task,
+        &params.run_id,
+        &params.proposal_id,
+        apply_result,
+    )
+}
+
+fn apply_patch_file_proposal(
+    store: &BrownieStore,
+    task: &TaskRecord,
+    params: &ProposalApplyParams,
+    proposal: &WorkspacePatchProposalSummary,
+    mut apply_result: WorkspacePatchApplyResultSummary,
+) -> Result<
+    (
+        WorkspacePatchProposalSummary,
+        WorkspacePatchApplyResultSummary,
+    ),
+    String,
+> {
+    if params.replacement_content.is_some() {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "replacement_content_omitted_for_patch",
+            "Fail",
+            "Patch-file apply must omit replacement_content.",
+        );
+    }
+    let Some(patch_old_text) = params.patch_old_text.as_deref() else {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_required",
+            "Fail",
+            "Patch-file apply requires patch_old_text.",
+        );
+    };
+    let Some(patch_new_text) = params.patch_new_text.as_deref() else {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_required",
+            "Fail",
+            "Patch-file apply requires patch_new_text.",
+        );
+    };
+    if patch_old_text.is_empty() {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_required",
+            "Fail",
+            "Patch-file old text must not be empty.",
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("patch_hunk_required", "Pass", None));
+
+    let hunk_chars = patch_old_text.chars().count() + patch_new_text.chars().count();
+    apply_result.content_chars = hunk_chars;
+    apply_result.content_bytes =
+        patch_old_text.as_bytes().len() as u64 + patch_new_text.as_bytes().len() as u64;
+    if hunk_chars > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_bounded",
+            "Fail",
+            "Patch hunk exceeds the runtime write limit.",
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("patch_hunk_bounded", "Pass", None));
+    if scan_text_for_sensitive_content(patch_old_text)
+        || scan_text_for_sensitive_content(patch_new_text)
+    {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_sensitive_scan",
+            "Blocked",
+            "Patch hunk contains sensitive-like data.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "patch_hunk_sensitive_scan",
+        "Pass",
+        None,
+    ));
+
+    let hunk_fingerprint = patch_hunk_fingerprint(patch_old_text, patch_new_text);
+    if proposal.hunk_count != Some(1)
+        || proposal.hunk_fingerprint.as_deref() != Some(hunk_fingerprint.as_str())
+    {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "patch_hunk_matches_proposal",
+            "Fail",
+            "Patch hunk does not match approved proposal metadata.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "patch_hunk_matches_proposal",
+        "Pass",
+        None,
+    ));
+
+    if proposal.diff_redacted || proposal.content_preview == "[redacted]" {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "proposal_diff_available",
+            "Blocked",
+            "Proposal diff or content preview is redacted.",
+        );
+    }
+    if proposal.diff_truncated || proposal.diff_preview.is_none() {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "proposal_diff_available",
+            "Fail",
+            "Proposal diff must be available and untruncated for apply verification.",
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("proposal_diff_available", "Pass", None));
+
+    let expected_preview = format!(
+        "[patch_file single_hunk old_chars={} new_chars={}]",
+        patch_old_text.chars().count(),
+        patch_new_text.chars().count()
+    );
+    let expected_diff = format!(
+        "--- a/{}\n+++ b/{}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
+        proposal.path,
+        proposal.path,
+        patch_old_text.chars().count(),
+        patch_new_text.chars().count()
+    );
+    if proposal.content_preview != expected_preview
+        || proposal.diff_preview.as_deref() != Some(expected_diff.as_str())
+    {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "approved_patch_metadata_matches",
+            "Fail",
+            "Approved patch metadata does not match the requested hunk.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "approved_patch_metadata_matches",
+        "Pass",
+        None,
+    ));
+
+    let Some(expected_target_sha256) = params.expected_target_sha256.as_deref() else {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "expected_target_hash_valid",
+            "Fail",
+            "Expected target hash must be provided for patch_file apply.",
+        );
+    };
+    if !is_sha256_fingerprint(expected_target_sha256) {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "expected_target_hash_valid",
+            "Fail",
+            "Expected target hash must be a sha256 fingerprint.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "expected_target_hash_valid",
+        "Pass",
+        None,
+    ));
+
+    let Some(previous_snapshot) = proposal.latest_snapshot.as_ref() else {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "latest_preflight_exists",
+            "Fail",
+            "Run proposal.preflight before applying.",
+        );
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("latest_preflight_exists", "Pass", None));
+    let current_snapshot =
+        match capture_preflight_snapshot(store, proposal, Some(previous_snapshot)) {
+            Ok(snapshot) => snapshot,
+            Err(_) => {
+                return deny_patch_file_apply(
+                    store,
+                    task,
+                    params,
+                    apply_result,
+                    "latest_preflight_validation",
+                    "Fail",
+                    "Latest preflight validation failed.",
+                )
+            }
+        };
+    append_preflight_snapshot_event(store, task, &current_snapshot)?;
+    if current_snapshot.stale {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "latest_preflight_validation",
+            "Fail",
+            current_snapshot
+                .stale_reason
+                .as_deref()
+                .unwrap_or("Latest preflight snapshot is stale."),
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "latest_preflight_validation",
+        "Pass",
+        None,
+    ));
+
+    let target_path = match resolve_apply_target_path(store, proposal) {
+        Ok(path) => path,
+        Err(reason) => {
+            return deny_patch_file_apply(
+                store,
+                task,
+                params,
+                apply_result,
+                "target_path_safe",
+                "Fail",
+                reason,
+            )
+        }
+    };
+    apply_result
+        .checklist
+        .push(apply_result_check("target_path_safe", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_exists", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_regular", "Pass", None));
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_not_symlink", "Pass", None));
+
+    let current_bytes = match std::fs::read(&target_path) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            return deny_patch_file_apply(
+                store,
+                task,
+                params,
+                apply_result,
+                "target_file_readable",
+                "Fail",
+                "Target file could not be read before apply.",
+            )
+        }
+    };
+    let pre_write_hash = format!("sha256:{}", hex_sha256(&current_bytes));
+    apply_result.pre_write_target_sha256 = Some(pre_write_hash.clone());
+    apply_result.pre_write_target_exists = Some(true);
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_readable", "Pass", None));
+    if current_snapshot.file_sha256.as_deref() != Some(pre_write_hash.as_str())
+        || expected_target_sha256 != pre_write_hash
+    {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "expected_target_hash_matches",
+            "Fail",
+            "Expected target hash does not match current target file.",
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "expected_target_hash_matches",
+        "Pass",
+        None,
+    ));
+
+    let current_content = match std::str::from_utf8(&current_bytes) {
+        Ok(content) => content,
+        Err(_) => {
+            return deny_patch_file_apply(
+                store,
+                task,
+                params,
+                apply_result,
+                "target_file_utf8",
+                "Fail",
+                "Target file is not UTF-8.",
+            )
+        }
+    };
+    if scan_text_for_sensitive_content(current_content) {
+        return deny_patch_file_apply(
+            store,
+            task,
+            params,
+            apply_result,
+            "target_file_sensitive_scan",
+            "Blocked",
+            "Target file contains sensitive-like data.",
+        );
+    }
+    apply_result
+        .checklist
+        .push(apply_result_check("target_file_utf8", "Pass", None));
+    apply_result.checklist.push(apply_result_check(
+        "target_file_sensitive_scan",
+        "Pass",
+        None,
+    ));
+
+    let replacement_content =
+        match apply_single_text_hunk(current_content, patch_old_text, patch_new_text) {
+            Ok(content) => content,
+            Err(reason) => {
+                return deny_patch_file_apply(
+                    store,
+                    task,
+                    params,
+                    apply_result,
+                    "patch_hunk_context_matches",
+                    "Fail",
+                    reason,
+                )
+            }
+        };
+    apply_result.checklist.push(apply_result_check(
+        "patch_hunk_context_matches",
+        "Pass",
+        None,
+    ));
+
+    let replacement_bytes = replacement_content.as_bytes();
+    let expected_post_write_hash = format!("sha256:{}", hex_sha256(replacement_bytes));
+    let outcome = atomic_replace_existing_file(&target_path, replacement_bytes);
+    apply_result.temp_file_cleaned = outcome.temp_file_cleaned;
+    apply_result.atomic_replacement_completed = outcome.atomic_replacement_completed;
+    apply_result.post_write_sha256 = outcome.post_write_sha256.clone();
+    if let Some(reason) = outcome.failure_reason {
+        apply_result.checklist.push(apply_result_check(
+            "temporary_sibling_file_created",
+            if reason == "Temporary sibling file creation failed." {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason == "Temporary sibling file creation failed." {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "bounded_write_flushed_and_synced",
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                "Fail"
+            } else {
+                "Pass"
+            },
+            if reason.contains("write") || reason.contains("flush") || reason.contains("sync") {
+                Some(reason)
+            } else {
+                None
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "atomic_replacement_completed",
+            if outcome.atomic_replacement_completed {
+                "Pass"
+            } else {
+                "Fail"
+            },
+            if outcome.atomic_replacement_completed {
+                None
+            } else {
+                Some(reason)
+            },
+        ));
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some(reason),
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = reason.to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "temporary_sibling_file_created",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "bounded_write_flushed_and_synced",
+        "Pass",
+        None,
+    ));
+    apply_result.checklist.push(apply_result_check(
+        "atomic_replacement_completed",
+        "Pass",
+        None,
+    ));
+    if apply_result.post_write_sha256.as_deref() != Some(expected_post_write_hash.as_str()) {
+        apply_result.checklist.push(apply_result_check(
+            "post_write_sha256_verified",
+            "Fail",
+            Some("Post-write SHA-256 does not match patch result."),
+        ));
+        apply_result.apply_status = "Failed".to_string();
+        apply_result.apply_reason = "Post-write SHA-256 does not match patch result.".to_string();
+        return record_apply_result(
+            store,
+            task,
+            &params.run_id,
+            &params.proposal_id,
+            apply_result,
+        );
+    }
+    apply_result.checklist.push(apply_result_check(
+        "post_write_sha256_verified",
+        "Pass",
+        None,
+    ));
+    apply_result.apply_status = "Applied".to_string();
+    apply_result.apply_reason =
+        "Patch-file hunk applied and post-write SHA-256 verified.".to_string();
     apply_result.authorization_consumed = true;
     apply_result.applied = true;
     apply_result.applied_at = Some(now_rfc3339());
@@ -17838,11 +18362,37 @@ fn apply_proposal(
     let replacement_content_for_counts = params.replacement_content.as_deref().unwrap_or("");
     let content_chars = if operation == WorkspacePatchOperation::DeleteFile.as_str() {
         0
+    } else if operation == WorkspacePatchOperation::PatchFile.as_str() {
+        params
+            .patch_old_text
+            .as_deref()
+            .unwrap_or("")
+            .chars()
+            .count()
+            + params
+                .patch_new_text
+                .as_deref()
+                .unwrap_or("")
+                .chars()
+                .count()
     } else {
         replacement_content_for_counts.chars().count()
     };
     let content_bytes = if operation == WorkspacePatchOperation::DeleteFile.as_str() {
         0
+    } else if operation == WorkspacePatchOperation::PatchFile.as_str() {
+        params
+            .patch_old_text
+            .as_deref()
+            .unwrap_or("")
+            .as_bytes()
+            .len() as u64
+            + params
+                .patch_new_text
+                .as_deref()
+                .unwrap_or("")
+                .as_bytes()
+                .len() as u64
     } else {
         replacement_content_for_counts.as_bytes().len() as u64
     };
@@ -17915,11 +18465,12 @@ fn apply_proposal(
     if operation != WorkspacePatchOperation::ReplaceFile.as_str()
         && operation != WorkspacePatchOperation::CreateFile.as_str()
         && operation != WorkspacePatchOperation::DeleteFile.as_str()
+        && operation != WorkspacePatchOperation::PatchFile.as_str()
     {
         apply_result.checklist.push(apply_result_check(
             "supported_operation",
             "Fail",
-            Some("Only replace_file, create_file, and delete_file proposals can be applied."),
+            Some("Only replace_file, create_file, delete_file, and patch_file proposals can be applied."),
         ));
         apply_result.apply_reason = "Proposal operation is not supported.".to_string();
         return record_apply_result(
@@ -18031,6 +18582,9 @@ fn apply_proposal(
 
     if operation == WorkspacePatchOperation::DeleteFile.as_str() {
         return apply_delete_file_proposal(store, &task, params, &proposal, apply_result);
+    }
+    if operation == WorkspacePatchOperation::PatchFile.as_str() {
+        return apply_patch_file_proposal(store, &task, params, &proposal, apply_result);
     }
 
     let Some(replacement_content) = params.replacement_content.as_deref() else {
@@ -22856,6 +23410,7 @@ fn capture_preflight_snapshot(
     let snapshot_id = format!("snapshot_{}", uuid::Uuid::new_v4().simple());
     let metadata = if proposal.operation == WorkspacePatchOperation::CreateFile.as_str()
         || proposal.operation == WorkspacePatchOperation::DeleteFile.as_str()
+        || proposal.operation == WorkspacePatchOperation::PatchFile.as_str()
     {
         std::fs::symlink_metadata(&target)
     } else {
@@ -25191,6 +25746,8 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "diff_preview",
         "diff_truncated",
         "diff_redacted",
+        "hunk_count",
+        "hunk_fingerprint",
         "approval_status",
         "approval_reason",
         "approval_reason_redacted",
@@ -30326,7 +30883,8 @@ fn append_workspace_patch_proposal(
         .get("operation")
         .and_then(Value::as_str)
         .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str());
-    let proposal = build_workspace_patch_proposal(store, path, operation, content);
+    let proposal =
+        build_workspace_patch_proposal_from_input(store, path, operation, content, &decision.input);
     let proposal_id = format!("proposal_{}", uuid::Uuid::new_v4().simple());
     let mut payload = json!({
         "proposal_id": proposal_id,
@@ -30342,6 +30900,12 @@ fn append_workspace_patch_proposal(
         "diff_truncated": proposal.diff_truncated,
         "diff_redacted": proposal.diff_redacted,
     });
+    if let Some(hunk_count) = proposal.hunk_count {
+        payload["hunk_count"] = json!(hunk_count);
+    }
+    if let Some(hunk_fingerprint) = proposal.hunk_fingerprint.as_ref() {
+        payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+    }
     if let Some(provenance) = record.verification_recovery_provenance.as_ref() {
         payload["verification_recovery_repair"] = json!(true);
         payload["source_task_id"] = json!(provenance.source_task_id.clone());
@@ -30368,13 +30932,61 @@ struct ProposalBuildResult {
     diff_preview: Option<String>,
     diff_truncated: bool,
     diff_redacted: bool,
+    hunk_count: Option<usize>,
+    hunk_fingerprint: Option<String>,
 }
 
+#[cfg(test)]
 fn build_workspace_patch_proposal(
     store: &BrownieStore,
     path: &str,
     operation: &str,
     content: &str,
+) -> ProposalBuildResult {
+    build_workspace_patch_proposal_from_input(store, path, operation, content, &Value::Null)
+}
+
+fn patch_hunk_fingerprint(old_text: &str, new_text: &str) -> String {
+    let canonical = json!({
+        "version": "patch_file_single_hunk_v1",
+        "old_text_chars": old_text.chars().count(),
+        "old_text_sha256": format!("sha256:{}", hex_sha256(old_text.as_bytes())),
+        "new_text_chars": new_text.chars().count(),
+        "new_text_sha256": format!("sha256:{}", hex_sha256(new_text.as_bytes())),
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn apply_single_text_hunk(
+    current_content: &str,
+    old_text: &str,
+    new_text: &str,
+) -> Result<String, &'static str> {
+    if old_text.is_empty() {
+        return Err("Patch old_text must not be empty.");
+    }
+    let mut matches = current_content.match_indices(old_text);
+    let Some((start, _)) = matches.next() else {
+        return Err("Patch old_text was not found in the current target.");
+    };
+    if matches.next().is_some() {
+        return Err("Patch old_text appears more than once in the current target.");
+    }
+    let end = start + old_text.len();
+    let mut replacement =
+        String::with_capacity(current_content.len() - old_text.len() + new_text.len());
+    replacement.push_str(&current_content[..start]);
+    replacement.push_str(new_text);
+    replacement.push_str(&current_content[end..]);
+    Ok(replacement)
+}
+
+fn build_workspace_patch_proposal_from_input(
+    store: &BrownieStore,
+    path: &str,
+    operation: &str,
+    content: &str,
+    input: &Value,
 ) -> ProposalBuildResult {
     let content_chars = content.chars().count();
     let mut result = ProposalBuildResult {
@@ -30389,6 +31001,8 @@ fn build_workspace_patch_proposal(
         diff_preview: None,
         diff_truncated: false,
         diff_redacted: false,
+        hunk_count: None,
+        hunk_fingerprint: None,
     };
     if scan_text_for_sensitive_content(content) {
         result.content_preview = "[redacted]".to_string();
@@ -30406,6 +31020,7 @@ fn build_workspace_patch_proposal(
     if operation != WorkspacePatchOperation::ReplaceFile.as_str()
         && operation != WorkspacePatchOperation::CreateFile.as_str()
         && operation != WorkspacePatchOperation::DeleteFile.as_str()
+        && operation != WorkspacePatchOperation::PatchFile.as_str()
     {
         result.validation_status = "Invalid";
         result.validation_reason = Some("workspace write operation is unsupported");
@@ -30416,6 +31031,105 @@ fn build_workspace_patch_proposal(
         result.validation_reason = Some("workspace root is not accessible");
         return result;
     };
+    if operation == WorkspacePatchOperation::PatchFile.as_str() {
+        if !content.is_empty() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file operation must not include content");
+            return result;
+        }
+        let Some(old_text) = input.get("old_text").and_then(Value::as_str) else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file old_text is required");
+            return result;
+        };
+        let Some(new_text) = input.get("new_text").and_then(Value::as_str) else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file new_text is required");
+            return result;
+        };
+        result.content_chars = old_text.chars().count() + new_text.chars().count();
+        result.truncated = false;
+        result.content_preview = format!(
+            "[patch_file single_hunk old_chars={} new_chars={}]",
+            old_text.chars().count(),
+            new_text.chars().count()
+        );
+        result.hunk_count = Some(1);
+        result.hunk_fingerprint = Some(patch_hunk_fingerprint(old_text, new_text));
+        if old_text.is_empty() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file old_text must not be empty");
+            return result;
+        }
+        if old_text.chars().count() + new_text.chars().count()
+            > DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS
+        {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("patch_file hunk exceeds runtime write limit");
+            return result;
+        }
+        if scan_text_for_sensitive_content(old_text) || scan_text_for_sensitive_content(new_text) {
+            result.content_preview = "[redacted]".to_string();
+            result.validation_status = "Blocked";
+            result.validation_reason = Some("patch_file hunk contains sensitive-like data");
+            result.diff_redacted = true;
+            return result;
+        }
+        let target = root.join(path);
+        let Ok(symlink_metadata) = std::fs::symlink_metadata(&target) else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target file does not exist");
+            return result;
+        };
+        if symlink_metadata.file_type().is_symlink() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target path is a symlink");
+            return result;
+        }
+        if !symlink_metadata.is_file() {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target path is not a file");
+            return result;
+        }
+        let Ok(canonical_target) = target.canonicalize() else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target file does not exist");
+            return result;
+        };
+        if !canonical_target.starts_with(&root) {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target path escapes workspace root");
+            return result;
+        }
+        let Ok(existing) = std::fs::read_to_string(&canonical_target) else {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some("target file is not UTF-8");
+            return result;
+        };
+        if scan_text_for_sensitive_content(&existing) {
+            result.validation_status = "Blocked";
+            result.validation_reason = Some("target file contains sensitive-like data");
+            result.diff_redacted = true;
+            return result;
+        }
+        if let Err(reason) = apply_single_text_hunk(&existing, old_text, new_text) {
+            result.validation_status = "Invalid";
+            result.validation_reason = Some(reason);
+            return result;
+        }
+        let diff = format!(
+            "--- a/{path}\n+++ b/{path}\n@@ patch_file single_hunk old_chars={} new_chars={} @@\n[patch hunk elided]\n",
+            old_text.chars().count(),
+            new_text.chars().count()
+        );
+        result.diff_truncated =
+            diff.chars().count() > DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS);
+        result.diff_preview = Some(preview_with_limit(
+            &diff,
+            DEFAULT_DIFF_PREVIEW_CHARS.min(MAX_DIFF_PREVIEW_CHARS),
+        ));
+        return result;
+    }
     if operation == WorkspacePatchOperation::CreateFile.as_str() {
         let relative_path = Path::new(path);
         let Some(file_name) = relative_path.file_name() else {
@@ -32682,27 +33396,82 @@ mod tests {
         content: &str,
     ) {
         let proposal = build_workspace_patch_proposal(store, path, operation, content);
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": operation,
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
         store
             .tasks()
             .append_task_event_with_payload(
                 record,
                 LedgerEventKind::WorkspacePatchProposed,
-                Some(json!({
-                    "proposal_id": proposal_id,
-                    "tool_id": WORKSPACE_WRITE_TOOL_ID,
-                    "path": path,
-                    "operation": operation,
-                    "content_preview": proposal.content_preview,
-                    "content_chars": proposal.content_chars,
-                    "truncated": proposal.truncated,
-                    "validation_status": proposal.validation_status,
-                    "validation_reason": proposal.validation_reason,
-                    "diff_preview": proposal.diff_preview,
-                    "diff_truncated": proposal.diff_truncated,
-                    "diff_redacted": proposal.diff_redacted,
-                })),
+                Some(payload),
             )
             .expect("append proposal");
+    }
+
+    fn append_generated_patch_hunk_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        old_text: &str,
+        new_text: &str,
+    ) {
+        let proposal = build_workspace_patch_proposal_from_input(
+            store,
+            path,
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "old_text": old_text,
+                "new_text": new_text,
+            }),
+        );
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(payload),
+            )
+            .expect("append patch hunk proposal");
     }
 
     fn partial_transaction_source_payload(
@@ -49407,6 +50176,120 @@ mod tests {
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_patch_file_replaces_single_hunk_after_approval_and_current_hash() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\n")
+            .expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README hunk","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .unwrap()
+            .expect("task");
+        let proposal_id = "patch_hunk_proposal";
+        append_generated_patch_hunk_proposal(
+            &store,
+            &record,
+            proposal_id,
+            "README.md",
+            "beta\n",
+            "delta\n",
+        );
+
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"patch hunk apply test"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}"}}}}"#
+        ));
+        let preflight_result = preflight.result.expect("preflight result");
+        let expected_hash = preflight_result["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "proposal.apply",
+            "params": {
+                "run_id": run_id,
+                "proposal_id": proposal_id,
+                "expected_target_sha256": expected_hash,
+                "patch_old_text": "beta\n",
+                "patch_new_text": "delta\n",
+                "authorize": true,
+            }
+        });
+        let apply = parse_line(&apply_request.to_string());
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["proposal"]["operation"], "patch_file");
+        assert_eq!(apply_result["proposal"]["hunk_count"], 1);
+        assert!(apply_result["proposal"]["hunk_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Applied");
+        assert_eq!(apply_result["apply_result"]["applied"], true);
+        assert_eq!(
+            apply_result["apply_result"]["atomic_replacement_completed"],
+            true
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\ndelta\ngamma\n"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let serialized_events =
+            serde_json::to_string(&events.result.expect("events result")["events"]).unwrap();
+        assert!(!serialized_events.contains("beta\n"));
+        assert!(!serialized_events.contains("delta\n"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_file_proposal_rejects_duplicate_context_without_writing() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\nbeta\ngamma\n")
+            .expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        let proposal = build_workspace_patch_proposal_from_input(
+            &store,
+            "README.md",
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "old_text": "beta\n",
+                "new_text": "delta\n",
+            }),
+        );
+
+        assert_eq!(proposal.validation_status, "Invalid");
+        assert_eq!(
+            proposal.validation_reason,
+            Some("Patch old_text appears more than once in the current target.")
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\nbeta\ngamma\n"
+        );
     }
 
     #[test]

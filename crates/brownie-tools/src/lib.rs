@@ -1166,6 +1166,7 @@ pub enum WorkspacePatchOperation {
     ReplaceFile,
     CreateFile,
     DeleteFile,
+    PatchFile,
 }
 
 impl WorkspacePatchOperation {
@@ -1174,6 +1175,7 @@ impl WorkspacePatchOperation {
             Self::ReplaceFile => "replace_file",
             Self::CreateFile => "create_file",
             Self::DeleteFile => "delete_file",
+            Self::PatchFile => "patch_file",
         }
     }
 }
@@ -1206,14 +1208,40 @@ pub fn preflight_workspace_write_input_with_limit(
     let Some(operation) = operation.as_str() else {
         return Err("workspace.write input.operation must be a string.");
     };
-    if operation != "replace_file" && operation != "create_file" && operation != "delete_file" {
-        return Err(
-            "workspace.write input.operation must be replace_file, create_file, or delete_file.",
-        );
+    if operation != "replace_file"
+        && operation != "create_file"
+        && operation != "delete_file"
+        && operation != "patch_file"
+    {
+        return Err("workspace.write input.operation must be replace_file, create_file, delete_file, or patch_file.");
     }
     if operation == "delete_file" {
         if object.contains_key("content") {
             return Err("workspace.write input.content must be omitted for delete_file.");
+        }
+        return Ok(());
+    }
+    if operation == "patch_file" {
+        if object.contains_key("content") {
+            return Err("workspace.write input.content must be omitted for patch_file.");
+        }
+        let Some(old_text) = object.get("old_text") else {
+            return Err("workspace.write input.old_text is required for patch_file.");
+        };
+        let Some(old_text) = old_text.as_str() else {
+            return Err("workspace.write input.old_text must be a string.");
+        };
+        let Some(new_text) = object.get("new_text") else {
+            return Err("workspace.write input.new_text is required for patch_file.");
+        };
+        let Some(new_text) = new_text.as_str() else {
+            return Err("workspace.write input.new_text must be a string.");
+        };
+        if old_text.is_empty() {
+            return Err("workspace.write input.old_text must not be empty for patch_file.");
+        }
+        if old_text.chars().count() + new_text.chars().count() > max_content_chars {
+            return Err("workspace.write patch hunk exceeds parser length limit.");
         }
         return Ok(());
     }
