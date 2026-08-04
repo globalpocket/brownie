@@ -811,6 +811,10 @@ pub struct ProposalApplyParams {
     pub expected_target_sha256: Option<String>,
     pub expected_target_absent: Option<bool>,
     pub replacement_content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_new_text: Option<String>,
     pub authorize: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub transaction_items: Option<Vec<ProposalApplyTransactionItem>>,
@@ -1639,6 +1643,10 @@ pub struct WorkspacePatchProposalSummary {
     pub diff_preview: Option<String>,
     pub diff_truncated: bool,
     pub diff_redacted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hunk_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hunk_fingerprint: Option<String>,
     pub approval_status: String,
     pub approval_reason: Option<String>,
     pub approval_reason_redacted: bool,

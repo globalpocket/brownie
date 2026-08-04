@@ -1148,6 +1148,8 @@ export interface WorkspacePatchProposalSummary {
   diff_preview: string | null;
   diff_truncated: boolean;
   diff_redacted: boolean;
+  hunk_count?: number | null;
+  hunk_fingerprint?: string | null;
   approval_status: string;
   approval_reason: string | null;
   approved_at: string | null;
@@ -3106,6 +3108,8 @@ export function isWorkspacePatchProposalSummary(value: unknown): value is Worksp
     (typeof value.diff_preview === 'string' || value.diff_preview === null) &&
     typeof value.diff_truncated === 'boolean' &&
     typeof value.diff_redacted === 'boolean' &&
+    (value.hunk_count === undefined || value.hunk_count === null || isNonNegativeInteger(value.hunk_count)) &&
+    (value.hunk_fingerprint === undefined || value.hunk_fingerprint === null || typeof value.hunk_fingerprint === 'string') &&
     (value.approval_status === 'Pending' || value.approval_status === 'Approved' || value.approval_status === 'Rejected' || value.approval_status === 'Superseded') &&
     (typeof value.approval_reason === 'string' || value.approval_reason === null) &&
     typeof value.approval_reason_redacted === 'boolean' &&

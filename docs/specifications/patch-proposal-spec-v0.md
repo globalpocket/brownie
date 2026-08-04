@@ -5,7 +5,7 @@ The runtime must not modify workspace files, apply patches, invoke git, or execu
 
 ## Accepted intent shape
 
-Only `workspace.write` requests with `operation: "replace_file"`, `operation: "create_file"`, or `operation: "delete_file"` are accepted. The input must include a workspace-relative `path`. `replace_file` and `create_file` require string `content`; `delete_file` must omit `content`.
+Only `workspace.write` requests with `operation: "replace_file"`, `operation: "create_file"`, `operation: "delete_file"`, or `operation: "patch_file"` are accepted. The input must include a workspace-relative `path`. `replace_file` and `create_file` require string `content`; `delete_file` must omit `content`; `patch_file` must omit `content` and include request-only string `old_text` and `new_text` fields for one bounded hunk.
 
 Rejected paths include empty paths, absolute paths, parent traversal, and protected components: `.git`, `.brownie`, `node_modules`, and `target`.
 
@@ -60,11 +60,15 @@ For `create_file`, validation requires a safe workspace-relative path, no protec
 
 For `delete_file`, validation requires a safe workspace-relative path, no protected path components, an existing regular non-symlink target file inside the workspace, UTF-8 target content, configured diff preview compliance, no proposed content, and no sensitive-like findings in existing target content. Missing targets are `Invalid` with `target file does not exist`; directories are `Invalid` with `target path is not a file`; symlinks are `Invalid` with `target path is a symlink`.
 
+For `patch_file`, validation requires a safe workspace-relative path, no protected path components, an existing regular non-symlink UTF-8 target file inside the workspace, no proposed `content`, request-only non-empty `old_text`, request-only `new_text`, bounded combined hunk size, no sensitive-like findings in the hunk or target, and exactly one current target match for `old_text`. Proposal evidence records `hunk_count = 1`, a SHA-256 `hunk_fingerprint`, a bounded metadata preview, and an elided synthetic diff preview; it must not persist raw hunk text or raw target content.
+
 Valid replacements get a deterministic synthetic unified diff preview generated from existing file text and proposed text. The preview is capped by the runtime diff preview cap; only the capped preview may be stored in the ledger or returned by inspection. `diff_truncated` reports cap truncation and `diff_redacted` reports sensitive-content suppression. Full proposed content and raw full diffs are never persisted.
 
 Valid creates get a deterministic synthetic unified diff preview generated from an empty old file and the proposed text. Full proposed content and raw full diffs are never persisted.
 
 Valid deletes get a deterministic synthetic unified diff preview generated from existing file text to an empty replacement. Full file content and raw full diffs are never persisted.
+
+Valid patch-file proposals get an elided synthetic diff preview that records the path and old/new hunk character counts, not raw hunk text. Raw hunk text is request-only and is never persisted.
 
 `WorkspacePatchProposed` payloads include validation and diff-preview metadata: `validation_status`, `validation_reason`, `diff_preview`, `diff_truncated`, and `diff_redacted`. Forbidden fields remain `content`, `raw_content`, `full_content`, `patch`, and `raw_input`.
 
@@ -141,6 +145,16 @@ The delete scope is one file per apply, workspace-relative paths only, existing 
 Before deleting, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, target UTF-8 and sensitive-like content checks, replacement-content omission checks, and deterministic diff matching against the approved deletion proposal metadata. Full target content is not persisted in the apply-result ledger payload and is not returned by the apply RPC response.
 
 On success, the runtime removes the target file, syncs the parent directory when possible, verifies post-delete absence, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `pre_write_target_sha256`, `pre_write_target_exists`, `atomic_delete_completed`, `post_delete_target_exists`, and check metadata. On denial or failure, it does not consume authorization before verified success, preserves the file whenever a precondition fails, and records bounded failure metadata for post-delete verification failures.
+
+## M25.1 controlled patch-file apply
+
+`proposal.apply` also accepts an existing `Approved` and `Valid` `patch_file` proposal, caller-provided `expected_target_sha256`, request-only `patch_old_text`, request-only `patch_new_text`, explicit `authorize = true`, and no `replacement_content`. It reuses the same side-effecting Rust runtime RPC as other apply operations; no additional apply endpoint, readiness wrapper, report, digest, preview, or history surface is introduced.
+
+The patch scope is one hunk and one file per apply, workspace-relative paths only, existing regular UTF-8 targets only, protected paths denied, symlinks denied, parent traversal denied, expected target hash required, approved proposal required, and approval must be current and unconsumed. It does not create files, delete files, create parent directories, mutate directories, rename paths, run multi-file transactions, execute shell/git/tests, access network resources, control services, or apply automatically without explicit authorization.
+
+Before writing, the runtime performs latest preflight validation, expected target hash verification, path and file-kind validation, symlink rejection, target UTF-8 and sensitive-like content checks, replacement-content omission checks, approved hunk fingerprint matching, and exact single-context matching against the current target. Missing, duplicate, stale, sensitive, hash-mismatched, unauthorized, permission-denied, or metadata-mismatched patch attempts do not mutate the workspace or consume authorization.
+
+On success, the runtime constructs the patched content in memory, writes it through the existing temporary sibling and atomic replacement path, verifies post-write SHA-256, records `WorkspacePatchApplyResultRecorded`, marks authorization consumed, and returns a bounded `WorkspacePatchApplyResultSummary` with `operation`, `pre_write_target_sha256`, `pre_write_target_exists`, `atomic_replacement_completed`, `post_write_sha256`, and check metadata. Proposal and apply results must not store or return raw hunk text, raw file content, raw diffs, raw request bodies, canonical paths, absolute paths, stdout, stderr, environment values, or secrets.
 
 ## M14.2 controlled transaction recovery apply
 
