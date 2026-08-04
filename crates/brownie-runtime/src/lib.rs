@@ -14554,6 +14554,22 @@ fn workspace_path_currently_absent(store: &BrownieStore, path: &str) -> Result<(
         .workspace_root()
         .canonicalize()
         .map_err(|_| "Workspace root is not accessible.")?;
+    let parent_relative = relative_path.parent().unwrap_or_else(|| Path::new(""));
+    let parent = root.join(parent_relative);
+    let parent_metadata = std::fs::symlink_metadata(&parent)
+        .map_err(|_| "Source parent directory does not exist.")?;
+    if parent_metadata.file_type().is_symlink() {
+        return Err("Source parent directory is a symlink.");
+    }
+    if !parent_metadata.is_dir() {
+        return Err("Source parent path is not a directory.");
+    }
+    let canonical_parent = parent
+        .canonicalize()
+        .map_err(|_| "Source parent directory is not accessible.")?;
+    if !canonical_parent.starts_with(&root) {
+        return Err("Source parent escapes workspace root.");
+    }
     let target = root.join(relative_path);
     match std::fs::symlink_metadata(&target) {
         Ok(_) => Err("Source target exists."),
