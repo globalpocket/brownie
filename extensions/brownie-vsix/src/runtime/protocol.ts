@@ -1286,10 +1286,12 @@ export interface WorkspacePatchApplyTransactionItemResultSummary {
   pre_write_target_sha256: string | null;
   pre_write_target_exists: boolean | null;
   post_write_sha256: string | null;
+  post_delete_target_exists?: boolean | null;
   content_chars: number;
   content_bytes: number;
   atomic_replacement_completed: boolean;
   atomic_create_completed: boolean;
+  atomic_delete_completed?: boolean | null;
   applied: boolean;
   temp_file_cleaned: boolean;
 }
@@ -2803,7 +2805,7 @@ export function isWorkspacePatchApplyResultCheckSummary(value: unknown): value i
 }
 
 export function isWorkspacePatchApplyTransactionItemResultSummary(value: unknown): value is WorkspacePatchApplyTransactionItemResultSummary {
-  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.apply_status === 'string' && typeof value.apply_reason === 'string' && typeof value.operation === 'string' && typeof value.path === 'string' && (typeof value.expected_target_sha256 === 'string' || value.expected_target_sha256 === null) && (typeof value.expected_target_absent === 'boolean' || value.expected_target_absent === null) && (typeof value.pre_write_target_sha256 === 'string' || value.pre_write_target_sha256 === null) && (typeof value.pre_write_target_exists === 'boolean' || value.pre_write_target_exists === null) && (typeof value.post_write_sha256 === 'string' || value.post_write_sha256 === null) && isNonNegativeInteger(value.content_chars) && isNonNegativeInteger(value.content_bytes) && typeof value.atomic_replacement_completed === 'boolean' && typeof value.atomic_create_completed === 'boolean' && typeof value.applied === 'boolean' && typeof value.temp_file_cleaned === 'boolean' && hasNoForbiddenRawFields(value);
+  return isRecord(value) && typeof value.proposal_id === 'string' && typeof value.apply_status === 'string' && typeof value.apply_reason === 'string' && typeof value.operation === 'string' && typeof value.path === 'string' && (typeof value.expected_target_sha256 === 'string' || value.expected_target_sha256 === null) && (typeof value.expected_target_absent === 'boolean' || value.expected_target_absent === null) && (typeof value.pre_write_target_sha256 === 'string' || value.pre_write_target_sha256 === null) && (typeof value.pre_write_target_exists === 'boolean' || value.pre_write_target_exists === null) && (typeof value.post_write_sha256 === 'string' || value.post_write_sha256 === null) && (value.post_delete_target_exists === undefined || typeof value.post_delete_target_exists === 'boolean' || value.post_delete_target_exists === null) && isNonNegativeInteger(value.content_chars) && isNonNegativeInteger(value.content_bytes) && typeof value.atomic_replacement_completed === 'boolean' && typeof value.atomic_create_completed === 'boolean' && (value.atomic_delete_completed === undefined || typeof value.atomic_delete_completed === 'boolean' || value.atomic_delete_completed === null) && typeof value.applied === 'boolean' && typeof value.temp_file_cleaned === 'boolean' && hasNoForbiddenRawFields(value);
 }
 
 export function isWorkspacePatchTransactionRecoverySourceSummary(value: unknown): value is WorkspacePatchTransactionRecoverySourceSummary {

@@ -1759,10 +1759,14 @@ pub struct WorkspacePatchApplyTransactionItemResultSummary {
     pub pre_write_target_sha256: Option<String>,
     pub pre_write_target_exists: Option<bool>,
     pub post_write_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub post_delete_target_exists: Option<bool>,
     pub content_chars: usize,
     pub content_bytes: u64,
     pub atomic_replacement_completed: bool,
     pub atomic_create_completed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub atomic_delete_completed: Option<bool>,
     pub applied: bool,
     pub temp_file_cleaned: bool,
 }
