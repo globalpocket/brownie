@@ -136,6 +136,17 @@ M6.3 extends the same `proposal.apply` authority to one approved `delete_file` p
 
 M25.1 extends the same Rust-owned apply authority to one approved `patch_file` proposal for an existing regular UTF-8 workspace file. The proposal is created from request-only `old_text` and `new_text` hunk fields, requires the old text to match exactly once during proposal validation, records only `hunk_count` and a SHA-256 hunk fingerprint, and omits raw hunk text from ledger evidence. Apply revalidates the approved fingerprint, current approval, expected target SHA-256, latest preflight, safe path, non-symlink file kind, UTF-8 content, and exact single-hunk context before using the existing temporary sibling and atomic replacement path with post-write SHA-256 verification.
 
+M26.1 extends that patch authority to one approved multi-hunk `patch_file`
+proposal for one existing regular UTF-8 workspace file. The proposal accepts a
+request-only `hunks` list of two to five old/new text hunks, requires every old
+text to match exactly once, rejects overlapping hunk ranges, records only
+`hunk_count` and an aggregate SHA-256 hunk fingerprint, and keeps raw hunk text
+out of ledger evidence. Apply requires caller-provided `patch_hunks`, revalidates
+the aggregate fingerprint, current approval, expected target SHA-256, latest
+preflight, safe path, non-symlink file kind, UTF-8 content, and all exact
+non-overlapping hunk contexts before constructing one patched file body in memory
+and using the existing temporary sibling and atomic replacement path.
+
 Controlled apply must not run shell or git commands, use network access, create parent directories, overwrite existing targets during create, remove files outside the approved `delete_file` path, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file or absent target whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic mutation and verification.
 
 M14.1 adds the first bounded multi-file mutation path to the same

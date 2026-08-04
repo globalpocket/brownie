@@ -1,5 +1,5 @@
 import { RuntimeJsonRpcError, RuntimeProtocolError } from './errors';
-import type { ProposalApplyResult } from './protocol';
+import type { ProposalApplyResult, ProposalPatchHunk } from './protocol';
 import type { CodebaseIndexSelectionReadResult, TaskRunParams } from './protocol';
 import type { HeadlessContinueOnceParams, HeadlessContinueOnceResult } from './protocol';
 import type { HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunDriveParams, HeadlessRunDriveResult } from './protocol';
@@ -282,6 +282,16 @@ export class RuntimeClient {
 
     if (!isProposalApplyResult(result)) {
       throw new RuntimeProtocolError('proposal.apply returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async applyPatchFileProposal(runId: string, proposalId: string, expectedTargetSha256: string, patchHunks: ProposalPatchHunk[], authorize = true): Promise<ProposalApplyResult> {
+    const result = await this.call<ProposalApplyResult>('proposal.apply', { run_id: runId, proposal_id: proposalId, expected_target_sha256: expectedTargetSha256, patch_hunks: patchHunks, authorize });
+
+    if (!isProposalApplyResult(result)) {
+      throw new RuntimeProtocolError('proposal.apply returned an invalid patch_file result');
     }
 
     return result;
