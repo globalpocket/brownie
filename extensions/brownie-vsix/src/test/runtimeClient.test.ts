@@ -1123,6 +1123,28 @@ describe('protocol validation', () => {
       timestamp: '2026-06-26T00:00:00Z',
       payload: verifierPayload,
     })).toBe(true);
+    const cargoTestPayload = {
+      ...verifierPayload,
+      tool_id: 'verification.cargo_test',
+      check_id: 'cargo_test',
+      test_code_executed: true,
+    };
+    expect(isLedgerEventSummary({
+      event_id: 'event_test',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: cargoTestPayload,
+    })).toBe(true);
+    expect(isLedgerEventSummary({
+      event_id: 'event_test_raw',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionCompleted',
+      timestamp: '2026-06-26T00:00:00Z',
+      payload: { ...cargoTestPayload, stdout: 'raw test output' },
+    })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_3',
       task_id: 'task_1',

@@ -364,6 +364,14 @@ impl FakeLlm {
         }
         if contains_any(
             &request_signal,
+            &["cargo test", "test suite", "run tests", "verify tests"],
+        ) {
+            requests.push((
+                "verification.cargo_test",
+                "Need to run the controlled cargo test verifier.",
+            ));
+        } else if contains_any(
+            &request_signal,
             &[
                 "cargo check",
                 "typecheck",
@@ -828,6 +836,21 @@ mod tests {
         let content = FakeLlm::complete(&request).content;
         assert!(content.contains("verification.cargo_check"));
         assert!(!content.contains("verification.cargo_fmt_check"));
+        assert!(!content.contains("process.exec"));
+    }
+
+    #[test]
+    fn fake_llm_requests_controlled_cargo_test_verifier_for_test_goals() {
+        let request = LlmRequest {
+            model: FAKE_LLM_MODEL.into(),
+            messages: vec![LlmMessage {
+                role: "user".into(),
+                content: "Please run tests for the Rust workspace.".into(),
+            }],
+        };
+        let content = FakeLlm::complete(&request).content;
+        assert!(content.contains("verification.cargo_test"));
+        assert!(!content.contains("verification.cargo_check"));
         assert!(!content.contains("process.exec"));
     }
 

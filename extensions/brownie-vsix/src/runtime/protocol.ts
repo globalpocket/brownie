@@ -5384,6 +5384,7 @@ function isSanitizedLedgerPayload(value: unknown): boolean {
     'cargo_dependency_fetch_offline',
     'os_network_isolated',
     'compile_time_code_sandboxed',
+    'test_code_executed',
     'trusted_workspace_required',
     'process_tree_timeout_supported',
     'process_tree_kill_attempted',

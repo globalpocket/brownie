@@ -232,7 +232,7 @@ use brownie_tools::{
     DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS, DEFAULT_PROPOSAL_PREVIEW_CHARS,
     MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
     SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
-    WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -26526,6 +26526,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "cargo_dependency_fetch_offline",
         "os_network_isolated",
         "compile_time_code_sandboxed",
+        "test_code_executed",
         "trusted_workspace_required",
         "process_tree_timeout_supported",
         "process_tree_kill_attempted",
@@ -27733,7 +27734,9 @@ fn event_matches_requirement(event: &LedgerEvent, requirement_fingerprint: Optio
 fn is_verification_tool_id(tool_id: &str) -> bool {
     matches!(
         tool_id,
-        VERIFICATION_CARGO_FMT_CHECK_TOOL_ID | VERIFICATION_CARGO_CHECK_TOOL_ID
+        VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
+            | VERIFICATION_CARGO_CHECK_TOOL_ID
+            | VERIFICATION_CARGO_TEST_TOOL_ID
     )
 }
 
@@ -28005,6 +28008,7 @@ fn append_verification_recovery_retry_tool_execution(
     let check_id = match definition.tool_id.as_str() {
         VERIFICATION_CARGO_FMT_CHECK_TOOL_ID => "cargo_fmt_check",
         VERIFICATION_CARGO_CHECK_TOOL_ID => "cargo_check",
+        VERIFICATION_CARGO_TEST_TOOL_ID => "cargo_test",
         _ => anyhow::bail!("unsupported verification retry tool id: {tool_id}"),
     };
     let input = json!({
@@ -30203,6 +30207,7 @@ fn handle_approved_workspace_intents(
             WORKSPACE_READ_TOOL_ID
                 | VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
                 | VERIFICATION_CARGO_CHECK_TOOL_ID
+                | VERIFICATION_CARGO_TEST_TOOL_ID
         );
         if !decision.allowed {
             if controlled_execution_tool {
@@ -33097,6 +33102,7 @@ fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutionResult) ->
         "cargo_dependency_fetch_offline",
         "os_network_isolated",
         "compile_time_code_sandboxed",
+        "test_code_executed",
         "trusted_workspace_required",
         "process_tree_timeout_supported",
         "process_tree_kill_attempted",
@@ -35752,6 +35758,20 @@ mod tests {
         assert!(output.get("network_disabled").is_none());
     }
 
+    fn assert_cargo_test_honest_safety_metadata(output: &Value) {
+        assert_eq!(output["target_dir_isolated"], true);
+        assert_eq!(output["cargo_dependency_fetch_offline"], true);
+        assert_eq!(output["os_network_isolated"], false);
+        assert_eq!(output["compile_time_code_sandboxed"], false);
+        assert_eq!(output["test_code_executed"], true);
+        assert_eq!(output["trusted_workspace_required"], true);
+        assert_eq!(output["process_tree_timeout_supported"], cfg!(unix));
+        assert_eq!(output["process_tree_kill_attempted"], false);
+        assert_eq!(output["process_tree_kill_succeeded"], false);
+        assert_eq!(output["process_tree_kill_reason"], "not_timed_out");
+        assert!(output.get("network_disabled").is_none());
+    }
+
     #[test]
     fn tool_execute_controlled_cargo_check_returns_honest_safety_metadata() {
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -35799,6 +35819,44 @@ mod tests {
     }
 
     #[test]
+    fn tool_execute_controlled_cargo_test_returns_honest_safety_metadata() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "runtime_test_pass",
+            "pub fn ok() -> i32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn passes() {\n        assert_eq!(super::ok(), 1);\n    }\n}\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"verification.cargo_test","input":{}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Completed");
+        assert_eq!(result["tool_id"], "verification.cargo_test");
+        assert_eq!(result["output"]["check_id"], "cargo_test");
+        assert_eq!(result["output"]["verification_status"], "Passed");
+        assert_eq!(result["output"]["process_launched"], true);
+        assert_eq!(result["output"]["output_redacted"], true);
+        assert_cargo_test_honest_safety_metadata(&result["output"]);
+        assert_eq!(result["output"]["cleanup_succeeded"], true);
+        assert!(!temp.path().join("target").exists());
+        let serialized = result.to_string();
+        assert!(serialized.contains("test_code_executed"));
+        assert!(!serialized.contains("passes"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+        assert!(!serialized.contains("command"));
+        assert!(!serialized.contains("CARGO_TARGET_DIR"));
+        assert!(!serialized.contains("CARGO_NET_OFFLINE"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn tool_execute_rejects_verification_command_overrides_without_launch() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -35833,6 +35891,25 @@ mod tests {
         assert!(!serialized.contains("cargo test"));
         assert!(!serialized.contains("RUSTFLAGS"));
         assert!(!serialized.contains("runtime"));
+        assert!(!serialized.contains("stdout"));
+        assert!(!serialized.contains("stderr"));
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"tool.execute","params":{"mode_id":"verifier","tool_id":"verification.cargo_test","input":{"command":"cargo test","env":{"RUSTFLAGS":"-Awarnings"},"package":"runtime","filter":"unit"}}}"#,
+        );
+
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["status"], "Failed");
+        assert_eq!(result["output"]["check_id"], "cargo_test");
+        assert_eq!(result["output"]["verification_status"], "Rejected");
+        assert_eq!(result["output"]["process_launched"], false);
+        assert_eq!(result["output"]["test_code_executed"], false);
+        let serialized = result.to_string();
+        assert!(!serialized.contains("cargo test"));
+        assert!(!serialized.contains("RUSTFLAGS"));
+        assert!(!serialized.contains("runtime"));
+        assert!(!serialized.contains("unit"));
         assert!(!serialized.contains("stdout"));
         assert!(!serialized.contains("stderr"));
 
@@ -36191,6 +36268,98 @@ mod tests {
         assert!(!sanitized.contains("network_disabled"));
         assert!(sanitized.contains("cleanup_succeeded"));
         assert!(!sanitized.contains("pub fn ok"));
+        assert!(!sanitized.contains("stdout"));
+        assert!(!sanitized.contains("stderr"));
+        assert!(!sanitized.contains("CARGO_TARGET_DIR"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_executes_controlled_cargo_test_and_records_bounded_metadata() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "task_test_pass",
+            "pub fn ok() -> i32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn passes() {\n        assert_eq!(super::ok(), 1);\n    }\n}\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run tests for the Rust workspace","mode_id":"verifier"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Completed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Passed"
+        );
+        assert_eq!(
+            run_result["verification_completion_gate"]["required_verifier_tool_ids"][0],
+            "verification.cargo_test"
+        );
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        let verifier_event = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("verification.cargo_test")
+            })
+            .expect("verification completion event");
+        let payload = verifier_event.payload.as_ref().expect("payload");
+        assert_eq!(payload["check_id"], "cargo_test");
+        assert_eq!(payload["verification_status"], "Passed");
+        assert_eq!(payload["process_launched"], true);
+        assert_eq!(payload["output_redacted"], true);
+        assert_cargo_test_honest_safety_metadata(payload);
+        assert_eq!(payload["cleanup_succeeded"], true);
+        assert!(payload.get("standard_output_bytes").is_some());
+        assert!(payload.get("standard_error_bytes").is_some());
+        assert!(!temp.path().join("target").exists());
+        assert!(!ledger.contains("passes"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+        assert!(!ledger.contains("command"));
+        assert!(!ledger.contains("CARGO_TARGET_DIR"));
+        assert!(!ledger.contains("CARGO_NET_OFFLINE"));
+
+        let events_response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let sanitized = events_response.result.expect("events result").to_string();
+        assert!(sanitized.contains("verification_completion_gate_status"));
+        assert!(sanitized.contains("verification.cargo_test"));
+        assert!(sanitized.contains("test_code_executed"));
+        assert!(!sanitized.contains("passes"));
         assert!(!sanitized.contains("stdout"));
         assert!(!sanitized.contains("stderr"));
         assert!(!sanitized.contains("CARGO_TARGET_DIR"));
@@ -59802,7 +59971,7 @@ mod tests {
             .as_array()
             .expect("tools")
             .clone();
-        assert_eq!(tools.len(), 10);
+        assert_eq!(tools.len(), 11);
         assert!(tools.iter().any(|tool| tool["tool_id"] == "workspace.read"));
         assert!(tools
             .iter()
@@ -59813,6 +59982,9 @@ mod tests {
         assert!(tools
             .iter()
             .any(|tool| tool["tool_id"] == "verification.cargo_check"));
+        assert!(tools
+            .iter()
+            .any(|tool| tool["tool_id"] == "verification.cargo_test"));
     }
 
     #[test]
