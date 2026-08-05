@@ -392,13 +392,19 @@ impl FakeLlm {
                 "Orchestrator mode may coordinate subtasks.",
             ));
         }
+        let patch_file_requested =
+            contains_any(&request_signal, &["patch_file", "patch file", "patch hunk"]);
         let tool_requests = requests
             .into_iter()
             .map(|(tool_id, reason)| {
                 if tool_id == "workspace.read" {
                     serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md" } })
                 } else if tool_id == "workspace.write" {
-                    serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md", "operation": "replace_file", "content": "new README content" } })
+                    if patch_file_requested {
+                        serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md", "operation": "patch_file", "old_text": "beta\n", "new_text": "delta\n" } })
+                    } else {
+                        serde_json::json!({ "tool_id": tool_id, "reason": reason, "input": { "path": "README.md", "operation": "replace_file", "content": "new README content" } })
+                    }
                 } else {
                     serde_json::json!({ "tool_id": tool_id, "reason": reason })
                 }
