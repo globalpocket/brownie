@@ -38,49 +38,7 @@
       "runtime_behavior_change": "The runtime now accepts patch_apply_recovery_source and patch_apply_recovery_run_target envelopes in headless.continue_once, rejects stale/conflicting/unauthorized inputs, and returns bounded replay-safe routes.",
       "headless_autonomous_contribution": "A headless controller can recover from failed patch_file apply evidence through admit -> run -> review route decisions using only runtime-owned continuation state.",
       "milestone_progress": "Completes the patch apply recovery continuation boundary needed before M27 closeout or a next phase for recovery proposal authorization/apply can be considered."
-    },
-    "questions": [
-      {
-        "id": "strategic_capabilities",
-        "question": "Which strategic capabilities does this phase advance?"
-      },
-      {
-        "id": "new_capability",
-        "question": "What new user-visible, operator-visible, or runtime capability does it add?"
-      },
-      {
-        "id": "why_existing_functionality_is_insufficient",
-        "question": "Why can existing functionality not substitute for this work?"
-      },
-      {
-        "id": "product_gap_if_skipped",
-        "question": "What concrete product gap remains if this is not implemented?"
-      },
-      {
-        "id": "non_duplicative",
-        "question": "Is this semantically distinct from the previous three phases?"
-      },
-      {
-        "id": "no_new_rpc",
-        "question": "Can this be done without adding a new RPC?"
-      },
-      {
-        "id": "no_new_summary",
-        "question": "Can this be done without adding a new summary surface?"
-      },
-      {
-        "id": "runtime_behavior_change",
-        "question": "What runtime or development-control behavior actually changes?"
-      },
-      {
-        "id": "headless_autonomous_contribution",
-        "question": "How does this help headless autonomous development?"
-      },
-      {
-        "id": "milestone_progress",
-        "question": "How does this move the milestone toward completion?"
-      }
-    ]
+    }
   },
   "review_value_gate": {
     "required": true,
@@ -109,7 +67,6 @@
       "docs/specifications/agent-loop-spec-v0.md",
       "docs/specifications/patch-proposal-spec-v0.md",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m27.1.1.json",
       "docs/architecture/phase-value-manifest.m27.2.json"
     ],
     "required_checks": [

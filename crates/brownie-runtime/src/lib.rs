@@ -38,10 +38,10 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PatchApplyRecoveryAdmission, PatchApplyRecoveryProvenance, PatchApplyRecoverySource,
-    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
+    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -8003,6 +8003,20 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: verification_recovery_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.patch_apply_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_source cannot be combined with max_steps greater than 1",
+        );
+    }
+    if params.patch_apply_recovery_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_apply_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8040,6 +8054,8 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.verification_recovery_run_target.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8053,6 +8069,8 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.verification_recovery_run_target.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8069,6 +8087,45 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: verification_recovery_source and verification_recovery_run_target cannot be combined",
+        );
+    }
+    if params.patch_apply_recovery_source.is_some()
+        && params.patch_apply_recovery_run_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_source and patch_apply_recovery_run_target cannot be combined",
+        );
+    }
+    if params.patch_apply_recovery_source.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_source cannot be combined with other recovery fields",
+        );
+    }
+    if params.patch_apply_recovery_run_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_run_target cannot be combined with other recovery fields",
         );
     }
     if params.verification_recovery_apply_target.is_some()
@@ -8138,6 +8195,8 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
             || params.verification_recovery_run_target.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8226,6 +8285,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             params,
         );
     }
+    if params.patch_apply_recovery_source.is_some() {
+        return handle_headless_continue_patch_apply_recovery_admission(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
     if params.verification_recovery_retry_source.is_some() {
         return handle_headless_continue_verification_recovery_retry_admission(
             id,
@@ -8244,6 +8311,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.verification_recovery_run_target.is_some() {
         return handle_headless_continue_verification_recovery_run(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.patch_apply_recovery_run_target.is_some() {
+        return handle_headless_continue_patch_apply_recovery_run(
             id,
             &store,
             &progress_overview,
@@ -9458,6 +9533,167 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
     )
 }
 
+fn handle_headless_continue_patch_apply_recovery_admission(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(source) = params.patch_apply_recovery_source else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing patch apply recovery source",
+        );
+    };
+    let goal = params
+        .patch_apply_recovery_goal
+        .unwrap_or_else(|| "Recover failed patch apply".to_string());
+    if goal.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_goal must not be empty",
+        );
+    }
+    let mode_id = params
+        .patch_apply_recovery_mode_id
+        .or_else(|| Some("implementer".to_string()));
+    let start_response = handle_task_start(
+        id.clone(),
+        Some(json!({
+            "goal": goal,
+            "mode_id": mode_id,
+            "patch_apply_recovery_source": source,
+        })),
+    );
+    let Some(start_value) = start_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: start_response.error,
+        };
+    };
+    let start_result: TaskStartResult = match serde_json::from_value(start_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let Some(admission) = start_result.patch_apply_recovery_admission.clone() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing patch apply recovery admission",
+        );
+    };
+    let recovery_record = match store.tasks().get_task(&admission.recovery_task_id) {
+        Ok(Some(record)) if record.run_id == admission.recovery_run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: patch apply recovery admission task/run mismatch",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: patch apply recovery admission task not found",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &recovery_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": recovery_record.task_id.clone(),
+            "selected_run_id": recovery_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_patch_apply_recovery": true,
+            "source_run_id": admission.source_run_id.clone(),
+            "source_proposal_id": admission.source_proposal_id.clone(),
+            "source_apply_id": admission.source_apply_id.clone(),
+            "recovery_task_id": admission.recovery_task_id.clone(),
+            "recovery_run_id": admission.recovery_run_id.clone(),
+            "source_apply_fingerprint": admission.source_apply_fingerprint.clone(),
+            "failure_fingerprint": admission.failure_fingerprint.clone(),
+            "next_action": "run_recovery_task_explicitly",
+            "reason": "Headless continue-once admitted one patch apply recovery task from bounded failed patch apply evidence."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: recovery_record.task_id.clone(),
+                selected_run_id: recovery_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(&recovery_record, None, &post_progress_overview);
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskInProgress,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(recovery_record.task_id),
+            selected_run_id: Some(recovery_record.run_id),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: admission.replayed,
+            task_run_result: None,
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
 fn handle_headless_continue_llm_provider_failure_retry_run(
     id: Value,
     store: &BrownieStore,
@@ -9545,6 +9781,162 @@ fn handle_headless_continue_llm_provider_failure_retry_run(
             "failure_fingerprint": target.expected_failure_fingerprint.clone(),
             "next_action": "inspect_progress_overview",
             "reason": "Headless continue-once ran one targeted LLM provider retry task from bounded route evidence."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: post_run_record.task_id.clone(),
+                selected_run_id: post_run_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &post_run_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(task_run_result.task_id.clone()),
+            selected_run_id: Some(task_run_result.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: Some(task_run_result),
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn handle_headless_continue_patch_apply_recovery_run(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.patch_apply_recovery_run_target.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing patch apply recovery run target",
+        );
+    };
+    let selected_record = match patch_apply_recovery_record_for_headless_run_target(store, target) {
+        Ok(record) => record,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+
+    let task_run_response = handle_task_run(
+        id.clone(),
+        Some(json!({
+            "task_id": selected_record.task_id.clone(),
+        })),
+    );
+    let Some(task_run_value) = task_run_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: task_run_response.error,
+        };
+    };
+    let task_run_result: TaskRunResult = match serde_json::from_value(task_run_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_run_record = match store.tasks().get_task(&selected_record.task_id) {
+        Ok(Some(record)) if record.run_id == selected_record.run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: patch apply recovery run task/run mismatch after execution",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: patch apply recovery run task not found after execution",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &post_run_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": post_run_record.task_id.clone(),
+            "selected_run_id": post_run_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_patch_apply_recovery_run": true,
+            "source_run_id": target.source_run_id.clone(),
+            "source_proposal_id": target.source_proposal_id.clone(),
+            "source_apply_id": target.source_apply_id.clone(),
+            "recovery_task_id": target.recovery_task_id.clone(),
+            "recovery_run_id": target.recovery_run_id.clone(),
+            "source_apply_fingerprint": target.expected_source_apply_fingerprint.clone(),
+            "failure_fingerprint": target.expected_failure_fingerprint.clone(),
+            "next_action": "review_and_authorize_recovery_proposal",
+            "reason": "Headless continue-once ran one targeted patch apply recovery task from bounded route evidence."
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -10685,6 +11077,30 @@ fn task_run_result_for_headless_replay(
         Err(error) => return Err(error.to_string()),
     }
 
+    match patch_apply_recovery_repair_outcome_for_replay(store, record) {
+        Ok(Some((agent_loop, patch_apply_recovery_repair))) => {
+            return Ok(Some(TaskRunResult {
+                task_id: record.task_id.clone(),
+                run_id: record.run_id.clone(),
+                status: record.status.clone(),
+                agent_loop,
+                completion_evidence: completion_evidence.clone(),
+                llm_provider_failure: None,
+                selected_index_prompt_context: None,
+                context_budget: task_run_context_budget_summary_for_record(store, record)?,
+                verification_completion_gate: None,
+                verification_recovery_repair: None,
+                patch_apply_recovery_repair: Some(patch_apply_recovery_repair),
+                verification_recovery_retry: None,
+                recovery_cycle_budget_outcome: None,
+                child_orchestration_outcome: None,
+                parent_join_readiness_outcome: None,
+            }));
+        }
+        Ok(None) => {}
+        Err(error) => return Err(error.to_string()),
+    }
+
     match verification_recovery_retry_outcome_for_replay(store, record) {
         Ok(Some((agent_loop, verification_completion_gate, verification_recovery_retry))) => {
             return Ok(Some(TaskRunResult {
@@ -10920,6 +11336,22 @@ fn headless_continue_next_route(
                     next_action: "run_verification_retry_task_explicitly".to_string(),
                 };
             }
+            if let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() {
+                return HeadlessContinueRoute {
+                    kind: HeadlessContinueRouteKind::RunRecoveryTaskExplicitly,
+                    reason: "Failed patch apply evidence has materialized a recovery task; run it explicitly."
+                        .to_string(),
+                    task_id: Some(record.task_id.clone()),
+                    run_id: Some(record.run_id.clone()),
+                    proposal_id: Some(provenance.source_proposal_id.clone()),
+                    apply_id: Some(provenance.source_apply_id.clone()),
+                    failure_fingerprint: Some(provenance.failure_fingerprint.clone()),
+                    apply_fingerprint: Some(provenance.source_apply_fingerprint.clone()),
+                    progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                    aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                    next_action: "run_recovery_task_explicitly".to_string(),
+                };
+            }
             if let Some(provenance) = record.llm_provider_failure_retry_provenance.as_ref() {
                 return HeadlessContinueRoute {
                     kind: HeadlessContinueRouteKind::RunLlmProviderRetryTaskExplicitly,
@@ -10965,6 +11397,25 @@ fn headless_continue_next_route(
                 apply_id: None,
                 failure_fingerprint: Some(repair.failure_fingerprint.clone()),
                 apply_fingerprint: None,
+                progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+                aggregate_sequence: Some(progress_overview.aggregate_sequence),
+                next_action: "review_and_authorize_recovery_proposal".to_string(),
+            };
+        }
+    }
+
+    if let Some(repair) = result.patch_apply_recovery_repair.as_ref() {
+        if let Some(proposal_id) = repair.proposal_id.as_ref() {
+            return HeadlessContinueRoute {
+                kind: HeadlessContinueRouteKind::ReviewAndAuthorizeRecoveryProposal,
+                reason: "Patch apply recovery repair produced one bounded proposal; review and authorize it explicitly."
+                    .to_string(),
+                task_id: Some(repair.recovery_task_id.clone()),
+                run_id: Some(repair.recovery_run_id.clone()),
+                proposal_id: Some(proposal_id.clone()),
+                apply_id: None,
+                failure_fingerprint: Some(repair.failure_fingerprint.clone()),
+                apply_fingerprint: Some(repair.source_apply_fingerprint.clone()),
                 progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
                 aggregate_sequence: Some(progress_overview.aggregate_sequence),
                 next_action: "review_and_authorize_recovery_proposal".to_string(),
@@ -28117,6 +28568,90 @@ fn verification_recovery_record_for_headless_run_target(
         ));
     }
     revalidate_verification_recovery_task_for_run(store, &record)?;
+    Ok(record)
+}
+
+fn patch_apply_recovery_record_for_headless_run_target(
+    store: &BrownieStore,
+    target: &PatchApplyRecoveryRunTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.recovery_task_id.as_str(),
+        target.recovery_run_id.as_str(),
+        target.source_run_id.as_str(),
+        target.source_proposal_id.as_str(),
+        target.source_apply_id.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: patch_apply_recovery_run_target fields must not be empty",
+            ));
+        }
+    }
+    if !target.authorize_patch_apply_recovery_run {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.authorize_patch_apply_recovery_run must be true",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_source_apply_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.expected_source_apply_fingerprint must be a sha256 fingerprint",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.expected_failure_fingerprint must be a sha256 fingerprint",
+        ));
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.recovery_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.recovery_task_id was not found",
+        ))?;
+    if record.run_id != target.recovery_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.recovery_run_id does not match recovery task",
+        ));
+    }
+    if !matches!(record.status, TaskStatus::Created | TaskStatus::Queued) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch apply recovery run target task must be Created or Queued",
+        ));
+    }
+    let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() else {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch apply recovery run target task has no recovery provenance",
+        ));
+    };
+    if provenance.source_run_id != target.source_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.source_run_id is stale",
+        ));
+    }
+    if provenance.source_proposal_id != target.source_proposal_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.source_proposal_id is stale",
+        ));
+    }
+    if provenance.source_apply_id != target.source_apply_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.source_apply_id is stale",
+        ));
+    }
+    if provenance.source_apply_fingerprint != target.expected_source_apply_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.expected_source_apply_fingerprint is stale",
+        ));
+    }
+    if provenance.failure_fingerprint != target.expected_failure_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_run_target.expected_failure_fingerprint is stale",
+        ));
+    }
+    revalidate_patch_apply_recovery_task_for_run(store, &record)?;
     Ok(record)
 }
 
@@ -51449,6 +51984,444 @@ mod tests {
                 .len(),
             recovery_events.len()
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_patch_apply_recovery_source_admits_and_replays_without_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append failed patch apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+        let request = format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{progress_fingerprint}",
+    "expected_aggregate_sequence": {aggregate_sequence},
+    "continuation_id": "m27.2.patch.apply.recovery.admit",
+    "patch_apply_recovery_source": {{
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery": true
+    }}
+  }}
+}}"#
+        );
+        let first = parse_line(&request).result.expect("first result");
+        assert_eq!(first["status"], "task_in_progress");
+        assert_eq!(first["replayed"], false);
+        assert_eq!(first["task_run_result"], Value::Null);
+        assert_eq!(first["next_action"], "run_recovery_task_explicitly");
+        assert_eq!(first["next_route"]["kind"], "run_recovery_task_explicitly");
+        let recovery_task_id = first["selected_task_id"].as_str().unwrap().to_string();
+        let recovery_run_id = first["selected_run_id"].as_str().unwrap().to_string();
+
+        let second = parse_line(&request).result.expect("replay result");
+        assert_eq!(second["status"], "task_in_progress");
+        assert_eq!(second["replayed"], true);
+        assert_eq!(second["decision_id"], first["decision_id"]);
+        assert_eq!(second["selected_task_id"], recovery_task_id);
+        assert_eq!(second["selected_run_id"], recovery_run_id);
+        assert_eq!(second["next_action"], "run_recovery_task_explicitly");
+
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events");
+        assert_eq!(
+            recovery_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+        assert!(recovery_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        let recovery_task = store
+            .tasks()
+            .get_task(&recovery_task_id)
+            .expect("read recovery task")
+            .expect("recovery task");
+        assert!(recovery_task.patch_apply_recovery_provenance.is_some());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_patch_apply_recovery_run_executes_and_replays_targeted_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append failed patch apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let admit = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{}",
+    "expected_aggregate_sequence": {},
+    "continuation_id": "m27.2.patch.apply.recovery.run.admit",
+    "patch_apply_recovery_goal": "Implement patch_file recovery edit",
+    "patch_apply_recovery_source": {{
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery": true
+    }}
+  }}
+}}"#,
+            progress["source_fingerprint"].as_str().unwrap(),
+            progress["aggregate_sequence"].as_u64().unwrap()
+        ))
+        .result
+        .expect("admit result");
+        let recovery_task_id = admit["selected_task_id"].as_str().unwrap().to_string();
+        let recovery_run_id = admit["selected_run_id"].as_str().unwrap().to_string();
+        let run_progress = parse_line(r#"{"jsonrpc":"2.0","id":4,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let run_request = format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{}",
+    "expected_aggregate_sequence": {},
+    "continuation_id": "m27.2.patch.apply.recovery.run",
+    "patch_apply_recovery_run_target": {{
+      "recovery_task_id": "{recovery_task_id}",
+      "recovery_run_id": "{recovery_run_id}",
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery_run": true
+    }}
+  }}
+}}"#,
+            run_progress["source_fingerprint"].as_str().unwrap(),
+            run_progress["aggregate_sequence"].as_u64().unwrap()
+        );
+        let first = parse_line(&run_request).result.expect("run result");
+        assert_eq!(first["status"], "task_executed");
+        assert_eq!(first["replayed"], false);
+        assert_eq!(first["selected_task_id"], recovery_task_id);
+        assert_eq!(first["selected_run_id"], recovery_run_id);
+        assert_eq!(
+            first["next_action"],
+            "review_and_authorize_recovery_proposal"
+        );
+        assert_eq!(
+            first["task_run_result"]["patch_apply_recovery_repair"]["gate_status"],
+            "Passed"
+        );
+        assert_eq!(
+            first["task_run_result"]["patch_apply_recovery_repair"]["next_action"],
+            "review_and_authorize_recovery_proposal"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\n"
+        );
+
+        let second = parse_line(&run_request).result.expect("run replay result");
+        assert_eq!(second["status"], "task_executed");
+        assert_eq!(second["replayed"], true);
+        assert_eq!(second["decision_id"], first["decision_id"]);
+        assert_eq!(
+            second["task_run_result"]["patch_apply_recovery_repair"]["gate_status"],
+            "Passed"
+        );
+        assert_eq!(
+            second["task_run_result"]["patch_apply_recovery_repair"]["replayed"],
+            true
+        );
+
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events");
+        assert_eq!(
+            recovery_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            recovery_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            recovery_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            2
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_patch_apply_recovery_source_rejects_stale_and_invalid_inputs_before_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append failed patch apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+        let stale = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 3,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+    "expected_aggregate_sequence": {aggregate_sequence},
+    "continuation_id": "m27.2.patch.apply.recovery.stale",
+    "patch_apply_recovery_source": {{
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery": true
+    }}
+  }}
+}}"#
+        ))
+        .result
+        .expect("stale result");
+        assert_eq!(stale["status"], "stale_progress");
+        assert_eq!(stale["next_action"], "refresh_progress_overview");
+
+        let progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let missing_auth = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 4,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{progress_fingerprint}",
+    "expected_aggregate_sequence": {aggregate_sequence},
+    "continuation_id": "m27.2.patch.apply.recovery.invalid.auth",
+    "patch_apply_recovery_source": {{
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery": false
+    }}
+  }}
+}}"#
+        ));
+        assert!(missing_auth
+            .error
+            .unwrap()
+            .message
+            .contains("patch_apply_recovery_source.authorize_patch_apply_recovery must be true"));
+
+        let incompatible = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 5,
+  "method": "headless.continue_once",
+  "params": {{
+    "authorize": true,
+    "expected_progress_fingerprint": "{progress_fingerprint}",
+    "expected_aggregate_sequence": {aggregate_sequence},
+    "continuation_id": "m27.2.patch.apply.recovery.invalid.maxsteps",
+    "max_steps": 2,
+    "patch_apply_recovery_source": {{
+      "source_run_id": "{source_run_id}",
+      "source_proposal_id": "source_patch_proposal",
+      "source_apply_id": "source_apply",
+      "expected_source_apply_fingerprint": "{source_apply_fingerprint}",
+      "expected_failure_fingerprint": "{failure_fingerprint}",
+      "authorize_patch_apply_recovery": true
+    }}
+  }}
+}}"#
+        ));
+        assert!(incompatible.error.unwrap().message.contains(
+            "patch_apply_recovery_source cannot be combined with max_steps greater than 1"
+        ));
+        assert_eq!(store.tasks().list_tasks().expect("list tasks").len(), 1);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
