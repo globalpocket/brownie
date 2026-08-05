@@ -656,6 +656,54 @@ describe('protocol validation', () => {
       ...headlessParams,
       verification_recovery_run_target: { ...verificationRecoveryRunTarget, authorize_recovery_run: false },
     })).toBe(false);
+    const patchApplyRecoverySource = {
+      source_run_id: 'run_patch_source',
+      source_proposal_id: 'proposal_patch_1',
+      source_apply_id: 'apply_patch_1',
+      expected_source_apply_fingerprint: `sha256:${'a'.repeat(64)}`,
+      expected_failure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      authorize_patch_apply_recovery: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_source: patchApplyRecoverySource,
+      patch_apply_recovery_goal: 'Recover failed patch apply',
+      patch_apply_recovery_mode_id: 'implementer',
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_source: { ...patchApplyRecoverySource, authorize_patch_apply_recovery: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_source: { ...patchApplyRecoverySource, raw_file_content: 'secret body' },
+    })).toBe(false);
+    const patchApplyRecoveryRunTarget = {
+      recovery_task_id: 'task_patch_recovery',
+      recovery_run_id: 'run_patch_recovery',
+      source_run_id: 'run_patch_source',
+      source_proposal_id: 'proposal_patch_1',
+      source_apply_id: 'apply_patch_1',
+      expected_source_apply_fingerprint: `sha256:${'a'.repeat(64)}`,
+      expected_failure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      authorize_patch_apply_recovery_run: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_run_target: patchApplyRecoveryRunTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_run_target: { ...patchApplyRecoveryRunTarget, authorize_patch_apply_recovery_run: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_run_target: { ...patchApplyRecoveryRunTarget, expected_failure_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_run_target: { ...patchApplyRecoveryRunTarget, raw_prompt: 'do not expose' },
+    })).toBe(false);
     const verificationRecoveryApplyTarget = {
       source_task_id: 'task_source',
       source_run_id: 'run_source',
