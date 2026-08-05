@@ -1861,10 +1861,11 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         };
         let source_apply_fingerprint = provenance.source_apply_fingerprint.clone();
         let failure_fingerprint = provenance.failure_fingerprint.clone();
+        let recovery_goal = patch_apply_recovery_runtime_goal(&goal, &provenance);
         match store
             .tasks()
             .start_patch_apply_recovery_task(PatchApplyRecoveryTaskStartParams {
-                goal,
+                goal: recovery_goal,
                 mode_id: Some(policy.mode_id.clone()),
                 provenance,
             }) {
@@ -25839,6 +25840,7 @@ fn sanitize_ledger_payload(payload: Option<Value>) -> Option<Value> {
         "source_apply_id",
         "source_apply_fingerprint",
         "source_operation",
+        "source_path",
         "source_hunk_count",
         "source_hunk_fingerprint",
         "recovery_task_id",
@@ -28279,7 +28281,7 @@ fn patch_apply_recovery_provenance_for_source(
         .tasks()
         .read_ledger_events(&source.source_run_id)
         .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
-    let payload = events
+    let latest_for_proposal = events
         .iter()
         .rev()
         .find_map(|event| {
@@ -28289,8 +28291,6 @@ fn patch_apply_recovery_provenance_for_source(
             let payload = event.payload.clone()?;
             if payload.get("proposal_id").and_then(Value::as_str)
                 == Some(source.source_proposal_id.as_str())
-                && payload.get("apply_id").and_then(Value::as_str)
-                    == Some(source.source_apply_id.as_str())
             {
                 Some(payload)
             } else {
@@ -28302,23 +28302,86 @@ fn patch_apply_recovery_provenance_for_source(
                 "invalid params: patch apply recovery source has no matching apply result".into(),
             )
         })?;
+    if latest_for_proposal.get("apply_id").and_then(Value::as_str)
+        != Some(source.source_apply_id.as_str())
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source apply result is superseded".into(),
+        ));
+    }
+    let payload = latest_for_proposal;
     if payload.get("operation").and_then(Value::as_str) != Some("patch_file") {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
             "invalid params: patch apply recovery source operation is not patch_file".into(),
         ));
     }
-    if payload.get("apply_status").and_then(Value::as_str) == Some("Applied")
-        || payload.get("applied").and_then(Value::as_bool) == Some(true)
-    {
+    if payload.get("apply_status").and_then(Value::as_str) != Some("Denied") {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
-            "invalid params: patch apply recovery source is already applied".into(),
+            "invalid params: patch apply recovery source status is not denied".into(),
         ));
     }
+    if payload.get("applied").and_then(Value::as_bool) != Some(false) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source applied flag must be false".into(),
+        ));
+    }
+    if payload
+        .get("authorization_consumed")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source authorization must be unconsumed".into(),
+        ));
+    }
+    let normalized_path = patch_apply_recovery_normalized_path(
+        payload
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+    .ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source path is not safe".into(),
+        )
+    })?;
     let failure_class = patch_apply_recovery_failure_class(&payload).ok_or_else(|| {
         VerificationRecoveryAdmissionError::InvalidParams(
             "invalid params: patch apply recovery source failure class is not recoverable".into(),
         )
     })?;
+    let failed_checks = payload_string_array(&payload, "failed_checks");
+    if failed_checks.len() != 1 || failed_checks.first() != Some(&failure_class) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source must have exactly one recoverable failed check"
+                .into(),
+        ));
+    }
+    if !payload_string_array(&payload, "blocked_checks").is_empty() {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source blocked checks must be empty".into(),
+        ));
+    }
+    let hunk_count = payload
+        .get("hunk_count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .filter(|value| (1..=5).contains(value))
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: patch apply recovery source hunk_count is invalid".into(),
+            )
+        })?;
+    let hunk_fingerprint = payload
+        .get("hunk_fingerprint")
+        .and_then(Value::as_str)
+        .filter(|value| is_sha256_fingerprint(value))
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: patch apply recovery source hunk_fingerprint is invalid".into(),
+            )
+        })?
+        .to_string();
     let source_apply_fingerprint = patch_apply_recovery_source_fingerprint(&payload);
     if source_apply_fingerprint != source.expected_source_apply_fingerprint {
         return Err(VerificationRecoveryAdmissionError::InvalidParams(
@@ -28345,19 +28408,9 @@ fn patch_apply_recovery_provenance_for_source(
         failure_fingerprint,
         failure_class,
         operation: "patch_file".to_string(),
-        path: payload
-            .get("path")
-            .and_then(Value::as_str)
-            .unwrap_or("[unknown]")
-            .to_string(),
-        hunk_count: payload
-            .get("hunk_count")
-            .and_then(Value::as_u64)
-            .map(|v| v as usize),
-        hunk_fingerprint: payload
-            .get("hunk_fingerprint")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
+        path: normalized_path,
+        hunk_count: Some(hunk_count),
+        hunk_fingerprint: Some(hunk_fingerprint),
     })
 }
 
@@ -28374,6 +28427,50 @@ fn patch_apply_recovery_failure_class(payload: &Value) -> Option<String> {
         }
     }
     None
+}
+
+fn patch_apply_recovery_normalized_path(path: &str) -> Option<String> {
+    if path.trim().is_empty() {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(value) => components.push(value.to_str()?.to_string()),
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    if components.is_empty() {
+        return None;
+    }
+    let normalized = components.join("/");
+    brownie_tools::preflight_workspace_write_path(&normalized).ok()?;
+    Some(normalized)
+}
+
+fn patch_apply_recovery_runtime_goal(
+    caller_goal: &str,
+    provenance: &PatchApplyRecoveryProvenance,
+) -> String {
+    let hunk_count = provenance
+        .hunk_count
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    let hunk_fingerprint = provenance.hunk_fingerprint.as_deref().unwrap_or("unknown");
+    format!(
+        "Patch apply recovery task. Runtime constraints: recover only source path {}; source operation {}; failure class {}; source proposal {}; source apply {}; source apply fingerprint {}; failure fingerprint {}; source hunk count {}; source hunk fingerprint {}; create exactly one patch_file recovery proposal for the source path; do not approve, apply, or mutate workspace files. Caller supplemental goal: {}",
+        provenance.path,
+        provenance.operation,
+        provenance.failure_class,
+        provenance.source_proposal_id,
+        provenance.source_apply_id,
+        provenance.source_apply_fingerprint,
+        provenance.failure_fingerprint,
+        hunk_count,
+        hunk_fingerprint,
+        caller_goal.trim()
+    )
 }
 
 fn patch_apply_recovery_source_fingerprint(payload: &Value) -> String {
@@ -28986,6 +29083,12 @@ fn patch_apply_recovery_repair_proposals_for_run(
         {
             continue;
         }
+        let path_matches_source = payload
+            .get("path")
+            .and_then(Value::as_str)
+            .and_then(patch_apply_recovery_normalized_path)
+            .as_deref()
+            == Some(provenance.path.as_str());
         let Some(proposal_id) = payload
             .get("proposal_id")
             .and_then(Value::as_str)
@@ -28994,7 +29097,8 @@ fn patch_apply_recovery_repair_proposals_for_run(
         else {
             continue;
         };
-        let applicable = payload.get("validation_status").and_then(Value::as_str) == Some("Valid");
+        let applicable = path_matches_source
+            && payload.get("validation_status").and_then(Value::as_str) == Some("Valid");
         proposals.push(PatchApplyRecoveryRepairProposalEvidence {
             proposal_id,
             applicable,
@@ -31469,19 +31573,24 @@ fn append_workspace_patch_proposal(
     }
     if operation == WorkspacePatchOperation::PatchFile.as_str() {
         if let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() {
-            payload["patch_apply_recovery_repair"] = json!(true);
-            payload["source_run_id"] = json!(provenance.source_run_id.clone());
-            payload["source_proposal_id"] = json!(provenance.source_proposal_id.clone());
-            payload["source_apply_id"] = json!(provenance.source_apply_id.clone());
-            payload["recovery_task_id"] = json!(record.task_id.clone());
-            payload["recovery_run_id"] = json!(record.run_id.clone());
-            payload["source_apply_fingerprint"] =
-                json!(provenance.source_apply_fingerprint.clone());
-            payload["failure_fingerprint"] = json!(provenance.failure_fingerprint.clone());
-            payload["failure_class"] = json!(provenance.failure_class.clone());
-            payload["source_operation"] = json!(provenance.operation.clone());
-            payload["source_hunk_count"] = json!(provenance.hunk_count);
-            payload["source_hunk_fingerprint"] = json!(provenance.hunk_fingerprint.clone());
+            if patch_apply_recovery_normalized_path(path).as_deref()
+                == Some(provenance.path.as_str())
+            {
+                payload["patch_apply_recovery_repair"] = json!(true);
+                payload["source_run_id"] = json!(provenance.source_run_id.clone());
+                payload["source_proposal_id"] = json!(provenance.source_proposal_id.clone());
+                payload["source_apply_id"] = json!(provenance.source_apply_id.clone());
+                payload["recovery_task_id"] = json!(record.task_id.clone());
+                payload["recovery_run_id"] = json!(record.run_id.clone());
+                payload["source_apply_fingerprint"] =
+                    json!(provenance.source_apply_fingerprint.clone());
+                payload["failure_fingerprint"] = json!(provenance.failure_fingerprint.clone());
+                payload["failure_class"] = json!(provenance.failure_class.clone());
+                payload["source_operation"] = json!(provenance.operation.clone());
+                payload["source_path"] = json!(provenance.path.clone());
+                payload["source_hunk_count"] = json!(provenance.hunk_count);
+                payload["source_hunk_fingerprint"] = json!(provenance.hunk_fingerprint.clone());
+            }
         }
     }
     store.tasks().append_task_event_with_payload(
@@ -51169,6 +51278,20 @@ mod tests {
             admitted_result["patch_apply_recovery_admission"]["replayed"],
             false
         );
+        let recovery_task = BrownieStore::new(temp.path())
+            .tasks()
+            .get_task(admitted_result["task_id"].as_str().unwrap())
+            .expect("read recovery task")
+            .expect("recovery task");
+        assert!(recovery_task
+            .goal
+            .contains("recover only source path README.md"));
+        assert!(recovery_task
+            .goal
+            .contains("failure class expected_target_hash_matches"));
+        assert!(recovery_task
+            .goal
+            .contains("Caller supplemental goal: Recover stale patch"));
         let replay = parse_line(&request.to_string());
         assert!(replay.error.is_none());
         assert_eq!(
@@ -51325,6 +51448,354 @@ mod tests {
                 .expect("recovery events after replay")
                 .len(),
             recovery_events.len()
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_apply_recovery_repair_gate_rejects_unrelated_proposal_path() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir src");
+        std::fs::write(temp.path().join("src/lib.rs"), "alpha\nbeta\n").expect("write lib");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch src lib","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "src/lib.rs",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append failed patch apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+
+        let admitted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.start",
+                "params": {
+                    "goal": "Implement patch_file recovery edit",
+                    "mode_id": "implementer",
+                    "patch_apply_recovery_source": {
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "authorize_patch_apply_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(admitted.error.is_none());
+        let recovery_task_id = admitted.result.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{recovery_task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["patch_apply_recovery_repair"]["gate_status"],
+            "Failed"
+        );
+        assert_eq!(
+            run_result["patch_apply_recovery_repair"]["failure_reason"],
+            "MissingPatchApplyRecoveryProposal"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("src/lib.rs")).unwrap(),
+            "alpha\nbeta\n"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_apply_recovery_source_rejects_superseded_apply_result() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let failed_a = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply_a",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        let failed_b = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply_b",
+            "apply_status": "Denied",
+            "apply_reason": "Expected target hash does not match current target file.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+            "pre_write_target_sha256": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["expected_target_hash_matches"],
+            "blocked_checks": []
+        });
+        for payload in [&failed_a, &failed_b] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &source_record,
+                    LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                    Some(payload.clone()),
+                )
+                .expect("append failed patch apply");
+        }
+        let source_apply_fingerprint = super::patch_apply_recovery_source_fingerprint(&failed_a);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &failed_a,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+
+        let rejected = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.start",
+                "params": {
+                    "goal": "Recover stale patch",
+                    "mode_id": "implementer",
+                    "patch_apply_recovery_source": {
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply_a",
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "authorize_patch_apply_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(rejected.error.is_some());
+        assert_eq!(
+            store.tasks().list_tasks().expect("list tasks").len(),
+            1,
+            "superseded source apply must not admit a recovery task"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_apply_recovery_source_rejects_malformed_receipts_and_normalizes_path() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("mkdir src");
+        std::fs::write(temp.path().join("src/lib.rs"), "alpha\nbeta\n").expect("write lib");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch src","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let valid_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "src/./lib.rs",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        let mut bad_path = valid_payload.clone();
+        bad_path["apply_id"] = json!("bad_path");
+        bad_path["path"] = json!("src/../README.md");
+        let mut bad_hunk_fingerprint = valid_payload.clone();
+        bad_hunk_fingerprint["apply_id"] = json!("bad_hunk_fingerprint");
+        bad_hunk_fingerprint["hunk_fingerprint"] = json!("sha256:not-a-real-fingerprint");
+        let mut blocked = valid_payload.clone();
+        blocked["apply_id"] = json!("blocked");
+        blocked["blocked_checks"] = json!(["sensitive_content"]);
+        let mut multiple_failed = valid_payload.clone();
+        multiple_failed["apply_id"] = json!("multiple_failed");
+        multiple_failed["failed_checks"] =
+            json!(["patch_hunk_context_matches", "expected_target_hash_matches"]);
+
+        for payload in [&bad_path, &bad_hunk_fingerprint, &blocked, &multiple_failed] {
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &source_record,
+                    LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                    Some(payload.clone()),
+                )
+                .expect("append malformed apply");
+            let source_apply_fingerprint = super::patch_apply_recovery_source_fingerprint(payload);
+            let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+                payload,
+                &source_apply_fingerprint,
+                "patch_hunk_context_matches",
+            );
+            let rejected = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "method": "task.start",
+                    "params": {
+                        "goal": "Recover malformed patch",
+                        "mode_id": "implementer",
+                        "patch_apply_recovery_source": {
+                            "source_run_id": source_run_id,
+                            "source_proposal_id": "source_patch_proposal",
+                            "source_apply_id": payload["apply_id"],
+                            "expected_source_apply_fingerprint": source_apply_fingerprint,
+                            "expected_failure_fingerprint": failure_fingerprint,
+                            "authorize_patch_apply_recovery": true
+                        }
+                    }
+                })
+                .to_string(),
+            );
+            assert!(rejected.error.is_some());
+        }
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(valid_payload.clone()),
+            )
+            .expect("append valid apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&valid_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &valid_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+        let admitted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "task.start",
+                "params": {
+                    "goal": "Recover normalized patch",
+                    "mode_id": "implementer",
+                    "patch_apply_recovery_source": {
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "authorize_patch_apply_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(admitted.error.is_none());
+        let recovery_task_id = admitted.result.unwrap()["task_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let recovery = store
+            .tasks()
+            .get_task(&recovery_task_id)
+            .expect("get recovery")
+            .expect("recovery task");
+        assert_eq!(
+            recovery
+                .patch_apply_recovery_provenance
+                .as_ref()
+                .expect("patch recovery provenance")
+                .path,
+            "src/lib.rs"
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
