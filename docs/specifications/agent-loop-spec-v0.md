@@ -89,6 +89,21 @@ M18.2 brings that explicit recovery task run step into the headless continuation
 
 M27.2 extends the same explicit continuation model to failed `patch_file` apply recovery. `headless.continue_once` may include `patch_apply_recovery_source` to admit or replay one recovery task from latest exact-source patch apply failure evidence, or `patch_apply_recovery_run_target` to run one current admitted recovery task after revalidating source run, proposal, apply, source apply fingerprint, and failure fingerprint. Admission returns a route to `run_recovery_task_explicitly`; execution returns the existing bounded `patch_apply_recovery_repair` result and routes passed repair gates to `review_and_authorize_recovery_proposal`. The runtime still rejects stale progress first, requires explicit authorization for the run target, and keeps replay idempotent. It does not approve or apply proposals, mutate the workspace, introduce a new RPC, or expose raw file, patch, prompt, provider response, command output, environment, or absolute path data.
 
+M28.1 extends `headless.continue_once` with `patch_apply_recovery_apply_target`
+for the next explicit patch recovery boundary. The target applies one already
+approved recovery-scoped `patch_file` proposal by delegating to existing
+`proposal.apply` after rechecking fresh aggregate progress, explicit one-time
+authorization, M27 source/recovery/proposal provenance, exact-source path
+binding, expected source apply and failure fingerprints, and expected target
+SHA-256. The request-only patch hunk payload is passed only to the existing
+apply authority. Successful continuation returns bounded `proposal_apply_result`
+metadata and an inspect-progress route; replay returns the same apply result
+without another apply or duplicate continuation evidence. The continuation does
+not create a new RPC, approve proposals, apply without authorization, duplicate
+mutation policy, run shell/git/network/service actions, or expose raw file
+content, raw hunks, raw diffs, prompts, provider responses, command output,
+environment, absolute paths, canonical paths, or secrets.
+
 M9.6 allows prompt materialization for ordinary `task.run` requests to include one validated selected index read. The runtime accepts optional `selected_index_context`, validates it before `TaskRunning` against prior `CodebaseIndexSelectionReadCompleted` evidence, and requires the stored task mode to allow both `ReadWorkspace` and `IndexCodebase`. When accepted, `PromptBuilder` adds a `Selected Index Context` section containing the selected file content for the in-memory LLM request only. `CodebaseIndexPromptContextMaterialized`, `PromptBuilt`, `SecondPassPromptBuilt`, and `TaskRunResult.selected_index_prompt_context` remain summary-only: prompt previews are redacted, and no ledger/result/diagnostic payload may store raw selected paths, raw selected file content, snippets, diffs, stdout/stderr, commands, environment values, raw prompts, provider responses, absolute paths, canonical paths, or secrets.
 
 M11.1 allows a headless caller to ask the runtime to continue once from the

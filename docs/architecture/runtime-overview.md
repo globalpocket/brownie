@@ -152,6 +152,24 @@ M27.1.1 hardens that recovery primitive before headless routing. Patch apply rec
 
 M27.2 routes that exact-source patch recovery primitive through `headless.continue_once`. A caller may provide fresh progress evidence plus bounded `patch_apply_recovery_source` to admit or replay one recovery task, or provide a current `patch_apply_recovery_run_target` with recovery task/run IDs, source run/proposal/apply IDs, expected source apply and failure fingerprints, and `authorize_patch_apply_recovery_run=true` to run the admitted recovery task exactly once through the existing `task.run` path. The runtime rejects stale aggregate progress before admission or execution, revalidates the exact M27.1.1 source/provenance evidence before running, records bounded continuation decisions, and routes successful repair output to `review_and_authorize_recovery_proposal`. Replay of the same continuation returns the same admission or task-run result without duplicating running, proposal, decision, or terminal task evidence. The continuation does not approve or apply recovery proposals, mutate workspace files, execute shell/git/network/service actions, expose raw file or patch content, or move policy into the VSIX.
 
+M28.1 extends that continuation boundary from proposal review to approved patch
+recovery apply. A caller may provide `patch_apply_recovery_apply_target` to
+`headless.continue_once` for one approved recovery-scoped `patch_file` proposal
+that originated from the targeted M27 recovery task/run. The runtime requires
+fresh aggregate progress, explicit `authorize_patch_apply_recovery_apply=true`,
+source run/proposal/apply IDs, recovery task/run/proposal IDs, expected source
+apply and failure fingerprints, expected target SHA-256, and request-only patch
+hunk payload. It revalidates M27 exact-source provenance and recovery proposal
+scope before delegating mutation to existing `proposal.apply`. Successful apply
+records bounded continuation evidence with source/recovery/proposal/apply
+handles and returns the existing bounded apply result plus an inspect-progress
+route. Replay of the same continuation returns the already-recorded apply result
+without reapplying or duplicating apply, continuation, task, or proposal events.
+This phase does not add a new RPC, approve proposals automatically, apply
+without explicit authorization, duplicate mutation policy in the headless layer,
+or expose raw file content, raw hunks, raw diffs, prompts, provider responses,
+command output, environment, absolute paths, canonical paths, or secrets.
+
 
 Controlled apply must not run shell or git commands, use network access, create parent directories, overwrite existing targets during create, remove files outside the approved `delete_file` path, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file or absent target whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic mutation and verification.
 

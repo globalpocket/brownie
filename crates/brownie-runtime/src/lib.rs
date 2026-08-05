@@ -38,10 +38,11 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PatchApplyRecoveryAdmission, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
-    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
+    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
+    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -8017,6 +8018,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: patch_apply_recovery_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.patch_apply_recovery_apply_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_apply_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_apply_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8056,6 +8064,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_run_target.is_some()
             || params.patch_apply_recovery_source.is_some()
             || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8071,6 +8080,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_run_target.is_some()
             || params.patch_apply_recovery_source.is_some()
             || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8099,11 +8109,30 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         );
     }
     if params.patch_apply_recovery_source.is_some()
+        && params.patch_apply_recovery_apply_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_source and patch_apply_recovery_apply_target cannot be combined",
+        );
+    }
+    if params.patch_apply_recovery_run_target.is_some()
+        && params.patch_apply_recovery_apply_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_run_target and patch_apply_recovery_apply_target cannot be combined",
+        );
+    }
+    if params.patch_apply_recovery_source.is_some()
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_run_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.verification_recovery_retry_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some())
     {
@@ -8119,6 +8148,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_source.is_some()
             || params.verification_recovery_retry_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some())
     {
@@ -8126,6 +8156,21 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: patch_apply_recovery_run_target cannot be combined with other recovery fields",
+        );
+    }
+    if params.patch_apply_recovery_apply_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: patch_apply_recovery_apply_target cannot be combined with other recovery fields",
         );
     }
     if params.verification_recovery_apply_target.is_some()
@@ -8197,6 +8242,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_run_target.is_some()
             || params.patch_apply_recovery_source.is_some()
             || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some())
     {
@@ -8319,6 +8365,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.patch_apply_recovery_run_target.is_some() {
         return handle_headless_continue_patch_apply_recovery_run(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.patch_apply_recovery_apply_target.is_some() {
+        return handle_headless_continue_patch_apply_recovery_apply(
             id,
             &store,
             &progress_overview,
@@ -10005,6 +10059,198 @@ fn handle_headless_continue_patch_apply_recovery_run(
     )
 }
 
+fn handle_headless_continue_patch_apply_recovery_apply(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.patch_apply_recovery_apply_target.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing patch apply recovery apply target",
+        );
+    };
+    let selected_record = match patch_apply_recovery_record_for_headless_apply_target(store, target)
+    {
+        Ok(record) => record,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    let patch_hunks = match patch_hunks_from_apply_params(&ProposalApplyParams {
+        run_id: target.recovery_run_id.clone(),
+        proposal_id: target.recovery_proposal_id.clone(),
+        expected_target_sha256: Some(target.expected_target_sha256.clone()),
+        expected_target_absent: None,
+        replacement_content: None,
+        patch_old_text: target.patch_old_text.clone(),
+        patch_new_text: target.patch_new_text.clone(),
+        patch_hunks: target.patch_hunks.clone(),
+        authorize: true,
+        transaction_items: None,
+        transaction_recovery_source: None,
+    }) {
+        Ok(hunks) => hunks,
+        Err(message) => return error_response(id, -32602, message),
+    };
+    let (proposal, apply_result) = match apply_proposal(
+        store,
+        &ProposalApplyParams {
+            run_id: target.recovery_run_id.clone(),
+            proposal_id: target.recovery_proposal_id.clone(),
+            expected_target_sha256: Some(target.expected_target_sha256.clone()),
+            expected_target_absent: None,
+            replacement_content: None,
+            patch_old_text: target.patch_old_text.clone(),
+            patch_new_text: target.patch_new_text.clone(),
+            patch_hunks: target.patch_hunks.clone(),
+            authorize: true,
+            transaction_items: None,
+            transaction_recovery_source: None,
+        },
+    ) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let apply_evidence = match latest_recovery_apply_evidence(
+        store,
+        &target.recovery_run_id,
+        &target.recovery_proposal_id,
+        &apply_result.apply_id,
+    ) {
+        Ok(evidence) => evidence,
+        Err(error) => {
+            return match error {
+                VerificationRecoveryAdmissionError::InvalidParams(message) => {
+                    error_response(id, -32602, &message)
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &selected_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": selected_record.task_id.clone(),
+            "selected_run_id": selected_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_patch_apply_recovery_apply": true,
+            "source_run_id": target.source_run_id.clone(),
+            "source_proposal_id": target.source_proposal_id.clone(),
+            "source_apply_id": target.source_apply_id.clone(),
+            "recovery_task_id": target.recovery_task_id.clone(),
+            "recovery_run_id": target.recovery_run_id.clone(),
+            "recovery_proposal_id": target.recovery_proposal_id.clone(),
+            "proposal_id": target.recovery_proposal_id.clone(),
+            "source_apply_fingerprint": target.expected_source_apply_fingerprint.clone(),
+            "failure_fingerprint": target.expected_failure_fingerprint.clone(),
+            "expected_target_sha256": target.expected_target_sha256.clone(),
+            "hunk_count": patch_hunks.len(),
+            "apply_id": apply_result.apply_id.clone(),
+            "apply_fingerprint": apply_evidence.apply_fingerprint.clone(),
+            "next_action": "inspect_progress_overview",
+            "reason": "Headless continue-once applied one approved patch recovery proposal under explicit authorization."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: selected_record.task_id.clone(),
+                selected_run_id: selected_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::InspectProgressOverview,
+        reason:
+            "Patch recovery proposal was applied with post-write verification; inspect progress."
+                .to_string(),
+        task_id: Some(target.recovery_task_id.clone()),
+        run_id: Some(target.recovery_run_id.clone()),
+        proposal_id: Some(target.recovery_proposal_id.clone()),
+        apply_id: Some(apply_result.apply_id.clone()),
+        failure_fingerprint: Some(target.expected_failure_fingerprint.clone()),
+        apply_fingerprint: Some(apply_evidence.apply_fingerprint),
+        progress_fingerprint: Some(post_progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+        next_action: "inspect_progress_overview".to_string(),
+    };
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(selected_record.task_id.clone()),
+            selected_run_id: Some(selected_record.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: None,
+            proposal_apply_result: Some(ProposalApplyResult {
+                proposal,
+                apply_result,
+            }),
+            llm_provider_failure_retry_admission: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
 fn handle_headless_continue_verification_recovery_retry_run(
     id: Value,
     store: &BrownieStore,
@@ -10857,10 +11103,14 @@ fn headless_recovery_apply_result_for_replay(
         }
         let payload = event.payload.as_ref()?;
         if payload.get("decision_id").and_then(Value::as_str) != Some(decision.decision_id.as_str())
-            || payload
+            || (payload
                 .get("authorize_recovery_apply")
                 .and_then(Value::as_bool)
                 != Some(true)
+                && payload
+                    .get("authorize_patch_apply_recovery_apply")
+                    .and_then(Value::as_bool)
+                    != Some(true))
         {
             return None;
         }
@@ -10923,28 +11173,58 @@ fn headless_recovery_apply_result_for_replay(
         .and_then(Value::as_str)
         .map(ToString::to_string)
         .unwrap_or_else(|| verification_recovery_apply_fingerprint(&apply_payload));
-    let next_route = HeadlessContinueRoute {
-        kind: HeadlessContinueRouteKind::StartVerificationRetryExplicitly,
-        reason: "Recovery proposal was already applied by this continuation; replaying bounded apply result."
-            .to_string(),
-        task_id: decision_payload
-            .get("source_task_id")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        run_id: decision_payload
-            .get("source_run_id")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        proposal_id: Some(proposal_id.to_string()),
-        apply_id: Some(apply_id.to_string()),
-        failure_fingerprint: decision_payload
-            .get("failure_fingerprint")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        apply_fingerprint: Some(apply_fingerprint),
-        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
-        aggregate_sequence: Some(progress_overview.aggregate_sequence),
-        next_action: "start_verification_retry_explicitly".to_string(),
+    let is_patch_recovery_apply = decision_payload
+        .get("authorize_patch_apply_recovery_apply")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let next_route = if is_patch_recovery_apply {
+        HeadlessContinueRoute {
+            kind: HeadlessContinueRouteKind::InspectProgressOverview,
+            reason: "Patch recovery proposal was already applied by this continuation; replaying bounded apply result."
+                .to_string(),
+            task_id: decision_payload
+                .get("recovery_task_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            run_id: decision_payload
+                .get("recovery_run_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            proposal_id: Some(proposal_id.to_string()),
+            apply_id: Some(apply_id.to_string()),
+            failure_fingerprint: decision_payload
+                .get("failure_fingerprint")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            apply_fingerprint: Some(apply_fingerprint),
+            progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+            aggregate_sequence: Some(progress_overview.aggregate_sequence),
+            next_action: "inspect_progress_overview".to_string(),
+        }
+    } else {
+        HeadlessContinueRoute {
+            kind: HeadlessContinueRouteKind::StartVerificationRetryExplicitly,
+            reason: "Recovery proposal was already applied by this continuation; replaying bounded apply result."
+                .to_string(),
+            task_id: decision_payload
+                .get("source_task_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            run_id: decision_payload
+                .get("source_run_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            proposal_id: Some(proposal_id.to_string()),
+            apply_id: Some(apply_id.to_string()),
+            failure_fingerprint: decision_payload
+                .get("failure_fingerprint")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            apply_fingerprint: Some(apply_fingerprint),
+            progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+            aggregate_sequence: Some(progress_overview.aggregate_sequence),
+            next_action: "start_verification_retry_explicitly".to_string(),
+        }
     };
     Ok(Some((
         ProposalApplyResult {
@@ -28655,6 +28935,101 @@ fn patch_apply_recovery_record_for_headless_run_target(
     Ok(record)
 }
 
+fn patch_apply_recovery_record_for_headless_apply_target(
+    store: &BrownieStore,
+    target: &PatchApplyRecoveryApplyTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.recovery_task_id.as_str(),
+        target.recovery_run_id.as_str(),
+        target.source_run_id.as_str(),
+        target.source_proposal_id.as_str(),
+        target.source_apply_id.as_str(),
+        target.recovery_proposal_id.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: patch_apply_recovery_apply_target fields must not be empty",
+            ));
+        }
+    }
+    if !target.authorize_patch_apply_recovery_apply {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.authorize_patch_apply_recovery_apply must be true",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_source_apply_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.expected_source_apply_fingerprint must be a sha256 fingerprint",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_failure_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.expected_failure_fingerprint must be a sha256 fingerprint",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_target_sha256) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.expected_target_sha256 must be a sha256 fingerprint",
+        ));
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.recovery_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.recovery_task_id was not found",
+        ))?;
+    if record.run_id != target.recovery_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.recovery_run_id does not match recovery task",
+        ));
+    }
+    let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() else {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch apply recovery apply target task has no recovery provenance",
+        ));
+    };
+    if provenance.source_run_id != target.source_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.source_run_id is stale",
+        ));
+    }
+    if provenance.source_proposal_id != target.source_proposal_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.source_proposal_id is stale",
+        ));
+    }
+    if provenance.source_apply_id != target.source_apply_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.source_apply_id is stale",
+        ));
+    }
+    if provenance.source_apply_fingerprint != target.expected_source_apply_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.expected_source_apply_fingerprint is stale",
+        ));
+    }
+    if provenance.failure_fingerprint != target.expected_failure_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.expected_failure_fingerprint is stale",
+        ));
+    }
+    revalidate_patch_apply_recovery_task_for_run(store, &record)?;
+    let proposals = patch_apply_recovery_repair_proposals_for_run(store, &record, provenance)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
+    if !proposals
+        .iter()
+        .any(|proposal| proposal.applicable && proposal.proposal_id == target.recovery_proposal_id)
+    {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch_apply_recovery_apply_target.recovery_proposal_id is not recovery-scoped",
+        ));
+    }
+    Ok(record)
+}
+
 fn latest_recovery_apply_evidence(
     store: &BrownieStore,
     recovery_run_id: &str,
@@ -28718,6 +29093,17 @@ fn latest_recovery_apply_evidence(
                     .filter(|hash| is_sha256_fingerprint(hash))
                     .is_some()
         }
+        "patch_file" => {
+            payload
+                .get("atomic_replacement_completed")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("post_write_sha256")
+                    .and_then(Value::as_str)
+                    .filter(|hash| is_sha256_fingerprint(hash))
+                    .is_some()
+        }
         "create_file" => {
             payload
                 .get("atomic_create_completed")
@@ -28762,6 +29148,8 @@ fn verification_recovery_apply_fingerprint(payload: &Value) -> String {
         "authorization_consumed": payload.get("authorization_consumed").and_then(Value::as_bool),
         "applied": payload.get("applied").and_then(Value::as_bool),
         "operation": payload.get("operation").and_then(Value::as_str),
+        "hunk_count": payload.get("hunk_count").and_then(Value::as_u64),
+        "hunk_fingerprint": payload.get("hunk_fingerprint").and_then(Value::as_str),
         "atomic_replacement_completed": payload.get("atomic_replacement_completed").and_then(Value::as_bool),
         "atomic_create_completed": payload.get("atomic_create_completed").and_then(Value::as_bool),
         "atomic_delete_completed": payload.get("atomic_delete_completed").and_then(Value::as_bool),
@@ -34830,6 +35218,71 @@ mod tests {
                 Some(payload),
             )
             .expect("append patch hunk proposal");
+    }
+
+    fn append_patch_apply_recovery_hunk_proposal(
+        store: &BrownieStore,
+        record: &TaskRecord,
+        proposal_id: &str,
+        path: &str,
+        old_text: &str,
+        new_text: &str,
+    ) {
+        let proposal = build_workspace_patch_proposal_from_input(
+            store,
+            path,
+            WorkspacePatchOperation::PatchFile.as_str(),
+            "",
+            &json!({
+                "old_text": old_text,
+                "new_text": new_text,
+            }),
+        );
+        let provenance = record
+            .patch_apply_recovery_provenance
+            .as_ref()
+            .expect("patch recovery provenance");
+        let mut payload = json!({
+            "proposal_id": proposal_id,
+            "tool_id": WORKSPACE_WRITE_TOOL_ID,
+            "path": path,
+            "operation": WorkspacePatchOperation::PatchFile.as_str(),
+            "content_preview": proposal.content_preview,
+            "content_chars": proposal.content_chars,
+            "truncated": proposal.truncated,
+            "validation_status": proposal.validation_status,
+            "validation_reason": proposal.validation_reason,
+            "diff_preview": proposal.diff_preview,
+            "diff_truncated": proposal.diff_truncated,
+            "diff_redacted": proposal.diff_redacted,
+            "patch_apply_recovery_repair": true,
+            "source_run_id": provenance.source_run_id.clone(),
+            "source_proposal_id": provenance.source_proposal_id.clone(),
+            "source_apply_id": provenance.source_apply_id.clone(),
+            "recovery_task_id": record.task_id.clone(),
+            "recovery_run_id": record.run_id.clone(),
+            "source_apply_fingerprint": provenance.source_apply_fingerprint.clone(),
+            "failure_fingerprint": provenance.failure_fingerprint.clone(),
+            "failure_class": provenance.failure_class.clone(),
+            "source_operation": provenance.operation.clone(),
+            "source_path": provenance.path.clone(),
+            "source_hunk_count": provenance.hunk_count,
+            "source_hunk_fingerprint": provenance.hunk_fingerprint.clone(),
+        });
+        if let Some(hunk_count) = proposal.hunk_count {
+            payload["hunk_count"] = json!(hunk_count);
+        }
+        if let Some(hunk_fingerprint) = proposal.hunk_fingerprint {
+            payload["hunk_fingerprint"] = json!(hunk_fingerprint);
+        }
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                record,
+                LedgerEventKind::WorkspacePatchProposed,
+                Some(payload),
+            )
+            .expect("append recovery-scoped patch proposal");
     }
 
     fn append_generated_patch_hunks_proposal(
@@ -52281,6 +52734,323 @@ mod tests {
                 .count(),
             2
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_patch_apply_recovery_apply_applies_and_replays_approved_recovery_proposal() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\ngamma\n")
+            .expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let source_run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let source_record = store
+            .tasks()
+            .get_task_by_run_id(&source_run_id)
+            .unwrap()
+            .expect("source task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Patch old_text was not found in the current target.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["patch_hunk_context_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source_record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append failed patch apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "patch_hunk_context_matches",
+        );
+
+        let admitted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.start",
+                "params": {
+                    "goal": "Prepare approved patch recovery proposal",
+                    "mode_id": "implementer",
+                    "patch_apply_recovery_source": {
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "authorize_patch_apply_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(admitted.error.is_none());
+        let admitted_result = admitted.result.expect("admitted result");
+        let recovery_task_id = admitted_result["task_id"].as_str().unwrap().to_string();
+        let recovery_run_id = admitted_result["run_id"].as_str().unwrap().to_string();
+        let recovery_record = store
+            .tasks()
+            .get_task(&recovery_task_id)
+            .expect("read recovery task")
+            .expect("recovery task");
+        let recovery_proposal_id = "proposal_patch_recovery_apply";
+        append_patch_apply_recovery_hunk_proposal(
+            &store,
+            &recovery_record,
+            recovery_proposal_id,
+            "README.md",
+            "beta\n",
+            "delta\n",
+        );
+        assert!(parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.approve","params":{{"run_id":"{recovery_run_id}","proposal_id":"{recovery_proposal_id}","reason":"approve patch recovery apply"}}}}"#
+        ))
+        .error
+        .is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{recovery_run_id}","proposal_id":"{recovery_proposal_id}"}}}}"#
+        ));
+        let expected_hash = preflight.result.expect("preflight result")["snapshot"]["file_sha256"]
+            .as_str()
+            .expect("file hash")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"task.list"}"#)
+            .result
+            .expect("task list")["progress_overview"]
+            .clone();
+        let progress_fingerprint = progress["source_fingerprint"].as_str().unwrap();
+        let aggregate_sequence = progress["aggregate_sequence"].as_u64().unwrap();
+
+        let missing_auth = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "expected_progress_fingerprint": progress_fingerprint,
+                    "expected_aggregate_sequence": aggregate_sequence,
+                    "patch_apply_recovery_apply_target": {
+                        "recovery_task_id": recovery_task_id,
+                        "recovery_run_id": recovery_run_id,
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "recovery_proposal_id": recovery_proposal_id,
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "expected_target_sha256": expected_hash,
+                        "patch_old_text": "beta\n",
+                        "patch_new_text": "delta\n",
+                        "authorize_patch_apply_recovery_apply": false
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(missing_auth
+            .error
+            .unwrap()
+            .message
+            .contains("authorize_patch_apply_recovery_apply must be true"));
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&recovery_run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count(),
+            0
+        );
+
+        let target = json!({
+            "recovery_task_id": recovery_task_id,
+            "recovery_run_id": recovery_run_id,
+            "source_run_id": source_run_id,
+            "source_proposal_id": "source_patch_proposal",
+            "source_apply_id": "source_apply",
+            "recovery_proposal_id": recovery_proposal_id,
+            "expected_source_apply_fingerprint": source_apply_fingerprint,
+            "expected_failure_fingerprint": failure_fingerprint,
+            "expected_target_sha256": expected_hash,
+            "patch_old_text": "beta\n",
+            "patch_new_text": "delta\n",
+            "authorize_patch_apply_recovery_apply": true
+        });
+        let stale = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "expected_progress_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                    "expected_aggregate_sequence": aggregate_sequence,
+                    "patch_apply_recovery_apply_target": target.clone()
+                }
+            })
+            .to_string(),
+        )
+        .result
+        .expect("stale result");
+        assert_eq!(stale["status"], "stale_progress");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\nbeta\ngamma\n"
+        );
+
+        let bad_proposal = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 8,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "expected_progress_fingerprint": progress_fingerprint,
+                    "expected_aggregate_sequence": aggregate_sequence,
+                    "patch_apply_recovery_apply_target": {
+                        "recovery_task_id": recovery_task_id,
+                        "recovery_run_id": recovery_run_id,
+                        "source_run_id": source_run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "recovery_proposal_id": "proposal_not_recovery_scoped",
+                        "expected_source_apply_fingerprint": source_apply_fingerprint,
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "expected_target_sha256": expected_hash,
+                        "patch_old_text": "beta\n",
+                        "patch_new_text": "delta\n",
+                        "authorize_patch_apply_recovery_apply": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(bad_proposal
+            .error
+            .unwrap()
+            .message
+            .contains("recovery_proposal_id is not recovery-scoped"));
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&recovery_run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count(),
+            0
+        );
+
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "expected_progress_fingerprint": progress_fingerprint,
+                "expected_aggregate_sequence": aggregate_sequence,
+                "continuation_id": "m28.1.patch.recovery.apply",
+                "patch_apply_recovery_apply_target": target
+            }
+        });
+        let applied = parse_line(&request.to_string());
+        assert!(applied.error.is_none(), "apply error: {:?}", applied.error);
+        let applied_result = applied.result.expect("applied result");
+        assert_eq!(applied_result["status"], "task_executed");
+        assert_eq!(applied_result["task_run_result"], Value::Null);
+        assert_eq!(
+            applied_result["proposal_apply_result"]["apply_result"]["operation"],
+            "patch_file"
+        );
+        assert_eq!(
+            applied_result["proposal_apply_result"]["apply_result"]["applied"],
+            true
+        );
+        assert_eq!(
+            applied_result["next_route"]["kind"],
+            "inspect_progress_overview"
+        );
+        let apply_id = applied_result["proposal_apply_result"]["apply_result"]["apply_id"]
+            .as_str()
+            .expect("apply id")
+            .to_string();
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "alpha\ndelta\ngamma\n"
+        );
+
+        let apply_event_count = || {
+            store
+                .tasks()
+                .read_ledger_events(&recovery_run_id)
+                .expect("recovery events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count()
+        };
+        assert_eq!(apply_event_count(), 1);
+        let replay = parse_line(&request.to_string())
+            .result
+            .expect("replay result");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(
+            replay["proposal_apply_result"]["apply_result"]["apply_id"],
+            apply_id
+        );
+        assert_eq!(replay["next_route"]["kind"], "inspect_progress_overview");
+        assert_eq!(apply_event_count(), 1);
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events after replay");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        for forbidden in [
+            "beta\n",
+            "delta\n",
+            "raw_content",
+            "full_content",
+            "raw_input",
+        ] {
+            assert!(!serialized_events.contains(forbidden));
+        }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

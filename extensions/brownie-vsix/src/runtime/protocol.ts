@@ -324,6 +324,7 @@ export interface HeadlessContinueOnceParams {
   patch_apply_recovery_goal?: string | null;
   patch_apply_recovery_mode_id?: string | null;
   patch_apply_recovery_run_target?: PatchApplyRecoveryRunTarget | null;
+  patch_apply_recovery_apply_target?: PatchApplyRecoveryApplyTarget | null;
   verification_recovery_apply_target?: VerificationRecoveryApplyTarget | null;
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
   llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
@@ -375,6 +376,22 @@ export interface PatchApplyRecoveryRunTarget {
   expected_source_apply_fingerprint: string;
   expected_failure_fingerprint: string;
   authorize_patch_apply_recovery_run: boolean;
+}
+
+export interface PatchApplyRecoveryApplyTarget {
+  recovery_task_id: string;
+  recovery_run_id: string;
+  source_run_id: string;
+  source_proposal_id: string;
+  source_apply_id: string;
+  recovery_proposal_id: string;
+  expected_source_apply_fingerprint: string;
+  expected_failure_fingerprint: string;
+  expected_target_sha256: string;
+  patch_old_text?: string | null;
+  patch_new_text?: string | null;
+  patch_hunks?: ProposalPatchHunk[] | null;
+  authorize_patch_apply_recovery_apply: boolean;
 }
 
 export interface VerificationRecoveryRetrySource {
@@ -4372,7 +4389,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4394,6 +4411,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.patch_apply_recovery_goal === undefined || value.patch_apply_recovery_goal === null || typeof value.patch_apply_recovery_goal === 'string') &&
     (value.patch_apply_recovery_mode_id === undefined || value.patch_apply_recovery_mode_id === null || typeof value.patch_apply_recovery_mode_id === 'string') &&
     (value.patch_apply_recovery_run_target === undefined || value.patch_apply_recovery_run_target === null || isPatchApplyRecoveryRunTarget(value.patch_apply_recovery_run_target)) &&
+    (value.patch_apply_recovery_apply_target === undefined || value.patch_apply_recovery_apply_target === null || isPatchApplyRecoveryApplyTarget(value.patch_apply_recovery_apply_target)) &&
     (value.verification_recovery_apply_target === undefined || value.verification_recovery_apply_target === null || isVerificationRecoveryApplyTarget(value.verification_recovery_apply_target)) &&
     (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target)) &&
     (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target))
@@ -4490,6 +4508,38 @@ function isPatchApplyRecoveryRunTarget(value: unknown): value is PatchApplyRecov
     typeof value.expected_failure_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_failure_fingerprint) &&
     value.authorize_patch_apply_recovery_run === true
+  );
+}
+
+function isPatchApplyRecoveryApplyTarget(value: unknown): value is PatchApplyRecoveryApplyTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['recovery_task_id', 'recovery_run_id', 'source_run_id', 'source_proposal_id', 'source_apply_id', 'recovery_proposal_id', 'expected_source_apply_fingerprint', 'expected_failure_fingerprint', 'expected_target_sha256', 'patch_old_text', 'patch_new_text', 'patch_hunks', 'authorize_patch_apply_recovery_apply']) &&
+    typeof value.recovery_task_id === 'string' &&
+    typeof value.recovery_run_id === 'string' &&
+    typeof value.source_run_id === 'string' &&
+    typeof value.source_proposal_id === 'string' &&
+    typeof value.source_apply_id === 'string' &&
+    typeof value.recovery_proposal_id === 'string' &&
+    typeof value.expected_source_apply_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_source_apply_fingerprint) &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    typeof value.expected_target_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_target_sha256) &&
+    (value.patch_old_text === undefined || value.patch_old_text === null || typeof value.patch_old_text === 'string') &&
+    (value.patch_new_text === undefined || value.patch_new_text === null || typeof value.patch_new_text === 'string') &&
+    (value.patch_hunks === undefined || value.patch_hunks === null || (Array.isArray(value.patch_hunks) && value.patch_hunks.every(isProposalPatchHunk))) &&
+    value.authorize_patch_apply_recovery_apply === true
+  );
+}
+
+function isProposalPatchHunk(value: unknown): value is ProposalPatchHunk {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['old_text', 'new_text']) &&
+    typeof value.old_text === 'string' &&
+    typeof value.new_text === 'string'
   );
 }
 

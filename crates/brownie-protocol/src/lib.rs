@@ -339,6 +339,26 @@ pub struct PatchApplyRecoveryRunTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchApplyRecoveryApplyTarget {
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub source_run_id: String,
+    pub source_proposal_id: String,
+    pub source_apply_id: String,
+    pub recovery_proposal_id: String,
+    pub expected_source_apply_fingerprint: String,
+    pub expected_failure_fingerprint: String,
+    pub expected_target_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_new_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_hunks: Option<Vec<ProposalPatchHunk>>,
+    pub authorize_patch_apply_recovery_apply: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationRecoveryRetrySource {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -539,6 +559,8 @@ pub struct HeadlessContinueOnceParams {
     pub patch_apply_recovery_mode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_apply_recovery_run_target: Option<PatchApplyRecoveryRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_apply_recovery_apply_target: Option<PatchApplyRecoveryApplyTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_apply_target: Option<VerificationRecoveryApplyTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
