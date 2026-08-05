@@ -9,9 +9,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
-    HeadlessRunDriveResult, LlmProviderFailureRetryProvenance, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    HeadlessRunDriveResult, LlmProviderFailureRetryProvenance, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -561,6 +561,19 @@ pub struct VerificationRecoveryTaskStartResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchApplyRecoveryTaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub provenance: PatchApplyRecoveryProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PatchApplyRecoveryTaskStartResult {
+    pub record: TaskRecord,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryTaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,
@@ -627,6 +640,7 @@ impl TaskStore {
             source_intent_summary: None,
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
@@ -660,6 +674,7 @@ impl TaskStore {
             source_intent_summary: params.source_intent_summary,
             recovery_cycle_provenance: params.recovery_cycle_provenance,
             verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
@@ -725,6 +740,7 @@ impl TaskStore {
             source_intent_summary: None,
             recovery_cycle_provenance: None,
             verification_recovery_provenance: Some(params.provenance),
+            patch_apply_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
@@ -768,6 +784,85 @@ impl TaskStore {
         })
     }
 
+    pub fn start_patch_apply_recovery_task(
+        &self,
+        params: PatchApplyRecoveryTaskStartParams,
+    ) -> Result<PatchApplyRecoveryTaskStartResult> {
+        let _lock = self.acquire_run_admission_lock(&params.provenance.source_run_id)?;
+        if let Some(record) = self.find_patch_apply_recovery_task_by_failure_fingerprint(
+            &params.provenance.failure_fingerprint,
+        )? {
+            return Ok(PatchApplyRecoveryTaskStartResult {
+                record,
+                replayed: true,
+            });
+        }
+
+        let now = timestamp()?;
+        let task_id = format!("task_{}", Uuid::new_v4());
+        let run_id = format!("run_{}", Uuid::new_v4());
+        let record = TaskRecord {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            goal: params.goal,
+            mode_id: params.mode_id,
+            status: TaskStatus::Created,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: Some(params.provenance),
+            verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let run_dir = self.run_dir(&run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        self.write_task_state(&record)?;
+        let provenance = record.patch_apply_recovery_provenance.clone();
+        self.append_task_event_with_payload(
+            &record,
+            LedgerEventKind::TaskStarted,
+            Some(serde_json::json!({
+                "status": "Created",
+                "patch_apply_recovery_provenance": provenance,
+                "source_run_id": record
+                    .patch_apply_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_run_id.clone()),
+                "source_proposal_id": record
+                    .patch_apply_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_proposal_id.clone()),
+                "source_apply_id": record
+                    .patch_apply_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_apply_id.clone()),
+                "failure_fingerprint": record
+                    .patch_apply_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.failure_fingerprint.clone()),
+                "execution_enabled": false,
+                "recovery_running_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "next_action": "run_recovery_task_explicitly",
+                "reason": "Patch apply failure recovery task admitted from bounded apply result evidence; recovery execution remains explicit."
+            })),
+        )?;
+
+        Ok(PatchApplyRecoveryTaskStartResult {
+            record,
+            replayed: false,
+        })
+    }
+
     pub fn start_verification_recovery_retry_task(
         &self,
         params: VerificationRecoveryRetryTaskStartParams,
@@ -802,6 +897,7 @@ impl TaskStore {
             source_intent_summary: None,
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
             verification_recovery_retry_provenance: Some(params.provenance),
             llm_provider_failure_retry_provenance: None,
             created_at: now.clone(),
@@ -902,6 +998,7 @@ impl TaskStore {
             source_intent_summary: None,
             recovery_cycle_provenance: None,
             verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: Some(params.provenance),
             created_at: now.clone(),
@@ -1102,6 +1199,23 @@ impl TaskStore {
         for record in self.list_tasks()? {
             if record
                 .verification_recovery_provenance
+                .as_ref()
+                .map(|provenance| provenance.failure_fingerprint.as_str())
+                == Some(failure_fingerprint)
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_patch_apply_recovery_task_by_failure_fingerprint(
+        &self,
+        failure_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record
+                .patch_apply_recovery_provenance
                 .as_ref()
                 .map(|provenance| provenance.failure_fingerprint.as_str())
                 == Some(failure_fingerprint)
@@ -1948,6 +2062,7 @@ mod tests {
                 goal: "test goal".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -1976,6 +2091,7 @@ mod tests {
                 goal: "run me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -2015,6 +2131,7 @@ mod tests {
                 goal: "read ledger".into(),
                 mode_id: None,
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -2044,6 +2161,7 @@ mod tests {
                 goal: "list me".into(),
                 mode_id: None,
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -2065,6 +2183,7 @@ mod tests {
                 goal: "parent".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })

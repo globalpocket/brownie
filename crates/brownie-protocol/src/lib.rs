@@ -301,6 +301,8 @@ pub struct TaskStartParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_source: Option<VerificationRecoverySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub patch_apply_recovery_source: Option<PatchApplyRecoverySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_source: Option<VerificationRecoveryRetrySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_source: Option<LlmProviderFailureRetrySource>,
@@ -312,6 +314,16 @@ pub struct VerificationRecoverySource {
     pub source_run_id: String,
     pub expected_failure_fingerprint: String,
     pub authorize_recovery: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchApplyRecoverySource {
+    pub source_run_id: String,
+    pub source_proposal_id: String,
+    pub source_apply_id: String,
+    pub expected_source_apply_fingerprint: String,
+    pub expected_failure_fingerprint: String,
+    pub authorize_patch_apply_recovery: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -388,6 +400,8 @@ pub struct TaskStartResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_admission: Option<VerificationRecoveryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_apply_recovery_admission: Option<PatchApplyRecoveryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry_admission: Option<VerificationRecoveryRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
@@ -399,6 +413,20 @@ pub struct VerificationRecoveryAdmission {
     pub source_run_id: String,
     pub recovery_task_id: String,
     pub recovery_run_id: String,
+    pub failure_fingerprint: String,
+    pub recovery_running_enabled: bool,
+    pub next_action: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchApplyRecoveryAdmission {
+    pub source_run_id: String,
+    pub source_proposal_id: String,
+    pub source_apply_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub source_apply_fingerprint: String,
     pub failure_fingerprint: String,
     pub recovery_running_enabled: bool,
     pub next_action: String,
@@ -1125,6 +1153,8 @@ pub struct TaskRunResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_repair: Option<TaskRunVerificationRecoveryRepairOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub patch_apply_recovery_repair: Option<TaskRunPatchApplyRecoveryRepairOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_recovery_retry: Option<TaskRunVerificationRecoveryRetryOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub recovery_cycle_budget_outcome: Option<RecoveryCycleBudgetOutcome>,
@@ -1415,6 +1445,25 @@ pub struct TaskRunVerificationRecoveryRepairOutcome {
     pub proposal_id: Option<String>,
     pub proposal_count: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_reason: Option<String>,
+    pub replayed: bool,
+    pub apply_enabled: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunPatchApplyRecoveryRepairOutcome {
+    pub gate_status: String,
+    pub source_run_id: String,
+    pub source_proposal_id: String,
+    pub source_apply_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub source_apply_fingerprint: String,
+    pub failure_fingerprint: String,
+    pub failure_class: String,
+    pub proposal_id: Option<String>,
+    pub proposal_count: usize,
     pub failure_reason: Option<String>,
     pub replayed: bool,
     pub apply_enabled: bool,
@@ -3534,6 +3583,20 @@ pub struct VerificationRecoveryProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PatchApplyRecoveryProvenance {
+    pub source_run_id: String,
+    pub source_proposal_id: String,
+    pub source_apply_id: String,
+    pub source_apply_fingerprint: String,
+    pub failure_fingerprint: String,
+    pub failure_class: String,
+    pub operation: String,
+    pub path: String,
+    pub hunk_count: Option<usize>,
+    pub hunk_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct VerificationRecoveryRetryProvenance {
     pub source_task_id: String,
     pub source_run_id: String,
@@ -3585,6 +3648,8 @@ pub struct TaskRecord {
     pub recovery_cycle_provenance: Option<RecoveryCycleChildProvenance>,
     #[serde(default)]
     pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
+    #[serde(default)]
+    pub patch_apply_recovery_provenance: Option<PatchApplyRecoveryProvenance>,
     #[serde(default)]
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
     #[serde(default)]

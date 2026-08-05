@@ -1901,6 +1901,59 @@ describe('RuntimeClient', () => {
     }]);
   });
 
+  it('creates a task.start patch apply recovery request', async () => {
+    const fingerprint = `sha256:${'a'.repeat(64)}`;
+    const failureFingerprint = `sha256:${'b'.repeat(64)}`;
+    const result = {
+      task_id: 'task_recovery',
+      run_id: 'run_recovery',
+      status: 'Created',
+      patch_apply_recovery_admission: {
+        source_run_id: 'run_source',
+        source_proposal_id: 'proposal_source',
+        source_apply_id: 'apply_source',
+        recovery_task_id: 'task_recovery',
+        source_apply_fingerprint: fingerprint,
+        failure_fingerprint: failureFingerprint,
+        recovery_running_enabled: false,
+        next_action: 'run_recovery_task_explicitly',
+        replayed: false,
+      },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.startTask({
+      goal: 'recover patch apply failure',
+      modeId: 'implementer',
+      patchApplyRecoverySource: {
+        source_run_id: 'run_source',
+        source_proposal_id: 'proposal_source',
+        source_apply_id: 'apply_source',
+        expected_source_apply_fingerprint: fingerprint,
+        expected_failure_fingerprint: failureFingerprint,
+        authorize_patch_apply_recovery: true,
+      },
+    })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'task.start',
+      params: {
+        goal: 'recover patch apply failure',
+        mode_id: 'implementer',
+        patch_apply_recovery_source: {
+          source_run_id: 'run_source',
+          source_proposal_id: 'proposal_source',
+          source_apply_id: 'apply_source',
+          expected_source_apply_fingerprint: fingerprint,
+          expected_failure_fingerprint: failureFingerprint,
+          authorize_patch_apply_recovery: true,
+        },
+      },
+    }]);
+  });
+
   it('accepts bounded cargo diagnostics and rejects unsafe diagnostic payloads', () => {
     const fingerprint = `sha256:${'a'.repeat(64)}`;
     const diagnostic = {

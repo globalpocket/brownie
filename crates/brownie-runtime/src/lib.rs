@@ -38,6 +38,7 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryProvenance, PatchApplyRecoverySource,
     PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
     ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
     ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
@@ -132,18 +133,18 @@ use brownie_protocol::{
     TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode,
     TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
     TaskRunCompletionEvidence, TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
-    TaskRunParentJoinReadinessOutcome, TaskRunResult, TaskRunSelectedIndexContext,
-    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
-    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
-    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, ToolExecuteParams,
-    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
-    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
-    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
-    ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
-    VerificationRecoveryApplyTarget, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
-    VerificationRecoveryRetryRunTarget, VerificationRecoveryRetrySource,
-    VerificationRecoveryRunTarget, VerificationRecoverySource,
+    TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
+    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
+    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
+    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
+    TaskStatusCounts, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
+    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
+    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
+    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
+    VerificationRecoveryRetryProvenance, VerificationRecoveryRetryRunTarget,
+    VerificationRecoveryRetrySource, VerificationRecoveryRunTarget, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
     WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
     WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
@@ -219,7 +220,8 @@ use brownie_store::{
     BrownieStore, ChildTaskStartParams, HeadlessContinuationDecisionLookup,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ParentJoinContinuationRunAdmission,
-    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
+    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
+    VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -1761,6 +1763,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         goal,
         mode_id,
         verification_recovery_source,
+        patch_apply_recovery_source,
         verification_recovery_retry_source,
         llm_provider_failure_retry_source,
     } = params;
@@ -1781,6 +1784,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
 
     let start_source_count = [
         verification_recovery_source.is_some(),
+        patch_apply_recovery_source.is_some(),
         verification_recovery_retry_source.is_some(),
         llm_provider_failure_retry_source.is_some(),
     ]
@@ -1837,6 +1841,60 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                             next_action: "run_recovery_task_explicitly".into(),
                             replayed: admission.replayed,
                         }),
+                        patch_apply_recovery_admission: None,
+                        verification_recovery_retry_admission: None,
+                        llm_provider_failure_retry_admission: None,
+                    }),
+                )
+            }
+            Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else if let Some(source) = patch_apply_recovery_source {
+        let provenance = match patch_apply_recovery_provenance_for_source(&store, &source) {
+            Ok(provenance) => provenance,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        let source_apply_fingerprint = provenance.source_apply_fingerprint.clone();
+        let failure_fingerprint = provenance.failure_fingerprint.clone();
+        match store
+            .tasks()
+            .start_patch_apply_recovery_task(PatchApplyRecoveryTaskStartParams {
+                goal,
+                mode_id: Some(policy.mode_id.clone()),
+                provenance,
+            }) {
+            Ok(admission) => {
+                if !admission.replayed {
+                    if let Err(error) =
+                        append_mode_resolved_event(&store, &admission.record, &policy)
+                    {
+                        return error_response(id, -32603, &format!("internal error: {error}"));
+                    }
+                }
+                result_response(
+                    id,
+                    json!(TaskStartResult {
+                        task_id: admission.record.task_id.clone(),
+                        run_id: admission.record.run_id.clone(),
+                        status: admission.record.status.clone(),
+                        verification_recovery_admission: None,
+                        patch_apply_recovery_admission: Some(PatchApplyRecoveryAdmission {
+                            source_run_id: source.source_run_id,
+                            source_proposal_id: source.source_proposal_id,
+                            source_apply_id: source.source_apply_id,
+                            recovery_task_id: admission.record.task_id,
+                            recovery_run_id: admission.record.run_id,
+                            source_apply_fingerprint,
+                            failure_fingerprint,
+                            recovery_running_enabled: false,
+                            next_action: "run_recovery_task_explicitly".into(),
+                            replayed: admission.replayed,
+                        }),
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: None,
                     }),
@@ -1878,6 +1936,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         run_id: admission.record.run_id.clone(),
                         status: admission.record.status.clone(),
                         verification_recovery_admission: None,
+                        patch_apply_recovery_admission: None,
                         verification_recovery_retry_admission: Some(
                             VerificationRecoveryRetryAdmission {
                                 source_task_id: source.source_task_id,
@@ -1936,6 +1995,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         run_id: admission.record.run_id.clone(),
                         status: admission.record.status.clone(),
                         verification_recovery_admission: None,
+                        patch_apply_recovery_admission: None,
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: Some(
                             LlmProviderFailureRetryAdmission {
@@ -1961,6 +2021,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
             goal,
             mode_id: Some(policy.mode_id.clone()),
             verification_recovery_source: None,
+            patch_apply_recovery_source: None,
             verification_recovery_retry_source: None,
             llm_provider_failure_retry_source: None,
         };
@@ -1977,6 +2038,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         run_id: record.run_id,
                         status: record.status,
                         verification_recovery_admission: None,
+                        patch_apply_recovery_admission: None,
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: None,
                     }),
@@ -2056,6 +2118,34 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
+                    patch_apply_recovery_repair: None,
+                    verification_recovery_retry: None,
+                    recovery_cycle_budget_outcome: None,
+                    child_orchestration_outcome: None,
+                    parent_join_readiness_outcome: None,
+                }),
+            );
+        }
+        Ok(None) => {}
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    }
+
+    match patch_apply_recovery_repair_outcome_for_replay(&store, &record) {
+        Ok(Some((agent_loop, patch_apply_recovery_repair))) => {
+            return result_response(
+                id,
+                json!(TaskRunResult {
+                    task_id: record.task_id,
+                    run_id: record.run_id,
+                    status: record.status,
+                    agent_loop,
+                    completion_evidence: replay_completion_evidence.clone(),
+                    llm_provider_failure: None,
+                    selected_index_prompt_context: None,
+                    context_budget: None,
+                    verification_completion_gate: None,
+                    verification_recovery_repair: None,
+                    patch_apply_recovery_repair: Some(patch_apply_recovery_repair),
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
@@ -2082,6 +2172,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry: Some(verification_recovery_retry),
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
@@ -2126,6 +2217,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
                     child_orchestration_outcome: None,
@@ -2152,6 +2244,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: Some(child_orchestration_outcome),
@@ -2178,6 +2271,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
@@ -2204,6 +2298,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
@@ -2262,6 +2357,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         context_budget: task_run_context_budget_summary_from_events(&events),
                         verification_completion_gate,
                         verification_recovery_repair: None,
+                        patch_apply_recovery_repair: None,
                         verification_recovery_retry: None,
                         recovery_cycle_budget_outcome: None,
                         child_orchestration_outcome: None,
@@ -2274,6 +2370,21 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
 
     let is_verification_recovery_task =
         match revalidate_verification_recovery_task_for_run(&store, &record) {
+            Ok(value) => value,
+            Err(rejection) => {
+                return match rejection {
+                    TaskRunAdmissionRejection::InvalidParams(message) => {
+                        error_response(id, -32602, message)
+                    }
+                    TaskRunAdmissionRejection::Internal(message) => {
+                        error_response(id, -32603, &format!("internal error: {message}"))
+                    }
+                }
+            }
+        };
+
+    let is_patch_apply_recovery_task =
+        match revalidate_patch_apply_recovery_task_for_run(&store, &record) {
             Ok(value) => value,
             Err(rejection) => {
                 return match rejection {
@@ -2612,6 +2723,14 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     } else {
         None
     };
+    let patch_apply_recovery_repair = if is_patch_apply_recovery_task {
+        match patch_apply_recovery_repair_outcome_for_run(&store, &running, false) {
+            Ok(outcome) => outcome,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else {
+        None
+    };
     if let Err(error) = append_subtask_handoff_prepared(&store, &running) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -2824,6 +2943,13 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             agent_loop_final_response_content.clear();
         }
     }
+    if let Some(repair) = patch_apply_recovery_repair.as_ref() {
+        if repair.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_FAILED {
+            agent_loop_final_state = AgentLoopState::Failed;
+            agent_loop_completion_summary = patch_apply_recovery_repair_failed_summary(repair);
+            agent_loop_final_response_content.clear();
+        }
+    }
 
     let completion_result_fingerprint_value = completion_result_fingerprint(
         agent_loop_final_state,
@@ -2908,6 +3034,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     context_budget: context_budget_result,
                     verification_completion_gate,
                     verification_recovery_repair,
+                    patch_apply_recovery_repair,
                     verification_recovery_retry: None,
                     recovery_cycle_budget_outcome,
                     child_orchestration_outcome,
@@ -3107,6 +3234,7 @@ fn handle_verification_recovery_retry_task_run(
                     context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
+                    patch_apply_recovery_repair: None,
                     verification_recovery_retry,
                     recovery_cycle_budget_outcome: None,
                     child_orchestration_outcome: None,
@@ -4232,6 +4360,7 @@ fn fail_llm_request(
                         context_budget: None,
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
+                        patch_apply_recovery_repair: None,
                         verification_recovery_retry: None,
                         recovery_cycle_budget_outcome: None,
                         child_orchestration_outcome: None,
@@ -4255,6 +4384,7 @@ fn fail_llm_request(
                 context_budget: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: None,
@@ -10519,6 +10649,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: None,
@@ -10542,6 +10673,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: Some(verification_recovery_repair),
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: None,
@@ -10565,6 +10697,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: Some(verification_recovery_retry),
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: None,
@@ -10588,6 +10721,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: Some(recovery_cycle_budget_outcome),
                 child_orchestration_outcome: None,
@@ -10611,6 +10745,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: Some(child_orchestration_outcome),
@@ -10634,6 +10769,7 @@ fn task_run_result_for_headless_replay(
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
+                patch_apply_recovery_repair: None,
                 verification_recovery_retry: None,
                 recovery_cycle_budget_outcome: None,
                 child_orchestration_outcome: None,
@@ -10667,6 +10803,7 @@ fn task_run_result_for_headless_replay(
         context_budget: task_run_context_budget_summary_from_events(&events),
         verification_completion_gate,
         verification_recovery_repair: None,
+        patch_apply_recovery_repair: None,
         verification_recovery_retry: None,
         recovery_cycle_budget_outcome: None,
         child_orchestration_outcome: None,
@@ -28095,6 +28232,173 @@ fn verification_recovery_apply_fingerprint(payload: &Value) -> String {
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
+fn patch_apply_recovery_provenance_for_source(
+    store: &BrownieStore,
+    source: &PatchApplyRecoverySource,
+) -> Result<PatchApplyRecoveryProvenance, VerificationRecoveryAdmissionError> {
+    for (field, value) in [
+        ("source_run_id", source.source_run_id.as_str()),
+        ("source_proposal_id", source.source_proposal_id.as_str()),
+        ("source_apply_id", source.source_apply_id.as_str()),
+    ] {
+        if value.trim().is_empty() {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: patch_apply_recovery_source.{field} must not be empty"
+            )));
+        }
+    }
+    if !source.authorize_patch_apply_recovery {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch_apply_recovery_source.authorize_patch_apply_recovery must be true"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&source.expected_source_apply_fingerprint) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch_apply_recovery_source.expected_source_apply_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+    if !is_sha256_fingerprint(&source.expected_failure_fingerprint) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch_apply_recovery_source.expected_failure_fingerprint must be a sha256 fingerprint"
+                .into(),
+        ));
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&source.source_run_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let payload = events
+        .iter()
+        .rev()
+        .find_map(|event| {
+            if event.kind != LedgerEventKind::WorkspacePatchApplyResultRecorded {
+                return None;
+            }
+            let payload = event.payload.clone()?;
+            if payload.get("proposal_id").and_then(Value::as_str)
+                == Some(source.source_proposal_id.as_str())
+                && payload.get("apply_id").and_then(Value::as_str)
+                    == Some(source.source_apply_id.as_str())
+            {
+                Some(payload)
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: patch apply recovery source has no matching apply result".into(),
+            )
+        })?;
+    if payload.get("operation").and_then(Value::as_str) != Some("patch_file") {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source operation is not patch_file".into(),
+        ));
+    }
+    if payload.get("apply_status").and_then(Value::as_str) == Some("Applied")
+        || payload.get("applied").and_then(Value::as_bool) == Some(true)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source is already applied".into(),
+        ));
+    }
+    let failure_class = patch_apply_recovery_failure_class(&payload).ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch apply recovery source failure class is not recoverable".into(),
+        )
+    })?;
+    let source_apply_fingerprint = patch_apply_recovery_source_fingerprint(&payload);
+    if source_apply_fingerprint != source.expected_source_apply_fingerprint {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch_apply_recovery_source.expected_source_apply_fingerprint is stale"
+                .into(),
+        ));
+    }
+    let failure_fingerprint = patch_apply_recovery_failure_fingerprint(
+        &payload,
+        &source_apply_fingerprint,
+        &failure_class,
+    );
+    if failure_fingerprint != source.expected_failure_fingerprint {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: patch_apply_recovery_source.expected_failure_fingerprint is stale"
+                .into(),
+        ));
+    }
+    Ok(PatchApplyRecoveryProvenance {
+        source_run_id: source.source_run_id.clone(),
+        source_proposal_id: source.source_proposal_id.clone(),
+        source_apply_id: source.source_apply_id.clone(),
+        source_apply_fingerprint,
+        failure_fingerprint,
+        failure_class,
+        operation: "patch_file".to_string(),
+        path: payload
+            .get("path")
+            .and_then(Value::as_str)
+            .unwrap_or("[unknown]")
+            .to_string(),
+        hunk_count: payload
+            .get("hunk_count")
+            .and_then(Value::as_u64)
+            .map(|v| v as usize),
+        hunk_fingerprint: payload
+            .get("hunk_fingerprint")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+    })
+}
+
+fn patch_apply_recovery_failure_class(payload: &Value) -> Option<String> {
+    let failed = payload_string_array(payload, "failed_checks");
+    for check in [
+        "expected_target_hash_matches",
+        "latest_preflight_validation",
+        "patch_hunk_context_matches",
+        "approved_patch_metadata_matches",
+    ] {
+        if failed.iter().any(|value| value == check) {
+            return Some(check.to_string());
+        }
+    }
+    None
+}
+
+fn patch_apply_recovery_source_fingerprint(payload: &Value) -> String {
+    let canonical = json!({
+        "version": "patch_apply_recovery_source_v1",
+        "proposal_id": payload.get("proposal_id").and_then(Value::as_str),
+        "apply_id": payload.get("apply_id").and_then(Value::as_str),
+        "apply_status": payload.get("apply_status").and_then(Value::as_str),
+        "operation": payload.get("operation").and_then(Value::as_str),
+        "path": payload.get("path").and_then(Value::as_str),
+        "expected_target_sha256": payload.get("expected_target_sha256").and_then(Value::as_str),
+        "pre_write_target_sha256": payload.get("pre_write_target_sha256").and_then(Value::as_str),
+        "hunk_count": payload.get("hunk_count").and_then(Value::as_u64),
+        "hunk_fingerprint": payload.get("hunk_fingerprint").and_then(Value::as_str),
+        "failed_checks": payload_string_array(payload, "failed_checks"),
+        "blocked_checks": payload_string_array(payload, "blocked_checks"),
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn patch_apply_recovery_failure_fingerprint(
+    payload: &Value,
+    source_apply_fingerprint: &str,
+    failure_class: &str,
+) -> String {
+    let canonical = json!({
+        "version": "patch_apply_recovery_failure_v1",
+        "source_apply_fingerprint": source_apply_fingerprint,
+        "failure_class": failure_class,
+        "apply_reason": payload.get("apply_reason").and_then(Value::as_str),
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
 fn revalidate_verification_recovery_task_for_run(
     store: &BrownieStore,
     record: &TaskRecord,
@@ -28124,6 +28428,42 @@ fn revalidate_verification_recovery_task_for_run(
     if latest != *provenance {
         return Err(TaskRunAdmissionRejection::InvalidParams(
             "invalid params: verification recovery provenance is stale",
+        ));
+    }
+    Ok(true)
+}
+
+fn revalidate_patch_apply_recovery_task_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<bool, TaskRunAdmissionRejection> {
+    let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() else {
+        return Ok(false);
+    };
+    let source = PatchApplyRecoverySource {
+        source_run_id: provenance.source_run_id.clone(),
+        source_proposal_id: provenance.source_proposal_id.clone(),
+        source_apply_id: provenance.source_apply_id.clone(),
+        expected_source_apply_fingerprint: provenance.source_apply_fingerprint.clone(),
+        expected_failure_fingerprint: provenance.failure_fingerprint.clone(),
+        authorize_patch_apply_recovery: true,
+    };
+    let latest =
+        patch_apply_recovery_provenance_for_source(store, &source).map_err(
+            |error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(_) => {
+                    TaskRunAdmissionRejection::InvalidParams(
+                        "invalid params: patch apply recovery provenance is stale",
+                    )
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    TaskRunAdmissionRejection::Internal(message)
+                }
+            },
+        )?;
+    if latest != *provenance {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: patch apply recovery provenance is stale",
         ));
     }
     Ok(true)
@@ -28501,6 +28841,169 @@ fn invalid_verification_recovery_repair_proposal_seen(
         }
     }
     Ok(false)
+}
+
+#[derive(Debug, Clone)]
+struct PatchApplyRecoveryRepairProposalEvidence {
+    proposal_id: String,
+    applicable: bool,
+}
+
+fn patch_apply_recovery_repair_outcome_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> anyhow::Result<
+    Option<(
+        TaskRunAgentLoopSummary,
+        TaskRunPatchApplyRecoveryRepairOutcome,
+    )>,
+> {
+    if record.patch_apply_recovery_provenance.is_none()
+        || !matches!(record.status, TaskStatus::Completed | TaskStatus::Failed)
+    {
+        return Ok(None);
+    }
+    let Some(outcome) = patch_apply_recovery_repair_outcome_for_run(store, record, true)? else {
+        return Ok(None);
+    };
+    let final_state = if outcome.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+        AgentLoopState::Completed
+    } else {
+        AgentLoopState::Failed
+    };
+    let completion_summary = if outcome.gate_status == VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+        "Patch apply recovery proposal already exists; replaying bounded proposal handle."
+            .to_string()
+    } else {
+        patch_apply_recovery_repair_failed_summary(&outcome)
+    };
+    Ok(Some((
+        TaskRunAgentLoopSummary {
+            final_state: agent_loop_state_name(final_state).to_string(),
+            completion_summary,
+        },
+        outcome,
+    )))
+}
+
+fn patch_apply_recovery_repair_outcome_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    replayed: bool,
+) -> anyhow::Result<Option<TaskRunPatchApplyRecoveryRepairOutcome>> {
+    let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() else {
+        return Ok(None);
+    };
+    let proposals = patch_apply_recovery_repair_proposals_for_run(store, record, provenance)?;
+    let proposal_id = proposals
+        .iter()
+        .find(|proposal| proposal.applicable)
+        .map(|proposal| proposal.proposal_id.clone());
+    let proposal_count = proposals.len();
+    let (gate_status, failure_reason, next_action) = match proposal_count {
+        1 if proposal_id.is_some() => (
+            VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
+            None,
+            "review_and_authorize_recovery_proposal".to_string(),
+        ),
+        1 => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            Some("PatchApplyRecoveryProposalNotApplicable".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+        0 => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            Some("MissingPatchApplyRecoveryProposal".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+        _ => (
+            VERIFICATION_COMPLETION_GATE_STATUS_FAILED.to_string(),
+            Some("AmbiguousPatchApplyRecoveryProposals".to_string()),
+            "inspect_recovery_repair_gate_failure".to_string(),
+        ),
+    };
+    Ok(Some(TaskRunPatchApplyRecoveryRepairOutcome {
+        gate_status,
+        source_run_id: provenance.source_run_id.clone(),
+        source_proposal_id: provenance.source_proposal_id.clone(),
+        source_apply_id: provenance.source_apply_id.clone(),
+        recovery_task_id: record.task_id.clone(),
+        recovery_run_id: record.run_id.clone(),
+        source_apply_fingerprint: provenance.source_apply_fingerprint.clone(),
+        failure_fingerprint: provenance.failure_fingerprint.clone(),
+        failure_class: provenance.failure_class.clone(),
+        proposal_id,
+        proposal_count,
+        failure_reason,
+        replayed,
+        apply_enabled: false,
+        next_action,
+    }))
+}
+
+fn patch_apply_recovery_repair_proposals_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    provenance: &PatchApplyRecoveryProvenance,
+) -> anyhow::Result<Vec<PatchApplyRecoveryRepairProposalEvidence>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let mut proposals = Vec::new();
+    for event in events {
+        if event.kind != LedgerEventKind::WorkspacePatchProposed {
+            continue;
+        }
+        let Some(payload) = sanitize_ledger_payload(event.payload) else {
+            continue;
+        };
+        if payload
+            .get("patch_apply_recovery_repair")
+            .and_then(Value::as_bool)
+            != Some(true)
+        {
+            continue;
+        }
+        if payload.get("source_run_id").and_then(Value::as_str)
+            != Some(provenance.source_run_id.as_str())
+            || payload.get("source_proposal_id").and_then(Value::as_str)
+                != Some(provenance.source_proposal_id.as_str())
+            || payload.get("source_apply_id").and_then(Value::as_str)
+                != Some(provenance.source_apply_id.as_str())
+            || payload.get("recovery_task_id").and_then(Value::as_str)
+                != Some(record.task_id.as_str())
+            || payload.get("recovery_run_id").and_then(Value::as_str)
+                != Some(record.run_id.as_str())
+            || payload.get("failure_fingerprint").and_then(Value::as_str)
+                != Some(provenance.failure_fingerprint.as_str())
+        {
+            continue;
+        }
+        let Some(proposal_id) = payload
+            .get("proposal_id")
+            .and_then(Value::as_str)
+            .filter(|proposal_id| !proposal_id.trim().is_empty())
+            .map(ToString::to_string)
+        else {
+            continue;
+        };
+        let applicable = payload.get("validation_status").and_then(Value::as_str) == Some("Valid");
+        proposals.push(PatchApplyRecoveryRepairProposalEvidence {
+            proposal_id,
+            applicable,
+        });
+    }
+    Ok(proposals)
+}
+
+fn patch_apply_recovery_repair_failed_summary(
+    outcome: &TaskRunPatchApplyRecoveryRepairOutcome,
+) -> String {
+    format!(
+        "Patch apply recovery repair gate failed: {}.",
+        outcome
+            .failure_reason
+            .as_deref()
+            .unwrap_or("PatchApplyRecoveryRepairGateFailed")
+    )
 }
 
 fn verification_recovery_failure_fingerprint(
@@ -30954,6 +31457,20 @@ fn append_workspace_patch_proposal(
         payload["recovery_run_id"] = json!(record.run_id.clone());
         payload["failure_fingerprint"] = json!(provenance.failure_fingerprint.clone());
         payload["failed_verifier_tool_ids"] = json!(provenance.failed_verifier_tool_ids.clone());
+    }
+    if let Some(provenance) = record.patch_apply_recovery_provenance.as_ref() {
+        payload["patch_apply_recovery_repair"] = json!(true);
+        payload["source_run_id"] = json!(provenance.source_run_id.clone());
+        payload["source_proposal_id"] = json!(provenance.source_proposal_id.clone());
+        payload["source_apply_id"] = json!(provenance.source_apply_id.clone());
+        payload["recovery_task_id"] = json!(record.task_id.clone());
+        payload["recovery_run_id"] = json!(record.run_id.clone());
+        payload["source_apply_fingerprint"] = json!(provenance.source_apply_fingerprint.clone());
+        payload["failure_fingerprint"] = json!(provenance.failure_fingerprint.clone());
+        payload["failure_class"] = json!(provenance.failure_class.clone());
+        payload["source_operation"] = json!(provenance.operation.clone());
+        payload["source_hunk_count"] = json!(provenance.hunk_count);
+        payload["source_hunk_fingerprint"] = json!(provenance.hunk_fingerprint.clone());
     }
     store.tasks().append_task_event_with_payload(
         record,
@@ -35044,6 +35561,7 @@ mod tests {
                 goal: "created source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -35054,6 +35572,7 @@ mod tests {
                 goal: "running source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -35072,6 +35591,7 @@ mod tests {
                 goal: "completed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -35090,6 +35610,7 @@ mod tests {
                 goal: "cancelled source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -35108,6 +35629,7 @@ mod tests {
                 goal: "non-verification failed source".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36643,6 +37165,7 @@ mod tests {
                 goal: "Created progress with stale agent loop evidence".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36676,6 +37199,7 @@ mod tests {
                 goal: "Parent for queued progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36708,6 +37232,7 @@ mod tests {
                 goal: "Parent for stale queued progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36742,6 +37267,7 @@ mod tests {
                 goal: "Running progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36779,6 +37305,7 @@ mod tests {
                 goal: "Non-terminal gate-shaped payload is ignored".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36829,6 +37356,7 @@ mod tests {
                 goal: "Malformed terminal gate status".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36873,6 +37401,7 @@ mod tests {
                 goal: "Non-verification failure progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36912,6 +37441,7 @@ mod tests {
                 goal: "Completed progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36952,6 +37482,7 @@ mod tests {
                 goal: "Cancelled progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -36991,6 +37522,7 @@ mod tests {
                 goal: "Recovered verification progress".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37045,6 +37577,7 @@ mod tests {
                 goal: "Recovery repair gate is not verification".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37094,6 +37627,7 @@ mod tests {
                 goal: "Failed parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37133,6 +37667,7 @@ mod tests {
                 goal: "Cancelled parent with running child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37180,6 +37715,7 @@ mod tests {
                 goal: "Completed parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37223,6 +37759,7 @@ mod tests {
                 goal: "Completed parent with running child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37275,6 +37812,7 @@ mod tests {
                 goal: "Completed parent with terminal child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37341,6 +37879,7 @@ mod tests {
                 goal: "Parent ready for join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37381,6 +37920,7 @@ mod tests {
                 goal: "Parent with pending child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37400,6 +37940,7 @@ mod tests {
                 goal: "Running task".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37470,6 +38011,7 @@ mod tests {
                 goal: "Headless first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37480,6 +38022,7 @@ mod tests {
                 goal: "Headless second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37586,6 +38129,7 @@ mod tests {
                 goal: "Budget first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37596,6 +38140,7 @@ mod tests {
                 goal: "Budget second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37606,6 +38151,7 @@ mod tests {
                 goal: "Budget third".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37699,6 +38245,7 @@ mod tests {
                 goal: "Budget replay first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37709,6 +38256,7 @@ mod tests {
                 goal: "Budget replay second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37807,6 +38355,7 @@ mod tests {
                 goal: "Budget validation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37866,6 +38415,7 @@ mod tests {
                 goal: "Budget stale".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37910,6 +38460,7 @@ mod tests {
                 goal: "Run session first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37920,6 +38471,7 @@ mod tests {
                 goal: "Run session second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -37930,6 +38482,7 @@ mod tests {
                 goal: "Run session third".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38121,6 +38674,7 @@ mod tests {
                 goal: "Run session stale".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38162,6 +38716,7 @@ mod tests {
                     goal: goal.to_string(),
                     mode_id: Some("orchestrator".to_string()),
                     verification_recovery_source: None,
+                    patch_apply_recovery_source: None,
                     verification_recovery_retry_source: None,
                     llm_provider_failure_retry_source: None,
                 })
@@ -38300,6 +38855,7 @@ mod tests {
                 goal: "Drive missing checkpoint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38335,6 +38891,7 @@ mod tests {
                 goal: "Budget failed verifier route".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38451,6 +39008,7 @@ mod tests {
                 goal: "Budget parent ready for explicit join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38536,6 +39094,7 @@ mod tests {
                 goal: "Parent with queued child".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38585,6 +39144,7 @@ mod tests {
                 goal: "Missing auth".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38620,6 +39180,7 @@ mod tests {
                 goal: "Stale fingerprint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38658,6 +39219,7 @@ mod tests {
                 goal: "Already running".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38709,6 +39271,7 @@ mod tests {
                 goal: "Parent join ready".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38783,6 +39346,7 @@ mod tests {
                 goal: "Replay terminal continuation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38860,6 +39424,7 @@ mod tests {
                 goal: "Replay running continuation".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38937,6 +39502,7 @@ mod tests {
                 goal: "Conflict first".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -38947,6 +39513,7 @@ mod tests {
                 goal: "Conflict second".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -39001,6 +39568,7 @@ mod tests {
                 goal: "Failed verifier route".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -39104,6 +39672,7 @@ mod tests {
                 goal: "Source verification failure".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -39203,6 +39772,7 @@ mod tests {
                 goal: "Source verification failure".to_string(),
                 mode_id: Some("verifier".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -39213,6 +39783,7 @@ mod tests {
                 goal: "Recovery task".to_string(),
                 mode_id: Some("implementer".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -40073,6 +40644,7 @@ mod tests {
                 goal: "Parent ready for explicit join".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -40161,6 +40733,7 @@ mod tests {
                 goal: "Bounded task listing parent".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -40344,6 +40917,7 @@ mod tests {
                 goal: "Stable progress fingerprint".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -40545,6 +41119,7 @@ mod tests {
                 goal: "Selected index progress".to_string(),
                 mode_id: Some("orchestrator".to_string()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43135,6 +43710,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43246,6 +43822,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43523,6 +44100,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43584,6 +44162,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43636,6 +44215,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43731,6 +44311,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43855,6 +44436,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -43943,6 +44525,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("external-orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -44004,6 +44587,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -44551,6 +45135,7 @@ mod tests {
                 goal: "Parent recovery-cycle admission".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -47189,6 +47774,7 @@ mod tests {
                 goal: "Parent orchestration".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -47240,6 +47826,7 @@ mod tests {
                 goal: "Parent over-budget recovery cycle".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -47350,6 +47937,7 @@ mod tests {
                 goal: "Parent over-budget recovery-cycle outcome".into(),
                 mode_id: Some("orchestrator".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -50412,6 +51000,184 @@ mod tests {
     }
 
     #[test]
+    fn patch_apply_recovery_source_rejects_bad_fingerprint_before_task_start() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .unwrap()
+            .expect("task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Expected target hash does not match current target file.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["expected_target_hash_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append source apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "expected_target_hash_matches",
+        );
+
+        let rejected = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.start",
+                "params": {
+                    "goal": "Recover stale patch",
+                    "mode_id": "implementer",
+                    "patch_apply_recovery_source": {
+                        "source_run_id": run_id,
+                        "source_proposal_id": "source_patch_proposal",
+                        "source_apply_id": "source_apply",
+                        "expected_source_apply_fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                        "expected_failure_fingerprint": failure_fingerprint,
+                        "authorize_patch_apply_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(rejected.error.is_some());
+        assert_eq!(
+            store.tasks().list_tasks().expect("list tasks").len(),
+            1,
+            "bad source fingerprint must not admit a recovery task"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn patch_apply_recovery_task_start_admits_recoverable_apply_failure_once() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "alpha\nbeta\n").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Patch README","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .unwrap()
+            .expect("task");
+        let source_payload = json!({
+            "proposal_id": "source_patch_proposal",
+            "apply_id": "source_apply",
+            "apply_status": "Denied",
+            "apply_reason": "Expected target hash does not match current target file.",
+            "authorization_consumed": false,
+            "applied": false,
+            "operation": "patch_file",
+            "path": "README.md",
+            "expected_target_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "pre_write_target_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+            "hunk_count": 1,
+            "hunk_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+            "failed_checks": ["expected_target_hash_matches"],
+            "blocked_checks": []
+        });
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::WorkspacePatchApplyResultRecorded,
+                Some(source_payload.clone()),
+            )
+            .expect("append source apply");
+        let source_apply_fingerprint =
+            super::patch_apply_recovery_source_fingerprint(&source_payload);
+        let failure_fingerprint = super::patch_apply_recovery_failure_fingerprint(
+            &source_payload,
+            &source_apply_fingerprint,
+            "expected_target_hash_matches",
+        );
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "task.start",
+            "params": {
+                "goal": "Recover stale patch",
+                "mode_id": "implementer",
+                "patch_apply_recovery_source": {
+                    "source_run_id": run_id,
+                    "source_proposal_id": "source_patch_proposal",
+                    "source_apply_id": "source_apply",
+                    "expected_source_apply_fingerprint": source_apply_fingerprint,
+                    "expected_failure_fingerprint": failure_fingerprint,
+                    "authorize_patch_apply_recovery": true
+                }
+            }
+        });
+        let admitted = parse_line(&request.to_string());
+        assert!(admitted.error.is_none());
+        let admitted_result = admitted.result.expect("admitted result");
+        assert_eq!(admitted_result["status"], "Created");
+        assert_eq!(
+            admitted_result["patch_apply_recovery_admission"]["next_action"],
+            "run_recovery_task_explicitly"
+        );
+        assert_eq!(
+            admitted_result["patch_apply_recovery_admission"]["replayed"],
+            false
+        );
+        let replay = parse_line(&request.to_string());
+        assert!(replay.error.is_none());
+        assert_eq!(
+            replay.result.unwrap()["patch_apply_recovery_admission"]["replayed"],
+            true
+        );
+        assert_eq!(
+            BrownieStore::new(temp.path())
+                .tasks()
+                .list_tasks()
+                .expect("list tasks")
+                .into_iter()
+                .filter(|record| record.patch_apply_recovery_provenance.is_some())
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn proposal_apply_patch_file_replaces_single_hunk_after_approval_and_current_hash() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -51908,6 +52674,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52054,6 +52821,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52128,6 +52896,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52197,6 +52966,7 @@ mod tests {
                 goal: "delete obsolete file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52269,6 +53039,7 @@ mod tests {
                 goal: "delete obsolete symlink".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52696,6 +53467,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52844,6 +53616,7 @@ mod tests {
                 goal: "create bounded files".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -52958,6 +53731,7 @@ mod tests {
                 goal: "create bounded files".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53234,6 +54008,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53302,6 +54077,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53397,6 +54173,7 @@ mod tests {
                 goal: "create a bounded file".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53466,6 +54243,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53505,6 +54283,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53553,6 +54332,7 @@ mod tests {
                 goal: "apply capability".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53595,6 +54375,7 @@ mod tests {
                 goal: "review readiness".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53628,6 +54409,7 @@ mod tests {
                 goal: "review verdict".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
@@ -53673,6 +54455,7 @@ mod tests {
                 goal: "review queue".into(),
                 mode_id: Some("implementer".into()),
                 verification_recovery_source: None,
+                patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
             })
