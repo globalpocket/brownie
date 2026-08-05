@@ -125,7 +125,12 @@ export class RuntimeClient {
   }
 
   async startTask(params: TaskStartParams): Promise<TaskStartResult> {
-    const requestParams: { goal: string; mode_id?: string; verification_recovery_source?: unknown } = {
+    const requestParams: {
+      goal: string;
+      mode_id?: string;
+      verification_recovery_source?: unknown;
+      patch_apply_recovery_source?: unknown;
+    } = {
       goal: params.goal,
     };
     if (params.modeId !== undefined) {
@@ -133,6 +138,9 @@ export class RuntimeClient {
     }
     if (params.verificationRecoverySource !== undefined) {
       requestParams.verification_recovery_source = params.verificationRecoverySource;
+    }
+    if (params.patchApplyRecoverySource !== undefined) {
+      requestParams.patch_apply_recovery_source = params.patchApplyRecoverySource;
     }
     const result = await this.call<TaskStartResult>('task.start', requestParams);
 

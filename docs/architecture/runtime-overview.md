@@ -146,6 +146,8 @@ the aggregate fingerprint, current approval, expected target SHA-256, latest
 preflight, safe path, non-symlink file kind, UTF-8 content, and all exact
 non-overlapping hunk contexts before constructing one patched file body in memory
 and using the existing temporary sibling and atomic replacement path.
+M27.1 adds patch apply failure recovery admission. A caller may pass bounded `patch_apply_recovery_source` evidence to `task.start` for a latest recoverable failed `patch_file` apply result. The runtime validates source run/proposal/apply IDs, expected apply and failure fingerprints, operation, recoverable failure class, and explicit authorization before creating or replaying one recovery task. Explicit `task.run` revalidates the same source evidence before running and marks any generated `workspace.write` proposal as `patch_apply_recovery_repair` with bounded source IDs, fingerprints, failure class, hunk count, and hunk fingerprint. It does not apply the proposal, approve it, run verifiers, expose raw hunk text or file content, or add a report/readiness/history wrapper.
+
 
 Controlled apply must not run shell or git commands, use network access, create parent directories, overwrite existing targets during create, remove files outside the approved `delete_file` path, mutate directories, perform multi-file transactions, expose canonical paths or absolute paths, or return/store raw file content, raw diffs, raw input JSON, stdout, stderr, environment values, or secrets. Failure paths should preserve the original file or absent target whenever possible, clean partial temporary files, and must not consume apply authorization before successful atomic mutation and verification.
 

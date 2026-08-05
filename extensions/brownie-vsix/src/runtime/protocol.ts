@@ -229,6 +229,19 @@ export interface VerificationRecoveryProvenance {
   bounded_cargo_diagnostics?: BoundedCargoDiagnostic[];
 }
 
+export interface PatchApplyRecoveryProvenance {
+  source_run_id: string;
+  source_proposal_id: string;
+  source_apply_id: string;
+  source_apply_fingerprint: string;
+  failure_fingerprint: string;
+  failure_class: string;
+  operation: string;
+  path: string;
+  hunk_count?: number | null;
+  hunk_fingerprint?: string | null;
+}
+
 export interface VerificationRecoveryRetryProvenance {
   source_task_id: string;
   source_run_id: string;
@@ -271,6 +284,7 @@ export interface TaskStartParams {
   goal: string;
   modeId?: string;
   verificationRecoverySource?: VerificationRecoverySource | null;
+  patchApplyRecoverySource?: PatchApplyRecoverySource | null;
   verificationRecoveryRetrySource?: VerificationRecoveryRetrySource | null;
   llmProviderFailureRetrySource?: LlmProviderFailureRetrySource | null;
 }
@@ -339,6 +353,15 @@ export interface VerificationRecoverySource {
   authorize_recovery: boolean;
 }
 
+export interface PatchApplyRecoverySource {
+  source_run_id: string;
+  source_proposal_id: string;
+  source_apply_id: string;
+  expected_source_apply_fingerprint: string;
+  expected_failure_fingerprint: string;
+  authorize_patch_apply_recovery: boolean;
+}
+
 export interface VerificationRecoveryRetrySource {
   source_task_id: string;
   source_run_id: string;
@@ -404,6 +427,7 @@ export interface TaskStartResult {
   run_id: string;
   status: TaskStatus;
   verification_recovery_admission?: VerificationRecoveryAdmission | null;
+  patch_apply_recovery_admission?: PatchApplyRecoveryAdmission | null;
   verification_recovery_retry_admission?: VerificationRecoveryRetryAdmission | null;
   llm_provider_failure_retry_admission?: LlmProviderFailureRetryAdmission | null;
 }
@@ -413,6 +437,19 @@ export interface VerificationRecoveryAdmission {
   source_run_id: string;
   recovery_task_id: string;
   recovery_run_id: string;
+  failure_fingerprint: string;
+  recovery_running_enabled: boolean;
+  next_action: string;
+  replayed: boolean;
+}
+
+export interface PatchApplyRecoveryAdmission {
+  source_run_id: string;
+  source_proposal_id: string;
+  source_apply_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  source_apply_fingerprint: string;
   failure_fingerprint: string;
   recovery_running_enabled: boolean;
   next_action: string;
@@ -458,6 +495,7 @@ export interface TaskRunResult {
   context_budget?: TaskRunContextBudgetSummary | null;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
   verification_recovery_repair?: TaskRunVerificationRecoveryRepairOutcome | null;
+  patch_apply_recovery_repair?: TaskRunPatchApplyRecoveryRepairOutcome | null;
   verification_recovery_retry?: TaskRunVerificationRecoveryRetryOutcome | null;
   recovery_cycle_budget_outcome?: RecoveryCycleBudgetOutcome | null;
   child_orchestration_outcome?: TaskRunChildOrchestrationOutcome | null;
@@ -678,6 +716,24 @@ export interface TaskRunVerificationRecoveryRepairOutcome {
   next_action: 'review_and_authorize_recovery_proposal' | 'inspect_recovery_repair_gate_failure';
 }
 
+export interface TaskRunPatchApplyRecoveryRepairOutcome {
+  gate_status: 'Passed' | 'Failed';
+  source_run_id: string;
+  source_proposal_id: string;
+  source_apply_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  source_apply_fingerprint: string;
+  failure_fingerprint: string;
+  failure_class: string;
+  proposal_id?: string | null;
+  proposal_count: number;
+  failure_reason?: string | null;
+  replayed: boolean;
+  apply_enabled: false;
+  next_action: 'review_and_authorize_recovery_proposal' | 'inspect_recovery_repair_gate_failure';
+}
+
 export interface TaskRunVerificationRecoveryRetryOutcome {
   source_task_id: string;
   source_run_id: string;
@@ -810,6 +866,7 @@ export interface TaskRecord {
   source_intent_summary?: ChildTaskSourceIntentSummary | null;
   recovery_cycle_provenance?: RecoveryCycleChildProvenance | null;
   verification_recovery_provenance?: VerificationRecoveryProvenance | null;
+  patch_apply_recovery_provenance?: PatchApplyRecoveryProvenance | null;
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
   created_at: string;
