@@ -704,6 +704,48 @@ describe('protocol validation', () => {
       ...headlessParams,
       patch_apply_recovery_run_target: { ...patchApplyRecoveryRunTarget, raw_prompt: 'do not expose' },
     })).toBe(false);
+    const patchApplyRecoveryApplyTarget = {
+      recovery_task_id: 'task_patch_recovery',
+      recovery_run_id: 'run_patch_recovery',
+      source_run_id: 'run_patch_source',
+      source_proposal_id: 'proposal_patch_1',
+      source_apply_id: 'apply_patch_1',
+      recovery_proposal_id: 'proposal_patch_recovery',
+      expected_source_apply_fingerprint: `sha256:${'a'.repeat(64)}`,
+      expected_failure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      expected_target_sha256: `sha256:${'c'.repeat(64)}`,
+      patch_old_text: 'old bounded hunk',
+      patch_new_text: 'new bounded hunk',
+      authorize_patch_apply_recovery_apply: true,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_apply_target: patchApplyRecoveryApplyTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_apply_target: {
+        ...patchApplyRecoveryApplyTarget,
+        patch_hunks: [
+          { old_text: 'old one', new_text: 'new one' },
+          { old_text: 'old two', new_text: 'new two' },
+        ],
+        patch_old_text: null,
+        patch_new_text: null,
+      },
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_apply_target: { ...patchApplyRecoveryApplyTarget, authorize_patch_apply_recovery_apply: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_apply_target: { ...patchApplyRecoveryApplyTarget, expected_target_sha256: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      patch_apply_recovery_apply_target: { ...patchApplyRecoveryApplyTarget, raw_file_content: 'secret body' },
+    })).toBe(false);
     const verificationRecoveryApplyTarget = {
       source_task_id: 'task_source',
       source_run_id: 'run_source',

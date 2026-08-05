@@ -342,3 +342,19 @@ The response reports `ReadyForHumanReview`, `NeedsSignals`, or `BlockedForReview
 M27.1.1 requires exact-source binding for that recovery path. The source receipt must be the latest apply result for the source proposal and must be a strict denied `patch_file` receipt with `applied=false`, `authorization_consumed=false`, exactly one recoverable failed check, no blocked checks, a safe normalized workspace-relative path, one to five hunks, and a SHA-256 hunk fingerprint. Recovery proposal evidence is marked as `patch_apply_recovery_repair` only when the proposal path normalizes to the source path, and the repair gate independently rechecks the path before passing. Stale source applies, unrelated proposal paths, malformed hunk metadata, parent traversal, blocked checks, and multi-failure receipts fail closed.
 
 M27.2 makes that exact-source recovery path available to headless callers through the existing `headless.continue_once` continuation contract. `patch_apply_recovery_source` admits or replays one recovery task without running it; `patch_apply_recovery_run_target` runs one current admitted recovery task only when the caller supplies matching recovery task/run IDs, source run/proposal/apply IDs, expected source apply and failure fingerprints, and explicit run authorization. The run path reuses the existing patch recovery proposal gate and returns bounded `patch_apply_recovery_repair` output. It never approves or applies the recovery proposal and never serializes raw file content, raw hunks, full diffs, command output, provider responses, environment, absolute paths, or canonical paths.
+
+M28.1 lets the same headless continuation apply one already-approved
+recovery-scoped patch repair proposal through existing `proposal.apply`.
+`patch_apply_recovery_apply_target` requires recovery task/run IDs, source
+run/proposal/apply IDs, the recovery proposal ID, expected source apply and
+failure fingerprints, expected target SHA-256, request-only patch hunk payload,
+and `authorize_patch_apply_recovery_apply=true`. The runtime revalidates
+fresh progress and M27 exact-source recovery provenance before calling
+`proposal.apply`; the existing apply path remains responsible for proposal
+approval, latest preflight, expected target hash, safe path, file-kind,
+symlink, UTF-8, sensitive-content, hunk fingerprint/context, temporary sibling,
+atomic replacement, and post-write SHA-256 checks. Replay returns the bounded
+apply result recorded by the first continuation and must not apply the proposal
+again. The target must not approve proposals, apply without explicit
+authorization, persist raw hunk text, expose raw file content or diffs, or add a
+readiness/report/history/digest/preview/inspection surface.
