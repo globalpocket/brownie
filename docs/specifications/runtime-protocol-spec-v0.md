@@ -472,6 +472,79 @@ file content, snippets, diffs, chunks, embeddings, stdout/stderr, environment
 values, commands, prompts, provider responses, absolute paths, canonical paths,
 or secrets.
 
+## `task.run` with verification recovery context read
+
+M31.1 extends the existing `task.run` request with one optional
+`verification_recovery_context_read` field for current verification recovery
+tasks only. It is not a generic workspace read endpoint.
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 31,
+  "method": "task.run",
+  "params": {
+    "task_id": "task_<uuid>",
+    "verification_recovery_context_read": {
+      "authorize": true,
+      "source_task_id": "task_<uuid>",
+      "source_run_id": "run_<uuid>",
+      "expected_failure_fingerprint": "sha256:<64 lowercase hex>",
+      "diagnostic_index": 0,
+      "max_excerpt_bytes": 1024
+    }
+  }
+}
+```
+
+Validation happens before file content is read. The runtime requires matching
+current `VerificationRecoveryProvenance`, revalidates the latest failed source
+verifier gate, checks `ReadWorkspace`, selects one bounded diagnostic by index,
+sanitizes the workspace-relative path, rejects protected paths, parent
+traversal, symlinks, directories, missing files, non-regular files, non-UTF-8
+content, and excerpt budgets outside `128..=8192` bytes, then reads at most one
+existing regular UTF-8 workspace file.
+
+The excerpt is inserted only into the in-memory recovery prompt. Successful
+task-run responses may include bounded metadata:
+
+```json
+{
+  "verification_recovery_context_read": {
+    "context_read_id": "ctx_<64 lowercase hex>",
+    "source_task_id": "task_<uuid>",
+    "source_run_id": "run_<uuid>",
+    "recovery_task_id": "task_<uuid>",
+    "recovery_run_id": "run_<uuid>",
+    "failure_fingerprint": "sha256:<64 lowercase hex>",
+    "diagnostic_index": 0,
+    "tool_id": "verification.cargo_test",
+    "check_id": "cargo_test",
+    "diagnostic_kind": "test_failure",
+    "severity": "error",
+    "test_name_hash": "sha256:<64 lowercase hex>",
+    "read_path_fingerprint": "sha256:<64 lowercase hex>",
+    "line": 12,
+    "column": 3,
+    "excerpt_start_line": 10,
+    "excerpt_end_line": 14,
+    "excerpt_bytes": 220,
+    "excerpt_sha256": "sha256:<64 lowercase hex>",
+    "excerpt_truncated": true,
+    "prompt_preview_redacted": true,
+    "replayed": false,
+    "next_action": "run_recovery_task_with_context"
+  }
+}
+```
+
+The ledger event `VerificationRecoveryContextReadMaterialized` and the RPC
+summary never include raw excerpts, raw file content, raw prompts, rendered
+diagnostics, stdout/stderr, command strings, environment values, absolute
+paths, canonical paths, or secrets. Replay of a terminal recovery run
+reconstructs the same bounded summary from ledger metadata without rereading
+the file or appending duplicate context-read evidence.
+
 ## `task.get`
 
 Returns a persisted task by `task_id`.

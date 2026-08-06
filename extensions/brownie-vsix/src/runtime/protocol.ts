@@ -292,6 +292,15 @@ export interface TaskStartParams {
 
 export type TaskRunSelectedIndexContext = CodebaseIndexSelectionReadResult;
 
+export interface TaskRunVerificationRecoveryContextRead {
+  authorize: boolean;
+  source_task_id: string;
+  source_run_id: string;
+  expected_failure_fingerprint: string;
+  diagnostic_index: number;
+  max_excerpt_bytes: number;
+}
+
 export interface TaskRunContextBudget {
   max_prompt_chars: number;
   max_ledger_events: number;
@@ -301,6 +310,7 @@ export interface TaskRunContextBudget {
 export interface TaskRunParams {
   task_id: string;
   selected_index_context?: TaskRunSelectedIndexContext | null;
+  verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   context_budget?: TaskRunContextBudget | null;
 }
 
@@ -525,6 +535,7 @@ export interface TaskRunResult {
   agent_loop: AgentLoopRunSummary;
   completion_evidence?: TaskRunCompletionEvidence | null;
   selected_index_prompt_context?: TaskRunSelectedIndexPromptContextSummary | null;
+  verification_recovery_context_read?: TaskRunVerificationRecoveryContextReadSummary | null;
   context_budget?: TaskRunContextBudgetSummary | null;
   verification_completion_gate?: TaskRunVerificationCompletionGate | null;
   verification_recovery_repair?: TaskRunVerificationRecoveryRepairOutcome | null;
@@ -691,6 +702,32 @@ export interface TaskRunSelectedIndexPromptContextSummary {
   content_sha256: string;
   prompt_preview_redacted: true;
   next_action: 'continue_task_execution_with_materialized_context';
+}
+
+export interface TaskRunVerificationRecoveryContextReadSummary {
+  context_read_id: string;
+  source_task_id: string;
+  source_run_id: string;
+  recovery_task_id: string;
+  recovery_run_id: string;
+  failure_fingerprint: string;
+  diagnostic_index: number;
+  tool_id: string;
+  check_id: string;
+  diagnostic_kind: string;
+  severity: string;
+  test_name_hash?: string | null;
+  read_path_fingerprint: string;
+  line?: number | null;
+  column?: number | null;
+  excerpt_start_line: number;
+  excerpt_end_line: number;
+  excerpt_bytes: number;
+  excerpt_sha256: string;
+  excerpt_truncated: boolean;
+  prompt_preview_redacted: true;
+  replayed: boolean;
+  next_action: 'run_recovery_task_with_context';
 }
 
 export interface TaskRunContextBudgetSummary {
@@ -4388,11 +4425,37 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
 export function isTaskRunParams(value: unknown): value is TaskRunParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['task_id', 'selected_index_context', 'context_budget']) &&
+    hasOnlyFields(value, ['task_id', 'selected_index_context', 'verification_recovery_context_read', 'context_budget']) &&
     typeof value.task_id === 'string' &&
     value.task_id.trim().length > 0 &&
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
+    (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget))
+  );
+}
+
+export function isTaskRunVerificationRecoveryContextRead(value: unknown): value is TaskRunVerificationRecoveryContextRead {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize',
+      'source_task_id',
+      'source_run_id',
+      'expected_failure_fingerprint',
+      'diagnostic_index',
+      'max_excerpt_bytes',
+    ]) &&
+    value.authorize === true &&
+    typeof value.source_task_id === 'string' &&
+    value.source_task_id.trim().length > 0 &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.expected_failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_failure_fingerprint) &&
+    isNonNegativeInteger(value.diagnostic_index) &&
+    isNonNegativeInteger(value.max_excerpt_bytes) &&
+    value.max_excerpt_bytes >= 128 &&
+    value.max_excerpt_bytes <= 8192
   );
 }
 
@@ -4650,6 +4713,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isAgentLoopRunSummary(value.agent_loop) &&
     (value.completion_evidence === undefined || value.completion_evidence === null || isTaskRunCompletionEvidence(value.completion_evidence)) &&
     (value.selected_index_prompt_context === undefined || value.selected_index_prompt_context === null || isTaskRunSelectedIndexPromptContextSummary(value.selected_index_prompt_context)) &&
+    (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextReadSummary(value.verification_recovery_context_read)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudgetSummary(value.context_budget)) &&
     (value.verification_completion_gate === undefined || value.verification_completion_gate === null || isTaskRunVerificationCompletionGate(value.verification_completion_gate)) &&
     (value.verification_recovery_repair === undefined || value.verification_recovery_repair === null || isTaskRunVerificationRecoveryRepairOutcome(value.verification_recovery_repair)) &&
@@ -5075,6 +5139,75 @@ export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): valu
     isSha256Fingerprint(value.content_sha256) &&
     value.prompt_preview_redacted === true &&
     value.next_action === 'continue_task_execution_with_materialized_context'
+  );
+}
+
+export function isTaskRunVerificationRecoveryContextReadSummary(value: unknown): value is TaskRunVerificationRecoveryContextReadSummary {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'context_read_id',
+      'source_task_id',
+      'source_run_id',
+      'recovery_task_id',
+      'recovery_run_id',
+      'failure_fingerprint',
+      'diagnostic_index',
+      'tool_id',
+      'check_id',
+      'diagnostic_kind',
+      'severity',
+      'test_name_hash',
+      'read_path_fingerprint',
+      'line',
+      'column',
+      'excerpt_start_line',
+      'excerpt_end_line',
+      'excerpt_bytes',
+      'excerpt_sha256',
+      'excerpt_truncated',
+      'prompt_preview_redacted',
+      'replayed',
+      'next_action',
+    ]) &&
+    typeof value.context_read_id === 'string' &&
+    /^ctx_[a-f0-9]{64}$/.test(value.context_read_id) &&
+    typeof value.source_task_id === 'string' &&
+    value.source_task_id.trim().length > 0 &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.recovery_task_id === 'string' &&
+    value.recovery_task_id.trim().length > 0 &&
+    typeof value.recovery_run_id === 'string' &&
+    value.recovery_run_id.trim().length > 0 &&
+    typeof value.failure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.failure_fingerprint) &&
+    isNonNegativeInteger(value.diagnostic_index) &&
+    typeof value.tool_id === 'string' &&
+    value.tool_id.trim().length > 0 &&
+    typeof value.check_id === 'string' &&
+    value.check_id.trim().length > 0 &&
+    typeof value.diagnostic_kind === 'string' &&
+    value.diagnostic_kind.trim().length > 0 &&
+    typeof value.severity === 'string' &&
+    value.severity.trim().length > 0 &&
+    (value.test_name_hash === undefined || value.test_name_hash === null || (typeof value.test_name_hash === 'string' && isSha256Fingerprint(value.test_name_hash))) &&
+    typeof value.read_path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.read_path_fingerprint) &&
+    (value.line === undefined || value.line === null || isNonNegativeInteger(value.line)) &&
+    (value.column === undefined || value.column === null || isNonNegativeInteger(value.column)) &&
+    isNonNegativeInteger(value.excerpt_start_line) &&
+    value.excerpt_start_line >= 1 &&
+    isNonNegativeInteger(value.excerpt_end_line) &&
+    value.excerpt_end_line >= value.excerpt_start_line &&
+    isNonNegativeInteger(value.excerpt_bytes) &&
+    value.excerpt_bytes <= 8192 &&
+    typeof value.excerpt_sha256 === 'string' &&
+    isSha256Fingerprint(value.excerpt_sha256) &&
+    typeof value.excerpt_truncated === 'boolean' &&
+    value.prompt_preview_redacted === true &&
+    typeof value.replayed === 'boolean' &&
+    value.next_action === 'run_recovery_task_with_context'
   );
 }
 
