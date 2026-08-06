@@ -331,6 +331,7 @@ export interface HeadlessContinueOnceParams {
   llm_provider_failure_retry_goal?: string | null;
   llm_provider_failure_retry_mode_id?: string | null;
   verification_recovery_run_target?: VerificationRecoveryRunTarget | null;
+  verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   patch_apply_recovery_source?: PatchApplyRecoverySource | null;
   patch_apply_recovery_goal?: string | null;
   patch_apply_recovery_mode_id?: string | null;
@@ -4476,7 +4477,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4494,6 +4495,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.llm_provider_failure_retry_goal === undefined || value.llm_provider_failure_retry_goal === null || typeof value.llm_provider_failure_retry_goal === 'string') &&
     (value.llm_provider_failure_retry_mode_id === undefined || value.llm_provider_failure_retry_mode_id === null || typeof value.llm_provider_failure_retry_mode_id === 'string') &&
     (value.verification_recovery_run_target === undefined || value.verification_recovery_run_target === null || isVerificationRecoveryRunTarget(value.verification_recovery_run_target)) &&
+    (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
     (value.patch_apply_recovery_source === undefined || value.patch_apply_recovery_source === null || isPatchApplyRecoverySource(value.patch_apply_recovery_source)) &&
     (value.patch_apply_recovery_goal === undefined || value.patch_apply_recovery_goal === null || typeof value.patch_apply_recovery_goal === 'string') &&
     (value.patch_apply_recovery_mode_id === undefined || value.patch_apply_recovery_mode_id === null || typeof value.patch_apply_recovery_mode_id === 'string') &&

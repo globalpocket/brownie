@@ -8478,6 +8478,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: verification_recovery_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.verification_recovery_context_read.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_context_read cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.patch_apply_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8571,6 +8578,32 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: verification_recovery_source and verification_recovery_run_target cannot be combined",
+        );
+    }
+    if params.verification_recovery_context_read.is_some()
+        && params.verification_recovery_run_target.is_none()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_context_read requires verification_recovery_run_target",
+        );
+    }
+    if params.verification_recovery_context_read.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: verification_recovery_context_read can only be combined with verification_recovery_run_target",
         );
     }
     if params.patch_apply_recovery_source.is_some()
@@ -8714,6 +8747,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
             || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
             || params.patch_apply_recovery_source.is_some()
             || params.patch_apply_recovery_run_target.is_some()
             || params.patch_apply_recovery_apply_target.is_some()
@@ -11077,12 +11111,16 @@ fn handle_headless_continue_verification_recovery_run(
     let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
     let policy_version = "headless_continue_once_v1";
 
-    let task_run_response = handle_task_run(
-        id.clone(),
-        Some(json!({
+    let task_run_params = match params.verification_recovery_context_read.as_ref() {
+        Some(context_read) => json!({
             "task_id": selected_record.task_id.clone(),
-        })),
-    );
+            "verification_recovery_context_read": context_read,
+        }),
+        None => json!({
+            "task_id": selected_record.task_id.clone(),
+        }),
+    };
+    let task_run_response = handle_task_run(id.clone(), Some(task_run_params));
     let Some(task_run_value) = task_run_response.result else {
         return JsonRpcResponse {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -11113,6 +11151,7 @@ fn handle_headless_continue_verification_recovery_run(
         }
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let context_read_summary = task_run_result.verification_recovery_context_read.clone();
     if let Err(error) = store.tasks().append_task_event_with_payload(
         &post_run_record,
         LedgerEventKind::HeadlessContinuationDecisionRecorded,
@@ -11130,6 +11169,22 @@ fn handle_headless_continue_verification_recovery_run(
             "source_task_id": target.source_task_id.clone(),
             "source_run_id": target.source_run_id.clone(),
             "failure_fingerprint": target.expected_failure_fingerprint.clone(),
+            "verification_recovery_context_read": context_read_summary.is_some(),
+            "context_read_id": context_read_summary
+                .as_ref()
+                .map(|summary| summary.context_read_id.clone()),
+            "diagnostic_index": context_read_summary
+                .as_ref()
+                .map(|summary| summary.diagnostic_index),
+            "excerpt_sha256": context_read_summary
+                .as_ref()
+                .map(|summary| summary.excerpt_sha256.clone()),
+            "read_path_fingerprint": context_read_summary
+                .as_ref()
+                .map(|summary| summary.read_path_fingerprint.clone()),
+            "excerpt_bytes": context_read_summary
+                .as_ref()
+                .map(|summary| summary.excerpt_bytes),
             "next_action": "review_and_authorize_recovery_proposal",
             "reason": "Headless continue-once ran one targeted verification recovery task from bounded route evidence."
         })),
@@ -38729,24 +38784,17 @@ mod tests {
     fn headless_continue_once_runs_targeted_verification_recovery_task() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir(temp.path().join("src")).expect("mkdir");
-        std::fs::write(temp.path().join("README.md"), "original README").expect("readme");
-        std::fs::write(
-            temp.path().join("Cargo.toml"),
-            "[package]\nname = \"m18_2_headless_recovery_run\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
-        )
-        .expect("manifest");
-        std::fs::write(
-            temp.path().join("src/lib.rs"),
-            "pub fn raw_m18_2_fmt_failure_marker( )->i32{1}\n",
-        )
-        .expect("src");
+        write_cargo_check_fixture(
+            temp.path(),
+            "m32_1_headless_contextual_recovery_run",
+            "pub fn raw_m32_1_check_failure_marker() -> MissingType {\n    1\n}\n",
+        );
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         clear_llm_env_for_test();
 
         let (source_task_id, source_run_id, fingerprint) =
             failed_verification_source_from_start_and_run(
-                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Verify formatting","mode_id":"verifier"}}"#,
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run cargo check","mode_id":"verifier"}}"#,
             );
         let progress = parse_line(r#"{"jsonrpc":"2.0","id":3,"method":"task.list"}"#)
             .result
@@ -38804,6 +38852,14 @@ mod tests {
                     "source_run_id": source_run_id,
                     "expected_failure_fingerprint": fingerprint,
                     "authorize_recovery_run": true
+                },
+                "verification_recovery_context_read": {
+                    "authorize": true,
+                    "source_task_id": source_task_id,
+                    "source_run_id": source_run_id,
+                    "expected_failure_fingerprint": fingerprint,
+                    "diagnostic_index": 0,
+                    "max_excerpt_bytes": 256
                 }
             }
         });
@@ -38863,9 +38919,39 @@ mod tests {
                 .is_some()
         );
         assert_eq!(
+            run_result["task_run_result"]["verification_recovery_context_read"]["source_task_id"],
+            source_task_id
+        );
+        assert_eq!(
+            run_result["task_run_result"]["verification_recovery_context_read"]["source_run_id"],
+            source_run_id
+        );
+        assert_eq!(
+            run_result["task_run_result"]["verification_recovery_context_read"]["diagnostic_index"],
+            0
+        );
+        assert_eq!(
+            run_result["task_run_result"]["verification_recovery_context_read"]
+                ["prompt_preview_redacted"],
+            true
+        );
+        assert_eq!(
             run_result["next_route"]["next_action"],
             "review_and_authorize_recovery_proposal"
         );
+        let decision_event = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events after contextual run")
+            .into_iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .expect("headless decision event");
+        let decision_payload = decision_event.payload.expect("decision payload");
+        assert_eq!(decision_payload["verification_recovery_context_read"], true);
+        assert!(decision_payload["excerpt_sha256"].as_str().is_some());
+        assert!(decision_payload["read_path_fingerprint"].as_str().is_some());
+        assert!(decision_payload.get("excerpt").is_none());
         let decision_count = store
             .tasks()
             .read_ledger_events(&recovery_run_id)

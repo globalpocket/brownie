@@ -648,13 +648,31 @@ describe('protocol validation', () => {
       expected_failure_fingerprint: `sha256:${'d'.repeat(64)}`,
       authorize_recovery_run: true,
     };
+    const headlessRecoveryContextRead = {
+      authorize: true,
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      expected_failure_fingerprint: `sha256:${'d'.repeat(64)}`,
+      diagnostic_index: 0,
+      max_excerpt_bytes: 1024,
+    };
     expect(isHeadlessContinueOnceParams({
       ...headlessParams,
       verification_recovery_run_target: verificationRecoveryRunTarget,
     })).toBe(true);
     expect(isHeadlessContinueOnceParams({
       ...headlessParams,
+      verification_recovery_run_target: verificationRecoveryRunTarget,
+      verification_recovery_context_read: headlessRecoveryContextRead,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
       verification_recovery_run_target: { ...verificationRecoveryRunTarget, authorize_recovery_run: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      verification_recovery_run_target: verificationRecoveryRunTarget,
+      verification_recovery_context_read: { ...headlessRecoveryContextRead, raw_file_content: 'secret body' },
     })).toBe(false);
     const patchApplyRecoverySource = {
       source_run_id: 'run_patch_source',
