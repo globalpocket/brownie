@@ -2079,6 +2079,17 @@ describe('RuntimeClient', () => {
       column: 12,
       truncated: false,
     };
+    const testDiagnostic = {
+      tool_id: 'verification.cargo_test',
+      check_id: 'cargo_test',
+      diagnostic_kind: 'panic_location',
+      severity: 'error',
+      test_name_hash: fingerprint,
+      workspace_relative_path: 'src/lib.rs',
+      line: 7,
+      column: 9,
+      truncated: false,
+    };
     const gate = {
       status: 'Failed',
       required_verifier_count: 1,
@@ -2133,6 +2144,20 @@ describe('RuntimeClient', () => {
       created_at: '2026-07-23T18:00:00Z',
       updated_at: '2026-07-23T18:00:01Z',
     })).toBe(true);
+    expect(isLedgerEventSummary({
+      event_id: 'event_cargo_test',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:03Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [testDiagnostic],
+      },
+    })).toBe(true);
 
     expect(isTaskRunResult({
       task_id: 'task_1',
@@ -2142,6 +2167,62 @@ describe('RuntimeClient', () => {
       verification_completion_gate: {
         ...gate,
         bounded_cargo_diagnostics: [{ ...diagnostic, workspace_relative_path: '/tmp/src/lib.rs' }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_bad_test_name',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:04Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, test_name: 'tests::fails' }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_bad_test_hash',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:05Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, test_name_hash: 'tests::fails' }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_missing_panic_hash',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:06Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, test_name_hash: undefined }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_missing_panic_location',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:07Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, workspace_relative_path: undefined }],
       },
     })).toBe(false);
     expect(isLedgerEventSummary({

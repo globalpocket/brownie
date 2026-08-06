@@ -27783,43 +27783,87 @@ fn bounded_cargo_diagnostics_from_value(value: &Value) -> Vec<BoundedCargoDiagno
 
 fn sanitized_bounded_cargo_diagnostic(item: &Value) -> Option<BoundedCargoDiagnostic> {
     let tool_id = item.get("tool_id")?.as_str()?;
-    if tool_id != VERIFICATION_CARGO_CHECK_TOOL_ID {
-        return None;
-    }
     let check_id = item.get("check_id")?.as_str()?;
-    if check_id != "cargo_check" {
-        return None;
-    }
     let diagnostic_kind = item.get("diagnostic_kind")?.as_str()?;
-    if !matches!(diagnostic_kind, "compile_error" | "compile_warning") {
-        return None;
-    }
     let severity = item.get("severity")?.as_str()?;
-    if !matches!(severity, "error" | "warning") {
-        return None;
-    }
-    let workspace_relative_path = item
-        .get("workspace_relative_path")
-        .and_then(Value::as_str)
-        .and_then(sanitize_bounded_cargo_diagnostic_path)?;
-    let line = item.get("line").and_then(positive_usize)?;
-    let column = item.get("column").and_then(positive_usize)?;
-    let code = item
-        .get("code")
-        .and_then(Value::as_str)
-        .and_then(sanitize_bounded_cargo_diagnostic_code);
     let truncated = item.get("truncated")?.as_bool()?;
-    Some(BoundedCargoDiagnostic {
-        tool_id: tool_id.to_string(),
-        check_id: check_id.to_string(),
-        diagnostic_kind: diagnostic_kind.to_string(),
-        severity: severity.to_string(),
-        code,
-        workspace_relative_path: Some(workspace_relative_path),
-        line: Some(line),
-        column: Some(column),
-        truncated,
-    })
+    match (tool_id, check_id) {
+        (VERIFICATION_CARGO_CHECK_TOOL_ID, "cargo_check") => {
+            if !matches!(diagnostic_kind, "compile_error" | "compile_warning") {
+                return None;
+            }
+            if !matches!(severity, "error" | "warning") {
+                return None;
+            }
+            let workspace_relative_path = item
+                .get("workspace_relative_path")
+                .and_then(Value::as_str)
+                .and_then(sanitize_bounded_cargo_diagnostic_path)?;
+            let line = item.get("line").and_then(positive_usize)?;
+            let column = item.get("column").and_then(positive_usize)?;
+            let code = item
+                .get("code")
+                .and_then(Value::as_str)
+                .and_then(sanitize_bounded_cargo_diagnostic_code);
+            Some(BoundedCargoDiagnostic {
+                tool_id: tool_id.to_string(),
+                check_id: check_id.to_string(),
+                diagnostic_kind: diagnostic_kind.to_string(),
+                severity: severity.to_string(),
+                code,
+                test_name_hash: None,
+                workspace_relative_path: Some(workspace_relative_path),
+                line: Some(line),
+                column: Some(column),
+                truncated,
+            })
+        }
+        (VERIFICATION_CARGO_TEST_TOOL_ID, "cargo_test") => {
+            if !matches!(
+                diagnostic_kind,
+                "panic_location" | "test_failure" | "unavailable"
+            ) {
+                return None;
+            }
+            if severity != "error" {
+                return None;
+            }
+            let test_name_hash = item
+                .get("test_name_hash")
+                .and_then(Value::as_str)
+                .and_then(sanitize_bounded_cargo_diagnostic_fingerprint);
+            let workspace_relative_path = item
+                .get("workspace_relative_path")
+                .and_then(Value::as_str)
+                .and_then(sanitize_bounded_cargo_diagnostic_path);
+            let line = item.get("line").and_then(positive_usize);
+            let column = item.get("column").and_then(positive_usize);
+            if diagnostic_kind == "panic_location"
+                && (test_name_hash.is_none()
+                    || workspace_relative_path.is_none()
+                    || line.is_none()
+                    || column.is_none())
+            {
+                return None;
+            }
+            if diagnostic_kind == "test_failure" && test_name_hash.is_none() {
+                return None;
+            }
+            Some(BoundedCargoDiagnostic {
+                tool_id: tool_id.to_string(),
+                check_id: check_id.to_string(),
+                diagnostic_kind: diagnostic_kind.to_string(),
+                severity: severity.to_string(),
+                code: None,
+                test_name_hash,
+                workspace_relative_path,
+                line,
+                column,
+                truncated,
+            })
+        }
+        _ => None,
+    }
 }
 
 fn positive_usize(value: &Value) -> Option<usize> {
@@ -27841,6 +27885,14 @@ fn sanitize_bounded_cargo_diagnostic_code(code: &str) -> Option<String> {
         return None;
     }
     Some(code.to_string())
+}
+
+fn sanitize_bounded_cargo_diagnostic_fingerprint(fingerprint: &str) -> Option<String> {
+    if is_sha256_fingerprint(fingerprint) {
+        Some(fingerprint.to_string())
+    } else {
+        None
+    }
 }
 
 fn sanitize_bounded_cargo_diagnostic_path(path: &str) -> Option<String> {
@@ -36368,6 +36420,101 @@ mod tests {
     }
 
     #[test]
+    fn task_run_fails_when_required_cargo_test_verifier_fails_with_bounded_diagnostics() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "task_test_fail",
+            "pub fn ok() -> i32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn fails() {\n        assert_eq!(super::ok(), 2);\n    }\n}\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run tests for the Rust workspace","mode_id":"verifier"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "Failed");
+        assert_eq!(
+            run_result["verification_completion_gate"]["status"],
+            "Failed"
+        );
+        let gate_diagnostics = run_result["verification_completion_gate"]
+            ["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("gate diagnostics");
+        assert!(!gate_diagnostics.is_empty());
+        assert_eq!(
+            gate_diagnostics[0]["tool_id"],
+            VERIFICATION_CARGO_TEST_TOOL_ID
+        );
+        assert_eq!(gate_diagnostics[0]["check_id"], "cargo_test");
+        assert_eq!(gate_diagnostics[0]["severity"], "error");
+        assert!(gate_diagnostics.iter().any(|diagnostic| diagnostic
+            .get("test_name_hash")
+            .and_then(Value::as_str)
+            .is_some_and(is_sha256_fingerprint)));
+        assert!(gate_diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.get("test_name").is_none()));
+
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("ledger");
+        let events: Vec<brownie_store::LedgerEvent> = ledger
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("event"))
+            .collect();
+        let verifier_event = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionFailed
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        .and_then(Value::as_str)
+                        == Some("verification.cargo_test")
+            })
+            .expect("verification failed event");
+        let verifier_payload = verifier_event.payload.as_ref().expect("verifier payload");
+        assert_eq!(verifier_payload["check_id"], "cargo_test");
+        assert_eq!(verifier_payload["verification_status"], "Failed");
+        assert!(verifier_payload["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("ledger diagnostics")
+            .iter()
+            .any(|diagnostic| diagnostic
+                .get("test_name_hash")
+                .and_then(Value::as_str)
+                .is_some_and(is_sha256_fingerprint)));
+        assert!(!ledger.contains("fails"));
+        assert!(!ledger.contains("assert_eq"));
+        assert!(!ledger.contains("stdout"));
+        assert!(!ledger.contains("stderr"));
+        assert!(!ledger.contains("command"));
+        assert!(!temp.path().join("target").exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_fails_when_required_cargo_fmt_verifier_fails() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -37039,6 +37186,79 @@ mod tests {
         );
         assert_eq!(diagnostic.line, Some(1));
         assert_eq!(diagnostic.severity, "error");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_start_admits_verification_recovery_from_failed_cargo_test_gate_with_bounded_diagnostics(
+    ) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_cargo_check_fixture(
+            temp.path(),
+            "m30_1_test_recovery",
+            "pub fn ok() -> i32 { 1 }\n\n#[cfg(test)]\nmod tests {\n    #[test]\n    fn fails() {\n        assert_eq!(super::ok(), 2);\n    }\n}\n",
+        );
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+        std::env::remove_var("BROWNIE_LLM_STRICT");
+
+        let (source_task_id, source_run_id, fingerprint) =
+            failed_verification_source_from_start_and_run(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Run tests for the Rust workspace","mode_id":"verifier"}}"#,
+            );
+        let recovery = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "task.start",
+                "params": {
+                    "goal": "Recover failed cargo test verification",
+                    "mode_id": "implementer",
+                    "verification_recovery_source": {
+                        "source_task_id": source_task_id,
+                        "source_run_id": source_run_id,
+                        "expected_failure_fingerprint": fingerprint,
+                        "authorize_recovery": true
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(recovery.error.is_none());
+        let recovery_task_id = recovery.result.expect("recovery result")["task_id"]
+            .as_str()
+            .expect("recovery task")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let recovery_task = store
+            .tasks()
+            .get_task(&recovery_task_id)
+            .expect("get recovery task")
+            .expect("recovery task");
+        let provenance = recovery_task
+            .verification_recovery_provenance
+            .expect("verification recovery provenance");
+        assert_eq!(
+            provenance.failed_verifier_tool_ids,
+            vec![VERIFICATION_CARGO_TEST_TOOL_ID.to_string()]
+        );
+        assert_eq!(provenance.failure_fingerprint, fingerprint);
+        assert_eq!(provenance.source_task_id, source_task_id);
+        assert_eq!(provenance.source_run_id, source_run_id);
+        assert!(!provenance.bounded_cargo_diagnostics.is_empty());
+        assert!(provenance
+            .bounded_cargo_diagnostics
+            .iter()
+            .any(|diagnostic| {
+                diagnostic.tool_id == VERIFICATION_CARGO_TEST_TOOL_ID
+                    && diagnostic.check_id == "cargo_test"
+                    && diagnostic
+                        .test_name_hash
+                        .as_deref()
+                        .is_some_and(is_sha256_fingerprint)
+            }));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

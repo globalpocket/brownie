@@ -1300,6 +1300,7 @@ mod tests {
                     diagnostic_kind: "compile_error".into(),
                     severity: "error".into(),
                     code: Some("E0412".into()),
+                    test_name_hash: None,
                     workspace_relative_path: Some("src/lib.rs".into()),
                     line: Some(7),
                     column: Some(12),

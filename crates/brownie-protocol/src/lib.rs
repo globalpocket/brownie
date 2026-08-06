@@ -1441,6 +1441,8 @@ pub struct BoundedCargoDiagnostic {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub test_name_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_relative_path: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,

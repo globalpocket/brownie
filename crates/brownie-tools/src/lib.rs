@@ -15,6 +15,7 @@ use anyhow::{bail, Context};
 use brownie_agentmodes::{CompiledModePolicy, RuntimeAction, RuntimePermissionGate};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
 pub const WORKSPACE_READ_TOOL_ID: &str = "workspace.read";
 pub const CODEBASE_INDEX_SELECTION_READ_TOOL_ID: &str = "codebase.index.selection.read";
@@ -800,8 +801,9 @@ fn verification_result(
     let bounded_diagnostics = bounded_cargo_diagnostics(
         check_id,
         verification_status,
-        stdout.truncated,
+        stdout.truncated || stderr.truncated,
         &stdout.content,
+        &stderr.content,
     );
     let mut output = json!({
         "check_id": check_id,
@@ -867,8 +869,15 @@ fn bounded_cargo_diagnostics(
     verification_status: &str,
     output_truncated: bool,
     stdout: &[u8],
+    stderr: &[u8],
 ) -> Vec<Value> {
-    if check_id != "cargo_check" || verification_status != "Failed" {
+    if verification_status != "Failed" {
+        return Vec::new();
+    }
+    if check_id == "cargo_test" {
+        return bounded_cargo_test_diagnostics(output_truncated, stdout, stderr);
+    }
+    if check_id != "cargo_check" {
         return Vec::new();
     }
     let stdout = String::from_utf8_lossy(stdout);
@@ -913,6 +922,100 @@ fn bounded_cargo_diagnostics(
         diagnostics.push(diagnostic);
     }
     diagnostics
+}
+
+fn bounded_cargo_test_diagnostics(
+    output_truncated: bool,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Vec<Value> {
+    let combined = format!(
+        "{}\n{}",
+        String::from_utf8_lossy(stdout),
+        String::from_utf8_lossy(stderr)
+    );
+    let mut diagnostics = Vec::new();
+    for line in combined.lines() {
+        if diagnostics.len() >= MAX_BOUNDED_CARGO_DIAGNOSTICS {
+            break;
+        }
+        let Some((test_name, path, line, column)) = parse_cargo_test_panic_location(line) else {
+            continue;
+        };
+        let diagnostic = json!({
+            "tool_id": VERIFICATION_CARGO_TEST_TOOL_ID,
+            "check_id": "cargo_test",
+            "diagnostic_kind": "panic_location",
+            "severity": "error",
+            "test_name_hash": cargo_test_name_hash(test_name),
+            "workspace_relative_path": path,
+            "line": line,
+            "column": column,
+            "truncated": output_truncated,
+        });
+        if !diagnostics.contains(&diagnostic) {
+            diagnostics.push(diagnostic);
+        }
+    }
+    for line in combined.lines() {
+        if diagnostics.len() >= MAX_BOUNDED_CARGO_DIAGNOSTICS {
+            break;
+        }
+        let Some(test_name) = parse_cargo_test_failed_name(line) else {
+            continue;
+        };
+        let diagnostic = json!({
+            "tool_id": VERIFICATION_CARGO_TEST_TOOL_ID,
+            "check_id": "cargo_test",
+            "diagnostic_kind": "test_failure",
+            "severity": "error",
+            "test_name_hash": cargo_test_name_hash(test_name),
+            "truncated": output_truncated,
+        });
+        if !diagnostics.contains(&diagnostic) {
+            diagnostics.push(diagnostic);
+        }
+    }
+    if diagnostics.is_empty() {
+        diagnostics.push(json!({
+            "tool_id": VERIFICATION_CARGO_TEST_TOOL_ID,
+            "check_id": "cargo_test",
+            "diagnostic_kind": "unavailable",
+            "severity": "error",
+            "truncated": output_truncated,
+        }));
+    }
+    diagnostics
+}
+
+fn parse_cargo_test_panic_location(line: &str) -> Option<(&str, String, u64, u64)> {
+    let rest = line.strip_prefix("thread '")?;
+    let (test_name, rest) = rest.split_once("' panicked at ")?;
+    let (location, _) = rest.rsplit_once(':')?;
+    let (path_and_line, column) = location.rsplit_once(':')?;
+    let (path, line) = path_and_line.rsplit_once(':')?;
+    let path = sanitize_cargo_diagnostic_path(path)?;
+    let line = line.parse::<u64>().ok()?;
+    let column = column.parse::<u64>().ok()?;
+    if line == 0 || column == 0 {
+        return None;
+    }
+    Some((test_name, path, line, column))
+}
+
+fn parse_cargo_test_failed_name(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("test ")?;
+    let test_name = rest.strip_suffix(" ... FAILED")?;
+    if test_name.is_empty() {
+        return None;
+    }
+    Some(test_name)
+}
+
+fn cargo_test_name_hash(test_name: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(test_name.as_bytes());
+    format!("sha256:{:x}", hasher.finalize())
 }
 
 fn primary_cargo_diagnostic_location(message: &Value) -> Option<(String, u64, u64)> {
@@ -2764,7 +2867,38 @@ mod tests {
         assert_eq!(result.output["process_launched"], true);
         assert_eq!(result.output["output_redacted"], true);
         assert_cargo_test_honest_safety_metadata(&result.output);
-        assert!(result.output.get("bounded_cargo_diagnostics").is_none());
+        let diagnostics = result.output["bounded_cargo_diagnostics"]
+            .as_array()
+            .expect("bounded cargo test diagnostics");
+        assert!(!diagnostics.is_empty());
+        assert!(diagnostics.len() <= MAX_BOUNDED_CARGO_DIAGNOSTICS);
+        assert_eq!(
+            diagnostics[0]["tool_id"],
+            json!(VERIFICATION_CARGO_TEST_TOOL_ID)
+        );
+        assert_eq!(diagnostics[0]["check_id"], "cargo_test");
+        assert_eq!(diagnostics[0]["severity"], "error");
+        assert!(matches!(
+            diagnostics[0]["diagnostic_kind"].as_str(),
+            Some("panic_location" | "test_failure" | "unavailable")
+        ));
+        assert!(diagnostics.iter().any(|diagnostic| diagnostic
+            .get("test_name_hash")
+            .and_then(Value::as_str)
+            .is_some_and(|hash| {
+                hash.len() == 71
+                    && hash.starts_with("sha256:")
+                    && hash[7..].bytes().all(|byte| byte.is_ascii_hexdigit())
+            })));
+        assert!(diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.get("test_name").is_none()));
+        assert!(diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.get("message").is_none()));
+        assert!(diagnostics
+            .iter()
+            .all(|diagnostic| diagnostic.get("rendered").is_none()));
         assert!(!temp.path().join("target").exists());
         let serialized = result.output.to_string();
         assert!(!serialized.contains("fails"));

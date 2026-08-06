@@ -211,6 +211,7 @@ export interface BoundedCargoDiagnostic {
   diagnostic_kind: string;
   severity: string;
   code?: string | null;
+  test_name_hash?: string | null;
   workspace_relative_path?: string | null;
   line?: number | null;
   column?: number | null;
@@ -2850,7 +2851,7 @@ export function isToolPlanResult(value: unknown): value is ToolPlanResult {
 }
 
 export function hasNoForbiddenRawFields(value: object): boolean {
-  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'raw_query') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content') && !Object.prototype.hasOwnProperty.call(value, 'command') && !Object.prototype.hasOwnProperty.call(value, 'stdout') && !Object.prototype.hasOwnProperty.call(value, 'stderr') && !Object.prototype.hasOwnProperty.call(value, 'env') && !Object.prototype.hasOwnProperty.call(value, 'request_body') && !Object.prototype.hasOwnProperty.call(value, 'serialized_request_body');
+  return !Object.prototype.hasOwnProperty.call(value, 'content') && !Object.prototype.hasOwnProperty.call(value, 'raw_content') && !Object.prototype.hasOwnProperty.call(value, 'full_content') && !Object.prototype.hasOwnProperty.call(value, 'patch') && !Object.prototype.hasOwnProperty.call(value, 'diff') && !Object.prototype.hasOwnProperty.call(value, 'raw_input') && !Object.prototype.hasOwnProperty.call(value, 'raw_query') && !Object.prototype.hasOwnProperty.call(value, 'canonical_path') && !Object.prototype.hasOwnProperty.call(value, 'absolute_path') && !Object.prototype.hasOwnProperty.call(value, 'file_content') && !Object.prototype.hasOwnProperty.call(value, 'command') && !Object.prototype.hasOwnProperty.call(value, 'stdout') && !Object.prototype.hasOwnProperty.call(value, 'stderr') && !Object.prototype.hasOwnProperty.call(value, 'env') && !Object.prototype.hasOwnProperty.call(value, 'test_name') && !Object.prototype.hasOwnProperty.call(value, 'request_body') && !Object.prototype.hasOwnProperty.call(value, 'serialized_request_body');
 }
 
 export function isWorkspacePatchPreflightSnapshotSummary(value: unknown): value is WorkspacePatchPreflightSnapshotSummary {
@@ -3545,6 +3546,7 @@ const BOUNDED_CARGO_DIAGNOSTIC_KEYS = new Set([
   'diagnostic_kind',
   'severity',
   'code',
+  'test_name_hash',
   'workspace_relative_path',
   'line',
   'column',
@@ -3779,15 +3781,37 @@ function isBoundedCargoDiagnosticArray(value: unknown): value is BoundedCargoDia
 }
 
 function isBoundedCargoDiagnostic(value: unknown): value is BoundedCargoDiagnostic {
+  if (!isRecord(value) || !hasOnlyKeys(value, BOUNDED_CARGO_DIAGNOSTIC_KEYS) || !hasNoForbiddenRawFields(value)) {
+    return false;
+  }
+  if (value.tool_id === 'verification.cargo_test') {
+    const hasValidTestNameHash = typeof value.test_name_hash === 'string' && isSha256Fingerprint(value.test_name_hash);
+    const hasValidLocation =
+      typeof value.workspace_relative_path === 'string' &&
+      isBoundedCargoDiagnosticPath(value.workspace_relative_path) &&
+      isPositiveInteger(value.line) &&
+      isPositiveInteger(value.column);
+    return (
+      value.check_id === 'cargo_test' &&
+      (value.diagnostic_kind === 'panic_location' || value.diagnostic_kind === 'test_failure' || value.diagnostic_kind === 'unavailable') &&
+      value.severity === 'error' &&
+      (value.code === undefined || value.code === null) &&
+      (value.test_name_hash === undefined || value.test_name_hash === null || hasValidTestNameHash) &&
+      (value.workspace_relative_path === undefined || value.workspace_relative_path === null || (typeof value.workspace_relative_path === 'string' && isBoundedCargoDiagnosticPath(value.workspace_relative_path))) &&
+      (value.line === undefined || value.line === null || isPositiveInteger(value.line)) &&
+      (value.column === undefined || value.column === null || isPositiveInteger(value.column)) &&
+      typeof value.truncated === 'boolean' &&
+      (value.diagnostic_kind !== 'panic_location' || (hasValidTestNameHash && hasValidLocation)) &&
+      (value.diagnostic_kind !== 'test_failure' || hasValidTestNameHash)
+    );
+  }
   return (
-    isRecord(value) &&
-    hasOnlyKeys(value, BOUNDED_CARGO_DIAGNOSTIC_KEYS) &&
-    hasNoForbiddenRawFields(value) &&
     value.tool_id === 'verification.cargo_check' &&
     value.check_id === 'cargo_check' &&
     (value.diagnostic_kind === 'compile_error' || value.diagnostic_kind === 'compile_warning') &&
     (value.severity === 'error' || value.severity === 'warning') &&
     (value.code === undefined || value.code === null || isBoundedCargoDiagnosticCode(value.code)) &&
+    (value.test_name_hash === undefined || value.test_name_hash === null) &&
     typeof value.workspace_relative_path === 'string' &&
     isBoundedCargoDiagnosticPath(value.workspace_relative_path) &&
     isPositiveInteger(value.line) &&
