@@ -2374,7 +2374,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         completion_evidence: replay_completion_evidence,
                         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
                         selected_index_prompt_context: None,
-                        verification_recovery_context_read: None,
+                        verification_recovery_context_read:
+                            replay_verification_recovery_context_read,
                         context_budget: task_run_context_budget_summary_from_events(&events),
                         verification_completion_gate,
                         verification_recovery_repair: None,
@@ -2482,6 +2483,32 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
         None => None,
     };
+    let verification_recovery_context_read =
+        match params.verification_recovery_context_read.as_ref() {
+            Some(target) => {
+                let policy = match resolve_policy_for_task_run(&record, &store) {
+                    Ok(policy) => policy,
+                    Err(message) => {
+                        return error_response(id, -32603, &format!("internal error: {message}"))
+                    }
+                };
+                match validate_verification_recovery_context_read(&store, &record, &policy, target)
+                {
+                    Ok(validated) => Some(validated),
+                    Err(rejection) => {
+                        return match rejection {
+                            TaskRunAdmissionRejection::InvalidParams(message) => {
+                                error_response(id, -32602, message)
+                            }
+                            TaskRunAdmissionRejection::Internal(message) => {
+                                error_response(id, -32603, &format!("internal error: {message}"))
+                            }
+                        }
+                    }
+                }
+            }
+            None => None,
+        };
 
     let admission = match validate_task_run_admission(&record, &store) {
         Ok(admission) => admission,
@@ -2548,26 +2575,6 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     if let Err(error) = append_tool_plan_events(&store, &running, &policy) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
-    let verification_recovery_context_read =
-        match params.verification_recovery_context_read.as_ref() {
-            Some(target) => {
-                match validate_verification_recovery_context_read(&store, &running, &policy, target)
-                {
-                    Ok(validated) => Some(validated),
-                    Err(rejection) => {
-                        return match rejection {
-                            TaskRunAdmissionRejection::InvalidParams(message) => {
-                                error_response(id, -32602, message)
-                            }
-                            TaskRunAdmissionRejection::Internal(message) => {
-                                error_response(id, -32603, &format!("internal error: {message}"))
-                            }
-                        }
-                    }
-                }
-            }
-            None => None,
-        };
     let provider_selection = match llm_provider_status_from_workspace(store.workspace_root()) {
         Ok(s) => s,
         Err(error) => {
@@ -34025,6 +34032,54 @@ mod tests {
                 panic!("unexpected internal error: {message}")
             }
         }
+    }
+
+    #[test]
+    fn verification_recovery_context_read_rejects_non_recovery_task_before_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"plain task","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task started");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "task.run",
+  "params": {{
+    "task_id": "{task_id}",
+    "verification_recovery_context_read": {{
+      "authorize": true,
+      "source_task_id": "task_source",
+      "source_run_id": "run_source",
+      "expected_failure_fingerprint": "sha256:{hash}",
+      "diagnostic_index": 0,
+      "max_excerpt_bytes": 128
+    }}
+  }}
+}}"#,
+            hash = "a".repeat(64)
+        ));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert!(run
+            .error
+            .expect("rejected")
+            .message
+            .contains("verification_recovery_context_read"));
+        let events = store_events(temp.path(), run_id);
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(!events.iter().any(|event| {
+            event.kind == LedgerEventKind::VerificationRecoveryContextReadMaterialized
+        }));
     }
 
     #[cfg(unix)]
