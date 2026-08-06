@@ -114,6 +114,14 @@ R3.3 adds optional `bounded_cargo_diagnostics` to failed `verification.cargo_che
 {"bounded_cargo_diagnostics":[{"tool_id":"verification.cargo_check","check_id":"cargo_check","diagnostic_kind":"compile_error","severity":"error","code":"E0412","workspace_relative_path":"src/lib.rs","line":7,"column":12,"truncated":false}]}
 ```
 
+M30.1 permits the same capped array for failed `verification.cargo_test` evidence. Cargo-test entries use hashed test identity and optional sanitized panic location:
+
+```json
+{"bounded_cargo_diagnostics":[{"tool_id":"verification.cargo_test","check_id":"cargo_test","diagnostic_kind":"panic_location","severity":"error","test_name_hash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","workspace_relative_path":"src/lib.rs","line":7,"column":9,"truncated":false}]}
+```
+
+Protocol consumers must reject diagnostic entries containing raw test names, stdout, stderr, rendered messages, source text, command data, environment values, absolute paths, canonical paths, file content, unknown fields, invalid hashes, invalid paths, invalid positive positions, or arrays over five items.
+
 The runtime and VSIX validators must reject raw nested stdout/stderr/rendered messages/source snippets, absolute paths, parent traversal, protected path components, non-positive line or column values, and arrays above the bound. This extends existing results only; it does not add a new RPC, report, digest, history, readiness wrapper, or inspection surface.
 
 ## `codebase.index.build`

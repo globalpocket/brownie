@@ -14,6 +14,7 @@ brownie-agentmodes = { path = "../brownie-agentmodes" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
+sha2.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
