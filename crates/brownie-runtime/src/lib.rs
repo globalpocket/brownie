@@ -9,7 +9,7 @@ use brownie_config::{
 };
 use brownie_context::{
     ContextBudget, ContextBudgetSummary, ContextMaterializer, ContextMaterializerInput,
-    ContextWindowSummary, SelectedIndexPromptContext,
+    ContextWindowSummary, SelectedIndexPromptContext, VerificationRecoveryContextPromptContext,
 };
 use brownie_indexer::{
     build_workspace_file_inventory, CodebaseIndexBuildOptions, CodebaseIndexError,
@@ -136,7 +136,8 @@ use brownie_protocol::{
     TaskRunCompletionEvidence, TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
     TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
     TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryRepairOutcome,
+    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
+    TaskRunVerificationRecoveryContextReadSummary, TaskRunVerificationRecoveryRepairOutcome,
     TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
     TaskStatusCounts, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
     ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
@@ -238,12 +239,16 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, BTreeSet},
-    io::Write,
+    fs,
+    io::{Read, Write},
     path::{Component, Path, PathBuf},
 };
 
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_CODE_CHARS: usize = 32;
+const MIN_VERIFICATION_RECOVERY_CONTEXT_EXCERPT_BYTES: usize = 128;
+const MAX_VERIFICATION_RECOVERY_CONTEXT_EXCERPT_BYTES: usize = 8_192;
+const VERIFICATION_RECOVERY_CONTEXT_READ_NEXT_ACTION: &str = "run_recovery_task_with_context";
 const EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION: &str = "external_modepack_child_provenance_v1";
 const EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION: &str = "external_modepack_task_provenance_v1";
 const EXTERNAL_MODEPACK_POLICY_FINGERPRINT_VERSION: &str =
@@ -2104,6 +2109,11 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             Ok(evidence) => evidence,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
+    let replay_verification_recovery_context_read =
+        match verification_recovery_context_read_summary_for_replay(&store, &record) {
+            Ok(summary) => summary,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
 
     match verification_recovery_repair_outcome_for_replay(&store, &record) {
         Ok(Some((agent_loop, verification_recovery_repair))) => {
@@ -2117,6 +2127,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: replay_verification_recovery_context_read
+                        .clone(),
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: Some(verification_recovery_repair),
@@ -2144,6 +2156,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2171,6 +2184,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
@@ -2216,6 +2230,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2243,6 +2258,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2270,6 +2286,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: replay_completion_evidence.clone(),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2297,6 +2314,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: None,
                     llm_provider_failure: Some(llm_provider_failure),
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: replay_verification_recovery_context_read,
                     context_budget: None,
                     verification_completion_gate: None,
                     verification_recovery_repair: None,
@@ -2356,6 +2374,8 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         completion_evidence: replay_completion_evidence,
                         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
                         selected_index_prompt_context: None,
+                        verification_recovery_context_read:
+                            replay_verification_recovery_context_read,
                         context_budget: task_run_context_budget_summary_from_events(&events),
                         verification_completion_gate,
                         verification_recovery_repair: None,
@@ -2463,6 +2483,32 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
         None => None,
     };
+    let verification_recovery_context_read =
+        match params.verification_recovery_context_read.as_ref() {
+            Some(target) => {
+                let policy = match resolve_policy_for_task_run(&record, &store) {
+                    Ok(policy) => policy,
+                    Err(message) => {
+                        return error_response(id, -32603, &format!("internal error: {message}"))
+                    }
+                };
+                match validate_verification_recovery_context_read(&store, &record, &policy, target)
+                {
+                    Ok(validated) => Some(validated),
+                    Err(rejection) => {
+                        return match rejection {
+                            TaskRunAdmissionRejection::InvalidParams(message) => {
+                                error_response(id, -32602, message)
+                            }
+                            TaskRunAdmissionRejection::Internal(message) => {
+                                error_response(id, -32603, &format!("internal error: {message}"))
+                            }
+                        }
+                    }
+                }
+            }
+            None => None,
+        };
 
     let admission = match validate_task_run_admission(&record, &store) {
         Ok(admission) => admission,
@@ -2577,6 +2623,15 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
     }
+    if let Some(context_read) = verification_recovery_context_read.as_ref() {
+        if let Err(error) = store.tasks().append_task_event_with_payload(
+            &running,
+            LedgerEventKind::VerificationRecoveryContextReadMaterialized,
+            Some(context_read.event_payload.clone()),
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
 
     let ledger_events = match store.tasks().read_ledger_events(&running.run_id) {
         Ok(events) => events,
@@ -2587,6 +2642,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         ledger_events,
         child_completion_summaries: child_completion_summaries.clone(),
         selected_index_context: selected_index_context
+            .as_ref()
+            .map(|context| context.prompt_context.clone()),
+        verification_recovery_context: verification_recovery_context_read
             .as_ref()
             .map(|context| context.prompt_context.clone()),
         context_budget,
@@ -2601,6 +2659,11 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         summary.content_truncated_for_prompt = prompt_context_budget.selected_index_truncated;
         summary
     });
+    let verification_recovery_context_read_result = verification_recovery_context_read
+        .as_ref()
+        .map(|context| context.summary.clone());
+    let privileged_prompt_context_present =
+        selected_index_context.is_some() || verification_recovery_context_read.is_some();
     if !prompt_context_budget.prompt_within_budget {
         return fail_llm_request(
             &store,
@@ -2689,7 +2752,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             &result.sensitive_scan,
             &prompt_context_window,
             &prompt_context_budget,
-            selected_index_context.is_some(),
+            privileged_prompt_context_present,
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2796,7 +2859,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             &provider_status,
             &result.llm_response.content,
             provider_selection.budget.response_preview_chars,
-            selected_index_context.is_some(),
+            privileged_prompt_context_present,
         )),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2815,6 +2878,9 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             ledger_events: second_pass_events,
             child_completion_summaries: child_completion_summaries.clone(),
             selected_index_context: selected_index_context
+                .as_ref()
+                .map(|context| context.prompt_context.clone()),
+            verification_recovery_context: verification_recovery_context_read
                 .as_ref()
                 .map(|context| context.prompt_context.clone()),
             context_budget,
@@ -2893,7 +2959,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 &second_pass.sensitive_scan,
                 &second_pass_context_window,
                 &second_pass_context_budget,
-                selected_index_context.is_some(),
+                privileged_prompt_context_present,
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -2918,7 +2984,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                 &provider_status,
                 &second_pass.llm_response.content,
                 provider_selection.budget.response_preview_chars,
-                selected_index_context.is_some(),
+                privileged_prompt_context_present,
             )),
         ) {
             return error_response(id, -32603, &format!("internal error: {error}"));
@@ -3033,6 +3099,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     completion_evidence: Some(completion_evidence),
                     llm_provider_failure: None,
                     selected_index_prompt_context: selected_index_prompt_context_result,
+                    verification_recovery_context_read: verification_recovery_context_read_result,
                     context_budget: context_budget_result,
                     verification_completion_gate,
                     verification_recovery_repair,
@@ -3233,6 +3300,7 @@ fn handle_verification_recovery_retry_task_run(
                     completion_evidence: Some(completion_evidence),
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
+                    verification_recovery_context_read: None,
                     context_budget: None,
                     verification_completion_gate,
                     verification_recovery_repair: None,
@@ -4359,6 +4427,7 @@ fn fail_llm_request(
                         completion_evidence: None,
                         llm_provider_failure: Some(outcome),
                         selected_index_prompt_context: None,
+                        verification_recovery_context_read: None,
                         context_budget: None,
                         verification_completion_gate: None,
                         verification_recovery_repair: None,
@@ -4383,6 +4452,7 @@ fn fail_llm_request(
                 completion_evidence: None,
                 llm_provider_failure: Some(outcome),
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: None,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -5643,6 +5713,410 @@ struct ValidatedTaskRunSelectedIndexContext {
     prompt_context: SelectedIndexPromptContext,
     summary: TaskRunSelectedIndexPromptContextSummary,
     event_payload: Value,
+}
+
+#[derive(Debug, Clone)]
+struct ValidatedVerificationRecoveryContextRead {
+    prompt_context: VerificationRecoveryContextPromptContext,
+    summary: TaskRunVerificationRecoveryContextReadSummary,
+    event_payload: Value,
+}
+
+fn validate_verification_recovery_context_read(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    policy: &CompiledModePolicy,
+    target: &TaskRunVerificationRecoveryContextRead,
+) -> Result<ValidatedVerificationRecoveryContextRead, TaskRunAdmissionRejection> {
+    if !target.authorize {
+        return invalid_verification_recovery_context_read("authorization is required");
+    }
+    if target.max_excerpt_bytes < MIN_VERIFICATION_RECOVERY_CONTEXT_EXCERPT_BYTES
+        || target.max_excerpt_bytes > MAX_VERIFICATION_RECOVERY_CONTEXT_EXCERPT_BYTES
+    {
+        return invalid_verification_recovery_context_read("max_excerpt_bytes is out of range");
+    }
+    let Some(provenance) = record.verification_recovery_provenance.as_ref() else {
+        return invalid_verification_recovery_context_read(
+            "task is not a verification recovery task",
+        );
+    };
+    if target.source_task_id != provenance.source_task_id
+        || target.source_run_id != provenance.source_run_id
+        || target.expected_failure_fingerprint != provenance.failure_fingerprint
+    {
+        return invalid_verification_recovery_context_read("recovery source does not match");
+    }
+    let latest = verification_recovery_provenance_for_source(
+        store,
+        &VerificationRecoverySource {
+            source_task_id: provenance.source_task_id.clone(),
+            source_run_id: provenance.source_run_id.clone(),
+            expected_failure_fingerprint: provenance.failure_fingerprint.clone(),
+            authorize_recovery: true,
+        },
+    )
+    .map_err(|error| match error {
+        VerificationRecoveryAdmissionError::InvalidParams(_) => {
+            TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: verification recovery context source is stale",
+            )
+        }
+        VerificationRecoveryAdmissionError::Internal(message) => {
+            TaskRunAdmissionRejection::Internal(message)
+        }
+    })?;
+    if latest != *provenance {
+        return invalid_verification_recovery_context_read("recovery provenance is stale");
+    }
+    let Some(diagnostic) = provenance
+        .bounded_cargo_diagnostics
+        .get(target.diagnostic_index)
+    else {
+        return invalid_verification_recovery_context_read("diagnostic_index is out of range");
+    };
+    let Some(relative_path) = diagnostic.workspace_relative_path.as_deref() else {
+        return invalid_verification_recovery_context_read("selected diagnostic has no path");
+    };
+    let safe_path = sanitize_bounded_cargo_diagnostic_path(relative_path).ok_or_else(|| {
+        TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_context_read path is unsafe",
+        )
+    })?;
+    validate_selected_index_context_permission(policy, RuntimeAction::ReadWorkspace)?;
+    let excerpt = read_verification_recovery_context_excerpt(
+        store.workspace_root(),
+        &safe_path,
+        diagnostic.line,
+        target.max_excerpt_bytes,
+    )?;
+    let read_path_fingerprint = format!("sha256:{}", hex_sha256(safe_path.as_bytes()));
+    let context_read_id = verification_recovery_context_read_id(record, target);
+    let summary = TaskRunVerificationRecoveryContextReadSummary {
+        context_read_id: context_read_id.clone(),
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        recovery_task_id: record.task_id.clone(),
+        recovery_run_id: record.run_id.clone(),
+        failure_fingerprint: provenance.failure_fingerprint.clone(),
+        diagnostic_index: target.diagnostic_index,
+        tool_id: diagnostic.tool_id.clone(),
+        check_id: diagnostic.check_id.clone(),
+        diagnostic_kind: diagnostic.diagnostic_kind.clone(),
+        severity: diagnostic.severity.clone(),
+        test_name_hash: diagnostic.test_name_hash.clone(),
+        read_path_fingerprint: read_path_fingerprint.clone(),
+        line: diagnostic.line,
+        column: diagnostic.column,
+        excerpt_start_line: excerpt.start_line,
+        excerpt_end_line: excerpt.end_line,
+        excerpt_bytes: excerpt.bytes,
+        excerpt_sha256: excerpt.sha256.clone(),
+        excerpt_truncated: excerpt.truncated,
+        prompt_preview_redacted: true,
+        replayed: false,
+        next_action: VERIFICATION_RECOVERY_CONTEXT_READ_NEXT_ACTION.to_string(),
+    };
+    let prompt_context = VerificationRecoveryContextPromptContext {
+        context_read_id: context_read_id.clone(),
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        recovery_task_id: record.task_id.clone(),
+        recovery_run_id: record.run_id.clone(),
+        failure_fingerprint: provenance.failure_fingerprint.clone(),
+        diagnostic_index: target.diagnostic_index,
+        tool_id: diagnostic.tool_id.clone(),
+        check_id: diagnostic.check_id.clone(),
+        diagnostic_kind: diagnostic.diagnostic_kind.clone(),
+        read_path_fingerprint: read_path_fingerprint.clone(),
+        line: diagnostic.line,
+        column: diagnostic.column,
+        excerpt_start_line: excerpt.start_line,
+        excerpt_end_line: excerpt.end_line,
+        excerpt_bytes: excerpt.bytes,
+        excerpt_sha256: excerpt.sha256.clone(),
+        excerpt_truncated: excerpt.truncated,
+        excerpt: excerpt.content,
+    };
+    let event_payload = verification_recovery_context_read_payload(&summary, policy);
+    Ok(ValidatedVerificationRecoveryContextRead {
+        prompt_context,
+        summary,
+        event_payload,
+    })
+}
+
+#[derive(Debug, Clone)]
+struct VerificationRecoveryContextExcerpt {
+    content: String,
+    start_line: usize,
+    end_line: usize,
+    bytes: usize,
+    sha256: String,
+    truncated: bool,
+}
+
+fn read_verification_recovery_context_excerpt(
+    workspace_root: &Path,
+    relative_path: &str,
+    line: Option<usize>,
+    max_bytes: usize,
+) -> Result<VerificationRecoveryContextExcerpt, TaskRunAdmissionRejection> {
+    let root = workspace_root.canonicalize().map_err(|error| {
+        TaskRunAdmissionRejection::Internal(format!(
+            "failed to canonicalize workspace root: {error}"
+        ))
+    })?;
+    let relative = Path::new(relative_path);
+    let target = root.join(relative);
+    let metadata = fs::symlink_metadata(&target).map_err(|_| {
+        TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_context_read target is missing",
+        )
+    })?;
+    if metadata.file_type().is_symlink() {
+        return invalid_verification_recovery_context_read("target is a symlink");
+    }
+    let canonical = target.canonicalize().map_err(|_| {
+        TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_context_read target is unsafe",
+        )
+    })?;
+    if !canonical.starts_with(&root) || canonical.is_dir() || !metadata.is_file() {
+        return invalid_verification_recovery_context_read(
+            "target is not a regular workspace file",
+        );
+    }
+    let mut file = fs::File::open(&canonical).map_err(|error| {
+        TaskRunAdmissionRejection::Internal(format!(
+            "verification_recovery_context_read failed to open file: {error}"
+        ))
+    })?;
+    let mut bytes = Vec::new();
+    std::io::Read::by_ref(&mut file)
+        .take((max_bytes + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| {
+            TaskRunAdmissionRejection::Internal(format!(
+                "verification_recovery_context_read failed to read file: {error}"
+            ))
+        })?;
+    let file_truncated = bytes.len() > max_bytes;
+    if file_truncated {
+        bytes.truncate(max_bytes);
+    }
+    let content = std::str::from_utf8(&bytes).map_err(|_| {
+        TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: verification_recovery_context_read target is not UTF-8",
+        )
+    })?;
+    let (excerpt, start_line, end_line, excerpt_truncated) =
+        bounded_line_excerpt(content, line, max_bytes);
+    let excerpt_bytes = excerpt.as_bytes().len();
+    Ok(VerificationRecoveryContextExcerpt {
+        sha256: format!("sha256:{}", hex_sha256(excerpt.as_bytes())),
+        content: excerpt,
+        start_line,
+        end_line,
+        bytes: excerpt_bytes,
+        truncated: file_truncated || excerpt_truncated,
+    })
+}
+
+fn bounded_line_excerpt(
+    content: &str,
+    line: Option<usize>,
+    max_bytes: usize,
+) -> (String, usize, usize, bool) {
+    let lines = content.lines().collect::<Vec<_>>();
+    if lines.is_empty() {
+        return (String::new(), 1, 1, false);
+    }
+    let center = line.unwrap_or(1).max(1).min(lines.len());
+    let mut start = center.saturating_sub(3).max(1);
+    let mut end = (center + 2).min(lines.len());
+    let mut excerpt = join_lines_bounded(&lines, start, end, max_bytes);
+    while excerpt.as_bytes().len() > max_bytes && start < end {
+        if center.saturating_sub(start) >= end.saturating_sub(center) {
+            start += 1;
+        } else {
+            end -= 1;
+        }
+        excerpt = join_lines_bounded(&lines, start, end, max_bytes);
+    }
+    let truncated = start > 1 || end < lines.len() || excerpt.as_bytes().len() >= max_bytes;
+    (excerpt, start, end, truncated)
+}
+
+fn join_lines_bounded(lines: &[&str], start: usize, end: usize, max_bytes: usize) -> String {
+    let mut out = lines[(start - 1)..end].join("\n");
+    if out.as_bytes().len() > max_bytes {
+        while out.as_bytes().len() > max_bytes {
+            out.pop();
+        }
+    }
+    out
+}
+
+fn verification_recovery_context_read_id(
+    record: &TaskRecord,
+    target: &TaskRunVerificationRecoveryContextRead,
+) -> String {
+    let canonical = json!({
+        "version": "verification_recovery_context_read_id_v1",
+        "recovery_task_id": record.task_id,
+        "recovery_run_id": record.run_id,
+        "source_task_id": target.source_task_id,
+        "source_run_id": target.source_run_id,
+        "failure_fingerprint": target.expected_failure_fingerprint,
+        "diagnostic_index": target.diagnostic_index,
+        "max_excerpt_bytes": target.max_excerpt_bytes,
+    });
+    format!("ctx_{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn verification_recovery_context_read_payload(
+    summary: &TaskRunVerificationRecoveryContextReadSummary,
+    policy: &CompiledModePolicy,
+) -> Value {
+    json!({
+        "verification_recovery_context_read": true,
+        "context_read_id": summary.context_read_id,
+        "source_task_id": summary.source_task_id,
+        "source_run_id": summary.source_run_id,
+        "recovery_task_id": summary.recovery_task_id,
+        "recovery_run_id": summary.recovery_run_id,
+        "failure_fingerprint": summary.failure_fingerprint,
+        "diagnostic_index": summary.diagnostic_index,
+        "tool_id": summary.tool_id,
+        "check_id": summary.check_id,
+        "diagnostic_kind": summary.diagnostic_kind,
+        "severity": summary.severity,
+        "test_name_hash": summary.test_name_hash,
+        "read_path_fingerprint": summary.read_path_fingerprint,
+        "line": summary.line,
+        "column": summary.column,
+        "excerpt_start_line": summary.excerpt_start_line,
+        "excerpt_end_line": summary.excerpt_end_line,
+        "excerpt_bytes": summary.excerpt_bytes,
+        "excerpt_sha256": summary.excerpt_sha256,
+        "excerpt_truncated": summary.excerpt_truncated,
+        "prompt_preview_redacted": true,
+        "mode_id": policy.mode_id,
+        "required_action": runtime_action_name(&RuntimeAction::ReadWorkspace),
+        "next_action": summary.next_action,
+    })
+}
+
+fn verification_recovery_context_read_summary_for_replay(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> anyhow::Result<Option<TaskRunVerificationRecoveryContextReadSummary>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let Some(payload) = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::VerificationRecoveryContextReadMaterialized)
+        .and_then(|event| event.payload.as_ref())
+    else {
+        return Ok(None);
+    };
+    let Some(context_read_id) = payload.get("context_read_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(source_task_id) = payload.get("source_task_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(source_run_id) = payload.get("source_run_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(failure_fingerprint) = payload.get("failure_fingerprint").and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let Some(tool_id) = payload.get("tool_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(check_id) = payload.get("check_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(diagnostic_kind) = payload.get("diagnostic_kind").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(severity) = payload.get("severity").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(read_path_fingerprint) = payload.get("read_path_fingerprint").and_then(Value::as_str)
+    else {
+        return Ok(None);
+    };
+    let Some(excerpt_sha256) = payload.get("excerpt_sha256").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let Some(next_action) = payload.get("next_action").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    Ok(Some(TaskRunVerificationRecoveryContextReadSummary {
+        context_read_id: context_read_id.to_string(),
+        source_task_id: source_task_id.to_string(),
+        source_run_id: source_run_id.to_string(),
+        recovery_task_id: record.task_id.clone(),
+        recovery_run_id: record.run_id.clone(),
+        failure_fingerprint: failure_fingerprint.to_string(),
+        diagnostic_index: payload
+            .get("diagnostic_index")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or_default(),
+        tool_id: tool_id.to_string(),
+        check_id: check_id.to_string(),
+        diagnostic_kind: diagnostic_kind.to_string(),
+        severity: severity.to_string(),
+        test_name_hash: payload
+            .get("test_name_hash")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        read_path_fingerprint: read_path_fingerprint.to_string(),
+        line: payload
+            .get("line")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+        column: payload
+            .get("column")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok()),
+        excerpt_start_line: payload
+            .get("excerpt_start_line")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(1),
+        excerpt_end_line: payload
+            .get("excerpt_end_line")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or(1),
+        excerpt_bytes: payload
+            .get("excerpt_bytes")
+            .and_then(Value::as_u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .unwrap_or_default(),
+        excerpt_sha256: excerpt_sha256.to_string(),
+        excerpt_truncated: payload
+            .get("excerpt_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        prompt_preview_redacted: true,
+        replayed: true,
+        next_action: next_action.to_string(),
+    }))
+}
+
+fn invalid_verification_recovery_context_read<T>(
+    _reason: &'static str,
+) -> Result<T, TaskRunAdmissionRejection> {
+    Err(TaskRunAdmissionRejection::InvalidParams(
+        "invalid params: verification_recovery_context_read rejected",
+    ))
 }
 
 fn validate_task_run_selected_index_context(
@@ -11308,6 +11782,9 @@ fn task_run_result_for_headless_replay(
         return Ok(None);
     }
     let completion_evidence = task_run_completion_evidence_for_record(store, record, true)?;
+    let verification_recovery_context_read =
+        verification_recovery_context_read_summary_for_replay(store, record)
+            .map_err(|error| error.to_string())?;
 
     match llm_provider_failure_outcome_for_replay(store, record) {
         Ok(Some((agent_loop, llm_provider_failure))) => {
@@ -11319,6 +11796,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: Some(llm_provider_failure),
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: verification_recovery_context_read.clone(),
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -11343,6 +11821,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: verification_recovery_context_read.clone(),
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: Some(verification_recovery_repair),
@@ -11367,6 +11846,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -11391,6 +11871,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate,
                 verification_recovery_repair: None,
@@ -11415,6 +11896,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -11439,6 +11921,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -11463,6 +11946,7 @@ fn task_run_result_for_headless_replay(
                 completion_evidence: completion_evidence.clone(),
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
+                verification_recovery_context_read: None,
                 context_budget: task_run_context_budget_summary_for_record(store, record)?,
                 verification_completion_gate: None,
                 verification_recovery_repair: None,
@@ -11497,6 +11981,7 @@ fn task_run_result_for_headless_replay(
         completion_evidence,
         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
         selected_index_prompt_context: None,
+        verification_recovery_context_read,
         context_budget: task_run_context_budget_summary_from_events(&events),
         verification_completion_gate,
         verification_recovery_repair: None,
@@ -33504,6 +33989,97 @@ mod tests {
             .tasks()
             .read_ledger_events(run_id)
             .expect("ledger events")
+    }
+
+    #[test]
+    fn verification_recovery_context_excerpt_is_bounded_and_hashed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("src")).expect("src dir");
+        std::fs::write(
+            temp.path().join("src/lib.rs"),
+            "line1\nline2\nline3\nline4 target\nline5\nline6\nline7\n",
+        )
+        .expect("source");
+
+        let excerpt =
+            read_verification_recovery_context_excerpt(temp.path(), "src/lib.rs", Some(4), 64)
+                .expect("excerpt");
+
+        assert_eq!(excerpt.start_line, 1);
+        assert_eq!(excerpt.end_line, 6);
+        assert!(excerpt.content.contains("line4 target"));
+        assert!(excerpt.bytes <= 64);
+        assert_eq!(
+            excerpt.sha256,
+            format!("sha256:{}", hex_sha256(excerpt.content.as_bytes()))
+        );
+    }
+
+    #[test]
+    fn verification_recovery_context_excerpt_rejects_parent_traversal() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let error =
+            read_verification_recovery_context_excerpt(temp.path(), "../outside.rs", Some(1), 128)
+                .expect_err("parent traversal denied");
+
+        match error {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                assert!(
+                    message.contains("target is missing") || message.contains("target is unsafe")
+                );
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                panic!("unexpected internal error: {message}")
+            }
+        }
+    }
+
+    #[test]
+    fn verification_recovery_context_read_rejects_non_recovery_task_before_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"plain task","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task started");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = parse_line(&format!(
+            r#"{{
+  "jsonrpc": "2.0",
+  "id": 2,
+  "method": "task.run",
+  "params": {{
+    "task_id": "{task_id}",
+    "verification_recovery_context_read": {{
+      "authorize": true,
+      "source_task_id": "task_source",
+      "source_run_id": "run_source",
+      "expected_failure_fingerprint": "sha256:{hash}",
+      "diagnostic_index": 0,
+      "max_excerpt_bytes": 128
+    }}
+  }}
+}}"#,
+            hash = "a".repeat(64)
+        ));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+
+        assert!(run
+            .error
+            .expect("rejected")
+            .message
+            .contains("verification_recovery_context_read"));
+        let events = store_events(temp.path(), run_id);
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(!events.iter().any(|event| {
+            event.kind == LedgerEventKind::VerificationRecoveryContextReadMaterialized
+        }));
     }
 
     #[cfg(unix)]

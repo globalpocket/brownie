@@ -146,6 +146,8 @@ pub struct PromptBuildInput {
     pub verification_recovery_diagnostics_summary: Vec<String>,
     #[serde(default, skip_serializing, skip_deserializing)]
     pub selected_index_context: Option<SelectedIndexPromptContext>,
+    #[serde(default, skip_serializing, skip_deserializing)]
+    pub verification_recovery_context: Option<VerificationRecoveryContextPromptContext>,
     pub context_window: ContextWindowSummary,
     pub context_budget: ContextBudgetSummary,
     pub ledger_summary: Vec<String>,
@@ -170,11 +172,35 @@ pub struct SelectedIndexPromptContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerificationRecoveryContextPromptContext {
+    pub context_read_id: String,
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub failure_fingerprint: String,
+    pub diagnostic_index: usize,
+    pub tool_id: String,
+    pub check_id: String,
+    pub diagnostic_kind: String,
+    pub read_path_fingerprint: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+    pub excerpt_start_line: usize,
+    pub excerpt_end_line: usize,
+    pub excerpt_bytes: usize,
+    pub excerpt_sha256: String,
+    pub excerpt_truncated: bool,
+    pub excerpt: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContextMaterializerInput {
     pub task: TaskRecord,
     pub ledger_events: Vec<LedgerEvent>,
     pub child_completion_summaries: Vec<String>,
     pub selected_index_context: Option<SelectedIndexPromptContext>,
+    pub verification_recovery_context: Option<VerificationRecoveryContextPromptContext>,
     pub context_budget: Option<ContextBudget>,
 }
 
@@ -212,6 +238,7 @@ impl ContextMaterializer {
         let selected_index_context = input.selected_index_context.map(|context| {
             materialize_selected_index_context(context, budget.max_selected_index_chars)
         });
+        let verification_recovery_context = input.verification_recovery_context;
 
         let mut prompt_input = PromptBuildInput {
             task_id: input.task.task_id,
@@ -226,6 +253,7 @@ impl ContextMaterializer {
             subtask_orchestration_summary,
             verification_recovery_diagnostics_summary,
             selected_index_context,
+            verification_recovery_context,
             context_window,
             context_budget: ContextBudgetSummary {
                 requested: input.context_budget.is_some(),
@@ -959,6 +987,33 @@ fn format_selected_index_context(context: &SelectedIndexPromptContext) -> String
     )
 }
 
+fn format_verification_recovery_context(
+    context: &VerificationRecoveryContextPromptContext,
+) -> String {
+    format!(
+        "context_read_id: {}\nsource_task_id: {}\nsource_run_id: {}\nrecovery_task_id: {}\nrecovery_run_id: {}\nfailure_fingerprint: {}\ndiagnostic_index: {}\ntool_id: {}\ncheck_id: {}\ndiagnostic_kind: {}\nread_path_fingerprint: {}\nline: {}\ncolumn: {}\nexcerpt_start_line: {}\nexcerpt_end_line: {}\nexcerpt_bytes: {}\nexcerpt_sha256: {}\nexcerpt_truncated: {}\nexcerpt:\n{}",
+        context.context_read_id,
+        context.source_task_id,
+        context.source_run_id,
+        context.recovery_task_id,
+        context.recovery_run_id,
+        context.failure_fingerprint,
+        context.diagnostic_index,
+        context.tool_id,
+        context.check_id,
+        context.diagnostic_kind,
+        context.read_path_fingerprint,
+        context.line.map(|line| line.to_string()).unwrap_or_else(|| "<none>".to_string()),
+        context.column.map(|column| column.to_string()).unwrap_or_else(|| "<none>".to_string()),
+        context.excerpt_start_line,
+        context.excerpt_end_line,
+        context.excerpt_bytes,
+        context.excerpt_sha256,
+        context.excerpt_truncated,
+        context.excerpt
+    )
+}
+
 pub struct PromptBuilder;
 
 impl PromptBuilder {
@@ -1042,6 +1097,16 @@ impl PromptBuilder {
                 )
             })
             .unwrap_or_default();
+        let verification_recovery_context = input
+            .verification_recovery_context
+            .as_ref()
+            .map(|context| {
+                format!(
+                    "\n\nVerification Recovery Context Read:\n{}",
+                    format_verification_recovery_context(context)
+                )
+            })
+            .unwrap_or_default();
 
         let ledger = if input.ledger_summary.is_empty() {
             "- <empty>".to_string()
@@ -1063,8 +1128,8 @@ impl PromptBuilder {
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -1175,6 +1240,7 @@ mod tests {
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_window: context_window.clone(),
             context_budget: ContextBudgetSummary::unrequested(&context_window, None, usize::MAX),
             ledger_summary: vec!["TaskStarted".into(), "TaskRunning".into()],
@@ -1231,6 +1297,7 @@ mod tests {
             subtask_orchestration_summary: vec![],
             verification_recovery_diagnostics_summary: vec![],
             selected_index_context: Some(selected_index_context.clone()),
+            verification_recovery_context: None,
             context_window: context_window.clone(),
             context_budget: ContextBudgetSummary::unrequested(
                 &context_window,
@@ -1266,6 +1333,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1312,6 +1380,7 @@ mod tests {
             ledger_events: vec![],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         });
 
@@ -1364,6 +1433,7 @@ mod tests {
                 .collect(),
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1416,6 +1486,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1446,6 +1517,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1487,6 +1559,7 @@ mod tests {
             ],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1517,6 +1590,7 @@ mod tests {
             }],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1721,6 +1795,7 @@ mod tests {
             ],
             child_completion_summaries: vec![],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 
@@ -1802,6 +1877,7 @@ mod tests {
                 "completed_child task_id=task_child source_candidate_id=subtask_1 completion_summary_preview=done".into(),
             ],
             selected_index_context: None,
+            verification_recovery_context: None,
             context_budget: None,
         };
 

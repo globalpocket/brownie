@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
-import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary } from '../runtime/protocol';
+import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -1380,14 +1380,52 @@ describe('protocol validation', () => {
       prompt_preview_redacted: true,
       next_action: 'continue_task_execution_with_materialized_context',
     };
+    const recoveryContextRead = {
+      authorize: true,
+      source_task_id: 'task_source_1',
+      source_run_id: 'run_source_1',
+      expected_failure_fingerprint: `sha256:${'8'.repeat(64)}`,
+      diagnostic_index: 0,
+      max_excerpt_bytes: 1024,
+    };
+    const recoveryContextReadSummary = {
+      context_read_id: `ctx_${'9'.repeat(64)}`,
+      source_task_id: 'task_source_1',
+      source_run_id: 'run_source_1',
+      recovery_task_id: 'task_1',
+      recovery_run_id: 'run_1',
+      failure_fingerprint: `sha256:${'8'.repeat(64)}`,
+      diagnostic_index: 0,
+      tool_id: 'verification.cargo_test',
+      check_id: 'cargo_test',
+      diagnostic_kind: 'test_failure',
+      severity: 'error',
+      test_name_hash: `sha256:${'7'.repeat(64)}`,
+      read_path_fingerprint: `sha256:${'6'.repeat(64)}`,
+      line: 12,
+      column: 3,
+      excerpt_start_line: 10,
+      excerpt_end_line: 14,
+      excerpt_bytes: 220,
+      excerpt_sha256: `sha256:${'5'.repeat(64)}`,
+      excerpt_truncated: true,
+      prompt_preview_redacted: true,
+      replayed: false,
+      next_action: 'run_recovery_task_with_context',
+    };
 
     expect(isTaskRunParams({ task_id: 'task_1' })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', verification_recovery_context_read: recoveryContextRead })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 4096, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 127, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: { ...selectedContext, content: 'changed' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext, raw_input: 'nope' })).toBe(false);
+    expect(isTaskRunVerificationRecoveryContextRead(recoveryContextRead)).toBe(true);
+    expect(isTaskRunVerificationRecoveryContextRead({ ...recoveryContextRead, authorize: false })).toBe(false);
+    expect(isTaskRunVerificationRecoveryContextRead({ ...recoveryContextRead, max_excerpt_bytes: 8193 })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary(summary)).toBe(true);
+    expect(isTaskRunVerificationRecoveryContextReadSummary(recoveryContextReadSummary)).toBe(true);
     expect(isTaskRunResult({
       task_id: 'task_1',
       run_id: 'run_1',
@@ -1405,6 +1443,7 @@ describe('protocol validation', () => {
         replayed: false,
       },
       selected_index_prompt_context: summary,
+      verification_recovery_context_read: recoveryContextReadSummary,
       context_budget: {
         requested: true,
         max_prompt_chars: 4096,
@@ -1460,6 +1499,9 @@ describe('protocol validation', () => {
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, prompt_preview_redacted: false })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, next_action: 'use_selected_file_context_for_prompt_materialization' })).toBe(false);
     expect(isTaskRunSelectedIndexPromptContextSummary({ ...summary, bytes_read: 65537 })).toBe(false);
+    expect(isTaskRunVerificationRecoveryContextReadSummary({ ...recoveryContextReadSummary, excerpt: 'raw content' })).toBe(false);
+    expect(isTaskRunVerificationRecoveryContextReadSummary({ ...recoveryContextReadSummary, path: 'src/lib.rs' })).toBe(false);
+    expect(isTaskRunVerificationRecoveryContextReadSummary({ ...recoveryContextReadSummary, prompt_preview_redacted: false })).toBe(false);
   });
 
   it('validates recovery-cycle child provenance invariants', () => {

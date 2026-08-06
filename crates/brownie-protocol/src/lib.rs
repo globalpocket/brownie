@@ -508,7 +508,20 @@ pub struct TaskRunParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_index_context: Option<TaskRunSelectedIndexContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_context_read: Option<TaskRunVerificationRecoveryContextRead>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRunVerificationRecoveryContextRead {
+    pub authorize: bool,
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub expected_failure_fingerprint: String,
+    pub diagnostic_index: usize,
+    pub max_excerpt_bytes: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1189,6 +1202,8 @@ pub struct TaskRunResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_context_read: Option<TaskRunVerificationRecoveryContextReadSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudgetSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub verification_completion_gate: Option<TaskRunVerificationCompletionGate>,
@@ -1204,6 +1219,34 @@ pub struct TaskRunResult {
     pub child_orchestration_outcome: Option<TaskRunChildOrchestrationOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_join_readiness_outcome: Option<TaskRunParentJoinReadinessOutcome>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunVerificationRecoveryContextReadSummary {
+    pub context_read_id: String,
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub recovery_task_id: String,
+    pub recovery_run_id: String,
+    pub failure_fingerprint: String,
+    pub diagnostic_index: usize,
+    pub tool_id: String,
+    pub check_id: String,
+    pub diagnostic_kind: String,
+    pub severity: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub test_name_hash: Option<String>,
+    pub read_path_fingerprint: String,
+    pub line: Option<usize>,
+    pub column: Option<usize>,
+    pub excerpt_start_line: usize,
+    pub excerpt_end_line: usize,
+    pub excerpt_bytes: usize,
+    pub excerpt_sha256: String,
+    pub excerpt_truncated: bool,
+    pub prompt_preview_redacted: bool,
+    pub replayed: bool,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
