@@ -2198,6 +2198,34 @@ describe('RuntimeClient', () => {
       },
     })).toBe(false);
     expect(isLedgerEventSummary({
+      event_id: 'event_missing_panic_hash',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:06Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, test_name_hash: undefined }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
+      event_id: 'event_missing_panic_location',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      kind: 'ToolExecutionFailed',
+      timestamp: '2026-07-23T18:00:07Z',
+      payload: {
+        tool_id: 'verification.cargo_test',
+        status: 'Failed',
+        check_id: 'cargo_test',
+        verification_status: 'Failed',
+        bounded_cargo_diagnostics: [{ ...testDiagnostic, workspace_relative_path: undefined }],
+      },
+    })).toBe(false);
+    expect(isLedgerEventSummary({
       event_id: 'event_2',
       task_id: 'task_1',
       run_id: 'run_1',

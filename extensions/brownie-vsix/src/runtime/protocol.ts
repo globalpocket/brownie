@@ -3785,16 +3785,24 @@ function isBoundedCargoDiagnostic(value: unknown): value is BoundedCargoDiagnost
     return false;
   }
   if (value.tool_id === 'verification.cargo_test') {
+    const hasValidTestNameHash = typeof value.test_name_hash === 'string' && isSha256Fingerprint(value.test_name_hash);
+    const hasValidLocation =
+      typeof value.workspace_relative_path === 'string' &&
+      isBoundedCargoDiagnosticPath(value.workspace_relative_path) &&
+      isPositiveInteger(value.line) &&
+      isPositiveInteger(value.column);
     return (
       value.check_id === 'cargo_test' &&
       (value.diagnostic_kind === 'panic_location' || value.diagnostic_kind === 'test_failure' || value.diagnostic_kind === 'unavailable') &&
       value.severity === 'error' &&
       (value.code === undefined || value.code === null) &&
-      (value.test_name_hash === undefined || value.test_name_hash === null || (typeof value.test_name_hash === 'string' && isSha256Fingerprint(value.test_name_hash))) &&
+      (value.test_name_hash === undefined || value.test_name_hash === null || hasValidTestNameHash) &&
       (value.workspace_relative_path === undefined || value.workspace_relative_path === null || (typeof value.workspace_relative_path === 'string' && isBoundedCargoDiagnosticPath(value.workspace_relative_path))) &&
       (value.line === undefined || value.line === null || isPositiveInteger(value.line)) &&
       (value.column === undefined || value.column === null || isPositiveInteger(value.column)) &&
-      typeof value.truncated === 'boolean'
+      typeof value.truncated === 'boolean' &&
+      (value.diagnostic_kind !== 'panic_location' || (hasValidTestNameHash && hasValidLocation)) &&
+      (value.diagnostic_kind !== 'test_failure' || hasValidTestNameHash)
     );
   }
   return (
