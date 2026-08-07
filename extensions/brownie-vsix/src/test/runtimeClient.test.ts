@@ -82,6 +82,17 @@ const taskListProgressOverview = {
   stage_counts: [{ current_stage: 'created', task_count: 1 }],
   next_action_sets: [{ next_action: 'run_task_explicitly', task_count: 1, task_ids: ['task_1'] }],
   blocked_sets: [],
+  headless_route_candidates: [{
+    kind: 'inspect_progress_overview',
+    reason: 'Task is runnable through the normal headless continuation selector.',
+    task_id: 'task_1',
+    run_id: 'run_1',
+    progress_fingerprint: `sha256:${'b'.repeat(64)}`,
+    aggregate_sequence: 20260626000000,
+    route_fingerprint: `sha256:${'c'.repeat(64)}`,
+    priority: 80,
+    next_action: 'headless_continue_once',
+  }],
   nodes: [{
     task_id: 'task_1',
     run_id: 'run_1',
@@ -541,6 +552,9 @@ describe('protocol validation', () => {
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, task_count: 2 } })).toBe(false);
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, source_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, percentage: 50 } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], route_fingerprint: 'not-a-fingerprint' }] } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], progress_fingerprint: `sha256:${'d'.repeat(64)}` }] } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], raw_provider_response: 'nope' }] } })).toBe(false);
     expect(isTaskListResult({
       ...taskListResult,
       progress_overview: {

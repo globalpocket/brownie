@@ -1719,8 +1719,32 @@ pub struct TaskListProgressOverview {
     pub stage_counts: Vec<TaskListProgressStageCount>,
     pub next_action_sets: Vec<TaskListProgressNextActionSet>,
     pub blocked_sets: Vec<TaskListProgressBlockedSet>,
+    pub headless_route_candidates: Vec<TaskListHeadlessRouteCandidate>,
     pub nodes: Vec<TaskProgressGraphNode>,
     pub edges: Vec<TaskProgressGraphEdge>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListHeadlessRouteCandidate {
+    pub kind: HeadlessContinueRouteKind,
+    pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub apply_fingerprint: Option<String>,
+    pub progress_fingerprint: String,
+    pub aggregate_sequence: u64,
+    pub route_fingerprint: String,
+    pub priority: u8,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
