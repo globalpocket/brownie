@@ -687,11 +687,39 @@ export interface HeadlessRunDriveResult {
   stop_reason: string;
   drive_fingerprint: string;
   terminal_completion_evidence?: TaskRunCompletionEvidence | null;
+  completion_closure: HeadlessRunCompletionClosure;
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
   advances?: HeadlessRunAdvanceResult[];
   next_action: string;
+}
+
+export type HeadlessRunCompletionClosureStatus =
+  | 'complete'
+  | 'routed_explicit_action'
+  | 'budget_exhausted'
+  | 'stale_no_progress'
+  | 'task_in_progress'
+  | 'no_eligible_task'
+  | 'unknown_nonterminal';
+
+export interface HeadlessRunCompletionClosure {
+  status: HeadlessRunCompletionClosureStatus;
+  stop_reason: string;
+  terminal_task_count: number;
+  total_task_count: number;
+  runnable_task_count: number;
+  blocked_task_count: number;
+  route_candidate_count: number;
+  progress_fingerprint: string;
+  aggregate_sequence: number;
+  route_kind?: HeadlessContinueRouteKind | null;
+  route_task_id?: string | null;
+  route_run_id?: string | null;
+  terminal_completion_fingerprint?: string | null;
+  next_action: string;
+  closure_fingerprint: string;
 }
 
 export interface TaskRunSelectedIndexPromptContextSummary {
@@ -5056,6 +5084,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'stop_reason',
       'drive_fingerprint',
       'terminal_completion_evidence',
+      'completion_closure',
       'start_progress',
       'post_progress',
       'next_route',
@@ -5085,11 +5114,69 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     typeof value.drive_fingerprint === 'string' &&
     isSha256Fingerprint(value.drive_fingerprint) &&
     (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
+    isHeadlessRunCompletionClosure(value.completion_closure) &&
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
     (value.advances === undefined || (Array.isArray(value.advances) && value.advances.length === value.advance_count && value.advances.every(isHeadlessRunAdvanceResult))) &&
     typeof value.next_action === 'string'
+  );
+}
+
+export function isHeadlessRunCompletionClosure(value: unknown): value is HeadlessRunCompletionClosure {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'status',
+      'stop_reason',
+      'terminal_task_count',
+      'total_task_count',
+      'runnable_task_count',
+      'blocked_task_count',
+      'route_candidate_count',
+      'progress_fingerprint',
+      'aggregate_sequence',
+      'route_kind',
+      'route_task_id',
+      'route_run_id',
+      'terminal_completion_fingerprint',
+      'next_action',
+      'closure_fingerprint',
+    ]) &&
+    isHeadlessRunCompletionClosureStatus(value.status) &&
+    typeof value.stop_reason === 'string' &&
+    value.stop_reason.length > 0 &&
+    value.stop_reason.length <= 120 &&
+    isNonNegativeInteger(value.terminal_task_count) &&
+    isNonNegativeInteger(value.total_task_count) &&
+    value.terminal_task_count <= value.total_task_count &&
+    isNonNegativeInteger(value.runnable_task_count) &&
+    isNonNegativeInteger(value.blocked_task_count) &&
+    isNonNegativeInteger(value.route_candidate_count) &&
+    typeof value.progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.progress_fingerprint) &&
+    isNonNegativeInteger(value.aggregate_sequence) &&
+    (value.route_kind === undefined || value.route_kind === null || isHeadlessContinueRouteKind(value.route_kind)) &&
+    (value.route_task_id === undefined || value.route_task_id === null || isBoundedHandle(value.route_task_id)) &&
+    (value.route_run_id === undefined || value.route_run_id === null || isBoundedHandle(value.route_run_id)) &&
+    (value.terminal_completion_fingerprint === undefined || value.terminal_completion_fingerprint === null || (typeof value.terminal_completion_fingerprint === 'string' && isSha256Fingerprint(value.terminal_completion_fingerprint))) &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120 &&
+    typeof value.closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.closure_fingerprint)
+  );
+}
+
+function isHeadlessRunCompletionClosureStatus(value: unknown): value is HeadlessRunCompletionClosureStatus {
+  return (
+    value === 'complete' ||
+    value === 'routed_explicit_action' ||
+    value === 'budget_exhausted' ||
+    value === 'stale_no_progress' ||
+    value === 'task_in_progress' ||
+    value === 'no_eligible_task' ||
+    value === 'unknown_nonterminal'
   );
 }
 
@@ -5103,6 +5190,10 @@ function isHeadlessContinuationId(value: unknown): value is string {
 
 function isHeadlessRunId(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,48}$/.test(value);
+}
+
+function isBoundedHandle(value: unknown): value is string {
+  return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {

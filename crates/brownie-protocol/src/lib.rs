@@ -1380,6 +1380,41 @@ pub struct HeadlessRunProgressCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum HeadlessRunCompletionClosureStatus {
+    Complete,
+    RoutedExplicitAction,
+    BudgetExhausted,
+    StaleNoProgress,
+    TaskInProgress,
+    NoEligibleTask,
+    UnknownNonterminal,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunCompletionClosure {
+    pub status: HeadlessRunCompletionClosureStatus,
+    pub stop_reason: String,
+    pub terminal_task_count: usize,
+    pub total_task_count: usize,
+    pub runnable_task_count: usize,
+    pub blocked_task_count: usize,
+    pub route_candidate_count: usize,
+    pub progress_fingerprint: String,
+    pub aggregate_sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_kind: Option<HeadlessContinueRouteKind>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_fingerprint: Option<String>,
+    pub next_action: String,
+    pub closure_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessRunAdvanceResult {
     pub status: HeadlessContinueOnceStatus,
     pub session_id: String,
@@ -1421,6 +1456,7 @@ pub struct HeadlessRunDriveResult {
     pub drive_fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
+    pub completion_closure: HeadlessRunCompletionClosure,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,
