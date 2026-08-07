@@ -565,6 +565,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_recovery_context_read: Option<TaskRunVerificationRecoveryContextRead>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_apply_recovery_source: Option<PatchApplyRecoverySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub patch_apply_recovery_goal: Option<String>,
