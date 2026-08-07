@@ -1128,6 +1128,23 @@ describe('protocol validation', () => {
       stop_reason: 'budget_exhausted',
       drive_fingerprint: `sha256:${'f'.repeat(64)}`,
       terminal_completion_evidence: terminalCompletionEvidence,
+      completion_closure: {
+        status: 'budget_exhausted',
+        stop_reason: 'budget_exhausted',
+        terminal_task_count: 1,
+        total_task_count: 2,
+        runnable_task_count: 1,
+        blocked_task_count: 0,
+        route_candidate_count: 1,
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        route_kind: 'inspect_progress_overview',
+        route_task_id: 'task_1',
+        route_run_id: 'run_1',
+        terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
+        next_action: 'inspect_progress_overview',
+        closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      },
       start_progress: headlessRunAdvanceResult.start_progress,
       post_progress: headlessRunAdvanceResult.post_progress,
       next_route: headlessBudgetResult.next_route,
@@ -1142,6 +1159,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, raw_file_content: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, absolute_path: '/tmp/file' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',
@@ -2747,6 +2766,19 @@ describe('RuntimeClient', () => {
       replayed_count: 0,
       stop_reason: 'budget_exhausted',
       drive_fingerprint: `sha256:${'f'.repeat(64)}`,
+      completion_closure: {
+        status: 'budget_exhausted',
+        stop_reason: 'budget_exhausted',
+        terminal_task_count: 1,
+        total_task_count: 2,
+        runnable_task_count: 1,
+        blocked_task_count: 0,
+        route_candidate_count: 0,
+        progress_fingerprint: advance.post_progress.progress_fingerprint,
+        aggregate_sequence: advance.post_progress.aggregate_sequence,
+        next_action: 'inspect_progress_overview',
+        closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      },
       start_progress: advance.start_progress,
       post_progress: advance.post_progress,
       advances: [advance],

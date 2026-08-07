@@ -32,10 +32,11 @@ use brownie_protocol::{
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
-    HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunDriveParams,
-    HeadlessRunDriveResult, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunCompletionClosure,
+    HeadlessRunCompletionClosureStatus, HeadlessRunDriveParams, HeadlessRunDriveResult,
+    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
+    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
     ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
@@ -9595,6 +9596,23 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         .last()
         .map(|advance| advance.status.clone())
         .unwrap_or(HeadlessContinueOnceStatus::NoEligibleTask);
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_overview = match task_list_progress_overview(&store, &post_tasks) {
+        Ok(progress) => progress,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let completion_closure = headless_run_completion_closure(
+        status.clone(),
+        &stop_reason,
+        next_route.as_ref(),
+        &next_action,
+        &terminal_completion_evidence,
+        &post_overview,
+        advances.len() >= usize::from(max_advances),
+    );
     let drive_seed = json!({
         "session_id": params.session_id,
         "drive_id": drive_id,
@@ -9607,6 +9625,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "replayed_count": replayed_count,
         "stop_reason": stop_reason,
         "terminal_completion_evidence": terminal_completion_evidence,
+        "completion_closure": completion_closure,
         "next_action": next_action
     });
     let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
@@ -9625,6 +9644,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         stop_reason,
         drive_fingerprint,
         terminal_completion_evidence,
+        completion_closure,
         start_progress,
         post_progress,
         next_route,
@@ -9647,6 +9667,117 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
     result_response(id, json!(result))
+}
+
+fn headless_run_completion_closure(
+    status: HeadlessContinueOnceStatus,
+    stop_reason: &str,
+    next_route: Option<&HeadlessContinueRoute>,
+    next_action: &str,
+    terminal_completion_evidence: &Option<brownie_protocol::TaskRunCompletionEvidence>,
+    progress_overview: &brownie_protocol::TaskListProgressOverview,
+    drive_budget_spent: bool,
+) -> HeadlessRunCompletionClosure {
+    let route_candidate = progress_overview.headless_route_candidates.first();
+    let route_kind = next_route
+        .map(|route| route.kind.clone())
+        .or_else(|| route_candidate.map(|candidate| candidate.kind.clone()));
+    let route_task_id = next_route
+        .and_then(|route| route.task_id.clone())
+        .or_else(|| route_candidate.and_then(|candidate| candidate.task_id.clone()));
+    let route_run_id = next_route
+        .and_then(|route| route.run_id.clone())
+        .or_else(|| route_candidate.and_then(|candidate| candidate.run_id.clone()));
+    let route_candidate_count = progress_overview.headless_route_candidates.len();
+    let all_known_tasks_terminal = progress_overview.task_count > 0
+        && progress_overview.terminal_task_ids.len() == progress_overview.task_count
+        && progress_overview.status_counts.running == 0
+        && progress_overview.status_counts.created == 0
+        && progress_overview.status_counts.queued == 0;
+    let routed_explicit_action =
+        progress_overview
+            .headless_route_candidates
+            .iter()
+            .any(|candidate| {
+                !matches!(
+                    candidate.kind,
+                    HeadlessContinueRouteKind::InspectProgressOverview
+                        | HeadlessContinueRouteKind::NoEligibleTask
+                        | HeadlessContinueRouteKind::RefreshProgressOverview
+                )
+            })
+            || next_route
+                .map(|route| {
+                    !matches!(
+                        route.kind,
+                        HeadlessContinueRouteKind::InspectProgressOverview
+                            | HeadlessContinueRouteKind::NoEligibleTask
+                            | HeadlessContinueRouteKind::RefreshProgressOverview
+                    )
+                })
+                .unwrap_or(false);
+    let closure_status = if all_known_tasks_terminal && !routed_explicit_action {
+        HeadlessRunCompletionClosureStatus::Complete
+    } else if routed_explicit_action {
+        HeadlessRunCompletionClosureStatus::RoutedExplicitAction
+    } else if drive_budget_spent
+        && matches!(status, HeadlessContinueOnceStatus::TaskExecuted)
+        && !all_known_tasks_terminal
+    {
+        HeadlessRunCompletionClosureStatus::BudgetExhausted
+    } else {
+        match status {
+            HeadlessContinueOnceStatus::StaleProgress => {
+                HeadlessRunCompletionClosureStatus::StaleNoProgress
+            }
+            HeadlessContinueOnceStatus::TaskInProgress => {
+                HeadlessRunCompletionClosureStatus::TaskInProgress
+            }
+            HeadlessContinueOnceStatus::NoEligibleTask => {
+                HeadlessRunCompletionClosureStatus::NoEligibleTask
+            }
+            HeadlessContinueOnceStatus::TaskExecuted => {
+                HeadlessRunCompletionClosureStatus::UnknownNonterminal
+            }
+        }
+    };
+    let terminal_completion_fingerprint = terminal_completion_evidence
+        .as_ref()
+        .map(|evidence| evidence.completion_result_fingerprint.clone());
+    let seed = json!({
+        "status": closure_status,
+        "stop_reason": stop_reason,
+        "terminal_task_count": progress_overview.terminal_task_ids.len(),
+        "total_task_count": progress_overview.task_count,
+        "runnable_task_count": progress_overview.runnable_task_ids.len(),
+        "blocked_task_count": progress_overview.blocked_task_ids.len(),
+        "route_candidate_count": route_candidate_count,
+        "progress_fingerprint": progress_overview.source_fingerprint,
+        "aggregate_sequence": progress_overview.aggregate_sequence,
+        "route_kind": route_kind.clone(),
+        "route_task_id": route_task_id.clone(),
+        "route_run_id": route_run_id.clone(),
+        "terminal_completion_fingerprint": terminal_completion_fingerprint.clone(),
+        "next_action": next_action
+    });
+    let closure_fingerprint = format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()));
+    HeadlessRunCompletionClosure {
+        status: closure_status,
+        stop_reason: stop_reason.to_string(),
+        terminal_task_count: progress_overview.terminal_task_ids.len(),
+        total_task_count: progress_overview.task_count,
+        runnable_task_count: progress_overview.runnable_task_ids.len(),
+        blocked_task_count: progress_overview.blocked_task_ids.len(),
+        route_candidate_count,
+        progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        aggregate_sequence: progress_overview.aggregate_sequence,
+        route_kind,
+        route_task_id,
+        route_run_id,
+        terminal_completion_fingerprint,
+        next_action: next_action.to_string(),
+        closure_fingerprint,
+    }
 }
 
 fn handle_headless_continue_verification_recovery_retry_admission(
@@ -12669,6 +12800,7 @@ fn append_headless_run_session_drive_completed_events(
                     "drive_fingerprint": result.drive_fingerprint,
                     "stop_reason": result.stop_reason,
                     "terminal_completion_evidence": step.terminal_completion_evidence,
+                    "completion_closure": result.completion_closure,
                     "next_action": result.next_action,
                     "reason": "Headless run session drive completed through bounded runtime-owned continuation execution."
                 })),
@@ -41470,6 +41602,18 @@ mod tests {
         assert!(drive["terminal_completion_evidence"]
             .get("final_response")
             .is_none());
+        assert_eq!(
+            drive["completion_closure"]["status"],
+            "routed_explicit_action"
+        );
+        assert_eq!(
+            drive["completion_closure"]["terminal_completion_fingerprint"],
+            drive["terminal_completion_evidence"]["completion_result_fingerprint"]
+        );
+        assert!(drive["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .starts_with("sha256:"));
         assert!(drive.get("provider_response").is_none());
 
         let replay = parse_line(drive_request)
@@ -41477,6 +41621,7 @@ mod tests {
             .unwrap_or_else(|| panic!("drive replay failed"));
         assert_eq!(replay["replayed"], true);
         assert_eq!(replay["drive_fingerprint"], drive["drive_fingerprint"]);
+        assert_eq!(replay["completion_closure"], drive["completion_closure"]);
         assert_eq!(
             replay["advances"][0]["steps"][0]["context_budget"],
             drive["advances"][0]["steps"][0]["context_budget"]
@@ -41536,6 +41681,48 @@ mod tests {
         assert_eq!(drive_events, advance_count as usize);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_completion_closure_marks_no_eligible_terminal_scope_complete() {
+        let progress = TaskListProgressOverview {
+            source_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            aggregate_sequence: 7,
+            task_count: 1,
+            root_task_ids: vec!["task_done".to_string()],
+            runnable_task_ids: Vec::new(),
+            blocked_task_ids: Vec::new(),
+            terminal_task_ids: vec!["task_done".to_string()],
+            parent_join_ready_task_ids: Vec::new(),
+            status_counts: TaskStatusCounts {
+                created: 0,
+                queued: 0,
+                running: 0,
+                completed: 1,
+                failed: 0,
+                cancelled: 0,
+            },
+            stage_counts: Vec::new(),
+            next_action_sets: Vec::new(),
+            blocked_sets: Vec::new(),
+            headless_route_candidates: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &None,
+            &progress,
+            false,
+        );
+        assert_eq!(closure.status, HeadlessRunCompletionClosureStatus::Complete);
+        assert_eq!(closure.terminal_task_count, closure.total_task_count);
+        assert_eq!(closure.runnable_task_count, 0);
+        assert_eq!(closure.route_candidate_count, 0);
+        assert!(closure.closure_fingerprint.starts_with("sha256:"));
     }
 
     #[test]
