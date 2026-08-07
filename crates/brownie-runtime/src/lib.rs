@@ -130,9 +130,9 @@ use brownie_protocol::{
     RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListProgressBlockedSet, TaskListProgressNextActionSet, TaskListProgressOverview,
-    TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode,
-    TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
+    TaskListHeadlessRouteCandidate, TaskListProgressBlockedSet, TaskListProgressNextActionSet,
+    TaskListProgressOverview, TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge,
+    TaskProgressGraphNode, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
     TaskRunCompletionEvidence, TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
     TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
     TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
@@ -12803,6 +12803,12 @@ fn task_list_progress_overview(
         &terminal_task_ids,
         &parent_join_ready_task_ids,
     );
+    let headless_route_candidates = task_list_headless_route_candidates(
+        tasks,
+        &classifications,
+        &source_fingerprint,
+        aggregate_sequence,
+    );
 
     Ok(TaskListProgressOverview {
         source_fingerprint,
@@ -12817,9 +12823,244 @@ fn task_list_progress_overview(
         stage_counts,
         next_action_sets,
         blocked_sets,
+        headless_route_candidates,
         nodes,
         edges,
     })
+}
+
+fn task_list_headless_route_candidates(
+    tasks: &[TaskRecord],
+    classifications: &[(String, TaskListProgressClassification)],
+    progress_fingerprint: &str,
+    aggregate_sequence: u64,
+) -> Vec<TaskListHeadlessRouteCandidate> {
+    let classification_by_task_id: std::collections::BTreeMap<
+        &str,
+        &TaskListProgressClassification,
+    > = classifications
+        .iter()
+        .map(|(task_id, classification)| (task_id.as_str(), classification))
+        .collect();
+    let mut candidates = Vec::new();
+    for task in tasks {
+        let Some(classification) = classification_by_task_id.get(task.task_id.as_str()) else {
+            continue;
+        };
+        if !matches!(
+            task.status,
+            TaskStatus::Created | TaskStatus::Queued | TaskStatus::Completed
+        ) {
+            continue;
+        }
+        if matches!(task.status, TaskStatus::Created | TaskStatus::Queued) {
+            if let Some(provenance) = task.verification_recovery_retry_provenance.as_ref() {
+                candidates.push(task_list_headless_route_candidate(
+                    HeadlessContinueRouteKind::RunVerificationRetryTaskExplicitly,
+                    "Approved recovery apply evidence has materialized a verification retry task; run it explicitly.",
+                    Some(task.task_id.clone()),
+                    Some(task.run_id.clone()),
+                    Some(provenance.proposal_id.clone()),
+                    Some(provenance.apply_id.clone()),
+                    Some(provenance.failure_fingerprint.clone()),
+                    Some(provenance.apply_fingerprint.clone()),
+                    progress_fingerprint,
+                    aggregate_sequence,
+                    10,
+                    "run_verification_retry_task_explicitly",
+                ));
+                continue;
+            }
+            if let Some(provenance) = task.verification_recovery_provenance.as_ref() {
+                candidates.push(task_list_headless_route_candidate(
+                    HeadlessContinueRouteKind::RunRecoveryTaskExplicitly,
+                    "Verifier failure evidence has materialized a recovery task; run it explicitly.",
+                    Some(task.task_id.clone()),
+                    Some(task.run_id.clone()),
+                    None,
+                    None,
+                    Some(provenance.failure_fingerprint.clone()),
+                    None,
+                    progress_fingerprint,
+                    aggregate_sequence,
+                    20,
+                    "run_recovery_task_explicitly",
+                ));
+                continue;
+            }
+            if let Some(provenance) = task.patch_apply_recovery_provenance.as_ref() {
+                candidates.push(task_list_headless_route_candidate(
+                    HeadlessContinueRouteKind::RunRecoveryTaskExplicitly,
+                    "Failed patch apply evidence has materialized a recovery task; run it explicitly.",
+                    Some(task.task_id.clone()),
+                    Some(task.run_id.clone()),
+                    Some(provenance.source_proposal_id.clone()),
+                    Some(provenance.source_apply_id.clone()),
+                    Some(provenance.failure_fingerprint.clone()),
+                    Some(provenance.source_apply_fingerprint.clone()),
+                    progress_fingerprint,
+                    aggregate_sequence,
+                    30,
+                    "run_recovery_task_explicitly",
+                ));
+                continue;
+            }
+            if let Some(provenance) = task.llm_provider_failure_retry_provenance.as_ref() {
+                candidates.push(task_list_headless_route_candidate(
+                    HeadlessContinueRouteKind::RunLlmProviderRetryTaskExplicitly,
+                    "LLM provider failure evidence has materialized a provider retry task; run it explicitly.",
+                    Some(task.task_id.clone()),
+                    Some(task.run_id.clone()),
+                    None,
+                    None,
+                    Some(provenance.failure_fingerprint.clone()),
+                    None,
+                    progress_fingerprint,
+                    aggregate_sequence,
+                    40,
+                    "run_llm_provider_retry_task_explicitly",
+                ));
+                continue;
+            }
+            if classification.next_action == ProgressNextAction::RunTaskExplicitly {
+                candidates.push(task_list_headless_route_candidate(
+                    HeadlessContinueRouteKind::InspectProgressOverview,
+                    "Task is runnable through the normal headless continuation selector.",
+                    Some(task.task_id.clone()),
+                    Some(task.run_id.clone()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    progress_fingerprint,
+                    aggregate_sequence,
+                    80,
+                    "headless_continue_once",
+                ));
+            }
+            continue;
+        }
+        if classification.current_stage == ProgressCurrentStage::ParentJoinReady {
+            candidates.push(task_list_headless_route_candidate(
+                HeadlessContinueRouteKind::RunParentTaskExplicitly,
+                "All controlled children reached terminal state; run the parent continuation explicitly.",
+                Some(task.task_id.clone()),
+                Some(task.run_id.clone()),
+                None,
+                None,
+                None,
+                None,
+                progress_fingerprint,
+                aggregate_sequence,
+                50,
+                "run_parent_task_explicitly",
+            ));
+        }
+    }
+    candidates.sort_by(|left, right| {
+        left.priority
+            .cmp(&right.priority)
+            .then(left.kind_string().cmp(&right.kind_string()))
+            .then(left.task_id.cmp(&right.task_id))
+            .then(left.run_id.cmp(&right.run_id))
+    });
+    candidates
+}
+
+fn task_list_headless_route_candidate(
+    kind: HeadlessContinueRouteKind,
+    reason: &str,
+    task_id: Option<String>,
+    run_id: Option<String>,
+    proposal_id: Option<String>,
+    apply_id: Option<String>,
+    failure_fingerprint: Option<String>,
+    apply_fingerprint: Option<String>,
+    progress_fingerprint: &str,
+    aggregate_sequence: u64,
+    priority: u8,
+    next_action: &str,
+) -> TaskListHeadlessRouteCandidate {
+    let route_fingerprint = task_list_headless_route_candidate_fingerprint(
+        &kind,
+        task_id.as_deref(),
+        run_id.as_deref(),
+        proposal_id.as_deref(),
+        apply_id.as_deref(),
+        failure_fingerprint.as_deref(),
+        apply_fingerprint.as_deref(),
+        progress_fingerprint,
+        aggregate_sequence,
+        priority,
+        next_action,
+    );
+    TaskListHeadlessRouteCandidate {
+        kind,
+        reason: reason.to_string(),
+        task_id,
+        run_id,
+        proposal_id,
+        apply_id,
+        failure_fingerprint,
+        apply_fingerprint,
+        progress_fingerprint: progress_fingerprint.to_string(),
+        aggregate_sequence,
+        route_fingerprint,
+        priority,
+        next_action: next_action.to_string(),
+    }
+}
+
+trait HeadlessRouteKindSortKey {
+    fn kind_string(&self) -> String;
+}
+
+impl HeadlessRouteKindSortKey for TaskListHeadlessRouteCandidate {
+    fn kind_string(&self) -> String {
+        serde_json::to_string(&self.kind).unwrap_or_else(|_| "unknown".to_string())
+    }
+}
+
+fn task_list_headless_route_candidate_fingerprint(
+    kind: &HeadlessContinueRouteKind,
+    task_id: Option<&str>,
+    run_id: Option<&str>,
+    proposal_id: Option<&str>,
+    apply_id: Option<&str>,
+    failure_fingerprint: Option<&str>,
+    apply_fingerprint: Option<&str>,
+    progress_fingerprint: &str,
+    aggregate_sequence: u64,
+    priority: u8,
+    next_action: &str,
+) -> String {
+    let entries = vec![
+        (
+            "version",
+            "task_list_headless_route_candidate_v1".to_string(),
+        ),
+        (
+            "kind",
+            serde_json::to_string(kind).unwrap_or_else(|_| "unknown".to_string()),
+        ),
+        ("task_id", task_id.unwrap_or("").to_string()),
+        ("run_id", run_id.unwrap_or("").to_string()),
+        ("proposal_id", proposal_id.unwrap_or("").to_string()),
+        ("apply_id", apply_id.unwrap_or("").to_string()),
+        (
+            "failure_fingerprint",
+            failure_fingerprint.unwrap_or("").to_string(),
+        ),
+        (
+            "apply_fingerprint",
+            apply_fingerprint.unwrap_or("").to_string(),
+        ),
+        ("progress_fingerprint", progress_fingerprint.to_string()),
+        ("aggregate_sequence", aggregate_sequence.to_string()),
+        ("priority", priority.to_string()),
+        ("next_action", next_action.to_string()),
+    ];
+    progress_snapshot_source_fingerprint(&entries)
 }
 
 fn task_list_children_by_parent_run(
@@ -40428,6 +40669,27 @@ mod tests {
         );
         assert_json_next_action_contains(progress, "run_task_explicitly", &pending_child.task_id);
         assert_json_next_action_contains(progress, "inspect_task", &running_task.task_id);
+        assert_json_headless_route_candidate_contains(
+            progress,
+            "run_parent_task_explicitly",
+            &parent_join.task_id,
+        );
+        assert_json_headless_route_candidate_contains(
+            progress,
+            "headless_continue_once",
+            &pending_child.task_id,
+        );
+        let route_candidates = progress["headless_route_candidates"]
+            .as_array()
+            .expect("route candidates");
+        assert!(route_candidates.iter().all(|candidate| {
+            candidate["progress_fingerprint"] == progress["source_fingerprint"]
+                && candidate["aggregate_sequence"] == progress["aggregate_sequence"]
+                && candidate["route_fingerprint"]
+                    .as_str()
+                    .expect("route fingerprint")
+                    .starts_with("sha256:")
+        }));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -43280,6 +43542,11 @@ mod tests {
             "run_parent_task_explicitly",
             &parent.task_id,
         );
+        assert_json_headless_route_candidate_contains(
+            &progress_first,
+            "run_parent_task_explicitly",
+            &parent.task_id,
+        );
         let serialized = serde_json::to_string(&progress_first).expect("serialize overview");
         assert!(!serialized.contains("raw_provider_response"));
         assert!(!serialized.contains("final_response"));
@@ -43328,6 +43595,11 @@ mod tests {
         assert_json_next_action_contains(
             &progress_consumed,
             "inspect_terminal_result",
+            &parent.task_id,
+        );
+        assert_json_headless_route_candidate_not_contains(
+            &progress_consumed,
+            "run_parent_task_explicitly",
             &parent.task_id,
         );
         assert_ne!(
@@ -43486,6 +43758,40 @@ mod tests {
             action_set["task_ids"].as_array().expect("task ids").len()
         );
         assert_json_array_contains(&action_set["task_ids"], expected_task_id);
+    }
+
+    fn assert_json_headless_route_candidate_contains(
+        progress: &Value,
+        next_action: &str,
+        expected_task_id: &str,
+    ) {
+        let candidates = progress["headless_route_candidates"]
+            .as_array()
+            .expect("headless route candidates");
+        assert!(
+            candidates.iter().any(|candidate| {
+                candidate["next_action"] == next_action
+                    && candidate["task_id"].as_str() == Some(expected_task_id)
+            }),
+            "expected headless route candidate {next_action} for {expected_task_id}, got {candidates:?}"
+        );
+    }
+
+    fn assert_json_headless_route_candidate_not_contains(
+        progress: &Value,
+        next_action: &str,
+        unexpected_task_id: &str,
+    ) {
+        let candidates = progress["headless_route_candidates"]
+            .as_array()
+            .expect("headless route candidates");
+        assert!(
+            candidates.iter().all(|candidate| {
+                candidate["next_action"] != next_action
+                    || candidate["task_id"].as_str() != Some(unexpected_task_id)
+            }),
+            "expected no headless route candidate {next_action} for {unexpected_task_id}, got {candidates:?}"
+        );
     }
 
     fn append_progress_test_handoff_envelope(

@@ -1069,8 +1069,25 @@ export interface TaskListProgressOverview {
   stage_counts: TaskListProgressStageCount[];
   next_action_sets: TaskListProgressNextActionSet[];
   blocked_sets: TaskListProgressBlockedSet[];
+  headless_route_candidates: TaskListHeadlessRouteCandidate[];
   nodes: TaskProgressGraphNode[];
   edges: TaskProgressGraphEdge[];
+}
+
+export interface TaskListHeadlessRouteCandidate {
+  kind: HeadlessContinueRouteKind;
+  reason: string;
+  task_id?: string | null;
+  run_id?: string | null;
+  proposal_id?: string | null;
+  apply_id?: string | null;
+  failure_fingerprint?: string | null;
+  apply_fingerprint?: string | null;
+  progress_fingerprint: string;
+  aggregate_sequence: number;
+  route_fingerprint: string;
+  priority: number;
+  next_action: string;
 }
 
 export interface TaskStatusCounts {
@@ -5115,6 +5132,34 @@ function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute
   );
 }
 
+function isTaskListHeadlessRouteCandidate(value: unknown): value is TaskListHeadlessRouteCandidate {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['kind', 'reason', 'task_id', 'run_id', 'proposal_id', 'apply_id', 'failure_fingerprint', 'apply_fingerprint', 'progress_fingerprint', 'aggregate_sequence', 'route_fingerprint', 'priority', 'next_action']) &&
+    hasNoForbiddenTaskListProgressFields(value) &&
+    isHeadlessContinueRouteKind(value.kind) &&
+    typeof value.reason === 'string' &&
+    value.reason.length > 0 &&
+    value.reason.length <= 240 &&
+    (value.task_id === undefined || value.task_id === null || typeof value.task_id === 'string') &&
+    (value.run_id === undefined || value.run_id === null || typeof value.run_id === 'string') &&
+    (value.proposal_id === undefined || value.proposal_id === null || typeof value.proposal_id === 'string') &&
+    (value.apply_id === undefined || value.apply_id === null || typeof value.apply_id === 'string') &&
+    (value.failure_fingerprint === undefined || value.failure_fingerprint === null || (typeof value.failure_fingerprint === 'string' && isSha256Fingerprint(value.failure_fingerprint))) &&
+    (value.apply_fingerprint === undefined || value.apply_fingerprint === null || (typeof value.apply_fingerprint === 'string' && isSha256Fingerprint(value.apply_fingerprint))) &&
+    typeof value.progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.progress_fingerprint) &&
+    isNonNegativeInteger(value.aggregate_sequence) &&
+    typeof value.route_fingerprint === 'string' &&
+    isSha256Fingerprint(value.route_fingerprint) &&
+    isNonNegativeInteger(value.priority) &&
+    value.priority <= 255 &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 96
+  );
+}
+
 export function isTaskRunSelectedIndexPromptContextSummary(value: unknown): value is TaskRunSelectedIndexPromptContextSummary {
   return (
     isRecord(value) &&
@@ -5362,6 +5407,7 @@ export function isTaskListProgressOverview(value: unknown): value is TaskListPro
       'stage_counts',
       'next_action_sets',
       'blocked_sets',
+      'headless_route_candidates',
       'nodes',
       'edges',
     ]) ||
@@ -5382,6 +5428,8 @@ export function isTaskListProgressOverview(value: unknown): value is TaskListPro
     !value.next_action_sets.every(isTaskListProgressNextActionSet) ||
     !Array.isArray(value.blocked_sets) ||
     !value.blocked_sets.every(isTaskListProgressBlockedSet) ||
+    !Array.isArray(value.headless_route_candidates) ||
+    !value.headless_route_candidates.every(isTaskListHeadlessRouteCandidate) ||
     !Array.isArray(value.nodes) ||
     !value.nodes.every(isTaskProgressGraphNode) ||
     !Array.isArray(value.edges) ||
@@ -5402,7 +5450,8 @@ export function isTaskListProgressOverview(value: unknown): value is TaskListPro
     value.nodes.length === value.task_count &&
     value.stage_counts.reduce((sum, entry) => sum + entry.task_count, 0) === value.task_count &&
     value.next_action_sets.every((entry) => entry.task_count === entry.task_ids.length) &&
-    value.blocked_sets.every((entry) => entry.task_count === entry.task_ids.length)
+    value.blocked_sets.every((entry) => entry.task_count === entry.task_ids.length) &&
+    value.headless_route_candidates.every((entry) => entry.progress_fingerprint === value.source_fingerprint && entry.aggregate_sequence === value.aggregate_sequence)
   );
 }
 
