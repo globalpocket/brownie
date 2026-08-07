@@ -831,6 +831,35 @@ describe('protocol validation', () => {
       ...headlessParams,
       llm_provider_failure_retry_run_target: { ...llmProviderFailureRetryRunTarget, raw_prompt: 'do not expose' },
     })).toBe(false);
+    const parentJoinRunTarget = {
+      authorize_parent_join_run: true,
+      parent_task_id: 'task_parent',
+      parent_run_id: 'run_parent',
+      expected_child_completion_fingerprint: `sha256:${'1'.repeat(64)}`,
+      expected_child_completion_child_count: 2,
+      expected_terminal_completed_child_count: 1,
+      expected_terminal_failed_child_count: 1,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      parent_join_run_target: parentJoinRunTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      parent_join_run_target: { ...parentJoinRunTarget, authorize_parent_join_run: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      parent_join_run_target: { ...parentJoinRunTarget, expected_child_completion_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      parent_join_run_target: { ...parentJoinRunTarget, expected_terminal_failed_child_count: 2 },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      parent_join_run_target: { ...parentJoinRunTarget, raw_child_output: 'do not expose' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const headlessBudgetResult = {
       ...headlessResult,

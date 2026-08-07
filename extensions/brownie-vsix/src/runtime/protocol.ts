@@ -314,6 +314,16 @@ export interface TaskRunParams {
   context_budget?: TaskRunContextBudget | null;
 }
 
+export interface ParentJoinRunTarget {
+  authorize_parent_join_run: true;
+  parent_task_id: string;
+  parent_run_id: string;
+  expected_child_completion_fingerprint: string;
+  expected_child_completion_child_count: number;
+  expected_terminal_completed_child_count: number;
+  expected_terminal_failed_child_count: number;
+}
+
 export interface HeadlessContinueOnceParams {
   authorize: true;
   expected_progress_fingerprint: string;
@@ -340,6 +350,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_apply_target?: VerificationRecoveryApplyTarget | null;
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
   llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
+  parent_join_run_target?: ParentJoinRunTarget | null;
 }
 
 export interface HeadlessRunAdvanceParams {
@@ -4477,7 +4488,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -4503,7 +4514,8 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.patch_apply_recovery_apply_target === undefined || value.patch_apply_recovery_apply_target === null || isPatchApplyRecoveryApplyTarget(value.patch_apply_recovery_apply_target)) &&
     (value.verification_recovery_apply_target === undefined || value.verification_recovery_apply_target === null || isVerificationRecoveryApplyTarget(value.verification_recovery_apply_target)) &&
     (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target)) &&
-    (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target))
+    (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target)) &&
+    (value.parent_join_run_target === undefined || value.parent_join_run_target === null || isParentJoinRunTarget(value.parent_join_run_target))
   );
 }
 
@@ -4535,6 +4547,25 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.max_advances === undefined || value.max_advances === null || (isNonNegativeInteger(value.max_advances) && value.max_advances >= 1 && value.max_advances <= 3)) &&
     (value.max_steps_per_advance === undefined || value.max_steps_per_advance === null || (isNonNegativeInteger(value.max_steps_per_advance) && value.max_steps_per_advance >= 1 && value.max_steps_per_advance <= 3)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget))
+  );
+}
+
+function isParentJoinRunTarget(value: unknown): value is ParentJoinRunTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['authorize_parent_join_run', 'parent_task_id', 'parent_run_id', 'expected_child_completion_fingerprint', 'expected_child_completion_child_count', 'expected_terminal_completed_child_count', 'expected_terminal_failed_child_count']) &&
+    value.authorize_parent_join_run === true &&
+    typeof value.parent_task_id === 'string' &&
+    value.parent_task_id.length > 0 &&
+    typeof value.parent_run_id === 'string' &&
+    value.parent_run_id.length > 0 &&
+    typeof value.expected_child_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_child_completion_fingerprint) &&
+    isNonNegativeInteger(value.expected_child_completion_child_count) &&
+    value.expected_child_completion_child_count > 0 &&
+    isNonNegativeInteger(value.expected_terminal_completed_child_count) &&
+    isNonNegativeInteger(value.expected_terminal_failed_child_count) &&
+    value.expected_terminal_completed_child_count + value.expected_terminal_failed_child_count === value.expected_child_completion_child_count
   );
 }
 

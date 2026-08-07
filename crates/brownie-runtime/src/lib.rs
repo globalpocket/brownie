@@ -38,10 +38,10 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
-    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
-    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
+    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
+    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
+    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
     ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
@@ -8464,6 +8464,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: llm_provider_failure_retry_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.parent_join_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: parent_join_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8712,6 +8719,33 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: verification_recovery_source cannot be combined with verification retry fields",
         );
     }
+    if params.parent_join_run_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: parent_join_run_target cannot be combined with recovery, apply, retry, provider, or context-read fields",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
@@ -8752,7 +8786,8 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.patch_apply_recovery_run_target.is_some()
             || params.patch_apply_recovery_apply_target.is_some()
             || params.verification_recovery_apply_target.is_some()
-            || params.verification_recovery_retry_run_target.is_some())
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some())
     {
         return error_response(
             id,
@@ -8910,6 +8945,9 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             &progress_overview,
             params,
         );
+    }
+    if params.parent_join_run_target.is_some() {
+        return handle_headless_continue_parent_join_run(id, &store, &progress_overview, params);
     }
 
     let mut candidate_task_ids = headless_continue_once_candidate_task_ids(&progress_overview);
@@ -11187,6 +11225,156 @@ fn handle_headless_continue_verification_recovery_run(
                 .map(|summary| summary.excerpt_bytes),
             "next_action": "review_and_authorize_recovery_proposal",
             "reason": "Headless continue-once ran one targeted verification recovery task from bounded route evidence."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: post_run_record.task_id.clone(),
+                selected_run_id: post_run_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &post_run_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(task_run_result.task_id.clone()),
+            selected_run_id: Some(task_run_result.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: Some(task_run_result),
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn handle_headless_continue_parent_join_run(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.parent_join_run_target.as_ref() else {
+        return error_response(id, -32603, "internal error: missing parent join run target");
+    };
+    let selected_record = match parent_join_record_for_headless_run_target(store, target) {
+        Ok(record) => record,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    let task_run_response = handle_task_run(
+        id.clone(),
+        Some(json!({
+            "task_id": selected_record.task_id.clone(),
+        })),
+    );
+    let Some(task_run_value) = task_run_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: task_run_response.error,
+        };
+    };
+    let task_run_result: TaskRunResult = match serde_json::from_value(task_run_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_run_record = match store.tasks().get_task(&selected_record.task_id) {
+        Ok(Some(record)) if record.run_id == selected_record.run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: parent join run task/run mismatch after execution",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: parent join run task not found after execution",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &post_run_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "selected_task_id": post_run_record.task_id.clone(),
+            "selected_run_id": post_run_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_parent_join_run": true,
+            "parent_task_id": target.parent_task_id.clone(),
+            "parent_run_id": target.parent_run_id.clone(),
+            "child_completion_fingerprint": target.expected_child_completion_fingerprint.clone(),
+            "child_completion_child_count": target.expected_child_completion_child_count,
+            "child_terminal_completed_count": target.expected_terminal_completed_child_count,
+            "child_terminal_failed_count": target.expected_terminal_failed_child_count,
+            "next_action": "inspect_progress_overview",
+            "reason": "Headless continue-once ran one completed parent join continuation from bounded child completion evidence."
         })),
     ) {
         return error_response(id, -32603, &format!("internal error: {error}"));
@@ -29447,6 +29635,90 @@ fn verification_recovery_record_for_headless_run_target(
     Ok(record)
 }
 
+fn parent_join_record_for_headless_run_target(
+    store: &BrownieStore,
+    target: &ParentJoinRunTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.parent_task_id.as_str(),
+        target.parent_run_id.as_str(),
+        target.expected_child_completion_fingerprint.as_str(),
+    ] {
+        if value.trim().is_empty() {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: parent_join_run_target fields must not be empty",
+            ));
+        }
+    }
+    if !target.authorize_parent_join_run {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.authorize_parent_join_run must be true",
+        ));
+    }
+    if !is_sha256_fingerprint(&target.expected_child_completion_fingerprint) {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_child_completion_fingerprint must be a sha256 fingerprint",
+        ));
+    }
+    if target.expected_child_completion_child_count == 0 {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_child_completion_child_count must be greater than zero",
+        ));
+    }
+    if target.expected_terminal_completed_child_count + target.expected_terminal_failed_child_count
+        != target.expected_child_completion_child_count
+    {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target terminal child counts must equal expected_child_completion_child_count",
+        ));
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.parent_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.parent_task_id was not found",
+        ))?;
+    if record.run_id != target.parent_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.parent_run_id does not match parent task",
+        ));
+    }
+    if record.parent_run_id.is_some() {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target must select a parent task, not a child task",
+        ));
+    }
+    if record.status != TaskStatus::Completed {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent join run target task must be Completed",
+        ));
+    }
+    let admission = validate_completed_parent_join_continuation_admission(&record, store)?;
+    if admission.child_completion_fingerprint != target.expected_child_completion_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_child_completion_fingerprint is stale",
+        ));
+    }
+    if admission.child_completion_child_count != target.expected_child_completion_child_count {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_child_completion_child_count is stale",
+        ));
+    }
+    if admission.child_terminal_completed_count != target.expected_terminal_completed_child_count {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_terminal_completed_child_count is stale",
+        ));
+    }
+    if admission.child_terminal_failed_count != target.expected_terminal_failed_child_count {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: parent_join_run_target.expected_terminal_failed_child_count is stale",
+        ));
+    }
+    Ok(record)
+}
+
 fn patch_apply_recovery_record_for_headless_run_target(
     store: &BrownieStore,
     target: &PatchApplyRecoveryRunTarget,
@@ -46826,6 +47098,172 @@ mod tests {
             .len();
 
         (parent_task_id, parent_run_id, child, parent_event_count)
+    }
+
+    #[test]
+    fn headless_continue_once_runs_parent_join_continuation_from_bounded_child_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let (parent_task_id, parent_run_id, child, _parent_event_count) =
+            start_parent_with_queued_child();
+        let child_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}"}}}}"#,
+            child.task_id
+        ));
+        assert!(child_run.error.is_none());
+
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .get_task(&parent_task_id)
+            .expect("get parent")
+            .expect("parent");
+        let admission = validate_completed_parent_join_continuation_admission(&parent, &store)
+            .expect("parent join admission");
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress_overview =
+            task_list_progress_overview(&store, &tasks).expect("progress overview");
+        let parent_events_before = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events before headless parent join");
+
+        let headless_parent_join = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"m33.parent.join.1","parent_join_run_target":{{"authorize_parent_join_run":true,"parent_task_id":"{parent_task_id}","parent_run_id":"{parent_run_id}","expected_child_completion_fingerprint":"{}","expected_child_completion_child_count":{},"expected_terminal_completed_child_count":{},"expected_terminal_failed_child_count":{}}}}}}}"#,
+            progress_overview.source_fingerprint,
+            progress_overview.aggregate_sequence,
+            admission.child_completion_fingerprint,
+            admission.child_completion_child_count,
+            admission.child_terminal_completed_count,
+            admission.child_terminal_failed_count
+        ));
+        assert!(headless_parent_join.error.is_none());
+        let result = headless_parent_join
+            .result
+            .expect("headless parent join result");
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["selected_task_id"], parent_task_id);
+        assert_eq!(result["selected_run_id"], parent_run_id);
+        assert_eq!(result["candidate_count"], 1);
+        assert_eq!(result["replayed"], false);
+        assert_eq!(result["task_run_result"]["status"], "Completed");
+        assert!(
+            payload_string_array(
+                &result["task_run_result"]["child_orchestration_outcome"],
+                "queued_child_task_ids"
+            )
+            .len()
+                == 1
+        );
+        assert!(
+            result["post_aggregate_sequence"].as_u64().unwrap()
+                > progress_overview.aggregate_sequence
+        );
+        assert_eq!(
+            result["next_route"]["next_action"],
+            "inspect_progress_overview"
+        );
+        let decision_id = result["decision_id"]
+            .as_str()
+            .expect("decision id")
+            .to_string();
+
+        let parent_events_after = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after headless parent join");
+        assert_eq!(
+            parent_events_after
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count(),
+            parent_events_before
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+                })
+                .count()
+                + 1
+        );
+        let decision_payload = parent_events_after
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .and_then(|event| event.payload.as_ref())
+            .expect("headless decision payload");
+        assert_eq!(decision_payload["decision_id"], decision_id);
+        assert_eq!(decision_payload["authorize_parent_join_run"], true);
+        assert_eq!(
+            decision_payload["child_completion_fingerprint"],
+            admission.child_completion_fingerprint
+        );
+        let serialized_decision = decision_payload.to_string();
+        for raw_marker in [
+            "raw_child_output",
+            "raw_prompt",
+            "provider_response",
+            "stdout",
+        ] {
+            assert!(!serialized_decision.contains(raw_marker));
+        }
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"m33.parent.join.1","parent_join_run_target":{{"authorize_parent_join_run":true,"parent_task_id":"{parent_task_id}","parent_run_id":"{parent_run_id}","expected_child_completion_fingerprint":"{}","expected_child_completion_child_count":{},"expected_terminal_completed_child_count":{},"expected_terminal_failed_child_count":{}}}}}}}"#,
+            progress_overview.source_fingerprint,
+            progress_overview.aggregate_sequence,
+            admission.child_completion_fingerprint,
+            admission.child_completion_child_count,
+            admission.child_terminal_completed_count,
+            admission.child_terminal_failed_count
+        ));
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["status"], "task_executed");
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(replay_result["decision_id"], decision_id);
+        let replay_post_fingerprint = replay_result["post_progress_fingerprint"]
+            .as_str()
+            .expect("replay post fingerprint");
+        let replay_post_sequence = replay_result["post_aggregate_sequence"]
+            .as_u64()
+            .expect("replay post sequence");
+
+        let parent_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&parent_run_id)
+            .expect("parent events after replay");
+        assert_eq!(parent_events_after_replay.len(), parent_events_after.len());
+        assert_eq!(
+            parent_events_after_replay
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded
+                })
+                .count(),
+            parent_events_after
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded
+                })
+                .count()
+        );
+
+        let missing_auth = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"parent_join_run_target":{{"authorize_parent_join_run":false,"parent_task_id":"{parent_task_id}","parent_run_id":"{parent_run_id}","expected_child_completion_fingerprint":"{}","expected_child_completion_child_count":{},"expected_terminal_completed_child_count":{},"expected_terminal_failed_child_count":{}}}}}}}"#,
+            replay_post_fingerprint,
+            replay_post_sequence,
+            admission.child_completion_fingerprint,
+            admission.child_completion_child_count,
+            admission.child_terminal_completed_count,
+            admission.child_terminal_failed_count
+        ));
+        assert_eq!(missing_auth.error.expect("missing auth error").code, -32602);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     fn assert_parent_join_readiness_outcome(

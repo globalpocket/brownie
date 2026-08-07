@@ -534,6 +534,18 @@ pub struct TaskRunContextBudget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ParentJoinRunTarget {
+    pub authorize_parent_join_run: bool,
+    pub parent_task_id: String,
+    pub parent_run_id: String,
+    pub expected_child_completion_fingerprint: String,
+    pub expected_child_completion_child_count: usize,
+    pub expected_terminal_completed_child_count: usize,
+    pub expected_terminal_failed_child_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessContinueOnceParams {
     pub authorize: bool,
     pub expected_progress_fingerprint: String,
@@ -582,6 +594,8 @@ pub struct HeadlessContinueOnceParams {
     pub verification_recovery_retry_run_target: Option<VerificationRecoveryRetryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_run_target: Option<LlmProviderFailureRetryRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_join_run_target: Option<ParentJoinRunTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
