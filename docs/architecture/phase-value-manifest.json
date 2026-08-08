@@ -140,7 +140,6 @@
       "crates/brownie-runtime/src/lib.rs",
       "crates/brownie-store/src/lib.rs",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m12.3.json",
       "docs/architecture/phase-value-manifest.m37.1.json",
       "extensions/brownie-vsix/src/runtime/protocol.ts",
       "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
