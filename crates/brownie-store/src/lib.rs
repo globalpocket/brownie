@@ -10,8 +10,9 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
-    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackActiveSnapshotSummary, PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance,
+    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -22,6 +23,7 @@ pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
+const MODEPACK_ACTIVE_DIR: &str = "modepack-active";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
@@ -54,9 +56,129 @@ impl BrownieStore {
         CodebaseIndexStore::new(self.workspace_root().to_path_buf())
     }
 
+    pub fn read_active_modepack_snapshot(&self) -> Result<Option<ActiveModePackSnapshot>> {
+        let path = self.active_modepack_current_path();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
+    pub fn commit_active_modepack_snapshot(
+        &self,
+        snapshot: &ActiveModePackSnapshot,
+    ) -> Result<ModePackActivationCommit> {
+        if let Some(existing) = self.read_active_modepack_snapshot()? {
+            if existing.summary.source_path == snapshot.summary.source_path
+                && existing.summary.activation_fingerprint
+                    == snapshot.summary.activation_fingerprint
+            {
+                return Ok(ModePackActivationCommit {
+                    replayed: true,
+                    event_id: existing.summary.activation_event_id.clone(),
+                    snapshot: existing,
+                });
+            }
+            bail!(
+                "conflicting active modepack snapshot for source {}",
+                snapshot.summary.source_path
+            );
+        }
+
+        let root = self.active_modepack_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = snapshot.clone();
+        committed.summary.activation_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize active modepack snapshot")?;
+        write_file_atomically(&root.join("current.json"), body.as_bytes())
+            .context("failed to write active modepack snapshot")?;
+        let event = ActiveModePackLedgerEvent {
+            event_id: committed.summary.activation_event_id.clone(),
+            kind: "ModePackActivated".to_string(),
+            timestamp: committed.summary.activated_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize active modepack summary")?,
+        };
+        self.append_active_modepack_event(&event)?;
+        Ok(ModePackActivationCommit {
+            replayed: false,
+            event_id: event.event_id,
+            snapshot: committed,
+        })
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
+
+    fn active_modepack_dir(&self) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(MODEPACK_ACTIVE_DIR)
+    }
+
+    fn active_modepack_current_path(&self) -> PathBuf {
+        self.active_modepack_dir().join("current.json")
+    }
+
+    fn append_active_modepack_event(&self, event: &ActiveModePackLedgerEvent) -> Result<()> {
+        let root = self.active_modepack_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut buffer = Vec::new();
+        serde_json::to_writer(&mut buffer, event)
+            .context("failed to serialize active modepack ledger event")?;
+        writeln!(&mut buffer).context("failed to write active modepack ledger newline")?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join("ledger.jsonl"))
+            .context("failed to open active modepack ledger")?;
+        file.write_all(&buffer)
+            .context("failed to append active modepack ledger")?;
+        file.sync_all()
+            .context("failed to sync active modepack ledger")?;
+        sync_dir(&root);
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveModePackPolicySnapshot {
+    pub mode_id: String,
+    pub display_name: String,
+    pub role_definition: String,
+    pub permissions: serde_json::Value,
+    pub allowed_handoff_targets: Option<Vec<String>>,
+    pub completion_rules: Vec<String>,
+    pub policy_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ActiveModePackSnapshot {
+    pub summary: ModePackActiveSnapshotSummary,
+    pub policies: Vec<ActiveModePackPolicySnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackActivationCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub snapshot: ActiveModePackSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ActiveModePackLedgerEvent {
+    event_id: String,
+    kind: String,
+    timestamp: String,
+    payload: serde_json::Value,
 }
 
 #[derive(Debug, Clone)]

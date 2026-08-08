@@ -152,6 +152,26 @@ export interface PermissionCheckResult {
   reason: string;
 }
 
+export interface ModePackActiveSnapshotSummary {
+  activation_id: string;
+  activation_fingerprint: string;
+  modepack_name: string;
+  schema_version: number;
+  source_kind: string;
+  source_path: string;
+  mode_count: number;
+  mode_ids: string[];
+  compiled_policy_fingerprint: string;
+  activated_at: string;
+  activation_event_id: string;
+}
+
+export interface ModePackActivateResult {
+  activated: boolean;
+  replayed: boolean;
+  snapshot: ModePackActiveSnapshotSummary;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -2937,6 +2957,37 @@ export function isPermissionCheckResult(value: unknown): value is PermissionChec
     isRuntimeActionName(value.action) &&
     typeof value.allowed === 'boolean' &&
     typeof value.reason === 'string'
+  );
+}
+
+export function isModePackActivateResult(value: unknown): value is ModePackActivateResult {
+  return (
+    isRecord(value) &&
+    typeof value.activated === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackActiveSnapshotSummary(value.snapshot)
+  );
+}
+
+function isModePackActiveSnapshotSummary(value: unknown): value is ModePackActiveSnapshotSummary {
+  return (
+    isRecord(value) &&
+    typeof value.activation_id === 'string' &&
+    typeof value.activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.activation_fingerprint) &&
+    typeof value.modepack_name === 'string' &&
+    Number.isInteger(value.schema_version) &&
+    typeof value.source_kind === 'string' &&
+    typeof value.source_path === 'string' &&
+    Number.isInteger(value.mode_count) &&
+    Array.isArray(value.mode_ids) &&
+    value.mode_ids.every((modeId) => typeof modeId === 'string') &&
+    typeof value.compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.activated_at === 'string' &&
+    typeof value.activation_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
 
