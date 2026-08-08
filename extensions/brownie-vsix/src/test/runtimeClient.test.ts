@@ -1112,6 +1112,8 @@ describe('protocol validation', () => {
       max_advances: 2,
       max_steps_per_advance: 1,
       context_budget: contextBudget,
+      authorize_completion_finalization: true,
+      expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
     };
     const headlessRunDriveResult = {
       status: 'task_executed',
@@ -1145,6 +1147,21 @@ describe('protocol validation', () => {
         next_action: 'inspect_progress_overview',
         closure_fingerprint: `sha256:${'b'.repeat(64)}`,
       },
+      completion_finalization: {
+        status: 'finalized',
+        session_id: 'm17.session',
+        drive_id: 'm17.drive.1',
+        start_session_sequence: 1,
+        end_session_sequence: 2,
+        closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        terminal_task_count: 1,
+        total_task_count: 1,
+        finalization_fingerprint: `sha256:${'e'.repeat(64)}`,
+        replayed: false,
+        next_action: 'close_headless_run',
+      },
       start_progress: headlessRunAdvanceResult.start_progress,
       post_progress: headlessRunAdvanceResult.post_progress,
       next_route: headlessBudgetResult.next_route,
@@ -1152,6 +1169,7 @@ describe('protocol validation', () => {
       next_action: 'inspect_progress_overview',
     };
     expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_completion_closure_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
@@ -1161,6 +1179,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, raw_file_content: 'secret' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_finalization: { ...headlessRunDriveResult.completion_finalization, finalization_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_finalization: { ...headlessRunDriveResult.completion_finalization, raw_ledger_payload: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, absolute_path: '/tmp/file' })).toBe(false);
     expect(isLedgerEventSummary({
       event_id: 'event_1',

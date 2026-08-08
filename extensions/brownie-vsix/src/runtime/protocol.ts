@@ -372,6 +372,8 @@ export interface HeadlessRunDriveParams {
   max_advances?: number | null;
   max_steps_per_advance?: number | null;
   context_budget?: TaskRunContextBudget | null;
+  authorize_completion_finalization?: boolean | null;
+  expected_completion_closure_fingerprint?: string | null;
 }
 
 export interface VerificationRecoverySource {
@@ -688,6 +690,7 @@ export interface HeadlessRunDriveResult {
   drive_fingerprint: string;
   terminal_completion_evidence?: TaskRunCompletionEvidence | null;
   completion_closure: HeadlessRunCompletionClosure;
+  completion_finalization?: HeadlessRunCompletionFinalization | null;
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
@@ -720,6 +723,22 @@ export interface HeadlessRunCompletionClosure {
   terminal_completion_fingerprint?: string | null;
   next_action: string;
   closure_fingerprint: string;
+}
+
+export interface HeadlessRunCompletionFinalization {
+  status: 'finalized';
+  session_id: string;
+  drive_id: string;
+  start_session_sequence: number;
+  end_session_sequence: number;
+  closure_fingerprint: string;
+  progress_fingerprint: string;
+  aggregate_sequence: number;
+  terminal_task_count: number;
+  total_task_count: number;
+  finalization_fingerprint: string;
+  replayed: boolean;
+  next_action: string;
 }
 
 export interface TaskRunSelectedIndexPromptContextSummary {
@@ -4583,7 +4602,7 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
 export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDriveParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
@@ -4591,6 +4610,8 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     value.expected_start_session_sequence >= 1 &&
     (value.max_advances === undefined || value.max_advances === null || (isNonNegativeInteger(value.max_advances) && value.max_advances >= 1 && value.max_advances <= 3)) &&
     (value.max_steps_per_advance === undefined || value.max_steps_per_advance === null || (isNonNegativeInteger(value.max_steps_per_advance) && value.max_steps_per_advance >= 1 && value.max_steps_per_advance <= 3)) &&
+    (value.authorize_completion_finalization === undefined || value.authorize_completion_finalization === null || typeof value.authorize_completion_finalization === 'boolean') &&
+    (value.expected_completion_closure_fingerprint === undefined || value.expected_completion_closure_fingerprint === null || (typeof value.expected_completion_closure_fingerprint === 'string' && isSha256Fingerprint(value.expected_completion_closure_fingerprint))) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget))
   );
 }
@@ -5085,6 +5106,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'drive_fingerprint',
       'terminal_completion_evidence',
       'completion_closure',
+      'completion_finalization',
       'start_progress',
       'post_progress',
       'next_route',
@@ -5115,6 +5137,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     isSha256Fingerprint(value.drive_fingerprint) &&
     (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
     isHeadlessRunCompletionClosure(value.completion_closure) &&
+    (value.completion_finalization === undefined || value.completion_finalization === null || isHeadlessRunCompletionFinalization(value.completion_finalization)) &&
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
@@ -5165,6 +5188,48 @@ export function isHeadlessRunCompletionClosure(value: unknown): value is Headles
     value.next_action.length <= 120 &&
     typeof value.closure_fingerprint === 'string' &&
     isSha256Fingerprint(value.closure_fingerprint)
+  );
+}
+
+export function isHeadlessRunCompletionFinalization(value: unknown): value is HeadlessRunCompletionFinalization {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'status',
+      'session_id',
+      'drive_id',
+      'start_session_sequence',
+      'end_session_sequence',
+      'closure_fingerprint',
+      'progress_fingerprint',
+      'aggregate_sequence',
+      'terminal_task_count',
+      'total_task_count',
+      'finalization_fingerprint',
+      'replayed',
+      'next_action',
+    ]) &&
+    value.status === 'finalized' &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.drive_id) &&
+    isNonNegativeInteger(value.start_session_sequence) &&
+    value.start_session_sequence >= 1 &&
+    isNonNegativeInteger(value.end_session_sequence) &&
+    value.end_session_sequence >= value.start_session_sequence &&
+    typeof value.closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.closure_fingerprint) &&
+    typeof value.progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.progress_fingerprint) &&
+    isNonNegativeInteger(value.aggregate_sequence) &&
+    isNonNegativeInteger(value.terminal_task_count) &&
+    isNonNegativeInteger(value.total_task_count) &&
+    value.terminal_task_count <= value.total_task_count &&
+    typeof value.finalization_fingerprint === 'string' &&
+    isSha256Fingerprint(value.finalization_fingerprint) &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120
   );
 }
 
