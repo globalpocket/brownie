@@ -630,6 +630,10 @@ pub struct HeadlessRunDriveParams {
     pub max_steps_per_advance: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorize_completion_finalization: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_completion_closure_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1415,6 +1419,23 @@ pub struct HeadlessRunCompletionClosure {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunCompletionFinalization {
+    pub status: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub start_session_sequence: u64,
+    pub end_session_sequence: u64,
+    pub closure_fingerprint: String,
+    pub progress_fingerprint: String,
+    pub aggregate_sequence: u64,
+    pub terminal_task_count: usize,
+    pub total_task_count: usize,
+    pub finalization_fingerprint: String,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessRunAdvanceResult {
     pub status: HeadlessContinueOnceStatus,
     pub session_id: String,
@@ -1457,6 +1478,8 @@ pub struct HeadlessRunDriveResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
     pub completion_closure: HeadlessRunCompletionClosure,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_finalization: Option<HeadlessRunCompletionFinalization>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,

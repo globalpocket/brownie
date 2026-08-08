@@ -9,9 +9,9 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
-    HeadlessRunDriveResult, LlmProviderFailureRetryProvenance, PatchApplyRecoveryProvenance,
-    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
+    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -95,6 +95,14 @@ pub struct HeadlessRunSessionDriveCheckpoint {
     pub drive_id: String,
     pub start_session_sequence: u64,
     pub result: HeadlessRunDriveResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunCompletionFinalizationCheckpoint {
+    pub session_id: String,
+    pub drive_id: String,
+    pub closure_fingerprint: String,
+    pub result: HeadlessRunCompletionFinalization,
 }
 
 impl CodebaseIndexStore {
@@ -1510,6 +1518,47 @@ impl TaskStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_run_completion_finalization_checkpoint(
+        &self,
+        session_id: &str,
+        drive_id: &str,
+    ) -> Result<Option<HeadlessRunCompletionFinalizationCheckpoint>> {
+        let path = self.headless_run_completion_finalization_path(session_id, drive_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_run_completion_finalization_checkpoint(
+        &self,
+        checkpoint: &HeadlessRunCompletionFinalizationCheckpoint,
+    ) -> Result<()> {
+        let path = self.headless_run_completion_finalization_path(
+            &checkpoint.session_id,
+            &checkpoint.drive_id,
+        );
+        if let Some(existing) = self.read_headless_run_completion_finalization_checkpoint(
+            &checkpoint.session_id,
+            &checkpoint.drive_id,
+        )? {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless run completion finalization checkpoint for {} drive {}",
+                checkpoint.session_id,
+                checkpoint.drive_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless run completion finalization checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     fn append_task_events_with_payloads(
         &self,
         record: &TaskRecord,
@@ -1596,6 +1645,19 @@ impl TaskStore {
             .join(HEADLESS_RUN_SESSIONS_DIR)
             .join(session_id)
             .join("drives")
+            .join(format!("{drive_id}.json"))
+    }
+
+    fn headless_run_completion_finalization_path(
+        &self,
+        session_id: &str,
+        drive_id: &str,
+    ) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_RUN_SESSIONS_DIR)
+            .join(session_id)
+            .join("completion-finalizations")
             .join(format!("{drive_id}.json"))
     }
 
@@ -1798,6 +1860,7 @@ pub enum LedgerEventKind {
     HeadlessContinuationDecisionRecorded,
     HeadlessRunSessionAdvanced,
     HeadlessRunSessionDriveCompleted,
+    HeadlessRunCompletionFinalized,
     TaskRunning,
     AgentLoopStarted,
     AgentLoopCompleted,
