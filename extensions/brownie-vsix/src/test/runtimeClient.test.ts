@@ -15,6 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
+import { isModePackActivateResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -415,6 +416,31 @@ describe('protocol validation', () => {
   it('rejects invalid permission.check result shapes', () => {
     expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'UnknownAction', allowed: false, reason: 'denied' })).toBe(false);
     expect(isPermissionCheckResult({ mode_id: 'orchestrator', action: 'WriteWorkspace', allowed: 'false', reason: 'denied' })).toBe(false);
+  });
+
+  it('accepts bounded modepack.activate results and rejects raw fields', () => {
+    const result = {
+      activated: true,
+      replayed: false,
+      snapshot: {
+        activation_id: 'modepack_activation_123',
+        activation_fingerprint: `sha256:${'a'.repeat(64)}`,
+        modepack_name: 'local-agentmodes',
+        schema_version: 1,
+        source_kind: 'workspace_modepack',
+        source_path: '.brownie/modepack.json',
+        mode_count: 1,
+        mode_ids: ['reviewer-lite'],
+        compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
+        activated_at: '2026-08-08T00:00:00Z',
+        activation_event_id: 'event_1',
+      },
+    };
+
+    expect(isModePackActivateResult(result)).toBe(true);
+    expect(isModePackActivateResult({ ...result, snapshot: { ...result.snapshot, activation_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackActivateResult({ ...result, snapshot: { ...result.snapshot, raw_modepack_json: '{}' } })).toBe(false);
+    expect(isModePackActivateResult({ ...result, snapshot: { ...result.snapshot, raw_ledger_payload: {} } })).toBe(false);
   });
 
   it('accepts valid tool intent parse results and rejects invalid decision shapes', () => {
@@ -2098,6 +2124,31 @@ describe('RuntimeClient', () => {
     const client = new RuntimeClient(transport);
 
     await expect(client.checkPermission('orchestrator', 'WriteWorkspace')).rejects.toThrow('permission.check returned an invalid result');
+  });
+
+  it('creates a modepack.activate request', async () => {
+    const result = {
+      activated: true,
+      replayed: false,
+      snapshot: {
+        activation_id: 'modepack_activation_123',
+        activation_fingerprint: `sha256:${'a'.repeat(64)}`,
+        modepack_name: 'local-agentmodes',
+        schema_version: 1,
+        source_kind: 'workspace_modepack',
+        source_path: '.brownie/modepack.json',
+        mode_count: 1,
+        mode_ids: ['reviewer-lite'],
+        compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
+        activated_at: '2026-08-08T00:00:00Z',
+        activation_event_id: 'event_1',
+      },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.activateModePack(true)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'modepack.activate', params: { authorize: true } }]);
   });
 
   it('creates a task.start request', async () => {

@@ -38,11 +38,12 @@ use brownie_protocol::{
     JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePermissionsSummary, ModeSummary,
-    ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
-    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
-    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
+    ModePackActiveSnapshotSummary, ModePermissionsSummary, ModeSummary, ParentJoinRunTarget,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
+    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
+    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
     ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
@@ -220,9 +221,9 @@ use brownie_protocol::{
     WorkspacePatchReviewVerdictSummary, WorkspacePatchTransactionRecoverySourceSummary,
 };
 use brownie_store::{
-    BrownieStore, ChildTaskStartParams, HeadlessContinuationDecisionLookup,
-    HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
-    HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
+    ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
+    HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
+    HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ParentJoinContinuationRunAdmission,
     PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
     VerificationRecoveryTaskStartParams,
@@ -278,6 +279,7 @@ const TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS: usize = 64;
 const TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS: usize = MAX_WORKSPACE_READ_BYTES;
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
+const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
 const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
@@ -443,6 +445,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_HEADLESS_RUN_DRIVE => handle_headless_run_drive(request.id, request.params),
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
+        METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
         METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
         METHOD_TOOL_LIST => handle_tool_list(request.id),
         METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
@@ -14159,6 +14162,29 @@ fn handle_mode_get(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(None) => error_response(id, -32602, "invalid params: unknown mode_id"),
         Err(message) => error_response(id, -32603, &format!("internal error: {message}")),
     }
+}
+
+fn handle_modepack_activate(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackActivateParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: activation authorization required",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match activate_workspace_modepack(&store) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
 }
 
 fn read_existing_run_events(
@@ -28164,6 +28190,26 @@ fn resolve_task_start_policy(
 
 fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolicy>, String> {
     let mut policies = BuiltinModeRegistry::list();
+    if let Some(snapshot) = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("active modepack snapshot load failed: {error}"))?
+    {
+        for policy in snapshot.policies {
+            let compiled = compiled_mode_policy_from_active_snapshot(&policy)?;
+            if policies
+                .iter()
+                .any(|existing| existing.mode_id == compiled.mode_id)
+            {
+                return Err(format!(
+                    "active modepack mode duplicates existing mode_id: {}",
+                    compiled.mode_id
+                ));
+            }
+            policies.push(compiled);
+        }
+        return Ok(policies);
+    }
+
     let Some(snapshot) = load_workspace_modepack(store.workspace_root())
         .map_err(|error| format!("modepack load failed: {error}"))?
     else {
@@ -28182,6 +28228,25 @@ fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolic
         policies.push(policy);
     }
     Ok(policies)
+}
+
+fn compiled_mode_policy_from_active_snapshot(
+    policy: &ActiveModePackPolicySnapshot,
+) -> Result<CompiledModePolicy, String> {
+    compiled_mode_policy_from_payload(&json!({
+        "mode_id": policy.mode_id,
+        "display_name": policy.display_name,
+        "role_definition": policy.role_definition,
+        "permissions": policy.permissions,
+        "allowed_handoff_targets": policy.allowed_handoff_targets,
+        "completion_rules": policy.completion_rules,
+    }))
+    .ok_or_else(|| {
+        format!(
+            "active modepack policy snapshot is invalid: {}",
+            policy.mode_id
+        )
+    })
 }
 
 fn resolve_workspace_mode_policy(
@@ -28378,6 +28443,29 @@ fn external_modepack_task_provenance_payload(
     store: &BrownieStore,
     mode_id: &str,
 ) -> Result<Option<Value>, String> {
+    if let Some(snapshot) = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("active modepack snapshot load failed: {error}"))?
+    {
+        let Some(policy) = snapshot
+            .policies
+            .iter()
+            .find(|policy| policy.mode_id == mode_id)
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(json!({
+            "version": EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION,
+            "source_kind": snapshot.summary.source_kind,
+            "modepack_name": snapshot.summary.modepack_name,
+            "schema_version": snapshot.summary.schema_version,
+            "source_path": snapshot.summary.source_path,
+            "mode_id": policy.mode_id,
+            "policy_fingerprint": policy.policy_fingerprint,
+            "activation_fingerprint": snapshot.summary.activation_fingerprint,
+        })));
+    }
+
     let Some(snapshot) = load_workspace_modepack(store.workspace_root())
         .map_err(|error| format!("modepack load failed: {error}"))?
     else {
@@ -28401,6 +28489,127 @@ fn external_modepack_task_provenance_payload(
         "mode_id": policy.mode_id,
         "policy_fingerprint": policy_fingerprint,
     })))
+}
+
+fn activate_workspace_modepack(store: &BrownieStore) -> Result<ModePackActivateResult, String> {
+    let Some(snapshot) = load_workspace_modepack(store.workspace_root())
+        .map_err(|error| format!("modepack load failed: {error}"))?
+    else {
+        return Err("modepack activation failed: missing .brownie/modepack.json".to_string());
+    };
+    for policy in &snapshot.modes {
+        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
+            return Err(format!(
+                "modepack mode duplicates existing mode_id: {}",
+                policy.mode_id
+            ));
+        }
+    }
+    let activated_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    let policy_snapshots = snapshot
+        .modes
+        .iter()
+        .map(|policy| {
+            let policy_fingerprint = external_modepack_policy_fingerprint(
+                &snapshot.name,
+                snapshot.schema_version,
+                policy,
+            );
+            ActiveModePackPolicySnapshot {
+                mode_id: policy.mode_id.clone(),
+                display_name: policy.display_name.clone(),
+                role_definition: policy.role_definition.clone(),
+                permissions: mode_permissions_payload(policy),
+                allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                completion_rules: policy.completion_rules.clone(),
+                policy_fingerprint,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policy_snapshots
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &policy_snapshots,
+    );
+    let activation_fingerprint = active_modepack_activation_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &compiled_policy_fingerprint,
+        &mode_ids,
+    );
+    let summary = ModePackActiveSnapshotSummary {
+        activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
+        activation_fingerprint,
+        modepack_name: snapshot.name,
+        schema_version: snapshot.schema_version,
+        source_kind: "workspace_modepack".to_string(),
+        source_path: WORKSPACE_MODEPACK_PATH.to_string(),
+        mode_count: mode_ids.len(),
+        mode_ids,
+        compiled_policy_fingerprint,
+        activated_at,
+        activation_event_id: String::new(),
+    };
+    let committed = store
+        .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+            summary,
+            policies: policy_snapshots,
+        })
+        .map_err(|error| format!("modepack activation failed: {error}"))?;
+    Ok(ModePackActivateResult {
+        activated: !committed.replayed,
+        replayed: committed.replayed,
+        snapshot: committed.snapshot.summary,
+    })
+}
+
+fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
+    json!({
+        "read_only": policy.permissions.read_only,
+        "workspace_write": policy.permissions.workspace_write,
+        "process_exec": policy.permissions.process_exec,
+        "network_access": policy.permissions.network_access,
+        "service_control": policy.permissions.service_control,
+        "destructive": policy.permissions.destructive,
+        "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
+        "codebase_index": policy.permissions.codebase_index,
+    })
+}
+
+fn active_modepack_compiled_policy_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    policies: &[ActiveModePackPolicySnapshot],
+) -> String {
+    let canonical = json!({
+        "version": "active_modepack_compiled_policy_fingerprint_v1",
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": WORKSPACE_MODEPACK_PATH,
+        "policies": policies,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn active_modepack_activation_fingerprint(
+    modepack_name: &str,
+    schema_version: u64,
+    compiled_policy_fingerprint: &str,
+    mode_ids: &[String],
+) -> String {
+    let canonical = json!({
+        "version": "active_modepack_activation_fingerprint_v1",
+        "modepack_name": modepack_name,
+        "schema_version": schema_version,
+        "source_path": WORKSPACE_MODEPACK_PATH,
+        "mode_ids": mode_ids,
+        "compiled_policy_fingerprint": compiled_policy_fingerprint,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn external_modepack_task_provenance_from_mode_resolved(
@@ -28575,6 +28784,32 @@ fn external_modepack_child_provenance_payload(
     source_handoff_envelope_id: &str,
     source_handoff_envelope_fingerprint: &str,
 ) -> Result<Option<Value>, String> {
+    if let Some(snapshot) = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("active modepack snapshot load failed: {error}"))?
+    {
+        let Some(policy) = snapshot
+            .policies
+            .iter()
+            .find(|policy| policy.mode_id == child_mode_id)
+        else {
+            return Ok(None);
+        };
+        return Ok(Some(json!({
+            "version": EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION,
+            "source_kind": snapshot.summary.source_kind,
+            "modepack_name": snapshot.summary.modepack_name,
+            "schema_version": snapshot.summary.schema_version,
+            "source_path": snapshot.summary.source_path,
+            "mode_id": policy.mode_id,
+            "policy_fingerprint": policy.policy_fingerprint,
+            "activation_fingerprint": snapshot.summary.activation_fingerprint,
+            "captured_parent_run_id": parent_run_id,
+            "captured_handoff_envelope_id": source_handoff_envelope_id,
+            "captured_handoff_envelope_fingerprint": source_handoff_envelope_fingerprint,
+        })));
+    }
+
     let Some(snapshot) = load_workspace_modepack(store.workspace_root())
         .map_err(|error| format!("modepack load failed: {error}"))?
     else {
@@ -61743,6 +61978,164 @@ mod tests {
             .contains("reviewer-lite"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_activate_writes_bounded_snapshot_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":false}}"#,
+        );
+        assert!(denied.result.is_none());
+        assert_eq!(denied.error.expect("missing auth").code, -32602);
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let activated_result = activated.result.expect("activation result");
+        assert_eq!(activated_result["activated"], true);
+        assert_eq!(activated_result["replayed"], false);
+        assert_eq!(
+            activated_result["snapshot"]["modepack_name"],
+            "local-agentmodes"
+        );
+        assert_eq!(
+            activated_result["snapshot"]["source_path"],
+            ".brownie/modepack.json"
+        );
+        assert_eq!(activated_result["snapshot"]["mode_ids"][0], "reviewer-lite");
+        assert!(activated_result["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(activated_result["snapshot"]["compiled_policy_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+
+        let replay = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["activated"], false);
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["snapshot"]["activation_fingerprint"],
+            activated_result["snapshot"]["activation_fingerprint"]
+        );
+        assert_eq!(
+            replay_result["snapshot"]["activation_event_id"],
+            activated_result["snapshot"]["activation_event_id"]
+        );
+
+        let current =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/current.json"))
+                .expect("active snapshot");
+        assert!(current.contains("\"policies\""));
+        assert!(current.contains("\"role_definition\""));
+        assert!(!current.contains("raw_modepack_json"));
+        assert!(!current.contains("raw_ledger_payload"));
+        assert!(!current.contains(temp.path().to_string_lossy().as_ref()));
+        let ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(ledger.lines().count(), 1);
+        assert!(!ledger.contains("raw_modepack_json"));
+        assert!(!ledger.contains("Review local changes without writing files."));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn active_modepack_snapshot_drives_mode_resolution_after_live_candidate_changes() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let activation_fingerprint = activated.result.unwrap()["snapshot"]
+            ["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        write_changed_test_handoff_modepack(temp.path());
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(modes
+            .iter()
+            .any(|mode| mode["mode_id"] == "reviewer-lite"
+                && mode["display_name"] == "Reviewer Lite"));
+        assert!(!modes
+            .iter()
+            .any(|mode| mode["mode_id"] == "external-orchestrator"));
+
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"mode.get","params":{"mode_id":"reviewer-lite"}}"#,
+        );
+        let mode = get.result.expect("get result");
+        assert_eq!(
+            mode["role_definition"],
+            "Review local changes without writing files."
+        );
+        assert_ne!(mode["display_name"], "Reviewer Lite Changed");
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"permission.check","params":{"mode_id":"reviewer-lite","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(
+            permission.result.expect("permission result")["allowed"],
+            false
+        );
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"task.start","params":{"goal":"Use active mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"].as_str().unwrap().to_string();
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live candidate");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+
+        let events = store_events(temp.path(), &run_id);
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(
+            mode_resolved["role_definition"],
+            "Review local changes without writing files."
+        );
+        let provenance = &mode_resolved["external_modepack_task_provenance"];
+        assert_eq!(provenance["source_path"], ".brownie/modepack.json");
+        assert_eq!(provenance["activation_fingerprint"], activation_fingerprint);
+        assert!(events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::ExternalModePackTaskProvenanceDenied));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]

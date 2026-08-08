@@ -177,6 +177,33 @@ pub struct PermissionCheckResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackActivateParams {
+    pub authorize: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackActiveSnapshotSummary {
+    pub activation_id: String,
+    pub activation_fingerprint: String,
+    pub modepack_name: String,
+    pub schema_version: u64,
+    pub source_kind: String,
+    pub source_path: String,
+    pub mode_count: usize,
+    pub mode_ids: Vec<String>,
+    pub compiled_policy_fingerprint: String,
+    pub activated_at: String,
+    pub activation_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackActivateResult {
+    pub activated: bool,
+    pub replayed: bool,
+    pub snapshot: ModePackActiveSnapshotSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeActionName {
     ReadWorkspace,
     WriteWorkspace,
