@@ -172,6 +172,14 @@ export interface ModePackActivateResult {
   snapshot: ModePackActiveSnapshotSummary;
 }
 
+export interface ModePackReplaceActiveResult {
+  replaced: boolean;
+  replayed: boolean;
+  previous_snapshot: ModePackActiveSnapshotSummary;
+  replacement_snapshot: ModePackActiveSnapshotSummary;
+  replacement_event_id: string;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -2966,6 +2974,19 @@ export function isModePackActivateResult(value: unknown): value is ModePackActiv
     typeof value.activated === 'boolean' &&
     typeof value.replayed === 'boolean' &&
     isModePackActiveSnapshotSummary(value.snapshot)
+  );
+}
+
+export function isModePackReplaceActiveResult(value: unknown): value is ModePackReplaceActiveResult {
+  return (
+    isRecord(value) &&
+    typeof value.replaced === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackActiveSnapshotSummary(value.previous_snapshot) &&
+    isModePackActiveSnapshotSummary(value.replacement_snapshot) &&
+    typeof value.replacement_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
 

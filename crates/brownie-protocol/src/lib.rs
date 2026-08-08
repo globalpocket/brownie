@@ -182,6 +182,13 @@ pub struct ModePackActivateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackReplaceActiveParams {
+    pub authorize_replacement: bool,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_candidate_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -201,6 +208,15 @@ pub struct ModePackActivateResult {
     pub activated: bool,
     pub replayed: bool,
     pub snapshot: ModePackActiveSnapshotSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackReplaceActiveResult {
+    pub replaced: bool,
+    pub replayed: bool,
+    pub previous_snapshot: ModePackActiveSnapshotSummary,
+    pub replacement_snapshot: ModePackActiveSnapshotSummary,
+    pub replacement_event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
