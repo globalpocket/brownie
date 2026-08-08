@@ -39,12 +39,12 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
-    ModePackActiveSnapshotSummary, ModePermissionsSummary, ModeSummary, ParentJoinRunTarget,
-    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
-    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
-    PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ModePackActiveSnapshotSummary, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
+    ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
+    PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
+    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -280,6 +280,7 @@ const TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS: usize = MAX_WORKSPACE_RE
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
+const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
 const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
@@ -446,6 +447,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
+        METHOD_MODEPACK_REPLACE_ACTIVE => {
+            handle_modepack_replace_active(request.id, request.params)
+        }
         METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
         METHOD_TOOL_LIST => handle_tool_list(request.id),
         METHOD_TOOL_PLAN => handle_tool_plan(request.id, request.params),
@@ -14181,6 +14185,43 @@ fn handle_modepack_activate(id: Value, params: Option<Value>) -> JsonRpcResponse
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match activate_workspace_modepack(&store) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_replace_active(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackReplaceActiveParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_replacement {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: active Mode Pack replacement authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_current_activation_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_current_activation_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_candidate_activation_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_candidate_activation_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match replace_active_workspace_modepack(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28492,6 +28533,45 @@ fn external_modepack_task_provenance_payload(
 }
 
 fn activate_workspace_modepack(store: &BrownieStore) -> Result<ModePackActivateResult, String> {
+    let snapshot = build_active_modepack_snapshot(store)?;
+    let committed = store
+        .commit_active_modepack_snapshot(&snapshot)
+        .map_err(|error| format!("modepack activation failed: {error}"))?;
+    Ok(ModePackActivateResult {
+        activated: !committed.replayed,
+        replayed: committed.replayed,
+        snapshot: committed.snapshot.summary,
+    })
+}
+
+fn replace_active_workspace_modepack(
+    store: &BrownieStore,
+    params: &ModePackReplaceActiveParams,
+) -> Result<ModePackReplaceActiveResult, String> {
+    let snapshot = build_active_modepack_snapshot(store)?;
+    if snapshot.summary.activation_fingerprint != params.expected_candidate_activation_fingerprint {
+        return Err(format!(
+            "modepack replacement failed: candidate activation fingerprint mismatch: expected {} but found {}",
+            params.expected_candidate_activation_fingerprint,
+            snapshot.summary.activation_fingerprint
+        ));
+    }
+    let committed = store
+        .replace_active_modepack_snapshot(
+            &params.expected_current_activation_fingerprint,
+            &snapshot,
+        )
+        .map_err(|error| format!("modepack replacement failed: {error}"))?;
+    Ok(ModePackReplaceActiveResult {
+        replaced: !committed.replayed,
+        replayed: committed.replayed,
+        previous_snapshot: committed.previous_snapshot.summary,
+        replacement_snapshot: committed.replacement_snapshot.summary,
+        replacement_event_id: committed.event_id,
+    })
+}
+
+fn build_active_modepack_snapshot(store: &BrownieStore) -> Result<ActiveModePackSnapshot, String> {
     let Some(snapshot) = load_workspace_modepack(store.workspace_root())
         .map_err(|error| format!("modepack load failed: {error}"))?
     else {
@@ -28554,16 +28634,9 @@ fn activate_workspace_modepack(store: &BrownieStore) -> Result<ModePackActivateR
         activated_at,
         activation_event_id: String::new(),
     };
-    let committed = store
-        .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
-            summary,
-            policies: policy_snapshots,
-        })
-        .map_err(|error| format!("modepack activation failed: {error}"))?;
-    Ok(ModePackActivateResult {
-        activated: !committed.replayed,
-        replayed: committed.replayed,
-        snapshot: committed.snapshot.summary,
+    Ok(ActiveModePackSnapshot {
+        summary,
+        policies: policy_snapshots,
     })
 }
 
@@ -62136,6 +62209,166 @@ mod tests {
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn modepack_replace_active_replaces_replays_and_drives_mode_resolution() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let current_fingerprint = activated.result.unwrap()["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        write_changed_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let candidate_fingerprint = build_active_modepack_snapshot(&store)
+            .expect("candidate snapshot")
+            .summary
+            .activation_fingerprint;
+
+        let denied = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":false,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}"}}}}"#
+        ));
+        assert_eq!(denied.error.expect("missing auth").code, -32602);
+
+        let replaced = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}"}}}}"#
+        ));
+        assert!(replaced.error.is_none());
+        let replaced_result = replaced.result.expect("replacement result");
+        assert_eq!(replaced_result["replaced"], true);
+        assert_eq!(replaced_result["replayed"], false);
+        assert_eq!(
+            replaced_result["previous_snapshot"]["activation_fingerprint"],
+            current_fingerprint
+        );
+        assert_eq!(
+            replaced_result["replacement_snapshot"]["activation_fingerprint"],
+            candidate_fingerprint
+        );
+        assert_eq!(
+            replaced_result["replacement_snapshot"]["mode_ids"][0],
+            "external-orchestrator"
+        );
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}"}}}}"#
+        ));
+        let replay_result = replay.result.expect("replacement replay");
+        assert_eq!(replay_result["replaced"], false);
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["replacement_event_id"],
+            replaced_result["replacement_event_id"]
+        );
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":5,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(modes
+            .iter()
+            .any(|mode| mode["mode_id"] == "external-orchestrator"));
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":6,"method":"mode.get","params":{"mode_id":"external-orchestrator"}}"#,
+        );
+        assert_eq!(
+            get.result.expect("get result")["display_name"],
+            "External Orchestrator"
+        );
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"permission.check","params":{"mode_id":"external-orchestrator","action":"SpawnSubtask"}}"#,
+        );
+        assert_eq!(
+            permission.result.expect("permission result")["allowed"],
+            true
+        );
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":8,"method":"task.start","params":{"goal":"Use replacement mode pack","mode_id":"external-orchestrator"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let events = store_events(temp.path(), &run_id);
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(
+            mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
+            candidate_fingerprint
+        );
+
+        let active_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(active_ledger.lines().count(), 2);
+        assert!(!active_ledger.contains("raw_modepack_json"));
+        assert!(!active_ledger.contains("Changed reviewer role"));
+        assert!(!active_ledger.contains(temp.path().to_string_lossy().as_ref()));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn modepack_replace_active_rejects_stale_current_and_candidate_mismatch() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let current_fingerprint = activated.result.unwrap()["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        write_changed_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let candidate_fingerprint = build_active_modepack_snapshot(&store)
+            .expect("candidate snapshot")
+            .summary
+            .activation_fingerprint;
+        let bad_fingerprint = format!("sha256:{}", "0".repeat(64));
+
+        let candidate_mismatch = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{bad_fingerprint}"}}}}"#
+        ));
+        let error = candidate_mismatch.error.expect("candidate mismatch");
+        assert_eq!(error.code, -32603);
+        assert!(error
+            .message
+            .contains("candidate activation fingerprint mismatch"));
+
+        let stale_current = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{bad_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}"}}}}"#
+        ));
+        let error = stale_current.error.expect("stale current");
+        assert_eq!(error.code, -32603);
+        assert!(error.message.contains("stale active modepack snapshot"));
+
+        let active_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(active_ledger.lines().count(), 1);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

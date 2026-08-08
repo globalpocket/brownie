@@ -113,6 +113,147 @@ impl BrownieStore {
         })
     }
 
+    pub fn replace_active_modepack_snapshot(
+        &self,
+        expected_current_activation_fingerprint: &str,
+        snapshot: &ActiveModePackSnapshot,
+    ) -> Result<ModePackReplacementCommit> {
+        if let Some(replayed) = self.find_replayed_active_modepack_replacement(
+            expected_current_activation_fingerprint,
+            &snapshot.summary.activation_fingerprint,
+        )? {
+            return Ok(replayed);
+        }
+
+        let Some(previous) = self.read_active_modepack_snapshot()? else {
+            bail!("missing active modepack snapshot");
+        };
+        if previous.summary.activation_fingerprint != expected_current_activation_fingerprint {
+            bail!(
+                "stale active modepack snapshot: expected {} but found {}",
+                expected_current_activation_fingerprint,
+                previous.summary.activation_fingerprint
+            );
+        }
+        if previous.summary.activation_fingerprint == snapshot.summary.activation_fingerprint {
+            bail!("replacement modepack activation fingerprint matches current snapshot");
+        }
+
+        let root = self.active_modepack_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut replacement = snapshot.clone();
+        replacement.summary.activation_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&replacement)
+            .context("failed to serialize active modepack snapshot")?;
+        write_file_atomically(&root.join("current.json"), body.as_bytes())
+            .context("failed to write replacement active modepack snapshot")?;
+        let verified = self
+            .read_active_modepack_snapshot()
+            .context("failed to verify replacement active modepack snapshot")?
+            .context("replacement active modepack snapshot was not persisted")?;
+        if verified.summary.activation_fingerprint != replacement.summary.activation_fingerprint {
+            let previous_body = serde_json::to_string_pretty(&previous)
+                .context("failed to serialize previous active modepack snapshot")?;
+            let _ = write_file_atomically(&root.join("current.json"), previous_body.as_bytes());
+            bail!("replacement active modepack snapshot verification failed");
+        }
+
+        let event = ActiveModePackLedgerEvent {
+            event_id: replacement.summary.activation_event_id.clone(),
+            kind: "ModePackReplaced".to_string(),
+            timestamp: replacement.summary.activated_at.clone(),
+            payload: serde_json::json!({
+                "previous_snapshot": previous.summary,
+                "replacement_snapshot": replacement.summary,
+            }),
+        };
+        if let Err(error) = self.append_active_modepack_event(&event) {
+            let previous_body = serde_json::to_string_pretty(&previous)
+                .context("failed to serialize previous active modepack snapshot")?;
+            let _ = write_file_atomically(&root.join("current.json"), previous_body.as_bytes());
+            return Err(error).context("failed to append active modepack replacement ledger");
+        }
+
+        Ok(ModePackReplacementCommit {
+            replayed: false,
+            event_id: event.event_id,
+            previous_snapshot: previous,
+            replacement_snapshot: replacement,
+        })
+    }
+
+    fn find_replayed_active_modepack_replacement(
+        &self,
+        expected_current_activation_fingerprint: &str,
+        expected_candidate_activation_fingerprint: &str,
+    ) -> Result<Option<ModePackReplacementCommit>> {
+        let ledger_path = self.active_modepack_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open active modepack ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read active modepack ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ActiveModePackLedgerEvent =
+                serde_json::from_str(&line).context("failed to parse active modepack ledger")?;
+            if event.kind != "ModePackReplaced" {
+                continue;
+            }
+            let previous = event
+                .payload
+                .get("previous_snapshot")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                });
+            let replacement =
+                event
+                    .payload
+                    .get("replacement_snapshot")
+                    .cloned()
+                    .and_then(|value| {
+                        serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                    });
+            let (Some(previous), Some(replacement)) = (previous, replacement) else {
+                continue;
+            };
+            if previous.activation_fingerprint == expected_current_activation_fingerprint
+                && replacement.activation_fingerprint == expected_candidate_activation_fingerprint
+            {
+                let Some(current) = self.read_active_modepack_snapshot()? else {
+                    return Ok(None);
+                };
+                if current.summary.activation_fingerprint
+                    != expected_candidate_activation_fingerprint
+                {
+                    return Ok(None);
+                }
+                return Ok(Some(ModePackReplacementCommit {
+                    replayed: true,
+                    event_id: event.event_id,
+                    previous_snapshot: ActiveModePackSnapshot {
+                        summary: previous,
+                        policies: Vec::new(),
+                    },
+                    replacement_snapshot: current,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -171,6 +312,14 @@ pub struct ModePackActivationCommit {
     pub replayed: bool,
     pub event_id: String,
     pub snapshot: ActiveModePackSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackReplacementCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub previous_snapshot: ActiveModePackSnapshot,
+    pub replacement_snapshot: ActiveModePackSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
