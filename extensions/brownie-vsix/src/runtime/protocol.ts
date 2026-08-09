@@ -211,6 +211,30 @@ export interface ModePackFetchCandidateResult {
   next_action: string;
 }
 
+export interface ModePackApprovedCandidateSummary {
+  approval_id: string;
+  candidate_id: string;
+  source_kind: string;
+  source_url_host: string;
+  source_url_fingerprint: string;
+  content_sha256: string;
+  modepack_name: string;
+  schema_version: number;
+  mode_count: number;
+  mode_ids: string[];
+  compiled_policy_fingerprint: string;
+  approved_at: string;
+  approval_event_id: string;
+  consumed: boolean;
+}
+
+export interface ModePackApproveCandidateResult {
+  approved: boolean;
+  replayed: boolean;
+  approval: ModePackApprovedCandidateSummary;
+  next_action: string;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -3041,6 +3065,47 @@ export function isModePackFetchCandidateResult(value: unknown): value is ModePac
     typeof value.replayed === 'boolean' &&
     isModePackCandidateSummary(value.candidate) &&
     typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+export function isModePackApproveCandidateResult(value: unknown): value is ModePackApproveCandidateResult {
+  return (
+    isRecord(value) &&
+    typeof value.approved === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackApprovedCandidateSummary(value.approval) &&
+    typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackApprovedCandidateSummary(value: unknown): value is ModePackApprovedCandidateSummary {
+  return (
+    isRecord(value) &&
+    typeof value.approval_id === 'string' &&
+    typeof value.candidate_id === 'string' &&
+    typeof value.source_kind === 'string' &&
+    typeof value.source_url_host === 'string' &&
+    typeof value.source_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_url_fingerprint) &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    typeof value.modepack_name === 'string' &&
+    typeof value.schema_version === 'number' &&
+    Number.isInteger(value.schema_version) &&
+    typeof value.mode_count === 'number' &&
+    Number.isInteger(value.mode_count) &&
+    Array.isArray(value.mode_ids) &&
+    value.mode_ids.every((modeId) => typeof modeId === 'string') &&
+    typeof value.compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.approved_at === 'string' &&
+    typeof value.approval_event_id === 'string' &&
+    typeof value.consumed === 'boolean' &&
+    !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );

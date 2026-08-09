@@ -39,7 +39,8 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
-    ModePackActiveSnapshotSummary, ModePackCandidateSummary, ModePackFetchCandidateParams,
+    ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
+    ModePackApprovedCandidateSummary, ModePackCandidateSummary, ModePackFetchCandidateParams,
     ModePackFetchCandidateResult, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
     ModePackRollbackActiveParams, ModePackRollbackActiveResult, ModePermissionsSummary,
     ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
@@ -226,9 +227,10 @@ use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
-    LlmProviderFailureRetryTaskStartParams, ModePackCandidateSnapshot,
-    ParentJoinContinuationRunAdmission, PatchApplyRecoveryTaskStartParams,
-    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
+    LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
+    ModePackCandidateSnapshot, ParentJoinContinuationRunAdmission,
+    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
+    VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -288,6 +290,7 @@ const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
+const METHOD_MODEPACK_APPROVE_CANDIDATE: &str = "modepack.approveCandidate";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -458,6 +461,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
         METHOD_MODEPACK_FETCH_CANDIDATE => {
             handle_modepack_fetch_candidate(request.id, request.params)
+        }
+        METHOD_MODEPACK_APPROVE_CANDIDATE => {
+            handle_modepack_approve_candidate(request.id, request.params)
         }
         METHOD_MODEPACK_REPLACE_ACTIVE => {
             handle_modepack_replace_active(request.id, request.params)
@@ -14232,6 +14238,43 @@ fn handle_modepack_fetch_candidate(id: Value, params: Option<Value>) -> JsonRpcR
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match fetch_remote_modepack_candidate(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_approve_candidate(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackApproveCandidateParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_trust {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: remote Mode Pack candidate trust authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_content_sha256) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_content_sha256 must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_compiled_policy_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_compiled_policy_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match approve_remote_modepack_candidate(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28731,6 +28774,115 @@ where
         replayed: committed.replayed,
         candidate: committed.snapshot.summary,
         next_action: "review_candidate_then_replace_active_modepack".to_string(),
+    })
+}
+
+fn approve_remote_modepack_candidate(
+    store: &BrownieStore,
+    params: &ModePackApproveCandidateParams,
+) -> Result<ModePackApproveCandidateResult, String> {
+    let cached = store
+        .read_modepack_candidate_snapshot(&params.expected_content_sha256)
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack candidate approval failed: cached candidate not found".to_string()
+        })?;
+    let actual_content_sha256 = format!("sha256:{}", hex_sha256(cached.modepack_json.as_bytes()));
+    if actual_content_sha256 != params.expected_content_sha256 {
+        return Err(format!(
+            "modepack candidate approval failed: cached content fingerprint mismatch: expected {} but found {}",
+            params.expected_content_sha256, actual_content_sha256
+        ));
+    }
+    if cached.summary.content_sha256 != params.expected_content_sha256 {
+        return Err(format!(
+            "modepack candidate approval failed: cached summary fingerprint mismatch: expected {} but found {}",
+            params.expected_content_sha256, cached.summary.content_sha256
+        ));
+    }
+    let recompiled =
+        load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
+            .map_err(|error| format!("modepack candidate approval compile failed: {error}"))?;
+    for policy in &recompiled.modes {
+        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
+            return Err(format!(
+                "modepack candidate approval failed: candidate duplicates existing mode_id: {}",
+                policy.mode_id
+            ));
+        }
+    }
+    let policy_snapshots = recompiled
+        .modes
+        .iter()
+        .map(|policy| ActiveModePackPolicySnapshot {
+            mode_id: policy.mode_id.clone(),
+            display_name: policy.display_name.clone(),
+            role_definition: policy.role_definition.clone(),
+            permissions: mode_permissions_payload(policy),
+            allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            completion_rules: policy.completion_rules.clone(),
+            policy_fingerprint: external_modepack_policy_fingerprint(
+                &recompiled.name,
+                recompiled.schema_version,
+                policy,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policy_snapshots
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+        &recompiled.name,
+        recompiled.schema_version,
+        &policy_snapshots,
+    );
+    if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
+        return Err(format!(
+            "modepack candidate approval failed: compiled policy fingerprint mismatch: expected {} but found {}",
+            params.expected_compiled_policy_fingerprint, compiled_policy_fingerprint
+        ));
+    }
+    if cached.summary.compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
+        return Err(format!(
+            "modepack candidate approval failed: cached summary policy fingerprint mismatch: expected {} but found {}",
+            params.expected_compiled_policy_fingerprint, cached.summary.compiled_policy_fingerprint
+        ));
+    }
+    if cached.summary.mode_ids != mode_ids {
+        return Err("modepack candidate approval failed: cached mode ids are stale".to_string());
+    }
+
+    let approved_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    let approval_summary = ModePackApprovedCandidateSummary {
+        approval_id: format!(
+            "modepack_candidate_approval_{}",
+            &actual_content_sha256[7..23]
+        ),
+        candidate_id: cached.summary.candidate_id,
+        source_kind: cached.summary.source_kind,
+        source_url_host: cached.summary.source_url_host,
+        source_url_fingerprint: cached.summary.source_url_fingerprint,
+        content_sha256: params.expected_content_sha256.clone(),
+        modepack_name: recompiled.name,
+        schema_version: recompiled.schema_version,
+        mode_count: mode_ids.len(),
+        mode_ids,
+        compiled_policy_fingerprint,
+        approved_at,
+        approval_event_id: String::new(),
+        consumed: false,
+    };
+    let committed = store
+        .approve_modepack_candidate_snapshot(&ModePackApprovedCandidateSnapshot {
+            summary: approval_summary,
+        })
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?;
+    Ok(ModePackApproveCandidateResult {
+        approved: !committed.replayed,
+        replayed: committed.replayed,
+        approval: committed.approval.summary,
+        next_action: "replace_active_with_approved_modepack_candidate".to_string(),
     })
 }
 
@@ -62561,6 +62713,181 @@ mod tests {
         })
         .expect_err("fingerprint mismatch");
         assert!(mismatch.contains("content fingerprint mismatch"));
+    }
+
+    #[test]
+    fn modepack_approve_candidate_records_trust_state_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-trusted-reviewer",
+              "display_name": "Remote Trusted Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let params = ModePackFetchCandidateParams {
+            authorize_fetch: true,
+            url: "https://example.com/modepack.json".to_string(),
+            expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+        };
+        let fetched = fetch_remote_modepack_candidate_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: body.as_bytes().to_vec(),
+            })
+        })
+        .expect("candidate fetch");
+        let request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
+            fetched.candidate.content_sha256, fetched.candidate.compiled_policy_fingerprint
+        );
+
+        let approved = parse_line(&request);
+        assert!(approved.error.is_none());
+        let approved_result = approved.result.expect("approval result");
+        assert!(approved_result["approved"].as_bool().unwrap());
+        assert!(!approved_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            approved_result["approval"]["content_sha256"],
+            fetched.candidate.content_sha256
+        );
+        assert_eq!(
+            approved_result["approval"]["compiled_policy_fingerprint"],
+            fetched.candidate.compiled_policy_fingerprint
+        );
+        assert_eq!(approved_result["approval"]["consumed"], false);
+        assert_eq!(
+            approved_result["next_action"],
+            "replace_active_with_approved_modepack_candidate"
+        );
+
+        let replay = parse_line(&request);
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert!(!replay_result["approved"].as_bool().unwrap());
+        assert!(replay_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            replay_result["approval"]["approval_event_id"],
+            approved_result["approval"]["approval_event_id"]
+        );
+        let cache_dir = temp.path().join(".brownie/modepack-candidates");
+        let ledger = std::fs::read_to_string(cache_dir.join("ledger.jsonl")).expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateApproved"))
+                .count(),
+            1
+        );
+        assert!(!ledger.contains("Review local changes without writing files."));
+        assert!(!ledger.contains("\"modepack_json\""));
+        assert!(!ledger.contains("raw_ledger_payload"));
+        assert!(!temp
+            .path()
+            .join(".brownie/modepack-active/current.json")
+            .exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_approve_candidate_rejects_missing_auth_unknown_and_fingerprint_mismatch() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-denial-reviewer",
+              "display_name": "Remote Denial Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let fetched = fetch_remote_modepack_candidate_with(
+            &store,
+            &ModePackFetchCandidateParams {
+                authorize_fetch: true,
+                url: "https://example.com/modepack.json".to_string(),
+                expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+            },
+            |_| {
+                Ok(RemoteModePackFetchResponse {
+                    status: 200,
+                    content_type: Some("application/json".to_string()),
+                    body: body.as_bytes().to_vec(),
+                })
+            },
+        )
+        .expect("candidate fetch");
+        let denied = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":false,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
+            fetched.candidate.content_sha256, fetched.candidate.compiled_policy_fingerprint
+        ));
+        assert!(denied
+            .error
+            .expect("auth error")
+            .message
+            .contains("trust authorization required"));
+
+        let unknown = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"sha256:{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
+            "0".repeat(64),
+            fetched.candidate.compiled_policy_fingerprint
+        ));
+        assert!(unknown
+            .error
+            .expect("unknown error")
+            .message
+            .contains("cached candidate not found"));
+
+        let mismatch = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"sha256:{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            "1".repeat(64)
+        ));
+        assert!(mismatch
+            .error
+            .expect("mismatch error")
+            .message
+            .contains("compiled policy fingerprint mismatch"));
+        assert!(!temp
+            .path()
+            .join(".brownie/modepack-active/current.json")
+            .exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
