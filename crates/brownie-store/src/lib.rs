@@ -10,9 +10,9 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, ModePackCandidateSummary, PatchApplyRecoveryProvenance,
-    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary, ModePackCandidateSummary,
+    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -503,6 +503,84 @@ impl BrownieStore {
         })
     }
 
+    pub fn read_approved_modepack_candidate_snapshot(
+        &self,
+        content_sha256: &str,
+    ) -> Result<Option<ModePackApprovedCandidateSnapshot>> {
+        let path = self.modepack_candidate_approval_path(content_sha256);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
+    pub fn approve_modepack_candidate_snapshot(
+        &self,
+        approval: &ModePackApprovedCandidateSnapshot,
+    ) -> Result<ModePackCandidateApprovalCommit> {
+        if let Some(existing) =
+            self.read_approved_modepack_candidate_snapshot(&approval.summary.content_sha256)?
+        {
+            if existing.summary.compiled_policy_fingerprint
+                != approval.summary.compiled_policy_fingerprint
+            {
+                bail!(
+                    "conflicting approved Mode Pack candidate policy fingerprint for {}",
+                    approval.summary.content_sha256
+                );
+            }
+            if !self.modepack_candidate_approval_event_exists(
+                &existing.summary.approval_event_id,
+                &existing.summary.content_sha256,
+                &existing.summary.compiled_policy_fingerprint,
+            )? {
+                let event = ModePackCandidateLedgerEvent {
+                    event_id: existing.summary.approval_event_id.clone(),
+                    kind: "ModePackCandidateApproved".to_string(),
+                    timestamp: existing.summary.approved_at.clone(),
+                    payload: serde_json::to_value(&existing.summary)
+                        .context("failed to serialize approved Mode Pack candidate summary")?,
+                };
+                self.append_modepack_candidate_event(&event)?;
+            }
+            return Ok(ModePackCandidateApprovalCommit {
+                replayed: true,
+                event_id: existing.summary.approval_event_id.clone(),
+                approval: existing,
+            });
+        }
+
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = approval.clone();
+        committed.summary.approval_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize approved Mode Pack candidate")?;
+        write_file_atomically(
+            &self.modepack_candidate_approval_path(&committed.summary.content_sha256),
+            body.as_bytes(),
+        )
+        .context("failed to write approved Mode Pack candidate")?;
+        let event = ModePackCandidateLedgerEvent {
+            event_id: committed.summary.approval_event_id.clone(),
+            kind: "ModePackCandidateApproved".to_string(),
+            timestamp: committed.summary.approved_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize approved Mode Pack candidate summary")?,
+        };
+        self.append_modepack_candidate_event(&event)?;
+        Ok(ModePackCandidateApprovalCommit {
+            replayed: false,
+            event_id: event.event_id,
+            approval: committed,
+        })
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -528,6 +606,14 @@ impl BrownieStore {
             .strip_prefix("sha256:")
             .unwrap_or(content_sha256);
         self.modepack_candidates_dir().join(format!("{slug}.json"))
+    }
+
+    fn modepack_candidate_approval_path(&self, content_sha256: &str) -> PathBuf {
+        let slug = content_sha256
+            .strip_prefix("sha256:")
+            .unwrap_or(content_sha256);
+        self.modepack_candidates_dir()
+            .join(format!("{slug}.approved.json"))
     }
 
     fn append_active_modepack_event(&self, event: &ActiveModePackLedgerEvent) -> Result<()> {
@@ -570,6 +656,52 @@ impl BrownieStore {
             .context("failed to sync Mode Pack candidate ledger")?;
         sync_dir(&root);
         Ok(())
+    }
+
+    fn modepack_candidate_approval_event_exists(
+        &self,
+        approval_event_id: &str,
+        content_sha256: &str,
+        compiled_policy_fingerprint: &str,
+    ) -> Result<bool> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackCandidateApproved" || event.event_id != approval_event_id {
+                continue;
+            }
+            if event
+                .payload
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str)
+                == Some(content_sha256)
+                && event
+                    .payload
+                    .get("compiled_policy_fingerprint")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(compiled_policy_fingerprint)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -632,6 +764,18 @@ pub struct ModePackCandidateCommit {
     pub replayed: bool,
     pub event_id: String,
     pub snapshot: ModePackCandidateSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackApprovedCandidateSnapshot {
+    pub summary: ModePackApprovedCandidateSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateApprovalCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub approval: ModePackApprovedCandidateSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
