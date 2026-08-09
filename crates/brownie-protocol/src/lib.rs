@@ -186,6 +186,9 @@ pub struct ModePackReplaceActiveParams {
     pub authorize_replacement: bool,
     pub expected_current_activation_fingerprint: String,
     pub expected_candidate_activation_fingerprint: String,
+    pub approved_candidate_approval_id: Option<String>,
+    pub expected_approved_candidate_content_sha256: Option<String>,
+    pub expected_approved_candidate_compiled_policy_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -238,6 +241,8 @@ pub struct ModePackReplaceActiveResult {
     pub previous_snapshot: ModePackActiveSnapshotSummary,
     pub replacement_snapshot: ModePackActiveSnapshotSummary,
     pub replacement_event_id: String,
+    pub approved_candidate: Option<ModePackApprovedCandidateSummary>,
+    pub candidate_consumed_event_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

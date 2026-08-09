@@ -164,12 +164,27 @@ export class RuntimeClient {
     return result;
   }
 
-  async replaceActiveModePack(authorizeReplacement: boolean, expectedCurrentActivationFingerprint: string, expectedCandidateActivationFingerprint: string): Promise<ModePackReplaceActiveResult> {
-    const result = await this.call<ModePackReplaceActiveResult>('modepack.replaceActive', {
+  async replaceActiveModePack(
+    authorizeReplacement: boolean,
+    expectedCurrentActivationFingerprint: string,
+    expectedCandidateActivationFingerprint: string,
+    approvedCandidate?: {
+      approvalId: string;
+      contentSha256: string;
+      compiledPolicyFingerprint: string;
+    } | null
+  ): Promise<ModePackReplaceActiveResult> {
+    const params: Record<string, unknown> = {
       authorize_replacement: authorizeReplacement,
       expected_current_activation_fingerprint: expectedCurrentActivationFingerprint,
       expected_candidate_activation_fingerprint: expectedCandidateActivationFingerprint,
-    });
+    };
+    if (approvedCandidate) {
+      params.approved_candidate_approval_id = approvedCandidate.approvalId;
+      params.expected_approved_candidate_content_sha256 = approvedCandidate.contentSha256;
+      params.expected_approved_candidate_compiled_policy_fingerprint = approvedCandidate.compiledPolicyFingerprint;
+    }
+    const result = await this.call<ModePackReplaceActiveResult>('modepack.replaceActive', params);
 
     if (!isModePackReplaceActiveResult(result)) {
       throw new RuntimeProtocolError('modepack.replaceActive returned an invalid result');

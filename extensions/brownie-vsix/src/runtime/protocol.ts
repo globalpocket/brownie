@@ -178,6 +178,8 @@ export interface ModePackReplaceActiveResult {
   previous_snapshot: ModePackActiveSnapshotSummary;
   replacement_snapshot: ModePackActiveSnapshotSummary;
   replacement_event_id: string;
+  approved_candidate?: ModePackApprovedCandidateSummary | null;
+  candidate_consumed_event_id?: string | null;
 }
 
 export interface ModePackRollbackActiveResult {
@@ -3040,6 +3042,8 @@ export function isModePackReplaceActiveResult(value: unknown): value is ModePack
     isModePackActiveSnapshotSummary(value.previous_snapshot) &&
     isModePackActiveSnapshotSummary(value.replacement_snapshot) &&
     typeof value.replacement_event_id === 'string' &&
+    (value.approved_candidate === undefined || value.approved_candidate === null || isModePackApprovedCandidateSummary(value.approved_candidate)) &&
+    (value.candidate_consumed_event_id === undefined || value.candidate_consumed_event_id === null || typeof value.candidate_consumed_event_id === 'string') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
