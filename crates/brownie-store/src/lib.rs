@@ -166,6 +166,7 @@ impl BrownieStore {
             payload: serde_json::json!({
                 "previous_snapshot": previous.summary,
                 "replacement_snapshot": replacement.summary,
+                "previous_snapshot_full": previous,
             }),
         };
         if let Err(error) = self.append_active_modepack_event(&event) {
@@ -180,6 +181,91 @@ impl BrownieStore {
             event_id: event.event_id,
             previous_snapshot: previous,
             replacement_snapshot: replacement,
+        })
+    }
+
+    pub fn rollback_active_modepack_snapshot(
+        &self,
+        expected_current_activation_fingerprint: &str,
+        expected_rollback_activation_fingerprint: &str,
+    ) -> Result<ModePackRollbackCommit> {
+        if let Some(replayed) = self.find_replayed_active_modepack_rollback(
+            expected_current_activation_fingerprint,
+            expected_rollback_activation_fingerprint,
+        )? {
+            return Ok(replayed);
+        }
+
+        let Some(current) = self.read_active_modepack_snapshot()? else {
+            bail!("missing active modepack snapshot");
+        };
+        if current.summary.activation_fingerprint != expected_current_activation_fingerprint {
+            bail!(
+                "stale active modepack snapshot: expected {} but found {}",
+                expected_current_activation_fingerprint,
+                current.summary.activation_fingerprint
+            );
+        }
+
+        let rollback_snapshot = self
+            .latest_rollback_capable_previous_snapshot()?
+            .context("missing rollback-capable active modepack replacement evidence")?;
+        if rollback_snapshot.summary.activation_fingerprint
+            != expected_rollback_activation_fingerprint
+        {
+            bail!(
+                "rollback modepack activation fingerprint mismatch: expected {} but found {}",
+                expected_rollback_activation_fingerprint,
+                rollback_snapshot.summary.activation_fingerprint
+            );
+        }
+        if rollback_snapshot.summary.activation_fingerprint
+            == current.summary.activation_fingerprint
+        {
+            bail!("rollback modepack activation fingerprint matches current snapshot");
+        }
+
+        let root = self.active_modepack_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let restored_body = serde_json::to_string_pretty(&rollback_snapshot)
+            .context("failed to serialize rollback active modepack snapshot")?;
+        write_file_atomically(&root.join("current.json"), restored_body.as_bytes())
+            .context("failed to write rollback active modepack snapshot")?;
+        let verified = self
+            .read_active_modepack_snapshot()
+            .context("failed to verify rollback active modepack snapshot")?
+            .context("rollback active modepack snapshot was not persisted")?;
+        if verified.summary.activation_fingerprint
+            != rollback_snapshot.summary.activation_fingerprint
+        {
+            let current_body = serde_json::to_string_pretty(&current)
+                .context("failed to serialize current active modepack snapshot")?;
+            let _ = write_file_atomically(&root.join("current.json"), current_body.as_bytes());
+            bail!("rollback active modepack snapshot verification failed");
+        }
+
+        let event = ActiveModePackLedgerEvent {
+            event_id: format!("event_{}", Uuid::new_v4()),
+            kind: "ModePackRolledBack".to_string(),
+            timestamp: timestamp().context("failed to timestamp active modepack rollback")?,
+            payload: serde_json::json!({
+                "current_snapshot": current.summary,
+                "restored_snapshot": rollback_snapshot.summary,
+            }),
+        };
+        if let Err(error) = self.append_active_modepack_event(&event) {
+            let current_body = serde_json::to_string_pretty(&current)
+                .context("failed to serialize current active modepack snapshot")?;
+            let _ = write_file_atomically(&root.join("current.json"), current_body.as_bytes());
+            return Err(error).context("failed to append active modepack rollback ledger");
+        }
+
+        Ok(ModePackRollbackCommit {
+            replayed: false,
+            event_id: event.event_id,
+            current_snapshot: current,
+            restored_snapshot: rollback_snapshot,
         })
     }
 
@@ -254,6 +340,112 @@ impl BrownieStore {
         Ok(None)
     }
 
+    fn find_replayed_active_modepack_rollback(
+        &self,
+        expected_current_activation_fingerprint: &str,
+        expected_rollback_activation_fingerprint: &str,
+    ) -> Result<Option<ModePackRollbackCommit>> {
+        for event in self.read_active_modepack_events()? {
+            if event.kind != "ModePackRolledBack" {
+                continue;
+            }
+            let current = event
+                .payload
+                .get("current_snapshot")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                });
+            let restored = event
+                .payload
+                .get("restored_snapshot")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                });
+            let (Some(current), Some(restored)) = (current, restored) else {
+                continue;
+            };
+            if current.activation_fingerprint == expected_current_activation_fingerprint
+                && restored.activation_fingerprint == expected_rollback_activation_fingerprint
+            {
+                let Some(active) = self.read_active_modepack_snapshot()? else {
+                    return Ok(None);
+                };
+                if active.summary.activation_fingerprint != expected_rollback_activation_fingerprint
+                {
+                    return Ok(None);
+                }
+                return Ok(Some(ModePackRollbackCommit {
+                    replayed: true,
+                    event_id: event.event_id,
+                    current_snapshot: ActiveModePackSnapshot {
+                        summary: current,
+                        policies: Vec::new(),
+                    },
+                    restored_snapshot: active,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    fn latest_rollback_capable_previous_snapshot(&self) -> Result<Option<ActiveModePackSnapshot>> {
+        let mut latest = None;
+        let mut saw_summary_only_replacement = false;
+        for event in self.read_active_modepack_events()? {
+            match event.kind.as_str() {
+                "ModePackReplaced" => {
+                    let Some(value) = event.payload.get("previous_snapshot_full").cloned() else {
+                        latest = None;
+                        saw_summary_only_replacement = true;
+                        continue;
+                    };
+                    let snapshot: ActiveModePackSnapshot = serde_json::from_value(value)
+                        .context("failed to parse rollback-capable previous modepack snapshot")?;
+                    latest = Some(snapshot);
+                    saw_summary_only_replacement = false;
+                }
+                "ModePackRolledBack" => {
+                    latest = None;
+                    saw_summary_only_replacement = false;
+                }
+                _ => {}
+            }
+        }
+        if saw_summary_only_replacement {
+            bail!("latest active modepack replacement evidence is summary-only");
+        }
+        Ok(latest)
+    }
+
+    fn read_active_modepack_events(&self) -> Result<Vec<ActiveModePackLedgerEvent>> {
+        let ledger_path = self.active_modepack_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open active modepack ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        let mut events = Vec::new();
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read active modepack ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            events.push(
+                serde_json::from_str(&line).context("failed to parse active modepack ledger")?,
+            );
+        }
+        Ok(events)
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -320,6 +512,14 @@ pub struct ModePackReplacementCommit {
     pub event_id: String,
     pub previous_snapshot: ActiveModePackSnapshot,
     pub replacement_snapshot: ActiveModePackSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRollbackCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub current_snapshot: ActiveModePackSnapshot,
+    pub restored_snapshot: ActiveModePackSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -189,6 +189,13 @@ pub struct ModePackReplaceActiveParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRollbackActiveParams {
+    pub authorize_rollback: bool,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_rollback_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -217,6 +224,15 @@ pub struct ModePackReplaceActiveResult {
     pub previous_snapshot: ModePackActiveSnapshotSummary,
     pub replacement_snapshot: ModePackActiveSnapshotSummary,
     pub replacement_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRollbackActiveResult {
+    pub rolled_back: bool,
+    pub replayed: bool,
+    pub current_snapshot: ModePackActiveSnapshotSummary,
+    pub restored_snapshot: ModePackActiveSnapshotSummary,
+    pub rollback_event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

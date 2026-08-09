@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackReplaceActiveResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -477,6 +477,42 @@ describe('protocol validation', () => {
     expect(isModePackReplaceActiveResult({ ...result, replacement_snapshot: { ...replacement, activation_fingerprint: 'bad' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+  });
+
+  it('accepts bounded modepack.rollbackActive results and rejects raw fields', () => {
+    const current = {
+      activation_id: 'modepack_activation_current',
+      activation_fingerprint: `sha256:${'a'.repeat(64)}`,
+      modepack_name: 'local-agentmodes',
+      schema_version: 1,
+      source_kind: 'workspace_modepack',
+      source_path: '.brownie/modepack.json',
+      mode_count: 1,
+      mode_ids: ['external-orchestrator'],
+      compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
+      activated_at: '2026-08-08T00:00:00Z',
+      activation_event_id: 'event_1',
+    };
+    const restored = {
+      ...current,
+      activation_id: 'modepack_activation_restored',
+      activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+      mode_ids: ['reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      activation_event_id: 'event_2',
+    };
+    const result = {
+      rolled_back: true,
+      replayed: false,
+      current_snapshot: current,
+      restored_snapshot: restored,
+      rollback_event_id: 'event_3',
+    };
+
+    expect(isModePackRollbackActiveResult(result)).toBe(true);
+    expect(isModePackRollbackActiveResult({ ...result, restored_snapshot: { ...restored, activation_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackRollbackActiveResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
+    expect(isModePackRollbackActiveResult({ ...result, raw_ledger_payload: {} })).toBe(false);
   });
 
   it('accepts valid tool intent parse results and rejects invalid decision shapes', () => {
@@ -2230,6 +2266,51 @@ describe('RuntimeClient', () => {
         authorize_replacement: true,
         expected_current_activation_fingerprint: current,
         expected_candidate_activation_fingerprint: candidate,
+      },
+    }]);
+  });
+
+  it('creates a modepack.rollbackActive request', async () => {
+    const current = {
+      activation_id: 'modepack_activation_current',
+      activation_fingerprint: `sha256:${'a'.repeat(64)}`,
+      modepack_name: 'local-agentmodes',
+      schema_version: 1,
+      source_kind: 'workspace_modepack',
+      source_path: '.brownie/modepack.json',
+      mode_count: 1,
+      mode_ids: ['external-orchestrator'],
+      compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
+      activated_at: '2026-08-08T00:00:00Z',
+      activation_event_id: 'event_1',
+    };
+    const restored = {
+      ...current,
+      activation_id: 'modepack_activation_restored',
+      activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+      mode_ids: ['reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      activation_event_id: 'event_2',
+    };
+    const result = {
+      rolled_back: true,
+      replayed: false,
+      current_snapshot: current,
+      restored_snapshot: restored,
+      rollback_event_id: 'event_3',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.rollbackActiveModePack(true, current.activation_fingerprint, restored.activation_fingerprint)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.rollbackActive',
+      params: {
+        authorize_rollback: true,
+        expected_current_activation_fingerprint: current.activation_fingerprint,
+        expected_rollback_activation_fingerprint: restored.activation_fingerprint,
       },
     }]);
   });
