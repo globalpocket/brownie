@@ -62789,7 +62789,8 @@ mod tests {
             approved_result["approval"]["approval_event_id"]
         );
         let cache_dir = temp.path().join(".brownie/modepack-candidates");
-        let ledger = std::fs::read_to_string(cache_dir.join("ledger.jsonl")).expect("ledger");
+        let ledger_path = cache_dir.join("ledger.jsonl");
+        let ledger = std::fs::read_to_string(&ledger_path).expect("ledger");
         assert_eq!(
             ledger
                 .lines()
@@ -62800,6 +62801,23 @@ mod tests {
         assert!(!ledger.contains("Review local changes without writing files."));
         assert!(!ledger.contains("\"modepack_json\""));
         assert!(!ledger.contains("raw_ledger_payload"));
+        let without_approval = ledger
+            .lines()
+            .filter(|line| !line.contains("ModePackCandidateApproved"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&ledger_path, format!("{without_approval}\n")).expect("rewrite ledger");
+        let reconciled = parse_line(&request);
+        assert!(reconciled.error.is_none());
+        assert!(reconciled.result.unwrap()["replayed"].as_bool().unwrap());
+        let reconciled_ledger = std::fs::read_to_string(&ledger_path).expect("reconciled ledger");
+        assert_eq!(
+            reconciled_ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateApproved"))
+                .count(),
+            1
+        );
         assert!(!temp
             .path()
             .join(".brownie/modepack-active/current.json")

@@ -533,6 +533,20 @@ impl BrownieStore {
                     approval.summary.content_sha256
                 );
             }
+            if !self.modepack_candidate_approval_event_exists(
+                &existing.summary.approval_event_id,
+                &existing.summary.content_sha256,
+                &existing.summary.compiled_policy_fingerprint,
+            )? {
+                let event = ModePackCandidateLedgerEvent {
+                    event_id: existing.summary.approval_event_id.clone(),
+                    kind: "ModePackCandidateApproved".to_string(),
+                    timestamp: existing.summary.approved_at.clone(),
+                    payload: serde_json::to_value(&existing.summary)
+                        .context("failed to serialize approved Mode Pack candidate summary")?,
+                };
+                self.append_modepack_candidate_event(&event)?;
+            }
             return Ok(ModePackCandidateApprovalCommit {
                 replayed: true,
                 event_id: existing.summary.approval_event_id.clone(),
@@ -642,6 +656,52 @@ impl BrownieStore {
             .context("failed to sync Mode Pack candidate ledger")?;
         sync_dir(&root);
         Ok(())
+    }
+
+    fn modepack_candidate_approval_event_exists(
+        &self,
+        approval_event_id: &str,
+        content_sha256: &str,
+        compiled_policy_fingerprint: &str,
+    ) -> Result<bool> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackCandidateApproved" || event.event_id != approval_event_id {
+                continue;
+            }
+            if event
+                .payload
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str)
+                == Some(content_sha256)
+                && event
+                    .payload
+                    .get("compiled_policy_fingerprint")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(compiled_policy_fingerprint)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
