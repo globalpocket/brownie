@@ -188,6 +188,29 @@ export interface ModePackRollbackActiveResult {
   rollback_event_id: string;
 }
 
+export interface ModePackCandidateSummary {
+  candidate_id: string;
+  source_kind: string;
+  source_url_host: string;
+  source_url_fingerprint: string;
+  content_sha256: string;
+  byte_count: number;
+  modepack_name: string;
+  schema_version: number;
+  mode_count: number;
+  mode_ids: string[];
+  compiled_policy_fingerprint: string;
+  cached_at: string;
+  cache_event_id: string;
+}
+
+export interface ModePackFetchCandidateResult {
+  fetched: boolean;
+  replayed: boolean;
+  candidate: ModePackCandidateSummary;
+  next_action: string;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -3006,6 +3029,48 @@ export function isModePackRollbackActiveResult(value: unknown): value is ModePac
     isModePackActiveSnapshotSummary(value.current_snapshot) &&
     isModePackActiveSnapshotSummary(value.restored_snapshot) &&
     typeof value.rollback_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+export function isModePackFetchCandidateResult(value: unknown): value is ModePackFetchCandidateResult {
+  return (
+    isRecord(value) &&
+    typeof value.fetched === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackCandidateSummary(value.candidate) &&
+    typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackCandidateSummary(value: unknown): value is ModePackCandidateSummary {
+  return (
+    isRecord(value) &&
+    typeof value.candidate_id === 'string' &&
+    typeof value.source_kind === 'string' &&
+    typeof value.source_url_host === 'string' &&
+    typeof value.source_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_url_fingerprint) &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    typeof value.byte_count === 'number' &&
+    Number.isInteger(value.byte_count) &&
+    value.byte_count >= 0 &&
+    typeof value.modepack_name === 'string' &&
+    typeof value.schema_version === 'number' &&
+    Number.isInteger(value.schema_version) &&
+    typeof value.mode_count === 'number' &&
+    Number.isInteger(value.mode_count) &&
+    Array.isArray(value.mode_ids) &&
+    value.mode_ids.every((modeId) => typeof modeId === 'string') &&
+    typeof value.compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.cached_at === 'string' &&
+    typeof value.cache_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );

@@ -27,59 +27,17 @@
   ],
   "phase_value_gate": {
     "required": true,
-    "questions": [
-      {
-        "id": "strategic_capabilities",
-        "question": "Which strategic capabilities does this phase advance?"
-      },
-      {
-        "id": "new_capability",
-        "question": "What new runtime capability does it add?"
-      },
-      {
-        "id": "why_existing_functionality_is_insufficient",
-        "question": "Why can existing functionality not substitute for this work?"
-      },
-      {
-        "id": "product_gap_if_skipped",
-        "question": "What concrete product gap remains if this is skipped?"
-      },
-      {
-        "id": "non_duplicative",
-        "question": "Is this semantically distinct from the previous three phases?"
-      },
-      {
-        "id": "no_new_rpc",
-        "question": "Can this be done without adding a new RPC?"
-      },
-      {
-        "id": "no_new_summary",
-        "question": "Can this be done without adding a new summary surface?"
-      },
-      {
-        "id": "runtime_behavior_change",
-        "question": "What runtime behavior changes?"
-      },
-      {
-        "id": "headless_autonomous_contribution",
-        "question": "How does this help headless autonomous development?"
-      },
-      {
-        "id": "milestone_progress",
-        "question": "How does this move the milestone toward completion?"
-      }
-    ],
     "answers": {
-      "strategic_capabilities": "mode_pack_runtime plus runtime_permission_enforcement, persistent_structured_ledger, and headless_autonomous_development.",
-      "new_capability": "Authorized HTTPS Mode Pack candidate fetch, validation, compilation, and replay-safe cache persistence.",
-      "why_existing_functionality_is_insufficient": "Local activation/replacement/rollback cannot acquire remote Mode Pack candidates.",
-      "product_gap_if_skipped": "External Mode Pack acquisition remains manual and unsuitable for headless operation.",
-      "non_duplicative": "Yes; this fetch/cache boundary is distinct from active replacement and rollback.",
-      "no_new_rpc": "No; an explicit authorized network action requires a dedicated runtime method.",
-      "no_new_summary": "No report/history/digest wrapper is added.",
-      "runtime_behavior_change": "The runtime performs bounded network fetch and controlled candidate cache mutation.",
-      "headless_autonomous_contribution": "Headless callers can acquire a fingerprinted candidate before replacement decisions.",
-      "milestone_progress": "First M38 acquisition primitive is now available."
+      "strategic_capabilities": "mode_pack_runtime with support from runtime_permission_enforcement, persistent_structured_ledger, and headless_autonomous_development.",
+      "new_capability": "modepack.fetchCandidate performs an explicitly authorized HTTPS fetch, validates URL/network/content boundaries, compiles the Mode Pack, and caches a replay-safe candidate snapshot by content fingerprint.",
+      "why_existing_functionality_is_insufficient": "Existing local activation/replacement/rollback only consume workspace-local .brownie/modepack.json or prior lifecycle evidence; they cannot acquire remote candidates.",
+      "product_gap_if_skipped": "External Mode Pack acquisition remains manual and cannot participate in headless autonomous policy update workflows.",
+      "non_duplicative": "Distinct from M37.1 replacement and M37.2 rollback because it does not mutate active policy; it creates a validated remote candidate cache boundary.",
+      "no_new_rpc": "No. Existing RPCs either read modes or mutate active snapshots and cannot perform authorized network fetch/cache.",
+      "no_new_summary": "No new report wrapper is added; the RPC returns the bounded execution result required for the fetch/cache action.",
+      "runtime_behavior_change": "The Rust runtime can make a bounded HTTPS request, reject unsafe destinations/content, compile external Mode Pack JSON, write a controlled cache, and return replay-safe evidence.",
+      "headless_autonomous_contribution": "A scheduled caller can acquire and fingerprint candidates before deciding on replacement without manual file edits.",
+      "milestone_progress": "Establishes the first M38 acquisition primitive; later phases can review trust and feed approved candidates into active replacement."
     }
   },
   "review_value_gate": {
@@ -95,21 +53,32 @@
     ]
   },
   "exit_criteria": [
-    "modepack.fetchCandidate requires explicit authorization",
-    "URL, network destination, response status, redirect, size, content type, UTF-8, JSON, permission, duplicate mode, sensitive-content, and expected fingerprint checks run before cache commit",
-    "Successful fetch writes .brownie/modepack-candidates cache and ModePackCandidateFetched bounded ledger evidence",
-    "Replay returns the same cache event id without duplicate ledger evidence",
-    "No activation/replacement/rollback or wrapper/report surface is mixed into this phase"
+    "modepack.fetchCandidate requires authorize_fetch=true",
+    "Only HTTPS URLs without credentials, fragments, unsupported ports, localhost, or private/link-local resolved addresses are accepted",
+    "Redirects, non-200 status, oversized responses, invalid UTF-8, unsupported content type, sensitive-like content, invalid JSON, unsafe permissions, and duplicate built-in mode IDs are rejected before cache commit",
+    "expected_content_sha256 is validated when supplied and mismatch fails closed",
+    "Successful fetches persist normalized candidate cache under .brownie/modepack-candidates by content fingerprint",
+    "Replaying the same successful content returns the existing cache event id and does not append duplicate ledger evidence",
+    "RPC and ledger payloads return bounded summaries only and contain no raw Mode Pack JSON or raw ledger payload",
+    "Behavior tests cover cache/replay, URL denial, and content fingerprint mismatch"
   ],
   "source_evidence": {
     "runtime_tokens": [
       "METHOD_MODEPACK_FETCH_CANDIDATE",
       "fetch_remote_modepack_candidate",
-      "ModePackCandidateFetched"
+      "validate_modepack_fetch_url",
+      "ModePackCandidateFetched",
+      "modepack-candidates"
     ],
     "test_tokens": [
       "modepack_fetch_candidate_caches_summary_and_replays_without_raw_ledger_payload",
       "modepack_fetch_candidate_rejects_unsafe_urls_and_fingerprint_mismatch"
+    ],
+    "forbidden_tokens_in_current_evidence": [
+      "ModePackFetchCandidateReport",
+      "ModePackFetchCandidateHistory",
+      "ModePackFetchCandidateDigest",
+      "ModePackFetchCandidateReadiness"
     ]
   },
   "guard_engine_change_review": {

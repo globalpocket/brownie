@@ -196,6 +196,13 @@ pub struct ModePackRollbackActiveParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackFetchCandidateParams {
+    pub authorize_fetch: bool,
+    pub url: String,
+    pub expected_content_sha256: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -233,6 +240,31 @@ pub struct ModePackRollbackActiveResult {
     pub current_snapshot: ModePackActiveSnapshotSummary,
     pub restored_snapshot: ModePackActiveSnapshotSummary,
     pub rollback_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateSummary {
+    pub candidate_id: String,
+    pub source_kind: String,
+    pub source_url_host: String,
+    pub source_url_fingerprint: String,
+    pub content_sha256: String,
+    pub byte_count: usize,
+    pub modepack_name: String,
+    pub schema_version: u64,
+    pub mode_count: usize,
+    pub mode_ids: Vec<String>,
+    pub compiled_policy_fingerprint: String,
+    pub cached_at: String,
+    pub cache_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackFetchCandidateResult {
+    pub fetched: bool,
+    pub replayed: bool,
+    pub candidate: ModePackCandidateSummary,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

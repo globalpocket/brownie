@@ -21,7 +21,7 @@ use brownie_llm::{
     OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
     PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
-use brownie_modepack::{load_workspace_modepack, WORKSPACE_MODEPACK_PATH};
+use brownie_modepack::{load_modepack_from_str, load_workspace_modepack, WORKSPACE_MODEPACK_PATH};
 use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
     ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
@@ -39,7 +39,8 @@ use brownie_protocol::{
     LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
-    ModePackActiveSnapshotSummary, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
+    ModePackActiveSnapshotSummary, ModePackCandidateSummary, ModePackFetchCandidateParams,
+    ModePackFetchCandidateResult, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
     ModePackRollbackActiveParams, ModePackRollbackActiveResult, ModePermissionsSummary,
     ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
     PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
@@ -225,9 +226,9 @@ use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
-    LlmProviderFailureRetryTaskStartParams, ParentJoinContinuationRunAdmission,
-    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
-    VerificationRecoveryTaskStartParams,
+    LlmProviderFailureRetryTaskStartParams, ModePackCandidateSnapshot,
+    ParentJoinContinuationRunAdmission, PatchApplyRecoveryTaskStartParams,
+    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -245,7 +246,9 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
+    net::{IpAddr, ToSocketAddrs},
     path::{Component, Path, PathBuf},
+    time::Duration,
 };
 
 const MAX_BOUNDED_CARGO_DIAGNOSTIC_PATH_CHARS: usize = 240;
@@ -257,6 +260,9 @@ const EXTERNAL_MODEPACK_CHILD_PROVENANCE_VERSION: &str = "external_modepack_chil
 const EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION: &str = "external_modepack_task_provenance_v1";
 const EXTERNAL_MODEPACK_POLICY_FINGERPRINT_VERSION: &str =
     "external_modepack_policy_fingerprint_v1";
+const MODEPACK_CANDIDATE_CACHE_SOURCE_PATH: &str = ".brownie/modepack-candidates";
+const MODEPACK_REMOTE_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+const MODEPACK_REMOTE_FETCH_MAX_BYTES: usize = 64 * 1024;
 
 const JSONRPC_VERSION: &str = "2.0";
 const METHOD_RUNTIME_STATUS: &str = "runtime.status";
@@ -281,6 +287,7 @@ const TASK_RUN_CONTEXT_BUDGET_MAX_SELECTED_INDEX_CHARS: usize = MAX_WORKSPACE_RE
 const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
+const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -449,6 +456,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
+        METHOD_MODEPACK_FETCH_CANDIDATE => {
+            handle_modepack_fetch_candidate(request.id, request.params)
+        }
         METHOD_MODEPACK_REPLACE_ACTIVE => {
             handle_modepack_replace_active(request.id, request.params)
         }
@@ -14190,6 +14200,38 @@ fn handle_modepack_activate(id: Value, params: Option<Value>) -> JsonRpcResponse
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match activate_workspace_modepack(&store) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_fetch_candidate(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackFetchCandidateParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_fetch {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: remote Mode Pack candidate fetch authorization required",
+        );
+    }
+    if let Some(expected) = params.expected_content_sha256.as_deref() {
+        if !is_sha256_fingerprint(expected) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_content_sha256 must be a sha256 fingerprint",
+            );
+        }
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match fetch_remote_modepack_candidate(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28572,6 +28614,232 @@ fn external_modepack_task_provenance_payload(
         "mode_id": policy.mode_id,
         "policy_fingerprint": policy_fingerprint,
     })))
+}
+
+#[derive(Debug, Clone)]
+struct RemoteModePackFetchResponse {
+    status: u16,
+    content_type: Option<String>,
+    body: Vec<u8>,
+}
+
+fn fetch_remote_modepack_candidate(
+    store: &BrownieStore,
+    params: &ModePackFetchCandidateParams,
+) -> Result<ModePackFetchCandidateResult, String> {
+    validate_modepack_fetch_url(&params.url, true)?;
+    fetch_remote_modepack_candidate_with(store, params, |url| fetch_modepack_url(url))
+}
+
+fn fetch_remote_modepack_candidate_with<F>(
+    store: &BrownieStore,
+    params: &ModePackFetchCandidateParams,
+    fetcher: F,
+) -> Result<ModePackFetchCandidateResult, String>
+where
+    F: FnOnce(&str) -> Result<RemoteModePackFetchResponse, String>,
+{
+    let parsed = validate_modepack_fetch_url(&params.url, false)?;
+    let response = fetcher(parsed.as_str())?;
+    if response.status != 200 {
+        return Err(format!(
+            "modepack candidate fetch failed: unsupported HTTP status {}",
+            response.status
+        ));
+    }
+    if !modepack_candidate_content_type_allowed(response.content_type.as_deref()) {
+        return Err("modepack candidate fetch failed: unsupported content type".to_string());
+    }
+    if response.body.len() > MODEPACK_REMOTE_FETCH_MAX_BYTES {
+        return Err("modepack candidate fetch failed: response exceeds byte limit".to_string());
+    }
+    let content_sha256 = format!("sha256:{}", hex_sha256(&response.body));
+    if let Some(expected) = params.expected_content_sha256.as_deref() {
+        if expected != content_sha256 {
+            return Err(format!(
+                "modepack candidate fetch failed: content fingerprint mismatch: expected {expected} but found {content_sha256}"
+            ));
+        }
+    }
+    let body = String::from_utf8(response.body)
+        .map_err(|_| "modepack candidate fetch failed: response is not UTF-8".to_string())?;
+    if scan_text_for_sensitive_content(&body) {
+        return Err(
+            "modepack candidate fetch failed: response contains sensitive-like content".to_string(),
+        );
+    }
+    let snapshot = load_modepack_from_str(&body, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
+        .map_err(|error| format!("modepack candidate compile failed: {error}"))?;
+    for policy in &snapshot.modes {
+        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
+            return Err(format!(
+                "modepack candidate duplicates existing mode_id: {}",
+                policy.mode_id
+            ));
+        }
+    }
+    let policies = snapshot
+        .modes
+        .iter()
+        .map(|policy| ActiveModePackPolicySnapshot {
+            mode_id: policy.mode_id.clone(),
+            display_name: policy.display_name.clone(),
+            role_definition: policy.role_definition.clone(),
+            permissions: mode_permissions_payload(policy),
+            allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            completion_rules: policy.completion_rules.clone(),
+            policy_fingerprint: external_modepack_policy_fingerprint(
+                &snapshot.name,
+                snapshot.schema_version,
+                policy,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policies
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &policies,
+    );
+    let summary = ModePackCandidateSummary {
+        candidate_id: format!("modepack_candidate_{}", &content_sha256[7..23]),
+        source_kind: "remote_https".to_string(),
+        source_url_host: parsed.host_str().unwrap_or_default().to_string(),
+        source_url_fingerprint: format!("sha256:{}", hex_sha256(parsed.as_str().as_bytes())),
+        content_sha256,
+        byte_count: body.len(),
+        modepack_name: snapshot.name,
+        schema_version: snapshot.schema_version,
+        mode_count: mode_ids.len(),
+        mode_ids,
+        compiled_policy_fingerprint,
+        cached_at: codebase_index_timestamp().map_err(|error| error.to_string())?,
+        cache_event_id: String::new(),
+    };
+    let candidate_snapshot = ModePackCandidateSnapshot {
+        summary,
+        modepack_json: body,
+    };
+    let committed = store
+        .commit_modepack_candidate_snapshot(&candidate_snapshot)
+        .map_err(|error| format!("modepack candidate cache failed: {error}"))?;
+    Ok(ModePackFetchCandidateResult {
+        fetched: !committed.replayed,
+        replayed: committed.replayed,
+        candidate: committed.snapshot.summary,
+        next_action: "review_candidate_then_replace_active_modepack".to_string(),
+    })
+}
+
+fn validate_modepack_fetch_url(value: &str, resolve_addresses: bool) -> Result<url::Url, String> {
+    let parsed =
+        url::Url::parse(value).map_err(|_| "modepack candidate URL is invalid".to_string())?;
+    if parsed.scheme() != "https" {
+        return Err("modepack candidate URL must use https".to_string());
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err("modepack candidate URL must not contain credentials".to_string());
+    }
+    if parsed.fragment().is_some() {
+        return Err("modepack candidate URL must not contain a fragment".to_string());
+    }
+    if !matches!(parsed.port_or_known_default(), Some(443)) {
+        return Err("modepack candidate URL uses an unsupported port".to_string());
+    }
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "modepack candidate URL host is required".to_string())?;
+    if host.eq_ignore_ascii_case("localhost") {
+        return Err("modepack candidate URL host is not allowed".to_string());
+    }
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if private_or_special_ip(ip) {
+            return Err("modepack candidate URL resolves to a disallowed address".to_string());
+        }
+    }
+    if resolve_addresses {
+        let addrs = (host, 443)
+            .to_socket_addrs()
+            .map_err(|error| format!("modepack candidate URL resolution failed: {error}"))?;
+        for addr in addrs {
+            if private_or_special_ip(addr.ip()) {
+                return Err("modepack candidate URL resolves to a disallowed address".to_string());
+            }
+        }
+    }
+    Ok(parsed)
+}
+
+fn private_or_special_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(ip) => {
+            ip.is_private()
+                || ip.is_loopback()
+                || ip.is_link_local()
+                || ip.is_broadcast()
+                || ip.octets()[0] == 0
+                || matches!(
+                    ip.octets(),
+                    [192, 0, 2, _] | [198, 51, 100, _] | [203, 0, 113, _]
+                )
+        }
+        IpAddr::V6(ip) => {
+            ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.segments()[0] == 0x2001 && ip.segments()[1] == 0x0db8
+        }
+    }
+}
+
+fn modepack_candidate_content_type_allowed(content_type: Option<&str>) -> bool {
+    let Some(content_type) = content_type else {
+        return true;
+    };
+    let media_type = content_type
+        .split(';')
+        .next()
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    matches!(
+        media_type.as_str(),
+        "application/json" | "text/json" | "text/plain" | "application/octet-stream"
+    )
+}
+
+fn fetch_modepack_url(url: &str) -> Result<RemoteModePackFetchResponse, String> {
+    let client = reqwest::blocking::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(MODEPACK_REMOTE_FETCH_TIMEOUT)
+        .build()
+        .map_err(|error| format!("modepack candidate fetch client failed: {error}"))?;
+    let mut response = client
+        .get(url)
+        .send()
+        .map_err(|error| format!("modepack candidate fetch failed: {error}"))?;
+    if response.status().is_redirection() {
+        return Err("modepack candidate fetch failed: redirects are not allowed".to_string());
+    }
+    let status = response.status().as_u16();
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .map(ToString::to_string);
+    let mut body = Vec::new();
+    response
+        .copy_to(&mut body)
+        .map_err(|error| format!("modepack candidate response read failed: {error}"))?;
+    Ok(RemoteModePackFetchResponse {
+        status,
+        content_type,
+        body,
+    })
 }
 
 fn activate_workspace_modepack(store: &BrownieStore) -> Result<ModePackActivateResult, String> {
@@ -62183,6 +62451,116 @@ mod tests {
         assert!(!ledger.contains("Review local changes without writing files."));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_fetch_candidate_caches_summary_and_replays_without_raw_ledger_payload() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-reviewer-lite",
+              "display_name": "Remote Reviewer Lite",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after reporting local review findings."]
+            }
+          ]
+        }"#;
+        let params = ModePackFetchCandidateParams {
+            authorize_fetch: true,
+            url: "https://example.com/modepack.json".to_string(),
+            expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+        };
+
+        let fetched = fetch_remote_modepack_candidate_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: body.as_bytes().to_vec(),
+            })
+        })
+        .expect("candidate fetch");
+        assert!(fetched.fetched);
+        assert!(!fetched.replayed);
+        assert_eq!(fetched.candidate.modepack_name, "remote-agentmodes");
+        assert_eq!(fetched.candidate.mode_ids, vec!["remote-reviewer-lite"]);
+        assert!(fetched.candidate.content_sha256.starts_with("sha256:"));
+        assert!(fetched
+            .candidate
+            .source_url_fingerprint
+            .starts_with("sha256:"));
+        assert_eq!(
+            fetched.next_action,
+            "review_candidate_then_replace_active_modepack"
+        );
+
+        let replay = fetch_remote_modepack_candidate_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: body.as_bytes().to_vec(),
+            })
+        })
+        .expect("candidate replay");
+        assert!(!replay.fetched);
+        assert!(replay.replayed);
+        assert_eq!(
+            replay.candidate.cache_event_id,
+            fetched.candidate.cache_event_id
+        );
+        let cache_dir = temp.path().join(".brownie/modepack-candidates");
+        let ledger = std::fs::read_to_string(cache_dir.join("ledger.jsonl")).expect("ledger");
+        assert_eq!(ledger.lines().count(), 1);
+        assert!(!ledger.contains("Review local changes without writing files."));
+        assert!(!ledger.contains("\"modepack_json\""));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_fetch_candidate_rejects_unsafe_urls_and_fingerprint_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        assert!(validate_modepack_fetch_url("http://example.com/modepack.json", false).is_err());
+        assert!(
+            validate_modepack_fetch_url("https://user@example.com/modepack.json", false).is_err()
+        );
+        assert!(validate_modepack_fetch_url("https://127.0.0.1/modepack.json", false).is_err());
+        assert!(
+            validate_modepack_fetch_url("https://example.com:8443/modepack.json", false).is_err()
+        );
+
+        let params = ModePackFetchCandidateParams {
+            authorize_fetch: true,
+            url: "https://example.com/modepack.json".to_string(),
+            expected_content_sha256: Some(
+                "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+                    .to_string(),
+            ),
+        };
+        let mismatch = fetch_remote_modepack_candidate_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: br#"{"name":"remote","schema_version":1,"modes":[]}"#.to_vec(),
+            })
+        })
+        .expect_err("fingerprint mismatch");
+        assert!(mismatch.contains("content fingerprint mismatch"));
     }
 
     #[test]

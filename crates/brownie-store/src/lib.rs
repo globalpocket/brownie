@@ -10,9 +10,9 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    ModePackActiveSnapshotSummary, ModePackCandidateSummary, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -24,6 +24,7 @@ pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
 const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
 const MODEPACK_ACTIVE_DIR: &str = "modepack-active";
+const MODEPACK_CANDIDATES_DIR: &str = "modepack-candidates";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
@@ -446,6 +447,62 @@ impl BrownieStore {
         Ok(events)
     }
 
+    pub fn read_modepack_candidate_snapshot(
+        &self,
+        content_sha256: &str,
+    ) -> Result<Option<ModePackCandidateSnapshot>> {
+        let path = self.modepack_candidate_cache_path(content_sha256);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
+    pub fn commit_modepack_candidate_snapshot(
+        &self,
+        snapshot: &ModePackCandidateSnapshot,
+    ) -> Result<ModePackCandidateCommit> {
+        if let Some(existing) =
+            self.read_modepack_candidate_snapshot(&snapshot.summary.content_sha256)?
+        {
+            return Ok(ModePackCandidateCommit {
+                replayed: true,
+                event_id: existing.summary.cache_event_id.clone(),
+                snapshot: existing,
+            });
+        }
+
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = snapshot.clone();
+        committed.summary.cache_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize Mode Pack candidate snapshot")?;
+        write_file_atomically(
+            &self.modepack_candidate_cache_path(&committed.summary.content_sha256),
+            body.as_bytes(),
+        )
+        .context("failed to write Mode Pack candidate cache")?;
+        let event = ModePackCandidateLedgerEvent {
+            event_id: committed.summary.cache_event_id.clone(),
+            kind: "ModePackCandidateFetched".to_string(),
+            timestamp: committed.summary.cached_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize Mode Pack candidate summary")?,
+        };
+        self.append_modepack_candidate_event(&event)?;
+        Ok(ModePackCandidateCommit {
+            replayed: false,
+            event_id: event.event_id,
+            snapshot: committed,
+        })
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -458,6 +515,19 @@ impl BrownieStore {
 
     fn active_modepack_current_path(&self) -> PathBuf {
         self.active_modepack_dir().join("current.json")
+    }
+
+    fn modepack_candidates_dir(&self) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(MODEPACK_CANDIDATES_DIR)
+    }
+
+    fn modepack_candidate_cache_path(&self, content_sha256: &str) -> PathBuf {
+        let slug = content_sha256
+            .strip_prefix("sha256:")
+            .unwrap_or(content_sha256);
+        self.modepack_candidates_dir().join(format!("{slug}.json"))
     }
 
     fn append_active_modepack_event(&self, event: &ActiveModePackLedgerEvent) -> Result<()> {
@@ -477,6 +547,27 @@ impl BrownieStore {
             .context("failed to append active modepack ledger")?;
         file.sync_all()
             .context("failed to sync active modepack ledger")?;
+        sync_dir(&root);
+        Ok(())
+    }
+
+    fn append_modepack_candidate_event(&self, event: &ModePackCandidateLedgerEvent) -> Result<()> {
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut buffer = Vec::new();
+        serde_json::to_writer(&mut buffer, event)
+            .context("failed to serialize Mode Pack candidate ledger event")?;
+        writeln!(&mut buffer).context("failed to write Mode Pack candidate ledger newline")?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(root.join("ledger.jsonl"))
+            .context("failed to open Mode Pack candidate ledger")?;
+        file.write_all(&buffer)
+            .context("failed to append Mode Pack candidate ledger")?;
+        file.sync_all()
+            .context("failed to sync Mode Pack candidate ledger")?;
         sync_dir(&root);
         Ok(())
     }
@@ -524,6 +615,27 @@ pub struct ModePackRollbackCommit {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 struct ActiveModePackLedgerEvent {
+    event_id: String,
+    kind: String,
+    timestamp: String,
+    payload: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateSnapshot {
+    pub summary: ModePackCandidateSummary,
+    pub modepack_json: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub snapshot: ModePackCandidateSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ModePackCandidateLedgerEvent {
     event_id: String,
     kind: String,
     timestamp: String,
