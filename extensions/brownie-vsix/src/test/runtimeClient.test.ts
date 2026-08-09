@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -477,6 +477,36 @@ describe('protocol validation', () => {
     expect(isModePackReplaceActiveResult({ ...result, replacement_snapshot: { ...replacement, activation_fingerprint: 'bad' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+  });
+
+  it('accepts bounded modepack.fetchCandidate results and rejects cached content fields', () => {
+    const candidate = {
+      candidate_id: 'modepack_candidate_123',
+      source_kind: 'remote_https',
+      source_url_host: 'example.com',
+      source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+      content_sha256: `sha256:${'b'.repeat(64)}`,
+      byte_count: 512,
+      modepack_name: 'remote-agentmodes',
+      schema_version: 1,
+      mode_count: 1,
+      mode_ids: ['remote-reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+      cached_at: '2026-08-09T00:00:00Z',
+      cache_event_id: 'event_1',
+    };
+    const result = {
+      fetched: true,
+      replayed: false,
+      candidate,
+      next_action: 'review_candidate_then_replace_active_modepack',
+    };
+
+    expect(isModePackFetchCandidateResult(result)).toBe(true);
+    expect(isModePackFetchCandidateResult({ ...result, candidate: { ...candidate, content_sha256: 'bad' } })).toBe(false);
+    expect(isModePackFetchCandidateResult({ ...result, candidate: { ...candidate, modepack_json: '{}' } })).toBe(false);
+    expect(isModePackFetchCandidateResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
+    expect(isModePackFetchCandidateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
   });
 
   it('accepts bounded modepack.rollbackActive results and rejects raw fields', () => {
@@ -2221,6 +2251,43 @@ describe('RuntimeClient', () => {
 
     await expect(client.activateModePack(true)).resolves.toEqual(result);
     expect(transport.requests).toEqual([{ jsonrpc: '2.0', id: 1, method: 'modepack.activate', params: { authorize: true } }]);
+  });
+
+  it('creates a modepack.fetchCandidate request', async () => {
+    const result = {
+      fetched: true,
+      replayed: false,
+      candidate: {
+        candidate_id: 'modepack_candidate_123',
+        source_kind: 'remote_https',
+        source_url_host: 'example.com',
+        source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+        content_sha256: `sha256:${'b'.repeat(64)}`,
+        byte_count: 512,
+        modepack_name: 'remote-agentmodes',
+        schema_version: 1,
+        mode_count: 1,
+        mode_ids: ['remote-reviewer-lite'],
+        compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+        cached_at: '2026-08-09T00:00:00Z',
+        cache_event_id: 'event_1',
+      },
+      next_action: 'review_candidate_then_replace_active_modepack',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.fetchModePackCandidate(true, 'https://example.com/modepack.json', result.candidate.content_sha256)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.fetchCandidate',
+      params: {
+        authorize_fetch: true,
+        url: 'https://example.com/modepack.json',
+        expected_content_sha256: result.candidate.content_sha256,
+      },
+    }]);
   });
 
   it('creates a modepack.replaceActive request', async () => {

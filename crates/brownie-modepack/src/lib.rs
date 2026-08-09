@@ -55,6 +55,15 @@ pub fn load_workspace_modepack(
     Ok(Some(compile_snapshot(raw, path)?))
 }
 
+pub fn load_modepack_from_str(
+    content: &str,
+    source_path: impl Into<PathBuf>,
+) -> Result<ModePackSnapshot> {
+    let raw: RawModePack =
+        serde_json::from_str(content).context("failed to parse Mode Pack JSON")?;
+    compile_snapshot(raw, source_path.into())
+}
+
 fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSnapshot> {
     if raw.schema_version != MODEPACK_SCHEMA_VERSION {
         bail!(
