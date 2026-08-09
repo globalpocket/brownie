@@ -581,6 +581,74 @@ impl BrownieStore {
         })
     }
 
+    pub fn consume_approved_modepack_candidate(
+        &self,
+        content_sha256: &str,
+        approval_id: &str,
+        replacement_event_id: &str,
+        replacement_activation_fingerprint: &str,
+    ) -> Result<ModePackCandidateConsumptionCommit> {
+        let mut approved = self
+            .read_approved_modepack_candidate_snapshot(content_sha256)?
+            .context("approved Mode Pack candidate not found")?;
+        if approved.summary.approval_id != approval_id {
+            bail!(
+                "approved Mode Pack candidate approval id mismatch: expected {} but found {}",
+                approval_id,
+                approved.summary.approval_id
+            );
+        }
+        if approved.summary.consumed {
+            if let Some(event_id) = self.modepack_candidate_consumption_event_id(
+                approval_id,
+                content_sha256,
+                replacement_event_id,
+                replacement_activation_fingerprint,
+            )? {
+                return Ok(ModePackCandidateConsumptionCommit {
+                    replayed: true,
+                    event_id,
+                    approval: approved,
+                });
+            }
+            let event = self.modepack_candidate_consumption_event(
+                &approved,
+                approval_id,
+                replacement_event_id,
+                replacement_activation_fingerprint,
+            )?;
+            self.append_modepack_candidate_event(&event)?;
+            return Ok(ModePackCandidateConsumptionCommit {
+                replayed: true,
+                event_id: event.event_id,
+                approval: approved,
+            });
+        }
+
+        approved.summary.consumed = true;
+        let body = serde_json::to_string_pretty(&approved)
+            .context("failed to serialize consumed approved Mode Pack candidate")?;
+        write_file_atomically(
+            &self.modepack_candidate_approval_path(content_sha256),
+            body.as_bytes(),
+        )
+        .context("failed to write consumed approved Mode Pack candidate")?;
+        let event = self.modepack_candidate_consumption_event(
+            &approved,
+            approval_id,
+            replacement_event_id,
+            replacement_activation_fingerprint,
+        )?;
+        if let Err(error) = self.append_modepack_candidate_event(&event) {
+            return Err(error).context("failed to append Mode Pack candidate consumption ledger");
+        }
+        Ok(ModePackCandidateConsumptionCommit {
+            replayed: false,
+            event_id: event.event_id,
+            approval: approved,
+        })
+    }
+
     pub fn workspace_root(&self) -> &std::path::Path {
         self.task_store.workspace_root()
     }
@@ -703,6 +771,87 @@ impl BrownieStore {
         }
         Ok(false)
     }
+
+    fn modepack_candidate_consumption_event_id(
+        &self,
+        approval_id: &str,
+        content_sha256: &str,
+        replacement_event_id: &str,
+        replacement_activation_fingerprint: &str,
+    ) -> Result<Option<String>> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackCandidateConsumed" {
+                continue;
+            }
+            if event
+                .payload
+                .get("approval_id")
+                .and_then(serde_json::Value::as_str)
+                == Some(approval_id)
+                && event
+                    .payload
+                    .get("content_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(content_sha256)
+                && event
+                    .payload
+                    .get("replacement_event_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(replacement_event_id)
+                && event
+                    .payload
+                    .get("replacement_activation_fingerprint")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(replacement_activation_fingerprint)
+            {
+                return Ok(Some(event.event_id));
+            }
+        }
+        Ok(None)
+    }
+
+    fn modepack_candidate_consumption_event(
+        &self,
+        approved: &ModePackApprovedCandidateSnapshot,
+        approval_id: &str,
+        replacement_event_id: &str,
+        replacement_activation_fingerprint: &str,
+    ) -> Result<ModePackCandidateLedgerEvent> {
+        Ok(ModePackCandidateLedgerEvent {
+            event_id: format!("event_{}", Uuid::new_v4()),
+            kind: "ModePackCandidateConsumed".to_string(),
+            timestamp: timestamp()
+                .context("failed to timestamp Mode Pack candidate consumption")?,
+            payload: serde_json::json!({
+                "approval_id": approval_id,
+                "candidate_id": approved.summary.candidate_id,
+                "content_sha256": approved.summary.content_sha256,
+                "compiled_policy_fingerprint": approved.summary.compiled_policy_fingerprint,
+                "replacement_event_id": replacement_event_id,
+                "replacement_activation_fingerprint": replacement_activation_fingerprint,
+                "consumed": true,
+            }),
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -773,6 +922,13 @@ pub struct ModePackApprovedCandidateSnapshot {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackCandidateApprovalCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub approval: ModePackApprovedCandidateSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateConsumptionCommit {
     pub replayed: bool,
     pub event_id: String,
     pub approval: ModePackApprovedCandidateSnapshot,

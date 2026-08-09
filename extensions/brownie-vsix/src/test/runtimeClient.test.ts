@@ -472,8 +472,26 @@ describe('protocol validation', () => {
       replacement_snapshot: replacement,
       replacement_event_id: 'event_2',
     };
+    const approvedCandidate = {
+      approval_id: 'modepack_candidate_approval_123',
+      candidate_id: 'modepack_candidate_123',
+      source_kind: 'remote_https',
+      source_url_host: 'example.com',
+      source_url_fingerprint: `sha256:${'e'.repeat(64)}`,
+      content_sha256: `sha256:${'f'.repeat(64)}`,
+      modepack_name: 'remote-agentmodes',
+      schema_version: 1,
+      mode_count: 1,
+      mode_ids: ['external-orchestrator'],
+      compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      approved_at: '2026-08-09T00:00:00Z',
+      approval_event_id: 'event_3',
+      consumed: true,
+    };
 
     expect(isModePackReplaceActiveResult(result)).toBe(true);
+    expect(isModePackReplaceActiveResult({ ...result, approved_candidate: approvedCandidate, candidate_consumed_event_id: 'event_4' })).toBe(true);
+    expect(isModePackReplaceActiveResult({ ...result, approved_candidate: { ...approvedCandidate, modepack_json: '{}' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, replacement_snapshot: { ...replacement, activation_fingerprint: 'bad' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_ledger_payload: {} })).toBe(false);
@@ -2404,6 +2422,73 @@ describe('RuntimeClient', () => {
         expected_candidate_activation_fingerprint: candidate,
       },
     }]);
+  });
+
+  it('creates a modepack.replaceActive request for an approved candidate', async () => {
+    const previous = {
+      activation_id: 'modepack_activation_previous',
+      activation_fingerprint: `sha256:${'a'.repeat(64)}`,
+      modepack_name: 'local-agentmodes',
+      schema_version: 1,
+      source_kind: 'workspace_modepack',
+      source_path: '.brownie/modepack.json',
+      mode_count: 1,
+      mode_ids: ['reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
+      activated_at: '2026-08-08T00:00:00Z',
+      activation_event_id: 'event_1',
+    };
+    const replacement = {
+      ...previous,
+      activation_id: 'modepack_activation_replacement',
+      activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+      source_kind: 'remote_https_candidate',
+      source_path: 'modepack_candidate_123',
+      mode_ids: ['remote-reviewer'],
+      compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      activation_event_id: 'event_2',
+    };
+    const approval = {
+      approval_id: 'modepack_candidate_approval_123',
+      candidate_id: 'modepack_candidate_123',
+      source_kind: 'remote_https',
+      source_url_host: 'example.com',
+      source_url_fingerprint: `sha256:${'e'.repeat(64)}`,
+      content_sha256: `sha256:${'f'.repeat(64)}`,
+      modepack_name: 'remote-agentmodes',
+      schema_version: 1,
+      mode_count: 1,
+      mode_ids: ['remote-reviewer'],
+      compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      approved_at: '2026-08-09T00:00:00Z',
+      approval_event_id: 'event_3',
+      consumed: true,
+    };
+    const result = {
+      replaced: true,
+      replayed: false,
+      previous_snapshot: previous,
+      replacement_snapshot: replacement,
+      replacement_event_id: 'event_2',
+      approved_candidate: approval,
+      candidate_consumed_event_id: 'event_4',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.replaceActiveModePack(true, previous.activation_fingerprint, replacement.activation_fingerprint, {
+      approvalId: approval.approval_id,
+      contentSha256: approval.content_sha256,
+      compiledPolicyFingerprint: approval.compiled_policy_fingerprint,
+    })).resolves.toEqual(result);
+    expect(transport.requests[0].params).toMatchObject({
+      authorize_replacement: true,
+      expected_current_activation_fingerprint: previous.activation_fingerprint,
+      expected_candidate_activation_fingerprint: replacement.activation_fingerprint,
+      approved_candidate_approval_id: approval.approval_id,
+      expected_approved_candidate_content_sha256: approval.content_sha256,
+      expected_approved_candidate_compiled_policy_fingerprint: approval.compiled_policy_fingerprint,
+    });
   });
 
   it('creates a modepack.rollbackActive request', async () => {
