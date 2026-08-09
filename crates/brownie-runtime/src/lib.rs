@@ -40,11 +40,12 @@ use brownie_protocol::{
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
-    ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
-    PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
-    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ModePackRollbackActiveParams, ModePackRollbackActiveResult, ModePermissionsSummary,
+    ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
+    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
+    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
+    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -281,6 +282,7 @@ const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
+const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
 const METHOD_TOOL_LIST: &str = "tool.list";
 const METHOD_TOOL_PLAN: &str = "tool.plan";
@@ -449,6 +451,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
         METHOD_MODEPACK_REPLACE_ACTIVE => {
             handle_modepack_replace_active(request.id, request.params)
+        }
+        METHOD_MODEPACK_ROLLBACK_ACTIVE => {
+            handle_modepack_rollback_active(request.id, request.params)
         }
         METHOD_PERMISSION_CHECK => handle_permission_check(request.id, request.params),
         METHOD_TOOL_LIST => handle_tool_list(request.id),
@@ -14222,6 +14227,43 @@ fn handle_modepack_replace_active(id: Value, params: Option<Value>) -> JsonRpcRe
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match replace_active_workspace_modepack(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_rollback_active(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackRollbackActiveParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_rollback {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: active Mode Pack rollback authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_current_activation_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_current_activation_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_rollback_activation_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_rollback_activation_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match rollback_active_workspace_modepack(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28568,6 +28610,25 @@ fn replace_active_workspace_modepack(
         previous_snapshot: committed.previous_snapshot.summary,
         replacement_snapshot: committed.replacement_snapshot.summary,
         replacement_event_id: committed.event_id,
+    })
+}
+
+fn rollback_active_workspace_modepack(
+    store: &BrownieStore,
+    params: &ModePackRollbackActiveParams,
+) -> Result<ModePackRollbackActiveResult, String> {
+    let committed = store
+        .rollback_active_modepack_snapshot(
+            &params.expected_current_activation_fingerprint,
+            &params.expected_rollback_activation_fingerprint,
+        )
+        .map_err(|error| format!("modepack rollback failed: {error}"))?;
+    Ok(ModePackRollbackActiveResult {
+        rolled_back: !committed.replayed,
+        replayed: committed.replayed,
+        current_snapshot: committed.current_snapshot.summary,
+        restored_snapshot: committed.restored_snapshot.summary,
+        rollback_event_id: committed.event_id,
     })
 }
 
@@ -62369,6 +62430,213 @@ mod tests {
         assert_eq!(active_ledger.lines().count(), 1);
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_rollback_active_restores_previous_snapshot_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let rollback_fingerprint = activated.result.unwrap()["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        write_changed_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let replacement_fingerprint = build_active_modepack_snapshot(&store)
+            .expect("candidate snapshot")
+            .summary
+            .activation_fingerprint;
+        let replaced = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{rollback_fingerprint}","expected_candidate_activation_fingerprint":"{replacement_fingerprint}"}}}}"#
+        ));
+        assert!(replaced.error.is_none());
+
+        let denied = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.rollbackActive","params":{{"authorize_rollback":false,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
+        ));
+        assert_eq!(denied.error.expect("missing auth").code, -32602);
+
+        let rolled_back = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
+        ));
+        assert!(rolled_back.error.is_none());
+        let rollback_result = rolled_back.result.expect("rollback result");
+        assert_eq!(rollback_result["rolled_back"], true);
+        assert_eq!(rollback_result["replayed"], false);
+        assert_eq!(
+            rollback_result["current_snapshot"]["activation_fingerprint"],
+            replacement_fingerprint
+        );
+        assert_eq!(
+            rollback_result["restored_snapshot"]["activation_fingerprint"],
+            rollback_fingerprint
+        );
+        assert_eq!(
+            rollback_result["restored_snapshot"]["mode_ids"][0],
+            "reviewer-lite"
+        );
+
+        let replay = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
+        ));
+        let replay_result = replay.result.expect("rollback replay");
+        assert_eq!(replay_result["rolled_back"], false);
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["rollback_event_id"],
+            rollback_result["rollback_event_id"]
+        );
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":6,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "reviewer-lite"));
+        let get = parse_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"mode.get","params":{"mode_id":"reviewer-lite"}}"#,
+        );
+        assert_eq!(
+            get.result.expect("get result")["display_name"],
+            "Reviewer Lite"
+        );
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":8,"method":"permission.check","params":{"mode_id":"reviewer-lite","action":"SpawnSubtask"}}"#,
+        );
+        assert_eq!(
+            permission.result.expect("permission result")["allowed"],
+            false
+        );
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":9,"method":"task.start","params":{"goal":"Use restored mode pack","mode_id":"reviewer-lite"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let events = store_events(temp.path(), &run_id);
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(
+            mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
+            rollback_fingerprint
+        );
+
+        let active_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(active_ledger.lines().count(), 3);
+        assert!(active_ledger.contains("ModePackRolledBack"));
+        assert!(active_ledger.contains("previous_snapshot_full"));
+        assert!(!active_ledger.contains("raw_modepack_json"));
+        assert!(!active_ledger.contains("Changed reviewer role"));
+        assert!(!active_ledger.contains(temp.path().to_string_lossy().as_ref()));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn modepack_rollback_active_rejects_stale_wrong_missing_and_legacy_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let rollback_fingerprint = activated.result.unwrap()["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let bad_fingerprint = format!("sha256:{}", "0".repeat(64));
+
+        let missing_replacement = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{rollback_fingerprint}","expected_rollback_activation_fingerprint":"{bad_fingerprint}"}}}}"#
+        ));
+        let error = missing_replacement.error.expect("missing replacement");
+        assert_eq!(error.code, -32603);
+        assert!(error
+            .message
+            .contains("missing rollback-capable active modepack replacement evidence"));
+
+        write_changed_test_handoff_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let replacement_fingerprint = build_active_modepack_snapshot(&store)
+            .expect("candidate snapshot")
+            .summary
+            .activation_fingerprint;
+        let replaced = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{rollback_fingerprint}","expected_candidate_activation_fingerprint":"{replacement_fingerprint}"}}}}"#
+        ));
+        assert!(replaced.error.is_none());
+
+        let stale_current = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{bad_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
+        ));
+        let error = stale_current.error.expect("stale current");
+        assert_eq!(error.code, -32603);
+        assert!(error.message.contains("stale active modepack snapshot"));
+
+        let wrong_target = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{bad_fingerprint}"}}}}"#
+        ));
+        let error = wrong_target.error.expect("wrong target");
+        assert_eq!(error.code, -32603);
+        assert!(error
+            .message
+            .contains("rollback modepack activation fingerprint mismatch"));
+
+        let ledger_path = temp.path().join(".brownie/modepack-active/ledger.jsonl");
+        let legacy_ledger = std::fs::read_to_string(&ledger_path)
+            .expect("active ledger")
+            .lines()
+            .map(|line| {
+                let mut value: serde_json::Value = serde_json::from_str(line).expect("ledger json");
+                if value["kind"] == "ModePackReplaced" {
+                    value["payload"]
+                        .as_object_mut()
+                        .expect("payload")
+                        .remove("previous_snapshot_full");
+                }
+                serde_json::to_string(&value).expect("serialize ledger")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
+        std::fs::write(&ledger_path, legacy_ledger).expect("legacy ledger");
+
+        let legacy = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
+        ));
+        let error = legacy.error.expect("legacy evidence");
+        assert_eq!(error.code, -32603);
+        assert!(error.message.contains("summary-only"));
+
+        let active_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(active_ledger.lines().count(), 2);
+        assert!(!active_ledger.contains("ModePackRolledBack"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]

@@ -180,6 +180,14 @@ export interface ModePackReplaceActiveResult {
   replacement_event_id: string;
 }
 
+export interface ModePackRollbackActiveResult {
+  rolled_back: boolean;
+  replayed: boolean;
+  current_snapshot: ModePackActiveSnapshotSummary;
+  restored_snapshot: ModePackActiveSnapshotSummary;
+  rollback_event_id: string;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -2985,6 +2993,19 @@ export function isModePackReplaceActiveResult(value: unknown): value is ModePack
     isModePackActiveSnapshotSummary(value.previous_snapshot) &&
     isModePackActiveSnapshotSummary(value.replacement_snapshot) &&
     typeof value.replacement_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+export function isModePackRollbackActiveResult(value: unknown): value is ModePackRollbackActiveResult {
+  return (
+    isRecord(value) &&
+    typeof value.rolled_back === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackActiveSnapshotSummary(value.current_snapshot) &&
+    isModePackActiveSnapshotSummary(value.restored_snapshot) &&
+    typeof value.rollback_event_id === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
