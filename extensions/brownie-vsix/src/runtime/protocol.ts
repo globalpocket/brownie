@@ -225,6 +225,10 @@ export interface ModePackApprovedCandidateSummary {
   mode_count: number;
   mode_ids: string[];
   compiled_policy_fingerprint: string;
+  provenance_id: string;
+  provenance_event_id: string;
+  signer_fingerprint: string;
+  statement_sha256: string;
   approved_at: string;
   approval_event_id: string;
   consumed: boolean;
@@ -3147,6 +3151,12 @@ function isModePackApprovedCandidateSummary(value: unknown): value is ModePackAp
     value.mode_ids.every((modeId) => typeof modeId === 'string') &&
     typeof value.compiled_policy_fingerprint === 'string' &&
     isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.provenance_id === 'string' &&
+    typeof value.provenance_event_id === 'string' &&
+    typeof value.signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.signer_fingerprint) &&
+    typeof value.statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.statement_sha256) &&
     typeof value.approved_at === 'string' &&
     typeof value.approval_event_id === 'string' &&
     typeof value.consumed === 'boolean' &&

@@ -210,6 +210,10 @@ pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
     pub expected_compiled_policy_fingerprint: String,
+    pub expected_provenance_id: String,
+    pub expected_provenance_event_id: String,
+    pub expected_signer_fingerprint: String,
+    pub expected_statement_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -295,6 +299,10 @@ pub struct ModePackApprovedCandidateSummary {
     pub mode_count: usize,
     pub mode_ids: Vec<String>,
     pub compiled_policy_fingerprint: String,
+    pub provenance_id: String,
+    pub provenance_event_id: String,
+    pub signer_fingerprint: String,
+    pub statement_sha256: String,
     pub approved_at: String,
     pub approval_event_id: String,
     pub consumed: bool,

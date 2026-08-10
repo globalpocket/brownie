@@ -484,6 +484,10 @@ describe('protocol validation', () => {
       mode_count: 1,
       mode_ids: ['external-orchestrator'],
       compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      provenance_id: 'modepack_candidate_provenance_123',
+      provenance_event_id: 'event_1',
+      signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+      statement_sha256: `sha256:${'b'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
       approval_event_id: 'event_3',
       consumed: true,
@@ -540,6 +544,10 @@ describe('protocol validation', () => {
       mode_count: 1,
       mode_ids: ['remote-reviewer-lite'],
       compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+      provenance_id: 'modepack_candidate_provenance_123',
+      provenance_event_id: 'event_1',
+      signer_fingerprint: `sha256:${'d'.repeat(64)}`,
+      statement_sha256: `sha256:${'e'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
       approval_event_id: 'event_2',
       consumed: false,
@@ -2388,6 +2396,10 @@ describe('RuntimeClient', () => {
         mode_count: 1,
         mode_ids: ['remote-reviewer-lite'],
         compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+        provenance_id: 'modepack_candidate_provenance_123',
+        provenance_event_id: 'event_1',
+        signer_fingerprint: `sha256:${'d'.repeat(64)}`,
+        statement_sha256: `sha256:${'e'.repeat(64)}`,
         approved_at: '2026-08-09T00:00:00Z',
         approval_event_id: 'event_2',
         consumed: false,
@@ -2397,7 +2409,15 @@ describe('RuntimeClient', () => {
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
-    await expect(client.approveModePackCandidate(true, result.approval.content_sha256, result.approval.compiled_policy_fingerprint)).resolves.toEqual(result);
+    await expect(client.approveModePackCandidate(
+      true,
+      result.approval.content_sha256,
+      result.approval.compiled_policy_fingerprint,
+      result.approval.provenance_id,
+      result.approval.provenance_event_id,
+      result.approval.signer_fingerprint,
+      result.approval.statement_sha256,
+    )).resolves.toEqual(result);
     expect(transport.requests).toEqual([{
       jsonrpc: '2.0',
       id: 1,
@@ -2406,6 +2426,10 @@ describe('RuntimeClient', () => {
         authorize_trust: true,
         expected_content_sha256: result.approval.content_sha256,
         expected_compiled_policy_fingerprint: result.approval.compiled_policy_fingerprint,
+        expected_provenance_id: result.approval.provenance_id,
+        expected_provenance_event_id: result.approval.provenance_event_id,
+        expected_signer_fingerprint: result.approval.signer_fingerprint,
+        expected_statement_sha256: result.approval.statement_sha256,
       },
     }]);
   });
@@ -2545,6 +2569,10 @@ describe('RuntimeClient', () => {
       mode_count: 1,
       mode_ids: ['remote-reviewer'],
       compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
+      provenance_id: 'modepack_candidate_provenance_123',
+      provenance_event_id: 'event_1',
+      signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+      statement_sha256: `sha256:${'b'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
       approval_event_id: 'event_3',
       consumed: true,
