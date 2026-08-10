@@ -43,7 +43,8 @@ use brownie_protocol::{
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackFetchCandidateParams, ModePackFetchCandidateResult, ModePackReplaceActiveParams,
-    ModePackReplaceActiveResult, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
+    ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
+    ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
     ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
@@ -231,9 +232,10 @@ use brownie_store::{
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
-    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot, ModePackTrustedSignerSnapshot,
-    ParentJoinContinuationRunAdmission, PatchApplyRecoveryTaskStartParams,
-    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
+    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot, ModePackRevokedSignerSnapshot,
+    ModePackTrustedSignerSnapshot, ParentJoinContinuationRunAdmission,
+    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
+    VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -296,6 +298,7 @@ const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
 const METHOD_MODEPACK_APPROVE_CANDIDATE: &str = "modepack.approveCandidate";
 const METHOD_MODEPACK_TRUST_SIGNER: &str = "modepack.trustSigner";
+const METHOD_MODEPACK_REVOKE_SIGNER: &str = "modepack.revokeSigner";
 const METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE: &str = "modepack.verifyCandidateProvenance";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
@@ -473,6 +476,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
             handle_modepack_approve_candidate(request.id, request.params)
         }
         METHOD_MODEPACK_TRUST_SIGNER => handle_modepack_trust_signer(request.id, request.params),
+        METHOD_MODEPACK_REVOKE_SIGNER => handle_modepack_revoke_signer(request.id, request.params),
         METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE => {
             handle_modepack_verify_candidate_provenance(request.id, request.params)
         }
@@ -14344,6 +14348,36 @@ fn handle_modepack_trust_signer(id: Value, params: Option<Value>) -> JsonRpcResp
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match trust_modepack_signer(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_revoke_signer(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackRevokeSignerParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_revocation {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: Mode Pack signer revocation authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.signer_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: signer_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match revoke_modepack_signer(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -29042,6 +29076,13 @@ fn approve_remote_modepack_candidate(
     if trusted_signer.summary.signer_fingerprint != provenance_summary.signer_fingerprint {
         return Err("modepack candidate approval failed: trusted signer is stale".to_string());
     }
+    if store
+        .read_modepack_revoked_signer_snapshot(&provenance_summary.signer_fingerprint)
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?
+        .is_some()
+    {
+        return Err("modepack candidate approval failed: trusted signer revoked".to_string());
+    }
 
     let approved_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let approval_summary = ModePackApprovedCandidateSummary {
@@ -29106,6 +29147,50 @@ fn trust_modepack_signer(
         replayed: committed.replayed,
         trusted_signer: committed.trusted_signer.summary,
         next_action: "verify_or_approve_modepack_candidate_for_trusted_signer".to_string(),
+    })
+}
+
+fn revoke_modepack_signer(
+    store: &BrownieStore,
+    params: &ModePackRevokeSignerParams,
+) -> Result<ModePackRevokeSignerResult, String> {
+    if let Some(existing) = store
+        .read_modepack_revoked_signer_snapshot(&params.signer_fingerprint)
+        .map_err(|error| format!("modepack signer revocation failed: {error}"))?
+    {
+        return Ok(ModePackRevokeSignerResult {
+            revoked: false,
+            replayed: true,
+            revoked_signer: existing.summary,
+            next_action: "signer_revoked_approval_denied_until_retrusted".to_string(),
+        });
+    }
+    let trusted_signer = store
+        .read_modepack_trusted_signer_snapshot(&params.signer_fingerprint)
+        .map_err(|error| format!("modepack signer revocation failed: {error}"))?
+        .ok_or_else(|| "modepack signer revocation failed: trusted signer not found".to_string())?;
+    let revoked_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    let revocation_summary = ModePackRevokedSignerSummary {
+        revocation_id: format!(
+            "modepack_signer_revocation_{}",
+            &params.signer_fingerprint[7..23]
+        ),
+        signer_fingerprint: params.signer_fingerprint.clone(),
+        trusted_signer_trust_id: trusted_signer.summary.trust_id,
+        trusted_signer_event_id: trusted_signer.summary.trust_event_id,
+        revoked_at,
+        revocation_event_id: String::new(),
+    };
+    let committed = store
+        .revoke_modepack_signer_snapshot(&ModePackRevokedSignerSnapshot {
+            summary: revocation_summary,
+        })
+        .map_err(|error| format!("modepack signer revocation failed: {error}"))?;
+    Ok(ModePackRevokeSignerResult {
+        revoked: !committed.replayed,
+        replayed: committed.replayed,
+        revoked_signer: committed.revoked_signer.summary,
+        next_action: "signer_revoked_approval_denied_until_retrusted".to_string(),
     })
 }
 
@@ -63594,6 +63679,22 @@ mod tests {
                 .count(),
             1
         );
+        let revoked = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":22,"method":"modepack.revokeSigner","params":{{"authorize_revocation":true,"signer_fingerprint":"{}"}}}}"#,
+            signer_fingerprint
+        ));
+        assert!(revoked.error.is_none());
+        let revoked_result = revoked.result.expect("revoked signer result");
+        assert_eq!(
+            revoked_result["revoked_signer"]["trusted_signer_trust_id"],
+            trusted_result["trusted_signer"]["trust_id"]
+        );
+        let revoked_approval = parse_line(&request);
+        assert!(revoked_approval
+            .error
+            .expect("revoked signer")
+            .message
+            .contains("trusted signer revoked"));
         assert!(!temp
             .path()
             .join(".brownie/modepack-active/current.json")
@@ -63654,6 +63755,84 @@ mod tests {
             ledger
                 .lines()
                 .filter(|line| line.contains("ModePackSignerTrusted"))
+                .count(),
+            1
+        );
+        assert!(!ledger.contains("raw_ledger_payload"));
+        assert!(!ledger.contains("provenance_statement_json"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_revoke_signer_records_bounded_state_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let signer_fingerprint =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let trust_request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{signer_fingerprint}"}}}}"#
+        );
+        let revoke_request = format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.revokeSigner","params":{{"authorize_revocation":true,"signer_fingerprint":"{signer_fingerprint}"}}}}"#
+        );
+        let trusted = parse_line(&trust_request);
+        assert!(trusted.error.is_none());
+        let trusted_result = trusted.result.expect("trusted signer result");
+
+        let revoked = parse_line(&revoke_request);
+        assert!(revoked.error.is_none());
+        let revoked_result = revoked.result.expect("revoked signer result");
+        assert!(revoked_result["revoked"].as_bool().unwrap());
+        assert!(!revoked_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            revoked_result["revoked_signer"]["signer_fingerprint"],
+            signer_fingerprint
+        );
+        assert_eq!(
+            revoked_result["revoked_signer"]["trusted_signer_trust_id"],
+            trusted_result["trusted_signer"]["trust_id"]
+        );
+        assert_eq!(
+            revoked_result["revoked_signer"]["trusted_signer_event_id"],
+            trusted_result["trusted_signer"]["trust_event_id"]
+        );
+
+        let replay = parse_line(&revoke_request);
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert!(!replay_result["revoked"].as_bool().unwrap());
+        assert!(replay_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            replay_result["revoked_signer"]["revocation_event_id"],
+            revoked_result["revoked_signer"]["revocation_event_id"]
+        );
+
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"modepack.revokeSigner","params":{"authorize_revocation":false,"signer_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#,
+        );
+        assert!(denied
+            .error
+            .expect("auth denial")
+            .message
+            .contains("signer revocation authorization required"));
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/modepack-candidates/ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackSignerTrusted"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackSignerRevoked"))
                 .count(),
             1
         );

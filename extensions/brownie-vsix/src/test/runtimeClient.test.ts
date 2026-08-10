@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRevokeSignerResult, isModePackRollbackActiveResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -587,6 +587,27 @@ describe('protocol validation', () => {
     expect(isModePackTrustSignerResult({ ...result, trusted_signer: { ...result.trusted_signer, signer_fingerprint: 'bad' } })).toBe(false);
     expect(isModePackTrustSignerResult({ ...result, raw_ledger_payload: {} })).toBe(false);
     expect(isModePackTrustSignerResult({ ...result, provenance_signature_base64: 'raw' })).toBe(false);
+  });
+
+  it('accepts bounded modepack.revokeSigner results and rejects raw fields', () => {
+    const result = {
+      revoked: true,
+      replayed: false,
+      revoked_signer: {
+        revocation_id: 'modepack_signer_revocation_123',
+        signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+        trusted_signer_trust_id: 'modepack_signer_trust_123',
+        trusted_signer_event_id: 'event_1',
+        revoked_at: '2026-08-09T00:00:00Z',
+        revocation_event_id: 'event_2',
+      },
+      next_action: 'signer_revoked_approval_denied_until_retrusted',
+    };
+
+    expect(isModePackRevokeSignerResult(result)).toBe(true);
+    expect(isModePackRevokeSignerResult({ ...result, revoked_signer: { ...result.revoked_signer, signer_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackRevokeSignerResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+    expect(isModePackRevokeSignerResult({ ...result, provenance_signature_base64: 'raw' })).toBe(false);
   });
 
   it('accepts bounded modepack.verifyCandidateProvenance results and rejects raw fields', () => {
@@ -2482,6 +2503,35 @@ describe('RuntimeClient', () => {
       params: {
         authorize_trust: true,
         signer_fingerprint: result.trusted_signer.signer_fingerprint,
+      },
+    }]);
+  });
+
+  it('creates a modepack.revokeSigner request', async () => {
+    const result = {
+      revoked: true,
+      replayed: false,
+      revoked_signer: {
+        revocation_id: 'modepack_signer_revocation_123',
+        signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+        trusted_signer_trust_id: 'modepack_signer_trust_123',
+        trusted_signer_event_id: 'event_1',
+        revoked_at: '2026-08-09T00:00:00Z',
+        revocation_event_id: 'event_2',
+      },
+      next_action: 'signer_revoked_approval_denied_until_retrusted',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.revokeModePackSigner(true, result.revoked_signer.signer_fingerprint)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.revokeSigner',
+      params: {
+        authorize_revocation: true,
+        signer_fingerprint: result.revoked_signer.signer_fingerprint,
       },
     }]);
   });

@@ -223,6 +223,12 @@ pub struct ModePackTrustSignerParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRevokeSignerParams {
+    pub authorize_revocation: bool,
+    pub signer_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackVerifyCandidateProvenanceParams {
     pub authorize_provenance_verification: bool,
     pub expected_content_sha256: String,
@@ -327,6 +333,16 @@ pub struct ModePackTrustedSignerSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRevokedSignerSummary {
+    pub revocation_id: String,
+    pub signer_fingerprint: String,
+    pub trusted_signer_trust_id: String,
+    pub trusted_signer_event_id: String,
+    pub revoked_at: String,
+    pub revocation_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackCandidateProvenanceSummary {
     pub provenance_id: String,
     pub candidate_id: String,
@@ -367,6 +383,14 @@ pub struct ModePackTrustSignerResult {
     pub trusted: bool,
     pub replayed: bool,
     pub trusted_signer: ModePackTrustedSignerSummary,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRevokeSignerResult {
+    pub revoked: bool,
+    pub replayed: bool,
+    pub revoked_signer: ModePackRevokedSignerSummary,
     pub next_action: String,
 }
 
