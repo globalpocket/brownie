@@ -10,9 +10,10 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary, ModePackCandidateSummary,
-    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -518,6 +519,88 @@ impl BrownieStore {
         })?))
     }
 
+    pub fn read_modepack_candidate_provenance_snapshot(
+        &self,
+        content_sha256: &str,
+    ) -> Result<Option<ModePackCandidateProvenanceSnapshot>> {
+        let path = self.modepack_candidate_provenance_path(content_sha256);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
+    pub fn verify_modepack_candidate_provenance_snapshot(
+        &self,
+        provenance: &ModePackCandidateProvenanceSnapshot,
+    ) -> Result<ModePackCandidateProvenanceCommit> {
+        if let Some(existing) =
+            self.read_modepack_candidate_provenance_snapshot(&provenance.summary.content_sha256)?
+        {
+            if existing.summary.compiled_policy_fingerprint
+                != provenance.summary.compiled_policy_fingerprint
+                || existing.summary.signer_fingerprint != provenance.summary.signer_fingerprint
+                || existing.summary.statement_sha256 != provenance.summary.statement_sha256
+                || existing.summary.signature_sha256 != provenance.summary.signature_sha256
+            {
+                bail!(
+                    "conflicting Mode Pack candidate provenance for {}",
+                    provenance.summary.content_sha256
+                );
+            }
+            if !self.modepack_candidate_provenance_event_exists(
+                &existing.summary.provenance_event_id,
+                &existing.summary.content_sha256,
+                &existing.summary.signer_fingerprint,
+                &existing.summary.statement_sha256,
+            )? {
+                let event = ModePackCandidateLedgerEvent {
+                    event_id: existing.summary.provenance_event_id.clone(),
+                    kind: "ModePackCandidateProvenanceVerified".to_string(),
+                    timestamp: existing.summary.verified_at.clone(),
+                    payload: serde_json::to_value(&existing.summary)
+                        .context("failed to serialize Mode Pack candidate provenance summary")?,
+                };
+                self.append_modepack_candidate_event(&event)?;
+            }
+            return Ok(ModePackCandidateProvenanceCommit {
+                replayed: true,
+                event_id: existing.summary.provenance_event_id.clone(),
+                provenance: existing,
+            });
+        }
+
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = provenance.clone();
+        committed.summary.provenance_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize Mode Pack candidate provenance")?;
+        write_file_atomically(
+            &self.modepack_candidate_provenance_path(&committed.summary.content_sha256),
+            body.as_bytes(),
+        )
+        .context("failed to write Mode Pack candidate provenance")?;
+        let event = ModePackCandidateLedgerEvent {
+            event_id: committed.summary.provenance_event_id.clone(),
+            kind: "ModePackCandidateProvenanceVerified".to_string(),
+            timestamp: committed.summary.verified_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize Mode Pack candidate provenance summary")?,
+        };
+        self.append_modepack_candidate_event(&event)?;
+        Ok(ModePackCandidateProvenanceCommit {
+            replayed: false,
+            event_id: event.event_id,
+            provenance: committed,
+        })
+    }
+
     pub fn approve_modepack_candidate_snapshot(
         &self,
         approval: &ModePackApprovedCandidateSnapshot,
@@ -684,6 +767,14 @@ impl BrownieStore {
             .join(format!("{slug}.approved.json"))
     }
 
+    fn modepack_candidate_provenance_path(&self, content_sha256: &str) -> PathBuf {
+        let slug = content_sha256
+            .strip_prefix("sha256:")
+            .unwrap_or(content_sha256);
+        self.modepack_candidates_dir()
+            .join(format!("{slug}.provenance.json"))
+    }
+
     fn append_active_modepack_event(&self, event: &ActiveModePackLedgerEvent) -> Result<()> {
         let root = self.active_modepack_dir();
         fs::create_dir_all(&root)
@@ -765,6 +856,60 @@ impl BrownieStore {
                     .get("compiled_policy_fingerprint")
                     .and_then(serde_json::Value::as_str)
                     == Some(compiled_policy_fingerprint)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn modepack_candidate_provenance_event_exists(
+        &self,
+        provenance_event_id: &str,
+        content_sha256: &str,
+        signer_fingerprint: &str,
+        statement_sha256: &str,
+    ) -> Result<bool> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackCandidateProvenanceVerified"
+                || event.event_id != provenance_event_id
+            {
+                continue;
+            }
+            if event
+                .payload
+                .get("content_sha256")
+                .and_then(serde_json::Value::as_str)
+                == Some(content_sha256)
+                && event
+                    .payload
+                    .get("signer_fingerprint")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(signer_fingerprint)
+                && event
+                    .payload
+                    .get("statement_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(statement_sha256)
             {
                 return Ok(true);
             }
@@ -925,6 +1070,18 @@ pub struct ModePackCandidateApprovalCommit {
     pub replayed: bool,
     pub event_id: String,
     pub approval: ModePackApprovedCandidateSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateProvenanceSnapshot {
+    pub summary: ModePackCandidateProvenanceSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateProvenanceCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub provenance: ModePackCandidateProvenanceSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

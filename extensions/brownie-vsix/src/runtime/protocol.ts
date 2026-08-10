@@ -237,6 +237,32 @@ export interface ModePackApproveCandidateResult {
   next_action: string;
 }
 
+export interface ModePackCandidateProvenanceSummary {
+  provenance_id: string;
+  candidate_id: string;
+  source_kind: string;
+  source_url_host: string;
+  source_url_fingerprint: string;
+  content_sha256: string;
+  modepack_name: string;
+  schema_version: number;
+  mode_count: number;
+  mode_ids: string[];
+  compiled_policy_fingerprint: string;
+  signer_fingerprint: string;
+  statement_sha256: string;
+  signature_sha256: string;
+  verified_at: string;
+  provenance_event_id: string;
+}
+
+export interface ModePackVerifyCandidateProvenanceResult {
+  verified: boolean;
+  replayed: boolean;
+  provenance: ModePackCandidateProvenanceSummary;
+  next_action: string;
+}
+
 export interface ToolPlanDecisionSummary {
   tool_id: string;
   required_action: RuntimeActionName;
@@ -3086,6 +3112,21 @@ export function isModePackApproveCandidateResult(value: unknown): value is ModeP
   );
 }
 
+export function isModePackVerifyCandidateProvenanceResult(value: unknown): value is ModePackVerifyCandidateProvenanceResult {
+  return (
+    isRecord(value) &&
+    typeof value.verified === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackCandidateProvenanceSummary(value.provenance) &&
+    typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
 function isModePackApprovedCandidateSummary(value: unknown): value is ModePackApprovedCandidateSummary {
   return (
     isRecord(value) &&
@@ -3111,6 +3152,43 @@ function isModePackApprovedCandidateSummary(value: unknown): value is ModePackAp
     typeof value.consumed === 'boolean' &&
     !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackCandidateProvenanceSummary(value: unknown): value is ModePackCandidateProvenanceSummary {
+  return (
+    isRecord(value) &&
+    typeof value.provenance_id === 'string' &&
+    typeof value.candidate_id === 'string' &&
+    typeof value.source_kind === 'string' &&
+    typeof value.source_url_host === 'string' &&
+    typeof value.source_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_url_fingerprint) &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    typeof value.modepack_name === 'string' &&
+    typeof value.schema_version === 'number' &&
+    Number.isInteger(value.schema_version) &&
+    typeof value.mode_count === 'number' &&
+    Number.isInteger(value.mode_count) &&
+    Array.isArray(value.mode_ids) &&
+    value.mode_ids.every((modeId) => typeof modeId === 'string') &&
+    typeof value.compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.signer_fingerprint) &&
+    typeof value.statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.statement_sha256) &&
+    typeof value.signature_sha256 === 'string' &&
+    isSha256Fingerprint(value.signature_sha256) &&
+    typeof value.verified_at === 'string' &&
+    typeof value.provenance_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }

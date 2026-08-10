@@ -1,5 +1,6 @@
 //! Brownie runtime entry points.
 
+use base64::{engine::general_purpose, Engine as _};
 use brownie_agent_loop::{AgentLoop, AgentLoopState};
 use brownie_agentmodes::{
     BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
@@ -40,14 +41,15 @@ use brownie_protocol::{
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
-    ModePackApprovedCandidateSummary, ModePackCandidateSummary, ModePackFetchCandidateParams,
-    ModePackFetchCandidateResult, ModePackReplaceActiveParams, ModePackReplaceActiveResult,
-    ModePackRollbackActiveParams, ModePackRollbackActiveResult, ModePermissionsSummary,
-    ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
-    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
-    PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
+    ModePackFetchCandidateParams, ModePackFetchCandidateResult, ModePackReplaceActiveParams,
+    ModePackReplaceActiveResult, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
+    ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
+    ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
+    PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
+    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -228,9 +230,9 @@ use brownie_store::{
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
-    ModePackCandidateSnapshot, ParentJoinContinuationRunAdmission,
-    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
-    VerificationRecoveryTaskStartParams,
+    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot,
+    ParentJoinContinuationRunAdmission, PatchApplyRecoveryTaskStartParams,
+    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -242,6 +244,7 @@ use brownie_tools::{
     SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
     VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -291,6 +294,7 @@ const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
 const METHOD_MODEPACK_APPROVE_CANDIDATE: &str = "modepack.approveCandidate";
+const METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE: &str = "modepack.verifyCandidateProvenance";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
 const METHOD_PERMISSION_CHECK: &str = "permission.check";
@@ -308,6 +312,7 @@ const CODEBASE_INDEX_SELECTION_READ_NEXT_ACTION: &str =
     "use_selected_file_context_for_prompt_materialization";
 const CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION: &str =
     "continue_task_execution_with_materialized_context";
+const MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES: usize = 16 * 1024;
 const CODEBASE_INDEX_QUERY_DEFAULT_MAX_RESULTS: usize = 10;
 const CODEBASE_INDEX_QUERY_MAX_RESULTS: usize = 50;
 const CODEBASE_INDEX_QUERY_MAX_CHARS: usize = 256;
@@ -464,6 +469,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         }
         METHOD_MODEPACK_APPROVE_CANDIDATE => {
             handle_modepack_approve_candidate(request.id, request.params)
+        }
+        METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE => {
+            handle_modepack_verify_candidate_provenance(request.id, request.params)
         }
         METHOD_MODEPACK_REPLACE_ACTIVE => {
             handle_modepack_replace_active(request.id, request.params)
@@ -14275,6 +14283,53 @@ fn handle_modepack_approve_candidate(id: Value, params: Option<Value>) -> JsonRp
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match approve_remote_modepack_candidate(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_verify_candidate_provenance(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ModePackVerifyCandidateProvenanceParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_provenance_verification {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: Mode Pack provenance verification authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_content_sha256) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_content_sha256 must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_compiled_policy_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_compiled_policy_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_signer_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_signer_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match verify_modepack_candidate_provenance(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28905,6 +28960,278 @@ fn approve_remote_modepack_candidate(
         approval: committed.approval.summary,
         next_action: "replace_active_with_approved_modepack_candidate".to_string(),
     })
+}
+
+fn verify_modepack_candidate_provenance(
+    store: &BrownieStore,
+    params: &ModePackVerifyCandidateProvenanceParams,
+) -> Result<ModePackVerifyCandidateProvenanceResult, String> {
+    if params.provenance_statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
+        return Err(
+            "modepack candidate provenance verification failed: statement exceeds byte limit"
+                .to_string(),
+        );
+    }
+    if scan_text_for_sensitive_content(&params.provenance_statement_json) {
+        return Err(
+            "modepack candidate provenance verification failed: statement contains sensitive-like content"
+                .to_string(),
+        );
+    }
+    let public_key_bytes = general_purpose::STANDARD
+        .decode(&params.provenance_public_key_base64)
+        .map_err(|_| {
+            "modepack candidate provenance verification failed: public key is not base64"
+                .to_string()
+        })?;
+    if public_key_bytes.len() != 32 {
+        return Err(
+            "modepack candidate provenance verification failed: public key must be 32 bytes"
+                .to_string(),
+        );
+    }
+    let signature_bytes = general_purpose::STANDARD
+        .decode(&params.provenance_signature_base64)
+        .map_err(|_| {
+            "modepack candidate provenance verification failed: signature is not base64".to_string()
+        })?;
+    if signature_bytes.len() != 64 {
+        return Err(
+            "modepack candidate provenance verification failed: signature must be 64 bytes"
+                .to_string(),
+        );
+    }
+    let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+    if signer_fingerprint != params.expected_signer_fingerprint {
+        return Err(format!(
+            "modepack candidate provenance verification failed: signer fingerprint mismatch: expected {} but found {}",
+            params.expected_signer_fingerprint, signer_fingerprint
+        ));
+    }
+    let verifying_key =
+        VerifyingKey::from_bytes(public_key_bytes.as_slice().try_into().map_err(|_| {
+            "modepack candidate provenance verification failed: public key length invalid"
+                .to_string()
+        })?)
+        .map_err(|_| {
+            "modepack candidate provenance verification failed: public key invalid".to_string()
+        })?;
+    let signature = Signature::from_slice(&signature_bytes).map_err(|_| {
+        "modepack candidate provenance verification failed: signature invalid".to_string()
+    })?;
+    verifying_key
+        .verify(params.provenance_statement_json.as_bytes(), &signature)
+        .map_err(|_| {
+            "modepack candidate provenance verification failed: bad signature".to_string()
+        })?;
+    let statement: Value =
+        serde_json::from_str(&params.provenance_statement_json).map_err(|_| {
+            "modepack candidate provenance verification failed: statement is not JSON".to_string()
+        })?;
+    let cached = store
+        .read_modepack_candidate_snapshot(&params.expected_content_sha256)
+        .map_err(|error| format!("modepack candidate provenance verification failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack candidate provenance verification failed: cached candidate not found"
+                .to_string()
+        })?;
+    let actual_content_sha256 = format!("sha256:{}", hex_sha256(cached.modepack_json.as_bytes()));
+    if actual_content_sha256 != params.expected_content_sha256 {
+        return Err(format!(
+            "modepack candidate provenance verification failed: cached content fingerprint mismatch: expected {} but found {}",
+            params.expected_content_sha256, actual_content_sha256
+        ));
+    }
+    if cached.summary.content_sha256 != params.expected_content_sha256 {
+        return Err(format!(
+            "modepack candidate provenance verification failed: cached summary fingerprint mismatch: expected {} but found {}",
+            params.expected_content_sha256, cached.summary.content_sha256
+        ));
+    }
+    let recompiled =
+        load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
+            .map_err(|error| {
+                format!("modepack candidate provenance verification compile failed: {error}")
+            })?;
+    for policy in &recompiled.modes {
+        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
+            return Err(format!(
+                "modepack candidate provenance verification failed: candidate duplicates existing mode_id: {}",
+                policy.mode_id
+            ));
+        }
+    }
+    let policy_snapshots = recompiled
+        .modes
+        .iter()
+        .map(|policy| ActiveModePackPolicySnapshot {
+            mode_id: policy.mode_id.clone(),
+            display_name: policy.display_name.clone(),
+            role_definition: policy.role_definition.clone(),
+            permissions: mode_permissions_payload(policy),
+            allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            completion_rules: policy.completion_rules.clone(),
+            policy_fingerprint: external_modepack_policy_fingerprint(
+                &recompiled.name,
+                recompiled.schema_version,
+                policy,
+            ),
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policy_snapshots
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+        &recompiled.name,
+        recompiled.schema_version,
+        &policy_snapshots,
+    );
+    if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
+        return Err(format!(
+            "modepack candidate provenance verification failed: compiled policy fingerprint mismatch: expected {} but found {}",
+            params.expected_compiled_policy_fingerprint, compiled_policy_fingerprint
+        ));
+    }
+    if cached.summary.compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
+        return Err(format!(
+            "modepack candidate provenance verification failed: cached summary policy fingerprint mismatch: expected {} but found {}",
+            params.expected_compiled_policy_fingerprint, cached.summary.compiled_policy_fingerprint
+        ));
+    }
+    if cached.summary.mode_ids != mode_ids {
+        return Err(
+            "modepack candidate provenance verification failed: cached mode ids are stale"
+                .to_string(),
+        );
+    }
+    validate_modepack_provenance_statement(
+        &statement,
+        &cached.summary,
+        &mode_ids,
+        recompiled.schema_version,
+        &params.expected_content_sha256,
+        &params.expected_compiled_policy_fingerprint,
+        &signer_fingerprint,
+    )?;
+
+    let provenance_summary = ModePackCandidateProvenanceSummary {
+        provenance_id: format!(
+            "modepack_candidate_provenance_{}",
+            &actual_content_sha256[7..23]
+        ),
+        candidate_id: cached.summary.candidate_id,
+        source_kind: cached.summary.source_kind,
+        source_url_host: cached.summary.source_url_host,
+        source_url_fingerprint: cached.summary.source_url_fingerprint,
+        content_sha256: params.expected_content_sha256.clone(),
+        modepack_name: recompiled.name,
+        schema_version: recompiled.schema_version,
+        mode_count: mode_ids.len(),
+        mode_ids,
+        compiled_policy_fingerprint,
+        signer_fingerprint,
+        statement_sha256: format!(
+            "sha256:{}",
+            hex_sha256(params.provenance_statement_json.as_bytes())
+        ),
+        signature_sha256: format!("sha256:{}", hex_sha256(&signature_bytes)),
+        verified_at: codebase_index_timestamp().map_err(|error| error.to_string())?,
+        provenance_event_id: String::new(),
+    };
+    let committed = store
+        .verify_modepack_candidate_provenance_snapshot(&ModePackCandidateProvenanceSnapshot {
+            summary: provenance_summary,
+        })
+        .map_err(|error| format!("modepack candidate provenance verification failed: {error}"))?;
+    Ok(ModePackVerifyCandidateProvenanceResult {
+        verified: !committed.replayed,
+        replayed: committed.replayed,
+        provenance: committed.provenance.summary,
+        next_action: "approve_verified_modepack_candidate".to_string(),
+    })
+}
+
+fn validate_modepack_provenance_statement(
+    statement: &Value,
+    cached_summary: &ModePackCandidateSummary,
+    mode_ids: &[String],
+    schema_version: u64,
+    expected_content_sha256: &str,
+    expected_compiled_policy_fingerprint: &str,
+    signer_fingerprint: &str,
+) -> Result<(), String> {
+    if statement.get("content_sha256").and_then(Value::as_str) != Some(expected_content_sha256) {
+        return Err(
+            "modepack candidate provenance verification failed: statement content fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if statement
+        .get("compiled_policy_fingerprint")
+        .and_then(Value::as_str)
+        != Some(expected_compiled_policy_fingerprint)
+    {
+        return Err(
+            "modepack candidate provenance verification failed: statement policy fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if statement
+        .get("source_url_fingerprint")
+        .and_then(Value::as_str)
+        != Some(cached_summary.source_url_fingerprint.as_str())
+    {
+        return Err(
+            "modepack candidate provenance verification failed: statement source fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if statement.get("schema_version").and_then(Value::as_u64) != Some(schema_version) {
+        return Err(
+            "modepack candidate provenance verification failed: statement schema version mismatch"
+                .to_string(),
+        );
+    }
+    if statement.get("signer_fingerprint").and_then(Value::as_str) != Some(signer_fingerprint) {
+        return Err(
+            "modepack candidate provenance verification failed: statement signer fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if !statement
+        .get("signer_identity")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Err(
+            "modepack candidate provenance verification failed: statement signer identity missing"
+                .to_string(),
+        );
+    }
+    let statement_mode_ids = statement
+        .get("mode_ids")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            "modepack candidate provenance verification failed: statement mode_ids missing"
+                .to_string()
+        })?
+        .iter()
+        .map(|value| {
+            value.as_str().map(ToString::to_string).ok_or_else(|| {
+                "modepack candidate provenance verification failed: statement mode_ids invalid"
+                    .to_string()
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    if statement_mode_ids != mode_ids {
+        return Err(
+            "modepack candidate provenance verification failed: statement mode ids mismatch"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn validate_modepack_fetch_url(value: &str, resolve_addresses: bool) -> Result<url::Url, String> {
@@ -63021,6 +63348,245 @@ mod tests {
             .path()
             .join(".brownie/modepack-active/current.json")
             .exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_verify_candidate_provenance_records_signed_state_and_replays() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-provenance-reviewer",
+              "display_name": "Remote Provenance Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let fetched = fetch_remote_modepack_candidate_with(
+            &store,
+            &ModePackFetchCandidateParams {
+                authorize_fetch: true,
+                url: "https://example.com/modepack.json".to_string(),
+                expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+            },
+            |_| {
+                Ok(RemoteModePackFetchResponse {
+                    status: 200,
+                    content_type: Some("application/json".to_string()),
+                    body: body.as_bytes().to_vec(),
+                })
+            },
+        )
+        .expect("candidate fetch");
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let statement = serde_json::json!({
+            "content_sha256": fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let signature = signing_key.sign(statement.as_bytes());
+        let request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            signer_fingerprint,
+            serde_json::to_string(&statement).expect("statement string"),
+            general_purpose::STANDARD.encode(signature.to_bytes()),
+            general_purpose::STANDARD.encode(public_key_bytes),
+        );
+
+        let verified = parse_line(&request);
+        assert!(verified.error.is_none());
+        let verified_result = verified.result.expect("verified result");
+        assert!(verified_result["verified"].as_bool().unwrap());
+        assert!(!verified_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            verified_result["provenance"]["content_sha256"],
+            fetched.candidate.content_sha256
+        );
+        assert_eq!(
+            verified_result["provenance"]["signer_fingerprint"],
+            signer_fingerprint
+        );
+        assert_eq!(
+            verified_result["next_action"],
+            "approve_verified_modepack_candidate"
+        );
+
+        let replay = parse_line(&request);
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert!(!replay_result["verified"].as_bool().unwrap());
+        assert!(replay_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            replay_result["provenance"]["provenance_event_id"],
+            verified_result["provenance"]["provenance_event_id"]
+        );
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/modepack-candidates/ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateProvenanceVerified"))
+                .count(),
+            1
+        );
+        assert!(!ledger.contains("Review local changes without writing files."));
+        assert!(!ledger.contains("provenance_statement_json"));
+        assert!(!ledger.contains("provenance_signature_base64"));
+        assert!(!ledger.contains("provenance_public_key_base64"));
+        assert!(!temp
+            .path()
+            .join(".brownie/modepack-active/current.json")
+            .exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_verify_candidate_provenance_rejects_bad_signature_and_statement_mismatch() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-provenance-denial-reviewer",
+              "display_name": "Remote Provenance Denial Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let fetched = fetch_remote_modepack_candidate_with(
+            &store,
+            &ModePackFetchCandidateParams {
+                authorize_fetch: true,
+                url: "https://example.com/modepack.json".to_string(),
+                expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+            },
+            |_| {
+                Ok(RemoteModePackFetchResponse {
+                    status: 200,
+                    content_type: Some("application/json".to_string()),
+                    body: body.as_bytes().to_vec(),
+                })
+            },
+        )
+        .expect("candidate fetch");
+        let signing_key = SigningKey::from_bytes(&[8u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let statement = serde_json::json!({
+            "content_sha256": fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let signature = signing_key.sign(statement.as_bytes());
+        let bad_request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            signer_fingerprint,
+            serde_json::to_string(&statement.replace("content_sha256", "content_sha256"))
+                .expect("statement string"),
+            general_purpose::STANDARD.encode(signature.to_bytes()),
+            general_purpose::STANDARD.encode(public_key_bytes),
+        );
+        let mut value: Value = serde_json::from_str(&bad_request).expect("request json");
+        value["params"]["provenance_statement_json"] = Value::String(statement.replace(
+            &fetched.candidate.content_sha256,
+            "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+        ));
+        let bad_signature = parse_line(&value.to_string());
+        assert!(bad_signature.result.is_none());
+        assert_eq!(bad_signature.error.expect("bad signature").code, -32603);
+
+        let statement_mismatch = serde_json::json!({
+            "content_sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let mismatch_signature = signing_key.sign(statement_mismatch.as_bytes());
+        let mismatch_request = format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.verifyCandidateProvenance","params":{{"authorize_provenance_verification":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_signer_fingerprint":"{}","provenance_statement_json":{},"provenance_signature_base64":"{}","provenance_public_key_base64":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            signer_fingerprint,
+            serde_json::to_string(&statement_mismatch).expect("statement mismatch string"),
+            general_purpose::STANDARD.encode(mismatch_signature.to_bytes()),
+            general_purpose::STANDARD.encode(public_key_bytes),
+        );
+        let mismatch = parse_line(&mismatch_request);
+        assert!(mismatch.result.is_none());
+        assert_eq!(mismatch.error.expect("statement mismatch").code, -32603);
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/modepack-candidates/ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateProvenanceVerified"))
+                .count(),
+            0
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

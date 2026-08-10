@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -556,6 +556,39 @@ describe('protocol validation', () => {
     expect(isModePackApproveCandidateResult({ ...result, approval: { ...approval, modepack_json: '{}' } })).toBe(false);
     expect(isModePackApproveCandidateResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackApproveCandidateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+  });
+
+  it('accepts bounded modepack.verifyCandidateProvenance results and rejects raw fields', () => {
+    const provenance = {
+      provenance_id: 'modepack_candidate_provenance_123',
+      candidate_id: 'modepack_candidate_123',
+      source_kind: 'remote_https',
+      source_url_host: 'example.com',
+      source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+      content_sha256: `sha256:${'b'.repeat(64)}`,
+      modepack_name: 'remote-agentmodes',
+      schema_version: 1,
+      mode_count: 1,
+      mode_ids: ['remote-reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+      signer_fingerprint: `sha256:${'d'.repeat(64)}`,
+      statement_sha256: `sha256:${'e'.repeat(64)}`,
+      signature_sha256: `sha256:${'f'.repeat(64)}`,
+      verified_at: '2026-08-10T00:00:00Z',
+      provenance_event_id: 'event_3',
+    };
+    const result = {
+      verified: true,
+      replayed: false,
+      provenance,
+      next_action: 'approve_verified_modepack_candidate',
+    };
+
+    expect(isModePackVerifyCandidateProvenanceResult(result)).toBe(true);
+    expect(isModePackVerifyCandidateProvenanceResult({ ...result, provenance: { ...provenance, signer_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackVerifyCandidateProvenanceResult({ ...result, raw_provenance_statement_json: '{}' })).toBe(false);
+    expect(isModePackVerifyCandidateProvenanceResult({ ...result, provenance_signature_base64: 'raw' })).toBe(false);
+    expect(isModePackVerifyCandidateProvenanceResult({ ...result, raw_ledger_payload: {} })).toBe(false);
   });
 
   it('accepts bounded modepack.rollbackActive results and rejects raw fields', () => {
@@ -2373,6 +2406,58 @@ describe('RuntimeClient', () => {
         authorize_trust: true,
         expected_content_sha256: result.approval.content_sha256,
         expected_compiled_policy_fingerprint: result.approval.compiled_policy_fingerprint,
+      },
+    }]);
+  });
+
+  it('creates a modepack.verifyCandidateProvenance request', async () => {
+    const result = {
+      verified: true,
+      replayed: false,
+      provenance: {
+        provenance_id: 'modepack_candidate_provenance_123',
+        candidate_id: 'modepack_candidate_123',
+        source_kind: 'remote_https',
+        source_url_host: 'example.com',
+        source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+        content_sha256: `sha256:${'b'.repeat(64)}`,
+        modepack_name: 'remote-agentmodes',
+        schema_version: 1,
+        mode_count: 1,
+        mode_ids: ['remote-reviewer-lite'],
+        compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
+        signer_fingerprint: `sha256:${'d'.repeat(64)}`,
+        statement_sha256: `sha256:${'e'.repeat(64)}`,
+        signature_sha256: `sha256:${'f'.repeat(64)}`,
+        verified_at: '2026-08-10T00:00:00Z',
+        provenance_event_id: 'event_3',
+      },
+      next_action: 'approve_verified_modepack_candidate',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.verifyModePackCandidateProvenance({
+      authorizeProvenanceVerification: true,
+      expectedContentSha256: result.provenance.content_sha256,
+      expectedCompiledPolicyFingerprint: result.provenance.compiled_policy_fingerprint,
+      expectedSignerFingerprint: result.provenance.signer_fingerprint,
+      provenanceStatementJson: '{"content_sha256":"x"}',
+      provenanceSignatureBase64: 'signature',
+      provenancePublicKeyBase64: 'public-key',
+    })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.verifyCandidateProvenance',
+      params: {
+        authorize_provenance_verification: true,
+        expected_content_sha256: result.provenance.content_sha256,
+        expected_compiled_policy_fingerprint: result.provenance.compiled_policy_fingerprint,
+        expected_signer_fingerprint: result.provenance.signer_fingerprint,
+        provenance_statement_json: '{"content_sha256":"x"}',
+        provenance_signature_base64: 'signature',
+        provenance_public_key_base64: 'public-key',
       },
     }]);
   });
