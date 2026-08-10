@@ -227,6 +227,8 @@ export interface ModePackApprovedCandidateSummary {
   compiled_policy_fingerprint: string;
   provenance_id: string;
   provenance_event_id: string;
+  trusted_signer_trust_id: string;
+  trusted_signer_event_id: string;
   signer_fingerprint: string;
   statement_sha256: string;
   approved_at: string;
@@ -234,10 +236,24 @@ export interface ModePackApprovedCandidateSummary {
   consumed: boolean;
 }
 
+export interface ModePackTrustedSignerSummary {
+  trust_id: string;
+  signer_fingerprint: string;
+  trusted_at: string;
+  trust_event_id: string;
+}
+
 export interface ModePackApproveCandidateResult {
   approved: boolean;
   replayed: boolean;
   approval: ModePackApprovedCandidateSummary;
+  next_action: string;
+}
+
+export interface ModePackTrustSignerResult {
+  trusted: boolean;
+  replayed: boolean;
+  trusted_signer: ModePackTrustedSignerSummary;
   next_action: string;
 }
 
@@ -3116,6 +3132,21 @@ export function isModePackApproveCandidateResult(value: unknown): value is ModeP
   );
 }
 
+export function isModePackTrustSignerResult(value: unknown): value is ModePackTrustSignerResult {
+  return (
+    isRecord(value) &&
+    typeof value.trusted === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackTrustedSignerSummary(value.trusted_signer) &&
+    typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64')
+  );
+}
+
 export function isModePackVerifyCandidateProvenanceResult(value: unknown): value is ModePackVerifyCandidateProvenanceResult {
   return (
     isRecord(value) &&
@@ -3153,6 +3184,8 @@ function isModePackApprovedCandidateSummary(value: unknown): value is ModePackAp
     isSha256Fingerprint(value.compiled_policy_fingerprint) &&
     typeof value.provenance_id === 'string' &&
     typeof value.provenance_event_id === 'string' &&
+    typeof value.trusted_signer_trust_id === 'string' &&
+    typeof value.trusted_signer_event_id === 'string' &&
     typeof value.signer_fingerprint === 'string' &&
     isSha256Fingerprint(value.signer_fingerprint) &&
     typeof value.statement_sha256 === 'string' &&
@@ -3163,6 +3196,22 @@ function isModePackApprovedCandidateSummary(value: unknown): value is ModePackAp
     !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackTrustedSignerSummary(value: unknown): value is ModePackTrustedSignerSummary {
+  return (
+    isRecord(value) &&
+    typeof value.trust_id === 'string' &&
+    typeof value.signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.signer_fingerprint) &&
+    typeof value.trusted_at === 'string' &&
+    typeof value.trust_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64')
   );
 }
 
