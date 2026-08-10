@@ -610,9 +610,13 @@ impl BrownieStore {
         {
             if existing.summary.compiled_policy_fingerprint
                 != approval.summary.compiled_policy_fingerprint
+                || existing.summary.provenance_id != approval.summary.provenance_id
+                || existing.summary.provenance_event_id != approval.summary.provenance_event_id
+                || existing.summary.signer_fingerprint != approval.summary.signer_fingerprint
+                || existing.summary.statement_sha256 != approval.summary.statement_sha256
             {
                 bail!(
-                    "conflicting approved Mode Pack candidate policy fingerprint for {}",
+                    "conflicting approved Mode Pack candidate provenance for {}",
                     approval.summary.content_sha256
                 );
             }

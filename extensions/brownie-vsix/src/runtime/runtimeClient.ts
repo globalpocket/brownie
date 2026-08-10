@@ -150,11 +150,23 @@ export class RuntimeClient {
     return result;
   }
 
-  async approveModePackCandidate(authorizeTrust: boolean, expectedContentSha256: string, expectedCompiledPolicyFingerprint: string): Promise<ModePackApproveCandidateResult> {
+  async approveModePackCandidate(
+    authorizeTrust: boolean,
+    expectedContentSha256: string,
+    expectedCompiledPolicyFingerprint: string,
+    expectedProvenanceId: string,
+    expectedProvenanceEventId: string,
+    expectedSignerFingerprint: string,
+    expectedStatementSha256: string,
+  ): Promise<ModePackApproveCandidateResult> {
     const result = await this.call<ModePackApproveCandidateResult>('modepack.approveCandidate', {
       authorize_trust: authorizeTrust,
       expected_content_sha256: expectedContentSha256,
       expected_compiled_policy_fingerprint: expectedCompiledPolicyFingerprint,
+      expected_provenance_id: expectedProvenanceId,
+      expected_provenance_event_id: expectedProvenanceEventId,
+      expected_signer_fingerprint: expectedSignerFingerprint,
+      expected_statement_sha256: expectedStatementSha256,
     });
 
     if (!isModePackApproveCandidateResult(result)) {

@@ -14278,6 +14278,34 @@ fn handle_modepack_approve_candidate(id: Value, params: Option<Value>) -> JsonRp
             "invalid params: expected_compiled_policy_fingerprint must be a sha256 fingerprint",
         );
     }
+    if params.expected_provenance_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_provenance_id is required",
+        );
+    }
+    if params.expected_provenance_event_id.trim().is_empty() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_provenance_event_id is required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_signer_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_signer_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_statement_sha256) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_statement_sha256 must be a sha256 fingerprint",
+        );
+    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -28928,6 +28956,50 @@ fn approve_remote_modepack_candidate(
     if cached.summary.mode_ids != mode_ids {
         return Err("modepack candidate approval failed: cached mode ids are stale".to_string());
     }
+    let provenance = store
+        .read_modepack_candidate_provenance_snapshot(&params.expected_content_sha256)
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack candidate approval failed: verified provenance not found".to_string()
+        })?;
+    let provenance_summary = provenance.summary;
+    if provenance_summary.provenance_id != params.expected_provenance_id {
+        return Err(format!(
+            "modepack candidate approval failed: provenance id mismatch: expected {} but found {}",
+            params.expected_provenance_id, provenance_summary.provenance_id
+        ));
+    }
+    if provenance_summary.provenance_event_id != params.expected_provenance_event_id {
+        return Err(format!(
+            "modepack candidate approval failed: provenance event mismatch: expected {} but found {}",
+            params.expected_provenance_event_id, provenance_summary.provenance_event_id
+        ));
+    }
+    if provenance_summary.signer_fingerprint != params.expected_signer_fingerprint {
+        return Err(format!(
+            "modepack candidate approval failed: signer fingerprint mismatch: expected {} but found {}",
+            params.expected_signer_fingerprint, provenance_summary.signer_fingerprint
+        ));
+    }
+    if provenance_summary.statement_sha256 != params.expected_statement_sha256 {
+        return Err(format!(
+            "modepack candidate approval failed: statement fingerprint mismatch: expected {} but found {}",
+            params.expected_statement_sha256, provenance_summary.statement_sha256
+        ));
+    }
+    if provenance_summary.candidate_id != cached.summary.candidate_id
+        || provenance_summary.source_kind != cached.summary.source_kind
+        || provenance_summary.source_url_host != cached.summary.source_url_host
+        || provenance_summary.source_url_fingerprint != cached.summary.source_url_fingerprint
+        || provenance_summary.content_sha256 != params.expected_content_sha256
+        || provenance_summary.modepack_name != recompiled.name
+        || provenance_summary.schema_version != recompiled.schema_version
+        || provenance_summary.mode_count != mode_ids.len()
+        || provenance_summary.mode_ids != mode_ids
+        || provenance_summary.compiled_policy_fingerprint != compiled_policy_fingerprint
+    {
+        return Err("modepack candidate approval failed: verified provenance is stale".to_string());
+    }
 
     let approved_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let approval_summary = ModePackApprovedCandidateSummary {
@@ -28945,6 +29017,10 @@ fn approve_remote_modepack_candidate(
         mode_count: mode_ids.len(),
         mode_ids,
         compiled_policy_fingerprint,
+        provenance_id: provenance_summary.provenance_id,
+        provenance_event_id: provenance_summary.provenance_event_id,
+        signer_fingerprint: provenance_summary.signer_fingerprint,
+        statement_sha256: provenance_summary.statement_sha256,
         approved_at,
         approval_event_id: String::new(),
         consumed: false,
@@ -63243,6 +63319,9 @@ mod tests {
 
     #[test]
     fn modepack_approve_candidate_records_trust_state_and_replays() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -63281,9 +63360,58 @@ mod tests {
             })
         })
         .expect("candidate fetch");
+        let signing_key = SigningKey::from_bytes(&[9u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let statement = serde_json::json!({
+            "content_sha256": fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let signature = signing_key.sign(statement.as_bytes());
+        let provenance = verify_modepack_candidate_provenance(
+            &store,
+            &ModePackVerifyCandidateProvenanceParams {
+                authorize_provenance_verification: true,
+                expected_content_sha256: fetched.candidate.content_sha256.clone(),
+                expected_compiled_policy_fingerprint: fetched
+                    .candidate
+                    .compiled_policy_fingerprint
+                    .clone(),
+                expected_signer_fingerprint: signer_fingerprint.clone(),
+                provenance_statement_json: statement,
+                provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
+                provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
+            },
+        )
+        .expect("candidate provenance");
+        let bad_signer = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":20,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"sha256:{}","expected_statement_sha256":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            provenance.provenance.provenance_id,
+            provenance.provenance.provenance_event_id,
+            "4".repeat(64),
+            provenance.provenance.statement_sha256
+        ));
+        assert!(bad_signer
+            .error
+            .expect("signer mismatch")
+            .message
+            .contains("signer fingerprint mismatch"));
         let request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
-            fetched.candidate.content_sha256, fetched.candidate.compiled_policy_fingerprint
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            provenance.provenance.provenance_id,
+            provenance.provenance.provenance_event_id,
+            provenance.provenance.signer_fingerprint,
+            provenance.provenance.statement_sha256
         );
 
         let approved = parse_line(&request);
@@ -63300,6 +63428,14 @@ mod tests {
             fetched.candidate.compiled_policy_fingerprint
         );
         assert_eq!(approved_result["approval"]["consumed"], false);
+        assert_eq!(
+            approved_result["approval"]["provenance_event_id"],
+            provenance.provenance.provenance_event_id
+        );
+        assert_eq!(
+            approved_result["approval"]["signer_fingerprint"],
+            signer_fingerprint
+        );
         assert_eq!(
             approved_result["next_action"],
             "replace_active_with_approved_modepack_candidate"
@@ -63634,9 +63770,20 @@ mod tests {
             },
         )
         .expect("candidate fetch");
+        let expected_provenance_id = "modepack_candidate_provenance_denial";
+        let expected_provenance_event_id = "event_denial";
+        let expected_signer_fingerprint =
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+        let expected_statement_sha256 =
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333";
         let denied = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":false,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
-            fetched.candidate.content_sha256, fetched.candidate.compiled_policy_fingerprint
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.approveCandidate","params":{{"authorize_trust":false,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            expected_provenance_id,
+            expected_provenance_event_id,
+            expected_signer_fingerprint,
+            expected_statement_sha256
         ));
         assert!(denied
             .error
@@ -63645,9 +63792,13 @@ mod tests {
             .contains("trust authorization required"));
 
         let unknown = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"sha256:{}","expected_compiled_policy_fingerprint":"{}"}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":3,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"sha256:{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
             "0".repeat(64),
-            fetched.candidate.compiled_policy_fingerprint
+            fetched.candidate.compiled_policy_fingerprint,
+            expected_provenance_id,
+            expected_provenance_event_id,
+            expected_signer_fingerprint,
+            expected_statement_sha256
         ));
         assert!(unknown
             .error
@@ -63655,10 +63806,29 @@ mod tests {
             .message
             .contains("cached candidate not found"));
 
-        let mismatch = parse_line(&format!(
-            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"sha256:{}"}}}}"#,
+        let missing_provenance = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
             fetched.candidate.content_sha256,
-            "1".repeat(64)
+            fetched.candidate.compiled_policy_fingerprint,
+            expected_provenance_id,
+            expected_provenance_event_id,
+            expected_signer_fingerprint,
+            expected_statement_sha256
+        ));
+        assert!(missing_provenance
+            .error
+            .expect("missing provenance error")
+            .message
+            .contains("verified provenance not found"));
+
+        let mismatch = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"sha256:{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            "1".repeat(64),
+            expected_provenance_id,
+            expected_provenance_event_id,
+            expected_signer_fingerprint,
+            expected_statement_sha256
         ));
         assert!(mismatch
             .error
@@ -63675,6 +63845,9 @@ mod tests {
 
     #[test]
     fn modepack_replace_active_consumes_approved_remote_candidate_and_replays() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
         let temp = tempfile::tempdir().expect("tempdir");
@@ -63725,6 +63898,36 @@ mod tests {
             },
         )
         .expect("candidate fetch");
+        let signing_key = SigningKey::from_bytes(&[10u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let statement = serde_json::json!({
+            "content_sha256": fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let signature = signing_key.sign(statement.as_bytes());
+        let provenance = verify_modepack_candidate_provenance(
+            &store,
+            &ModePackVerifyCandidateProvenanceParams {
+                authorize_provenance_verification: true,
+                expected_content_sha256: fetched.candidate.content_sha256.clone(),
+                expected_compiled_policy_fingerprint: fetched
+                    .candidate
+                    .compiled_policy_fingerprint
+                    .clone(),
+                expected_signer_fingerprint: signer_fingerprint,
+                provenance_statement_json: statement,
+                provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
+                provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
+            },
+        )
+        .expect("candidate provenance");
         let approved = approve_remote_modepack_candidate(
             &store,
             &ModePackApproveCandidateParams {
@@ -63734,6 +63937,10 @@ mod tests {
                     .candidate
                     .compiled_policy_fingerprint
                     .clone(),
+                expected_provenance_id: provenance.provenance.provenance_id.clone(),
+                expected_provenance_event_id: provenance.provenance.provenance_event_id.clone(),
+                expected_signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
+                expected_statement_sha256: provenance.provenance.statement_sha256.clone(),
             },
         )
         .expect("candidate approval");
