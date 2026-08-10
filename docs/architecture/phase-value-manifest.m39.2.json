@@ -140,8 +140,7 @@
       "docs/architecture/phase-value-manifest.m39.2.json",
       "extensions/brownie-vsix/src/runtime/protocol.ts",
       "extensions/brownie-vsix/src/runtime/runtimeClient.ts",
-      "extensions/brownie-vsix/src/test/runtimeClient.test.ts",
-      "docs/architecture/phase-value-manifest.m39.1.json"
+      "extensions/brownie-vsix/src/test/runtimeClient.test.ts"
     ],
     "required_checks": [
       "pnpm guard:diagnostics",
