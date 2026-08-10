@@ -3,12 +3,12 @@ import type { ProposalApplyResult, ProposalPatchHunk } from './protocol';
 import type { CodebaseIndexSelectionReadResult, TaskRunParams } from './protocol';
 import type { HeadlessContinueOnceParams, HeadlessContinueOnceResult } from './protocol';
 import type { HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunDriveParams, HeadlessRunDriveResult } from './protocol';
-import type { ModePackActivateResult, ModePackApproveCandidateResult, ModePackFetchCandidateResult, ModePackReplaceActiveResult, ModePackRollbackActiveResult } from './protocol';
+import type { ModePackActivateResult, ModePackApproveCandidateResult, ModePackFetchCandidateResult, ModePackReplaceActiveResult, ModePackRollbackActiveResult, ModePackVerifyCandidateProvenanceResult } from './protocol';
 import { isProposalApplyResult } from './protocol';
 import type { TaskListResult } from './protocol';
 import { isHeadlessContinueOnceResult, isTaskListResult } from './protocol';
 import { isHeadlessRunAdvanceResult, isHeadlessRunDriveResult } from './protocol';
-import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult } from './protocol';
+import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult, isModePackVerifyCandidateProvenanceResult } from './protocol';
 import type { JsonRpcRequest, LlmHealthResult, LlmStatusResult, RuntimeConfigGetResult, RuntimeDiagnosticsResult, ModeSummary, PermissionCheckResult, RuntimeActionName, RuntimeStatusResult, RunEventsResult, RunInspectResult, RunInspectSummary, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunResult, ProposalApproveResult, ProposalAuditTrailResult, ProposalPreflightResult, ProposalReadinessResult, ProposalInspectResult, ProposalListResult, ProposalRejectResult, ProposalReviewBundleResult, ProposalReviewQueueDiagnosticsDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, ProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, ProposalReviewQueueDiagnosticsDigestReportVerdictResult, ProposalReviewQueueDiagnosticsDigestResult, ProposalReviewQueueDiagnosticsHistoryResult, ProposalReviewQueueDiagnosticsReportResult, ProposalReviewQueueDiagnosticsResult, ProposalReviewQueueResult, ProposalReviewReportResult, ProposalReviewVerdictResult, TaskInspectResult, TaskRecord, TaskRunResult, ToolExecuteResult, ToolIntentParseResult, ToolPlanResult, TaskStartParams, TaskStartResult } from './protocol';
 import type { ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from './protocol';
 import type { ProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from './protocol';
@@ -159,6 +159,32 @@ export class RuntimeClient {
 
     if (!isModePackApproveCandidateResult(result)) {
       throw new RuntimeProtocolError('modepack.approveCandidate returned an invalid result');
+    }
+
+    return result;
+  }
+
+  async verifyModePackCandidateProvenance(params: {
+    authorizeProvenanceVerification: boolean;
+    expectedContentSha256: string;
+    expectedCompiledPolicyFingerprint: string;
+    expectedSignerFingerprint: string;
+    provenanceStatementJson: string;
+    provenanceSignatureBase64: string;
+    provenancePublicKeyBase64: string;
+  }): Promise<ModePackVerifyCandidateProvenanceResult> {
+    const result = await this.call<ModePackVerifyCandidateProvenanceResult>('modepack.verifyCandidateProvenance', {
+      authorize_provenance_verification: params.authorizeProvenanceVerification,
+      expected_content_sha256: params.expectedContentSha256,
+      expected_compiled_policy_fingerprint: params.expectedCompiledPolicyFingerprint,
+      expected_signer_fingerprint: params.expectedSignerFingerprint,
+      provenance_statement_json: params.provenanceStatementJson,
+      provenance_signature_base64: params.provenanceSignatureBase64,
+      provenance_public_key_base64: params.provenancePublicKeyBase64,
+    });
+
+    if (!isModePackVerifyCandidateProvenanceResult(result)) {
+      throw new RuntimeProtocolError('modepack.verifyCandidateProvenance returned an invalid result');
     }
 
     return result;

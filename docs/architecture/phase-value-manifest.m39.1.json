@@ -38,49 +38,7 @@
       "runtime_behavior_change": "The runtime can verify signer-bound candidate provenance, persist it, replay it idempotently, and reject stale or unsigned evidence without mutating approval or active state.",
       "headless_autonomous_contribution": "Headless callers can advance remote Mode Pack trust using explicit signer evidence and bounded fingerprints without raw cache inspection.",
       "milestone_progress": "Establishes the first M39 cryptographic provenance primitive and prepares the next phase for provenance-gated approval."
-    },
-    "questions": [
-      {
-        "id": "strategic_capabilities",
-        "question": "Which strategic capabilities does this phase advance?"
-      },
-      {
-        "id": "new_capability",
-        "question": "What new runtime capability does it add?"
-      },
-      {
-        "id": "why_existing_functionality_is_insufficient",
-        "question": "Why can existing functionality not substitute for this work?"
-      },
-      {
-        "id": "product_gap_if_skipped",
-        "question": "What concrete product gap remains if this is skipped?"
-      },
-      {
-        "id": "non_duplicative",
-        "question": "Is this semantically distinct from the previous three phases?"
-      },
-      {
-        "id": "no_new_rpc",
-        "question": "Can this be done without adding a new RPC?"
-      },
-      {
-        "id": "no_new_summary",
-        "question": "Can this be done without adding a new summary surface?"
-      },
-      {
-        "id": "runtime_behavior_change",
-        "question": "What runtime behavior changes?"
-      },
-      {
-        "id": "headless_autonomous_contribution",
-        "question": "How does this help headless autonomous development?"
-      },
-      {
-        "id": "milestone_progress",
-        "question": "How does this move the milestone toward completion?"
-      }
-    ]
+    }
   },
   "review_value_gate": {
     "required": true,

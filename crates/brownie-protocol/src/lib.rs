@@ -213,6 +213,17 @@ pub struct ModePackApproveCandidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackVerifyCandidateProvenanceParams {
+    pub authorize_provenance_verification: bool,
+    pub expected_content_sha256: String,
+    pub expected_compiled_policy_fingerprint: String,
+    pub expected_signer_fingerprint: String,
+    pub provenance_statement_json: String,
+    pub provenance_signature_base64: String,
+    pub provenance_public_key_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -290,6 +301,26 @@ pub struct ModePackApprovedCandidateSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackCandidateProvenanceSummary {
+    pub provenance_id: String,
+    pub candidate_id: String,
+    pub source_kind: String,
+    pub source_url_host: String,
+    pub source_url_fingerprint: String,
+    pub content_sha256: String,
+    pub modepack_name: String,
+    pub schema_version: u64,
+    pub mode_count: usize,
+    pub mode_ids: Vec<String>,
+    pub compiled_policy_fingerprint: String,
+    pub signer_fingerprint: String,
+    pub statement_sha256: String,
+    pub signature_sha256: String,
+    pub verified_at: String,
+    pub provenance_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackFetchCandidateResult {
     pub fetched: bool,
     pub replayed: bool,
@@ -302,6 +333,14 @@ pub struct ModePackApproveCandidateResult {
     pub approved: bool,
     pub replayed: bool,
     pub approval: ModePackApprovedCandidateSummary,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackVerifyCandidateProvenanceResult {
+    pub verified: bool,
+    pub replayed: bool,
+    pub provenance: ModePackCandidateProvenanceSummary,
     pub next_action: String,
 }
 
