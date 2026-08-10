@@ -44,6 +44,7 @@ use brownie_protocol::{
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackFetchCandidateParams, ModePackFetchCandidateResult, ModePackReplaceActiveParams,
     ModePackReplaceActiveResult, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
+    ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
@@ -230,7 +231,7 @@ use brownie_store::{
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
-    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot,
+    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot, ModePackTrustedSignerSnapshot,
     ParentJoinContinuationRunAdmission, PatchApplyRecoveryTaskStartParams,
     VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
@@ -294,6 +295,7 @@ const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
 const METHOD_MODEPACK_APPROVE_CANDIDATE: &str = "modepack.approveCandidate";
+const METHOD_MODEPACK_TRUST_SIGNER: &str = "modepack.trustSigner";
 const METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE: &str = "modepack.verifyCandidateProvenance";
 const METHOD_MODEPACK_REPLACE_ACTIVE: &str = "modepack.replaceActive";
 const METHOD_MODEPACK_ROLLBACK_ACTIVE: &str = "modepack.rollbackActive";
@@ -470,6 +472,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODEPACK_APPROVE_CANDIDATE => {
             handle_modepack_approve_candidate(request.id, request.params)
         }
+        METHOD_MODEPACK_TRUST_SIGNER => handle_modepack_trust_signer(request.id, request.params),
         METHOD_MODEPACK_VERIFY_CANDIDATE_PROVENANCE => {
             handle_modepack_verify_candidate_provenance(request.id, request.params)
         }
@@ -14311,6 +14314,36 @@ fn handle_modepack_approve_candidate(id: Value, params: Option<Value>) -> JsonRp
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match approve_remote_modepack_candidate(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_trust_signer(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params: ModePackTrustSignerParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_trust {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: Mode Pack signer trust authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.signer_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: signer_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match trust_modepack_signer(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -29000,6 +29033,15 @@ fn approve_remote_modepack_candidate(
     {
         return Err("modepack candidate approval failed: verified provenance is stale".to_string());
     }
+    let trusted_signer = store
+        .read_modepack_trusted_signer_snapshot(&provenance_summary.signer_fingerprint)
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack candidate approval failed: trusted signer not found".to_string()
+        })?;
+    if trusted_signer.summary.signer_fingerprint != provenance_summary.signer_fingerprint {
+        return Err("modepack candidate approval failed: trusted signer is stale".to_string());
+    }
 
     let approved_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let approval_summary = ModePackApprovedCandidateSummary {
@@ -29019,6 +29061,8 @@ fn approve_remote_modepack_candidate(
         compiled_policy_fingerprint,
         provenance_id: provenance_summary.provenance_id,
         provenance_event_id: provenance_summary.provenance_event_id,
+        trusted_signer_trust_id: trusted_signer.summary.trust_id,
+        trusted_signer_event_id: trusted_signer.summary.trust_event_id,
         signer_fingerprint: provenance_summary.signer_fingerprint,
         statement_sha256: provenance_summary.statement_sha256,
         approved_at,
@@ -29035,6 +29079,33 @@ fn approve_remote_modepack_candidate(
         replayed: committed.replayed,
         approval: committed.approval.summary,
         next_action: "replace_active_with_approved_modepack_candidate".to_string(),
+    })
+}
+
+fn trust_modepack_signer(
+    store: &BrownieStore,
+    params: &ModePackTrustSignerParams,
+) -> Result<ModePackTrustSignerResult, String> {
+    let trusted_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    let trust_summary = ModePackTrustedSignerSummary {
+        trust_id: format!(
+            "modepack_signer_trust_{}",
+            &params.signer_fingerprint[7..23]
+        ),
+        signer_fingerprint: params.signer_fingerprint.clone(),
+        trusted_at,
+        trust_event_id: String::new(),
+    };
+    let committed = store
+        .trust_modepack_signer_snapshot(&ModePackTrustedSignerSnapshot {
+            summary: trust_summary,
+        })
+        .map_err(|error| format!("modepack signer trust failed: {error}"))?;
+    Ok(ModePackTrustSignerResult {
+        trusted: !committed.replayed,
+        replayed: committed.replayed,
+        trusted_signer: committed.trusted_signer.summary,
+        next_action: "verify_or_approve_modepack_candidate_for_trusted_signer".to_string(),
     })
 }
 
@@ -63390,6 +63461,34 @@ mod tests {
             },
         )
         .expect("candidate provenance");
+        let untrusted = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":19,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"{}","expected_statement_sha256":"{}"}}}}"#,
+            fetched.candidate.content_sha256,
+            fetched.candidate.compiled_policy_fingerprint,
+            provenance.provenance.provenance_id,
+            provenance.provenance.provenance_event_id,
+            provenance.provenance.signer_fingerprint,
+            provenance.provenance.statement_sha256
+        ));
+        assert!(untrusted
+            .error
+            .expect("untrusted signer")
+            .message
+            .contains("trusted signer not found"));
+        let trusted = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":21,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{}"}}}}"#,
+            signer_fingerprint
+        ));
+        assert!(trusted.error.is_none());
+        let trusted_result = trusted.result.expect("trusted signer result");
+        assert_eq!(
+            trusted_result["trusted_signer"]["signer_fingerprint"],
+            signer_fingerprint
+        );
+        assert!(trusted_result["trusted_signer"]["trust_event_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("event_"));
         let bad_signer = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":20,"method":"modepack.approveCandidate","params":{{"authorize_trust":true,"expected_content_sha256":"{}","expected_compiled_policy_fingerprint":"{}","expected_provenance_id":"{}","expected_provenance_event_id":"{}","expected_signer_fingerprint":"sha256:{}","expected_statement_sha256":"{}"}}}}"#,
             fetched.candidate.content_sha256,
@@ -63433,6 +63532,14 @@ mod tests {
             provenance.provenance.provenance_event_id
         );
         assert_eq!(
+            approved_result["approval"]["trusted_signer_trust_id"],
+            trusted_result["trusted_signer"]["trust_id"]
+        );
+        assert_eq!(
+            approved_result["approval"]["trusted_signer_event_id"],
+            trusted_result["trusted_signer"]["trust_event_id"]
+        );
+        assert_eq!(
             approved_result["approval"]["signer_fingerprint"],
             signer_fingerprint
         );
@@ -63453,6 +63560,13 @@ mod tests {
         let cache_dir = temp.path().join(".brownie/modepack-candidates");
         let ledger_path = cache_dir.join("ledger.jsonl");
         let ledger = std::fs::read_to_string(&ledger_path).expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackSignerTrusted"))
+                .count(),
+            1
+        );
         assert_eq!(
             ledger
                 .lines()
@@ -63484,6 +63598,67 @@ mod tests {
             .path()
             .join(".brownie/modepack-active/current.json")
             .exists());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_trust_signer_records_bounded_state_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let signer_fingerprint =
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{signer_fingerprint}"}}}}"#
+        );
+
+        let trusted = parse_line(&request);
+        assert!(trusted.error.is_none());
+        let trusted_result = trusted.result.expect("trusted signer result");
+        assert!(trusted_result["trusted"].as_bool().unwrap());
+        assert!(!trusted_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            trusted_result["trusted_signer"]["signer_fingerprint"],
+            signer_fingerprint
+        );
+        assert_eq!(
+            trusted_result["next_action"],
+            "verify_or_approve_modepack_candidate_for_trusted_signer"
+        );
+
+        let replay = parse_line(&request);
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert!(!replay_result["trusted"].as_bool().unwrap());
+        assert!(replay_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            replay_result["trusted_signer"]["trust_event_id"],
+            trusted_result["trusted_signer"]["trust_event_id"]
+        );
+
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"modepack.trustSigner","params":{"authorize_trust":false,"signer_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}"#,
+        );
+        assert!(denied
+            .error
+            .expect("auth denial")
+            .message
+            .contains("signer trust authorization required"));
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/modepack-candidates/ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert_eq!(
+            ledger
+                .lines()
+                .filter(|line| line.contains("ModePackSignerTrusted"))
+                .count(),
+            1
+        );
+        assert!(!ledger.contains("raw_ledger_payload"));
+        assert!(!ledger.contains("provenance_statement_json"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -63928,6 +64103,14 @@ mod tests {
             },
         )
         .expect("candidate provenance");
+        trust_modepack_signer(
+            &store,
+            &ModePackTrustSignerParams {
+                authorize_trust: true,
+                signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
+            },
+        )
+        .expect("trusted signer");
         let approved = approve_remote_modepack_candidate(
             &store,
             &ModePackApproveCandidateParams {

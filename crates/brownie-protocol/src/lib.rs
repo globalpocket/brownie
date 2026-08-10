@@ -217,6 +217,12 @@ pub struct ModePackApproveCandidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackTrustSignerParams {
+    pub authorize_trust: bool,
+    pub signer_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackVerifyCandidateProvenanceParams {
     pub authorize_provenance_verification: bool,
     pub expected_content_sha256: String,
@@ -301,11 +307,23 @@ pub struct ModePackApprovedCandidateSummary {
     pub compiled_policy_fingerprint: String,
     pub provenance_id: String,
     pub provenance_event_id: String,
+    #[serde(default)]
+    pub trusted_signer_trust_id: String,
+    #[serde(default)]
+    pub trusted_signer_event_id: String,
     pub signer_fingerprint: String,
     pub statement_sha256: String,
     pub approved_at: String,
     pub approval_event_id: String,
     pub consumed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackTrustedSignerSummary {
+    pub trust_id: String,
+    pub signer_fingerprint: String,
+    pub trusted_at: String,
+    pub trust_event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -341,6 +359,14 @@ pub struct ModePackApproveCandidateResult {
     pub approved: bool,
     pub replayed: bool,
     pub approval: ModePackApprovedCandidateSummary,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackTrustSignerResult {
+    pub trusted: bool,
+    pub replayed: bool,
+    pub trusted_signer: ModePackTrustedSignerSummary,
     pub next_action: String,
 }
 

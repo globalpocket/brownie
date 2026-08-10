@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRollbackActiveResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -486,6 +486,8 @@ describe('protocol validation', () => {
       compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
       provenance_id: 'modepack_candidate_provenance_123',
       provenance_event_id: 'event_1',
+      trusted_signer_trust_id: 'modepack_signer_trust_123',
+      trusted_signer_event_id: 'event_0',
       signer_fingerprint: `sha256:${'a'.repeat(64)}`,
       statement_sha256: `sha256:${'b'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
@@ -546,6 +548,8 @@ describe('protocol validation', () => {
       compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
       provenance_id: 'modepack_candidate_provenance_123',
       provenance_event_id: 'event_1',
+      trusted_signer_trust_id: 'modepack_signer_trust_123',
+      trusted_signer_event_id: 'event_0',
       signer_fingerprint: `sha256:${'d'.repeat(64)}`,
       statement_sha256: `sha256:${'e'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
@@ -564,6 +568,25 @@ describe('protocol validation', () => {
     expect(isModePackApproveCandidateResult({ ...result, approval: { ...approval, modepack_json: '{}' } })).toBe(false);
     expect(isModePackApproveCandidateResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackApproveCandidateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+  });
+
+  it('accepts bounded modepack.trustSigner results and rejects raw fields', () => {
+    const result = {
+      trusted: true,
+      replayed: false,
+      trusted_signer: {
+        trust_id: 'modepack_signer_trust_123',
+        signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+        trusted_at: '2026-08-09T00:00:00Z',
+        trust_event_id: 'event_1',
+      },
+      next_action: 'verify_or_approve_modepack_candidate_for_trusted_signer',
+    };
+
+    expect(isModePackTrustSignerResult(result)).toBe(true);
+    expect(isModePackTrustSignerResult({ ...result, trusted_signer: { ...result.trusted_signer, signer_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackTrustSignerResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+    expect(isModePackTrustSignerResult({ ...result, provenance_signature_base64: 'raw' })).toBe(false);
   });
 
   it('accepts bounded modepack.verifyCandidateProvenance results and rejects raw fields', () => {
@@ -2398,6 +2421,8 @@ describe('RuntimeClient', () => {
         compiled_policy_fingerprint: `sha256:${'c'.repeat(64)}`,
         provenance_id: 'modepack_candidate_provenance_123',
         provenance_event_id: 'event_1',
+        trusted_signer_trust_id: 'modepack_signer_trust_123',
+        trusted_signer_event_id: 'event_0',
         signer_fingerprint: `sha256:${'d'.repeat(64)}`,
         statement_sha256: `sha256:${'e'.repeat(64)}`,
         approved_at: '2026-08-09T00:00:00Z',
@@ -2430,6 +2455,33 @@ describe('RuntimeClient', () => {
         expected_provenance_event_id: result.approval.provenance_event_id,
         expected_signer_fingerprint: result.approval.signer_fingerprint,
         expected_statement_sha256: result.approval.statement_sha256,
+      },
+    }]);
+  });
+
+  it('creates a modepack.trustSigner request', async () => {
+    const result = {
+      trusted: true,
+      replayed: false,
+      trusted_signer: {
+        trust_id: 'modepack_signer_trust_123',
+        signer_fingerprint: `sha256:${'a'.repeat(64)}`,
+        trusted_at: '2026-08-09T00:00:00Z',
+        trust_event_id: 'event_1',
+      },
+      next_action: 'verify_or_approve_modepack_candidate_for_trusted_signer',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.trustModePackSigner(true, result.trusted_signer.signer_fingerprint)).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.trustSigner',
+      params: {
+        authorize_trust: true,
+        signer_fingerprint: result.trusted_signer.signer_fingerprint,
       },
     }]);
   });
@@ -2571,6 +2623,8 @@ describe('RuntimeClient', () => {
       compiled_policy_fingerprint: `sha256:${'d'.repeat(64)}`,
       provenance_id: 'modepack_candidate_provenance_123',
       provenance_event_id: 'event_1',
+      trusted_signer_trust_id: 'modepack_signer_trust_123',
+      trusted_signer_event_id: 'event_0',
       signer_fingerprint: `sha256:${'a'.repeat(64)}`,
       statement_sha256: `sha256:${'b'.repeat(64)}`,
       approved_at: '2026-08-09T00:00:00Z',
