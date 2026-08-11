@@ -11,9 +11,10 @@ use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
     ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
-    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackTrustedSignerSummary,
-    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackRevokedSignerSummary,
+    ModePackTrustedSignerSummary, PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance,
+    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -549,6 +550,21 @@ impl BrownieStore {
         })?))
     }
 
+    pub fn read_modepack_revoked_signer_snapshot(
+        &self,
+        signer_fingerprint: &str,
+    ) -> Result<Option<ModePackRevokedSignerSnapshot>> {
+        let path = self.modepack_revoked_signer_path(signer_fingerprint);
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
     pub fn trust_modepack_signer_snapshot(
         &self,
         trusted: &ModePackTrustedSignerSnapshot,
@@ -600,6 +616,60 @@ impl BrownieStore {
             replayed: false,
             event_id: event.event_id,
             trusted_signer: committed,
+        })
+    }
+
+    pub fn revoke_modepack_signer_snapshot(
+        &self,
+        revoked: &ModePackRevokedSignerSnapshot,
+    ) -> Result<ModePackRevokedSignerCommit> {
+        if let Some(existing) =
+            self.read_modepack_revoked_signer_snapshot(&revoked.summary.signer_fingerprint)?
+        {
+            if !self.modepack_revoked_signer_event_exists(
+                &existing.summary.revocation_event_id,
+                &existing.summary.signer_fingerprint,
+            )? {
+                let event = ModePackCandidateLedgerEvent {
+                    event_id: existing.summary.revocation_event_id.clone(),
+                    kind: "ModePackSignerRevoked".to_string(),
+                    timestamp: existing.summary.revoked_at.clone(),
+                    payload: serde_json::to_value(&existing.summary)
+                        .context("failed to serialize Mode Pack revoked signer summary")?,
+                };
+                self.append_modepack_candidate_event(&event)?;
+            }
+            return Ok(ModePackRevokedSignerCommit {
+                replayed: true,
+                event_id: existing.summary.revocation_event_id.clone(),
+                revoked_signer: existing,
+            });
+        }
+
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = revoked.clone();
+        committed.summary.revocation_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize Mode Pack revoked signer")?;
+        write_file_atomically(
+            &self.modepack_revoked_signer_path(&committed.summary.signer_fingerprint),
+            body.as_bytes(),
+        )
+        .context("failed to write Mode Pack revoked signer")?;
+        let event = ModePackCandidateLedgerEvent {
+            event_id: committed.summary.revocation_event_id.clone(),
+            kind: "ModePackSignerRevoked".to_string(),
+            timestamp: committed.summary.revoked_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize Mode Pack revoked signer summary")?,
+        };
+        self.append_modepack_candidate_event(&event)?;
+        Ok(ModePackRevokedSignerCommit {
+            replayed: false,
+            event_id: event.event_id,
+            revoked_signer: committed,
         })
     }
 
@@ -860,6 +930,14 @@ impl BrownieStore {
             .join(format!("trusted-signer-{slug}.json"))
     }
 
+    fn modepack_revoked_signer_path(&self, signer_fingerprint: &str) -> PathBuf {
+        let slug = signer_fingerprint
+            .strip_prefix("sha256:")
+            .unwrap_or(signer_fingerprint);
+        self.modepack_candidates_dir()
+            .join(format!("revoked-signer-{slug}.json"))
+    }
+
     fn append_active_modepack_event(&self, event: &ActiveModePackLedgerEvent) -> Result<()> {
         let root = self.active_modepack_dir();
         fs::create_dir_all(&root)
@@ -1042,6 +1120,46 @@ impl BrownieStore {
         Ok(false)
     }
 
+    fn modepack_revoked_signer_event_exists(
+        &self,
+        revocation_event_id: &str,
+        signer_fingerprint: &str,
+    ) -> Result<bool> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackSignerRevoked" || event.event_id != revocation_event_id {
+                continue;
+            }
+            if event
+                .payload
+                .get("signer_fingerprint")
+                .and_then(serde_json::Value::as_str)
+                == Some(signer_fingerprint)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn modepack_candidate_consumption_event_id(
         &self,
         approval_id: &str,
@@ -1208,10 +1326,22 @@ pub struct ModePackTrustedSignerSnapshot {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRevokedSignerSnapshot {
+    pub summary: ModePackRevokedSignerSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackTrustedSignerCommit {
     pub replayed: bool,
     pub event_id: String,
     pub trusted_signer: ModePackTrustedSignerSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRevokedSignerCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub revoked_signer: ModePackRevokedSignerSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
