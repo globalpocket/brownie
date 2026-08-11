@@ -12,9 +12,9 @@ use brownie_protocol::{
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
     ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
     ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackRevokedSignerSummary,
-    ModePackTrustedSignerSummary, PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -120,6 +120,7 @@ impl BrownieStore {
         &self,
         expected_current_activation_fingerprint: &str,
         snapshot: &ActiveModePackSnapshot,
+        update_admission: Option<&ModePackUpdateAdmissionSummary>,
     ) -> Result<ModePackReplacementCommit> {
         if let Some(replayed) = self.find_replayed_active_modepack_replacement(
             expected_current_activation_fingerprint,
@@ -162,6 +163,11 @@ impl BrownieStore {
             bail!("replacement active modepack snapshot verification failed");
         }
 
+        let update_admission = update_admission.map(|summary| {
+            let mut summary = summary.clone();
+            summary.admission_event_id = replacement.summary.activation_event_id.clone();
+            summary
+        });
         let event = ActiveModePackLedgerEvent {
             event_id: replacement.summary.activation_event_id.clone(),
             kind: "ModePackReplaced".to_string(),
@@ -170,6 +176,7 @@ impl BrownieStore {
                 "previous_snapshot": previous.summary,
                 "replacement_snapshot": replacement.summary,
                 "previous_snapshot_full": previous,
+                "update_admission": update_admission,
             }),
         };
         if let Err(error) = self.append_active_modepack_event(&event) {
@@ -184,6 +191,7 @@ impl BrownieStore {
             event_id: event.event_id,
             previous_snapshot: previous,
             replacement_snapshot: replacement,
+            update_admission,
         })
     }
 
@@ -318,6 +326,14 @@ impl BrownieStore {
             let (Some(previous), Some(replacement)) = (previous, replacement) else {
                 continue;
             };
+            let update_admission =
+                event
+                    .payload
+                    .get("update_admission")
+                    .cloned()
+                    .and_then(|value| {
+                        serde_json::from_value::<ModePackUpdateAdmissionSummary>(value).ok()
+                    });
             if previous.activation_fingerprint == expected_current_activation_fingerprint
                 && replacement.activation_fingerprint == expected_candidate_activation_fingerprint
             {
@@ -337,6 +353,7 @@ impl BrownieStore {
                         policies: Vec::new(),
                     },
                     replacement_snapshot: current,
+                    update_admission,
                 }));
             }
         }
@@ -1272,6 +1289,7 @@ pub struct ModePackReplacementCommit {
     pub event_id: String,
     pub previous_snapshot: ActiveModePackSnapshot,
     pub replacement_snapshot: ActiveModePackSnapshot,
+    pub update_admission: Option<ModePackUpdateAdmissionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

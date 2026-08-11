@@ -46,6 +46,7 @@ use brownie_protocol::{
     ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
     ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
     ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
+    ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
@@ -29681,10 +29682,43 @@ fn replace_active_workspace_modepack(
             snapshot.summary.activation_fingerprint
         ));
     }
+    let update_admission = match params.update_admission.as_ref() {
+        Some(update_params) => {
+            let Some((_, _, _, (_, approved))) = approved_candidate.as_ref() else {
+                return Err(
+                    "modepack replacement failed: update admission requires an approved remote candidate".to_string(),
+                );
+            };
+            let active = store
+                .read_active_modepack_snapshot()
+                .map_err(|error| format!("modepack replacement failed: {error}"))?;
+            if approved.consumed
+                && active
+                    .as_ref()
+                    .map(|snapshot| {
+                        snapshot.summary.activation_fingerprint
+                            == params.expected_candidate_activation_fingerprint
+                    })
+                    .unwrap_or(false)
+            {
+                None
+            } else {
+                Some(validate_modepack_update_admission(
+                    store,
+                    params,
+                    update_params,
+                    &snapshot.summary,
+                    approved,
+                )?)
+            }
+        }
+        None => None,
+    };
     let committed = store
         .replace_active_modepack_snapshot(
             &params.expected_current_activation_fingerprint,
             &snapshot,
+            update_admission.as_ref(),
         )
         .map_err(|error| format!("modepack replacement failed: {error}"))?;
     let mut result = ModePackReplaceActiveResult {
@@ -29695,6 +29729,7 @@ fn replace_active_workspace_modepack(
         replacement_event_id: committed.event_id,
         approved_candidate: None,
         candidate_consumed_event_id: None,
+        update_admission: committed.update_admission,
     };
     if let Some((approval_id, content_sha256, _, _)) = approved_candidate {
         let consumed = store
@@ -29709,6 +29744,161 @@ fn replace_active_workspace_modepack(
         result.candidate_consumed_event_id = Some(consumed.event_id);
     }
     Ok(result)
+}
+
+fn validate_modepack_update_admission(
+    store: &BrownieStore,
+    params: &ModePackReplaceActiveParams,
+    update_params: &ModePackUpdateAdmissionParams,
+    candidate: &ModePackActiveSnapshotSummary,
+    approved: &ModePackApprovedCandidateSummary,
+) -> Result<ModePackUpdateAdmissionSummary, String> {
+    if !update_params.authorize_update {
+        return Err("modepack replacement failed: update authorization required".to_string());
+    }
+    let active = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("modepack replacement failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack replacement failed: missing active modepack snapshot".to_string()
+        })?;
+    if active.summary.activation_fingerprint != params.expected_current_activation_fingerprint {
+        return Err(format!(
+            "modepack replacement failed: stale active modepack snapshot: expected {} but found {}",
+            params.expected_current_activation_fingerprint, active.summary.activation_fingerprint
+        ));
+    }
+    if active.summary.modepack_name != update_params.expected_current_modepack_name {
+        return Err(format!(
+            "modepack replacement failed: active modepack name mismatch: expected {} but found {}",
+            update_params.expected_current_modepack_name, active.summary.modepack_name
+        ));
+    }
+    if active.summary.source_kind != update_params.expected_current_source_kind {
+        return Err(format!(
+            "modepack replacement failed: active source kind mismatch: expected {} but found {}",
+            update_params.expected_current_source_kind, active.summary.source_kind
+        ));
+    }
+    if active.summary.source_kind != "remote_https_candidate" {
+        return Err(
+            "modepack replacement failed: update admission requires an active remote HTTPS modepack"
+                .to_string(),
+        );
+    }
+    if candidate.source_kind != "remote_https_candidate" {
+        return Err(
+            "modepack replacement failed: update admission requires a remote HTTPS candidate"
+                .to_string(),
+        );
+    }
+    if candidate.modepack_name != active.summary.modepack_name {
+        return Err(format!(
+            "modepack replacement failed: update candidate modepack name mismatch: expected {} but found {}",
+            active.summary.modepack_name, candidate.modepack_name
+        ));
+    }
+    if candidate.activation_fingerprint == active.summary.activation_fingerprint {
+        return Err(
+            "modepack replacement failed: update candidate matches current activation fingerprint"
+                .to_string(),
+        );
+    }
+    if approved.provenance_id != update_params.expected_approved_candidate_provenance_id
+        || approved.provenance_event_id
+            != update_params.expected_approved_candidate_provenance_event_id
+        || approved.signer_fingerprint
+            != update_params.expected_approved_candidate_signer_fingerprint
+        || approved.statement_sha256 != update_params.expected_approved_candidate_statement_sha256
+        || approved.trusted_signer_trust_id != update_params.expected_trusted_signer_trust_id
+        || approved.trusted_signer_event_id != update_params.expected_trusted_signer_event_id
+    {
+        return Err(
+            "modepack replacement failed: approved candidate update evidence mismatch".to_string(),
+        );
+    }
+    let cached = store
+        .read_modepack_candidate_snapshot(&approved.content_sha256)
+        .map_err(|error| format!("modepack replacement failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack replacement failed: cached approved candidate not found".to_string()
+        })?;
+    if cached.summary.candidate_id != approved.candidate_id
+        || cached.summary.content_sha256 != approved.content_sha256
+        || cached.summary.compiled_policy_fingerprint != approved.compiled_policy_fingerprint
+        || cached.summary.modepack_name != approved.modepack_name
+        || cached.summary.mode_ids != approved.mode_ids
+    {
+        return Err("modepack replacement failed: approved candidate cache is stale".to_string());
+    }
+    let provenance = store
+        .read_modepack_candidate_provenance_snapshot(&approved.content_sha256)
+        .map_err(|error| format!("modepack replacement failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack replacement failed: approved candidate provenance not found".to_string()
+        })?;
+    if provenance.summary.provenance_id != approved.provenance_id
+        || provenance.summary.provenance_event_id != approved.provenance_event_id
+        || provenance.summary.candidate_id != approved.candidate_id
+        || provenance.summary.content_sha256 != approved.content_sha256
+        || provenance.summary.modepack_name != approved.modepack_name
+        || provenance.summary.mode_ids != approved.mode_ids
+        || provenance.summary.compiled_policy_fingerprint != approved.compiled_policy_fingerprint
+        || provenance.summary.signer_fingerprint != approved.signer_fingerprint
+        || provenance.summary.statement_sha256 != approved.statement_sha256
+    {
+        return Err(
+            "modepack replacement failed: approved candidate provenance is stale".to_string(),
+        );
+    }
+    let trusted_signer = store
+        .read_modepack_trusted_signer_snapshot(&approved.signer_fingerprint)
+        .map_err(|error| format!("modepack replacement failed: {error}"))?
+        .ok_or_else(|| "modepack replacement failed: trusted signer not found".to_string())?;
+    if trusted_signer.summary.trust_id != approved.trusted_signer_trust_id
+        || trusted_signer.summary.trust_event_id != approved.trusted_signer_event_id
+        || trusted_signer.summary.signer_fingerprint != approved.signer_fingerprint
+    {
+        return Err("modepack replacement failed: trusted signer is stale".to_string());
+    }
+    if store
+        .read_modepack_revoked_signer_snapshot(&approved.signer_fingerprint)
+        .map_err(|error| format!("modepack replacement failed: {error}"))?
+        .is_some()
+    {
+        return Err("modepack replacement failed: trusted signer revoked".to_string());
+    }
+    if modepack_signer_trust_expired(&trusted_signer.summary).map_err(|error| {
+        error.replace(
+            "modepack candidate approval failed",
+            "modepack replacement failed",
+        )
+    })? {
+        return Err("modepack replacement failed: trusted signer expired".to_string());
+    }
+    let admitted_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    Ok(ModePackUpdateAdmissionSummary {
+        update_id: format!(
+            "modepack_update_{}",
+            &candidate.activation_fingerprint[7..23]
+        ),
+        current_activation_fingerprint: active.summary.activation_fingerprint,
+        replacement_activation_fingerprint: candidate.activation_fingerprint.clone(),
+        modepack_name: candidate.modepack_name.clone(),
+        source_kind: candidate.source_kind.clone(),
+        approval_id: approved.approval_id.clone(),
+        candidate_id: approved.candidate_id.clone(),
+        content_sha256: approved.content_sha256.clone(),
+        compiled_policy_fingerprint: approved.compiled_policy_fingerprint.clone(),
+        provenance_id: approved.provenance_id.clone(),
+        provenance_event_id: approved.provenance_event_id.clone(),
+        trusted_signer_trust_id: approved.trusted_signer_trust_id.clone(),
+        trusted_signer_event_id: approved.trusted_signer_event_id.clone(),
+        signer_fingerprint: approved.signer_fingerprint.clone(),
+        statement_sha256: approved.statement_sha256.clone(),
+        admitted_at,
+        admission_event_id: String::new(),
+    })
 }
 
 fn build_active_modepack_snapshot_from_approved_candidate(
@@ -64394,7 +64584,7 @@ mod tests {
     }
 
     #[test]
-    fn modepack_replace_active_consumes_approved_remote_candidate_and_replays() {
+    fn modepack_replace_active_consumes_approved_remote_candidate_admits_update_and_replays() {
         use base64::{engine::general_purpose, Engine as _};
         use ed25519_dalek::{Signer, SigningKey};
 
@@ -64573,6 +64763,148 @@ mod tests {
         );
         assert!(!ledger.contains("Review remote activation without writing files."));
         assert!(!ledger.contains("\"modepack_json\""));
+
+        let update_body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-active-updated-reviewer",
+              "display_name": "Remote Active Updated Reviewer",
+              "role_definition": "Review remote updates without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded update findings."]
+            }
+          ]
+        }"#;
+        let update_fetched = fetch_remote_modepack_candidate_with(
+            &store,
+            &ModePackFetchCandidateParams {
+                authorize_fetch: true,
+                url: "https://example.com/modepack-update.json".to_string(),
+                expected_content_sha256: Some(format!(
+                    "sha256:{}",
+                    hex_sha256(update_body.as_bytes())
+                )),
+            },
+            |_| {
+                Ok(RemoteModePackFetchResponse {
+                    status: 200,
+                    content_type: Some("application/json".to_string()),
+                    body: update_body.as_bytes().to_vec(),
+                })
+            },
+        )
+        .expect("update candidate fetch");
+        let update_statement = serde_json::json!({
+            "content_sha256": update_fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": update_fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": update_fetched.candidate.source_url_fingerprint,
+            "mode_ids": update_fetched.candidate.mode_ids,
+            "schema_version": update_fetched.candidate.schema_version,
+            "signer_fingerprint": provenance.provenance.signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let update_signature = signing_key.sign(update_statement.as_bytes());
+        let update_provenance = verify_modepack_candidate_provenance(
+            &store,
+            &ModePackVerifyCandidateProvenanceParams {
+                authorize_provenance_verification: true,
+                expected_content_sha256: update_fetched.candidate.content_sha256.clone(),
+                expected_compiled_policy_fingerprint: update_fetched
+                    .candidate
+                    .compiled_policy_fingerprint
+                    .clone(),
+                expected_signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
+                provenance_statement_json: update_statement,
+                provenance_signature_base64: general_purpose::STANDARD
+                    .encode(update_signature.to_bytes()),
+                provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
+            },
+        )
+        .expect("update candidate provenance");
+        let update_approved = approve_remote_modepack_candidate(
+            &store,
+            &ModePackApproveCandidateParams {
+                authorize_trust: true,
+                expected_content_sha256: update_fetched.candidate.content_sha256.clone(),
+                expected_compiled_policy_fingerprint: update_fetched
+                    .candidate
+                    .compiled_policy_fingerprint
+                    .clone(),
+                expected_provenance_id: update_provenance.provenance.provenance_id.clone(),
+                expected_provenance_event_id: update_provenance
+                    .provenance
+                    .provenance_event_id
+                    .clone(),
+                expected_signer_fingerprint: update_provenance
+                    .provenance
+                    .signer_fingerprint
+                    .clone(),
+                expected_statement_sha256: update_provenance.provenance.statement_sha256.clone(),
+            },
+        )
+        .expect("update candidate approval");
+        let (update_snapshot, _) = build_active_modepack_snapshot_from_approved_candidate(
+            &store,
+            &update_approved.approval.approval_id,
+            &update_approved.approval.content_sha256,
+            &update_approved.approval.compiled_policy_fingerprint,
+        )
+        .expect("update active snapshot");
+        let update_fingerprint = update_snapshot.summary.activation_fingerprint.clone();
+        let update_request = format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{candidate_fingerprint}","expected_candidate_activation_fingerprint":"{update_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","update_admission":{{"authorize_update":true,"expected_current_modepack_name":"remote-agentmodes","expected_current_source_kind":"remote_https_candidate","expected_approved_candidate_provenance_id":"{}","expected_approved_candidate_provenance_event_id":"{}","expected_approved_candidate_signer_fingerprint":"{}","expected_approved_candidate_statement_sha256":"{}","expected_trusted_signer_trust_id":"{}","expected_trusted_signer_event_id":"{}"}}}}}}"#,
+            update_approved.approval.approval_id,
+            update_approved.approval.content_sha256,
+            update_approved.approval.compiled_policy_fingerprint,
+            update_approved.approval.provenance_id,
+            update_approved.approval.provenance_event_id,
+            update_approved.approval.signer_fingerprint,
+            update_approved.approval.statement_sha256,
+            update_approved.approval.trusted_signer_trust_id,
+            update_approved.approval.trusted_signer_event_id
+        );
+        let update = parse_line(&update_request);
+        assert!(update.error.is_none());
+        let update_result = update.result.expect("update result");
+        assert_eq!(update_result["replaced"], true);
+        assert_eq!(
+            update_result["update_admission"]["modepack_name"],
+            "remote-agentmodes"
+        );
+        assert_eq!(
+            update_result["update_admission"]["admission_event_id"],
+            update_result["replacement_event_id"]
+        );
+        let update_replay = parse_line(&update_request);
+        assert!(update_replay.error.is_none());
+        let update_replay_result = update_replay.result.expect("update replay result");
+        assert_eq!(update_replay_result["replayed"], true);
+        assert_eq!(
+            update_replay_result["update_admission"],
+            update_result["update_admission"]
+        );
+        let update_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(
+            update_ledger
+                .lines()
+                .filter(|line| line.contains("modepack_update_"))
+                .count(),
+            1
+        );
+        assert!(!update_ledger.contains("Review remote updates without writing files."));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

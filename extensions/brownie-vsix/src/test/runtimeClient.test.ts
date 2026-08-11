@@ -447,10 +447,10 @@ describe('protocol validation', () => {
     const previous = {
       activation_id: 'modepack_activation_previous',
       activation_fingerprint: `sha256:${'a'.repeat(64)}`,
-      modepack_name: 'local-agentmodes',
+      modepack_name: 'remote-agentmodes',
       schema_version: 1,
-      source_kind: 'workspace_modepack',
-      source_path: '.brownie/modepack.json',
+      source_kind: 'remote_https_candidate',
+      source_path: 'modepack_candidate_previous',
       mode_count: 1,
       mode_ids: ['reviewer-lite'],
       compiled_policy_fingerprint: `sha256:${'b'.repeat(64)}`,
@@ -494,9 +494,30 @@ describe('protocol validation', () => {
       approval_event_id: 'event_3',
       consumed: true,
     };
+    const updateAdmission = {
+      update_id: 'modepack_update_123',
+      current_activation_fingerprint: previous.activation_fingerprint,
+      replacement_activation_fingerprint: replacement.activation_fingerprint,
+      modepack_name: 'remote-agentmodes',
+      source_kind: 'remote_https_candidate',
+      approval_id: approvedCandidate.approval_id,
+      candidate_id: approvedCandidate.candidate_id,
+      content_sha256: approvedCandidate.content_sha256,
+      compiled_policy_fingerprint: approvedCandidate.compiled_policy_fingerprint,
+      provenance_id: approvedCandidate.provenance_id,
+      provenance_event_id: approvedCandidate.provenance_event_id,
+      trusted_signer_trust_id: approvedCandidate.trusted_signer_trust_id,
+      trusted_signer_event_id: approvedCandidate.trusted_signer_event_id,
+      signer_fingerprint: approvedCandidate.signer_fingerprint,
+      statement_sha256: approvedCandidate.statement_sha256,
+      admitted_at: '2026-08-09T00:00:01Z',
+      admission_event_id: 'event_2',
+    };
 
     expect(isModePackReplaceActiveResult(result)).toBe(true);
     expect(isModePackReplaceActiveResult({ ...result, approved_candidate: approvedCandidate, candidate_consumed_event_id: 'event_4' })).toBe(true);
+    expect(isModePackReplaceActiveResult({ ...result, approved_candidate: approvedCandidate, update_admission: updateAdmission })).toBe(true);
+    expect(isModePackReplaceActiveResult({ ...result, update_admission: { ...updateAdmission, raw_provenance_statement_json: '{}' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, approved_candidate: { ...approvedCandidate, modepack_json: '{}' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, replacement_snapshot: { ...replacement, activation_fingerprint: 'bad' } })).toBe(false);
     expect(isModePackReplaceActiveResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
@@ -2693,6 +2714,25 @@ describe('RuntimeClient', () => {
       replacement_event_id: 'event_2',
       approved_candidate: approval,
       candidate_consumed_event_id: 'event_4',
+      update_admission: {
+        update_id: 'modepack_update_123',
+        current_activation_fingerprint: previous.activation_fingerprint,
+        replacement_activation_fingerprint: replacement.activation_fingerprint,
+        modepack_name: 'remote-agentmodes',
+        source_kind: 'remote_https_candidate',
+        approval_id: approval.approval_id,
+        candidate_id: approval.candidate_id,
+        content_sha256: approval.content_sha256,
+        compiled_policy_fingerprint: approval.compiled_policy_fingerprint,
+        provenance_id: approval.provenance_id,
+        provenance_event_id: approval.provenance_event_id,
+        trusted_signer_trust_id: approval.trusted_signer_trust_id,
+        trusted_signer_event_id: approval.trusted_signer_event_id,
+        signer_fingerprint: approval.signer_fingerprint,
+        statement_sha256: approval.statement_sha256,
+        admitted_at: '2026-08-09T00:00:01Z',
+        admission_event_id: 'event_2',
+      },
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
@@ -2701,6 +2741,16 @@ describe('RuntimeClient', () => {
       approvalId: approval.approval_id,
       contentSha256: approval.content_sha256,
       compiledPolicyFingerprint: approval.compiled_policy_fingerprint,
+    }, {
+      authorizeUpdate: true,
+      expectedCurrentModePackName: previous.modepack_name,
+      expectedCurrentSourceKind: previous.source_kind,
+      expectedApprovedCandidateProvenanceId: approval.provenance_id,
+      expectedApprovedCandidateProvenanceEventId: approval.provenance_event_id,
+      expectedApprovedCandidateSignerFingerprint: approval.signer_fingerprint,
+      expectedApprovedCandidateStatementSha256: approval.statement_sha256,
+      expectedTrustedSignerTrustId: approval.trusted_signer_trust_id,
+      expectedTrustedSignerEventId: approval.trusted_signer_event_id,
     })).resolves.toEqual(result);
     expect(transport.requests[0].params).toMatchObject({
       authorize_replacement: true,
@@ -2709,6 +2759,17 @@ describe('RuntimeClient', () => {
       approved_candidate_approval_id: approval.approval_id,
       expected_approved_candidate_content_sha256: approval.content_sha256,
       expected_approved_candidate_compiled_policy_fingerprint: approval.compiled_policy_fingerprint,
+      update_admission: {
+        authorize_update: true,
+        expected_current_modepack_name: previous.modepack_name,
+        expected_current_source_kind: previous.source_kind,
+        expected_approved_candidate_provenance_id: approval.provenance_id,
+        expected_approved_candidate_provenance_event_id: approval.provenance_event_id,
+        expected_approved_candidate_signer_fingerprint: approval.signer_fingerprint,
+        expected_approved_candidate_statement_sha256: approval.statement_sha256,
+        expected_trusted_signer_trust_id: approval.trusted_signer_trust_id,
+        expected_trusted_signer_event_id: approval.trusted_signer_event_id,
+      },
     });
   });
 
