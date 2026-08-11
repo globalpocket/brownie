@@ -578,13 +578,15 @@ describe('protocol validation', () => {
         trust_id: 'modepack_signer_trust_123',
         signer_fingerprint: `sha256:${'a'.repeat(64)}`,
         trusted_at: '2026-08-09T00:00:00Z',
+        expires_at: '2099-01-01T00:00:00Z',
         trust_event_id: 'event_1',
       },
-      next_action: 'verify_or_approve_modepack_candidate_for_trusted_signer',
+      next_action: 'verify_or_approve_modepack_candidate_before_signer_trust_expires',
     };
 
     expect(isModePackTrustSignerResult(result)).toBe(true);
     expect(isModePackTrustSignerResult({ ...result, trusted_signer: { ...result.trusted_signer, signer_fingerprint: 'bad' } })).toBe(false);
+    expect(isModePackTrustSignerResult({ ...result, trusted_signer: { ...result.trusted_signer, expires_at: 42 } })).toBe(false);
     expect(isModePackTrustSignerResult({ ...result, raw_ledger_payload: {} })).toBe(false);
     expect(isModePackTrustSignerResult({ ...result, provenance_signature_base64: 'raw' })).toBe(false);
   });
@@ -2488,14 +2490,15 @@ describe('RuntimeClient', () => {
         trust_id: 'modepack_signer_trust_123',
         signer_fingerprint: `sha256:${'a'.repeat(64)}`,
         trusted_at: '2026-08-09T00:00:00Z',
+        expires_at: '2099-01-01T00:00:00Z',
         trust_event_id: 'event_1',
       },
-      next_action: 'verify_or_approve_modepack_candidate_for_trusted_signer',
+      next_action: 'verify_or_approve_modepack_candidate_before_signer_trust_expires',
     };
     const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
     const client = new RuntimeClient(transport);
 
-    await expect(client.trustModePackSigner(true, result.trusted_signer.signer_fingerprint)).resolves.toEqual(result);
+    await expect(client.trustModePackSigner(true, result.trusted_signer.signer_fingerprint, result.trusted_signer.expires_at)).resolves.toEqual(result);
     expect(transport.requests).toEqual([{
       jsonrpc: '2.0',
       id: 1,
@@ -2503,6 +2506,7 @@ describe('RuntimeClient', () => {
       params: {
         authorize_trust: true,
         signer_fingerprint: result.trusted_signer.signer_fingerprint,
+        expires_at: result.trusted_signer.expires_at,
       },
     }]);
   });
