@@ -240,6 +240,17 @@ export class RuntimeClient {
       approvalId: string;
       contentSha256: string;
       compiledPolicyFingerprint: string;
+    } | null,
+    updateAdmission?: {
+      authorizeUpdate: boolean;
+      expectedCurrentModePackName: string;
+      expectedCurrentSourceKind: string;
+      expectedApprovedCandidateProvenanceId: string;
+      expectedApprovedCandidateProvenanceEventId: string;
+      expectedApprovedCandidateSignerFingerprint: string;
+      expectedApprovedCandidateStatementSha256: string;
+      expectedTrustedSignerTrustId: string;
+      expectedTrustedSignerEventId: string;
     } | null
   ): Promise<ModePackReplaceActiveResult> {
     const params: Record<string, unknown> = {
@@ -251,6 +262,19 @@ export class RuntimeClient {
       params.approved_candidate_approval_id = approvedCandidate.approvalId;
       params.expected_approved_candidate_content_sha256 = approvedCandidate.contentSha256;
       params.expected_approved_candidate_compiled_policy_fingerprint = approvedCandidate.compiledPolicyFingerprint;
+    }
+    if (updateAdmission) {
+      params.update_admission = {
+        authorize_update: updateAdmission.authorizeUpdate,
+        expected_current_modepack_name: updateAdmission.expectedCurrentModePackName,
+        expected_current_source_kind: updateAdmission.expectedCurrentSourceKind,
+        expected_approved_candidate_provenance_id: updateAdmission.expectedApprovedCandidateProvenanceId,
+        expected_approved_candidate_provenance_event_id: updateAdmission.expectedApprovedCandidateProvenanceEventId,
+        expected_approved_candidate_signer_fingerprint: updateAdmission.expectedApprovedCandidateSignerFingerprint,
+        expected_approved_candidate_statement_sha256: updateAdmission.expectedApprovedCandidateStatementSha256,
+        expected_trusted_signer_trust_id: updateAdmission.expectedTrustedSignerTrustId,
+        expected_trusted_signer_event_id: updateAdmission.expectedTrustedSignerEventId,
+      };
     }
     const result = await this.call<ModePackReplaceActiveResult>('modepack.replaceActive', params);
 

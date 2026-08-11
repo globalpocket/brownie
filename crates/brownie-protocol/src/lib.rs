@@ -189,6 +189,21 @@ pub struct ModePackReplaceActiveParams {
     pub approved_candidate_approval_id: Option<String>,
     pub expected_approved_candidate_content_sha256: Option<String>,
     pub expected_approved_candidate_compiled_policy_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_admission: Option<ModePackUpdateAdmissionParams>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackUpdateAdmissionParams {
+    pub authorize_update: bool,
+    pub expected_current_modepack_name: String,
+    pub expected_current_source_kind: String,
+    pub expected_approved_candidate_provenance_id: String,
+    pub expected_approved_candidate_provenance_event_id: String,
+    pub expected_approved_candidate_signer_fingerprint: String,
+    pub expected_approved_candidate_statement_sha256: String,
+    pub expected_trusted_signer_trust_id: String,
+    pub expected_trusted_signer_event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -272,6 +287,8 @@ pub struct ModePackReplaceActiveResult {
     pub replacement_event_id: String,
     pub approved_candidate: Option<ModePackApprovedCandidateSummary>,
     pub candidate_consumed_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_admission: Option<ModePackUpdateAdmissionSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -344,6 +361,27 @@ pub struct ModePackRevokedSignerSummary {
     pub trusted_signer_event_id: String,
     pub revoked_at: String,
     pub revocation_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackUpdateAdmissionSummary {
+    pub update_id: String,
+    pub current_activation_fingerprint: String,
+    pub replacement_activation_fingerprint: String,
+    pub modepack_name: String,
+    pub source_kind: String,
+    pub approval_id: String,
+    pub candidate_id: String,
+    pub content_sha256: String,
+    pub compiled_policy_fingerprint: String,
+    pub provenance_id: String,
+    pub provenance_event_id: String,
+    pub trusted_signer_trust_id: String,
+    pub trusted_signer_event_id: String,
+    pub signer_fingerprint: String,
+    pub statement_sha256: String,
+    pub admitted_at: String,
+    pub admission_event_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -180,6 +180,7 @@ export interface ModePackReplaceActiveResult {
   replacement_event_id: string;
   approved_candidate?: ModePackApprovedCandidateSummary | null;
   candidate_consumed_event_id?: string | null;
+  update_admission?: ModePackUpdateAdmissionSummary | null;
 }
 
 export interface ModePackRollbackActiveResult {
@@ -188,6 +189,26 @@ export interface ModePackRollbackActiveResult {
   current_snapshot: ModePackActiveSnapshotSummary;
   restored_snapshot: ModePackActiveSnapshotSummary;
   rollback_event_id: string;
+}
+
+export interface ModePackUpdateAdmissionSummary {
+  update_id: string;
+  current_activation_fingerprint: string;
+  replacement_activation_fingerprint: string;
+  modepack_name: string;
+  source_kind: string;
+  approval_id: string;
+  candidate_id: string;
+  content_sha256: string;
+  compiled_policy_fingerprint: string;
+  provenance_id: string;
+  provenance_event_id: string;
+  trusted_signer_trust_id: string;
+  trusted_signer_event_id: string;
+  signer_fingerprint: string;
+  statement_sha256: string;
+  admitted_at: string;
+  admission_event_id: string;
 }
 
 export interface ModePackCandidateSummary {
@@ -3107,7 +3128,43 @@ export function isModePackReplaceActiveResult(value: unknown): value is ModePack
     typeof value.replacement_event_id === 'string' &&
     (value.approved_candidate === undefined || value.approved_candidate === null || isModePackApprovedCandidateSummary(value.approved_candidate)) &&
     (value.candidate_consumed_event_id === undefined || value.candidate_consumed_event_id === null || typeof value.candidate_consumed_event_id === 'string') &&
+    (value.update_admission === undefined || value.update_admission === null || isModePackUpdateAdmissionSummary(value.update_admission)) &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackUpdateAdmissionSummary(value: unknown): value is ModePackUpdateAdmissionSummary {
+  return (
+    isRecord(value) &&
+    typeof value.update_id === 'string' &&
+    typeof value.current_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.current_activation_fingerprint) &&
+    typeof value.replacement_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.replacement_activation_fingerprint) &&
+    typeof value.modepack_name === 'string' &&
+    typeof value.source_kind === 'string' &&
+    typeof value.approval_id === 'string' &&
+    typeof value.candidate_id === 'string' &&
+    typeof value.content_sha256 === 'string' &&
+    isSha256Fingerprint(value.content_sha256) &&
+    typeof value.compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.compiled_policy_fingerprint) &&
+    typeof value.provenance_id === 'string' &&
+    typeof value.provenance_event_id === 'string' &&
+    typeof value.trusted_signer_trust_id === 'string' &&
+    typeof value.trusted_signer_event_id === 'string' &&
+    typeof value.signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.signer_fingerprint) &&
+    typeof value.statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.statement_sha256) &&
+    typeof value.admitted_at === 'string' &&
+    typeof value.admission_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
