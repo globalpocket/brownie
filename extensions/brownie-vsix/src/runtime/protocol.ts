@@ -240,6 +240,7 @@ export interface ModePackTrustedSignerSummary {
   trust_id: string;
   signer_fingerprint: string;
   trusted_at: string;
+  expires_at?: string;
   trust_event_id: string;
 }
 
@@ -3237,6 +3238,7 @@ function isModePackTrustedSignerSummary(value: unknown): value is ModePackTruste
     typeof value.signer_fingerprint === 'string' &&
     isSha256Fingerprint(value.signer_fingerprint) &&
     typeof value.trusted_at === 'string' &&
+    (value.expires_at === undefined || typeof value.expires_at === 'string') &&
     typeof value.trust_event_id === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&

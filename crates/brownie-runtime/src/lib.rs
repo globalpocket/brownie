@@ -14343,6 +14343,19 @@ fn handle_modepack_trust_signer(id: Value, params: Option<Value>) -> JsonRpcResp
             "invalid params: signer_fingerprint must be a sha256 fingerprint",
         );
     }
+    if let Some(expires_at) = params.expires_at.as_deref() {
+        match parse_modepack_signer_trust_expiry(expires_at) {
+            Ok(expires_at) if expires_at <= time::OffsetDateTime::now_utc() => {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: signer trust expires_at must be in the future",
+                );
+            }
+            Ok(_) => {}
+            Err(message) => return error_response(id, -32602, &message),
+        }
+    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -29083,6 +29096,9 @@ fn approve_remote_modepack_candidate(
     {
         return Err("modepack candidate approval failed: trusted signer revoked".to_string());
     }
+    if modepack_signer_trust_expired(&trusted_signer.summary)? {
+        return Err("modepack candidate approval failed: trusted signer expired".to_string());
+    }
 
     let approved_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let approval_summary = ModePackApprovedCandidateSummary {
@@ -29135,6 +29151,7 @@ fn trust_modepack_signer(
         ),
         signer_fingerprint: params.signer_fingerprint.clone(),
         trusted_at,
+        expires_at: params.expires_at.clone(),
         trust_event_id: String::new(),
     };
     let committed = store
@@ -29142,12 +29159,32 @@ fn trust_modepack_signer(
             summary: trust_summary,
         })
         .map_err(|error| format!("modepack signer trust failed: {error}"))?;
+    let trusted_signer = committed.trusted_signer.summary;
+    let has_expiry = trusted_signer.expires_at.is_some();
     Ok(ModePackTrustSignerResult {
         trusted: !committed.replayed,
         replayed: committed.replayed,
-        trusted_signer: committed.trusted_signer.summary,
-        next_action: "verify_or_approve_modepack_candidate_for_trusted_signer".to_string(),
+        trusted_signer,
+        next_action: if has_expiry {
+            "verify_or_approve_modepack_candidate_before_signer_trust_expires".to_string()
+        } else {
+            "verify_or_approve_modepack_candidate_for_trusted_signer".to_string()
+        },
     })
+}
+
+fn parse_modepack_signer_trust_expiry(expires_at: &str) -> Result<time::OffsetDateTime, String> {
+    time::OffsetDateTime::parse(expires_at, &time::format_description::well_known::Rfc3339)
+        .map_err(|_| "invalid params: expires_at must be an RFC3339 timestamp".to_string())
+}
+
+fn modepack_signer_trust_expired(summary: &ModePackTrustedSignerSummary) -> Result<bool, String> {
+    let Some(expires_at) = summary.expires_at.as_deref() else {
+        return Ok(false);
+    };
+    let expires_at = parse_modepack_signer_trust_expiry(expires_at)
+        .map_err(|error| format!("modepack candidate approval failed: {error}"))?;
+    Ok(expires_at <= time::OffsetDateTime::now_utc())
 }
 
 fn revoke_modepack_signer(
@@ -63710,8 +63747,9 @@ mod tests {
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         let signer_fingerprint =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let expires_at = "2099-01-01T00:00:00Z";
         let request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{signer_fingerprint}"}}}}"#
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{signer_fingerprint}","expires_at":"{expires_at}"}}}}"#
         );
 
         let trusted = parse_line(&request);
@@ -63723,9 +63761,10 @@ mod tests {
             trusted_result["trusted_signer"]["signer_fingerprint"],
             signer_fingerprint
         );
+        assert_eq!(trusted_result["trusted_signer"]["expires_at"], expires_at);
         assert_eq!(
             trusted_result["next_action"],
-            "verify_or_approve_modepack_candidate_for_trusted_signer"
+            "verify_or_approve_modepack_candidate_before_signer_trust_expires"
         );
 
         let replay = parse_line(&request);
@@ -63736,6 +63775,21 @@ mod tests {
         assert_eq!(
             replay_result["trusted_signer"]["trust_event_id"],
             trusted_result["trusted_signer"]["trust_event_id"]
+        );
+        assert_eq!(replay_result["trusted_signer"]["expires_at"], expires_at);
+        let replay_without_expiry = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.trustSigner","params":{{"authorize_trust":true,"signer_fingerprint":"{signer_fingerprint}"}}}}"#
+        ));
+        assert!(replay_without_expiry.error.is_none());
+        let replay_without_expiry_result = replay_without_expiry.result.expect("replay result");
+        assert!(replay_without_expiry_result["replayed"].as_bool().unwrap());
+        assert_eq!(
+            replay_without_expiry_result["trusted_signer"]["expires_at"],
+            expires_at
+        );
+        assert_eq!(
+            replay_without_expiry_result["next_action"],
+            "verify_or_approve_modepack_candidate_before_signer_trust_expires"
         );
 
         let denied = parse_line(
@@ -63758,8 +63812,150 @@ mod tests {
                 .count(),
             1
         );
+        assert!(ledger.contains("\"expires_at\":\"2099-01-01T00:00:00Z\""));
         assert!(!ledger.contains("raw_ledger_payload"));
         assert!(!ledger.contains("provenance_statement_json"));
+
+        let expired = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"modepack.trustSigner","params":{"authorize_trust":true,"signer_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","expires_at":"2000-01-01T00:00:00Z"}}"#,
+        );
+        assert!(expired
+            .error
+            .expect("expired trust")
+            .message
+            .contains("signer trust expires_at must be in the future"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn modepack_approval_denies_expired_trusted_signer() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-trusted-reviewer",
+              "display_name": "Remote Trusted Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let fetched = fetch_remote_modepack_candidate_with(
+            &store,
+            &ModePackFetchCandidateParams {
+                authorize_fetch: true,
+                url: "https://example.com/modepack.json".to_string(),
+                expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
+            },
+            |_| {
+                Ok(RemoteModePackFetchResponse {
+                    status: 200,
+                    content_type: Some("application/json".to_string()),
+                    body: body.as_bytes().to_vec(),
+                })
+            },
+        )
+        .expect("candidate fetch");
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let statement = serde_json::json!({
+            "content_sha256": fetched.candidate.content_sha256,
+            "compiled_policy_fingerprint": fetched.candidate.compiled_policy_fingerprint,
+            "source_url_fingerprint": fetched.candidate.source_url_fingerprint,
+            "mode_ids": fetched.candidate.mode_ids,
+            "schema_version": fetched.candidate.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "example-publisher",
+        })
+        .to_string();
+        let signature = signing_key.sign(statement.as_bytes());
+        let provenance = verify_modepack_candidate_provenance(
+            &store,
+            &ModePackVerifyCandidateProvenanceParams {
+                authorize_provenance_verification: true,
+                expected_content_sha256: fetched.candidate.content_sha256.clone(),
+                expected_compiled_policy_fingerprint: fetched
+                    .candidate
+                    .compiled_policy_fingerprint
+                    .clone(),
+                expected_signer_fingerprint: signer_fingerprint.clone(),
+                provenance_statement_json: statement,
+                provenance_signature_base64: general_purpose::STANDARD.encode(signature.to_bytes()),
+                provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
+            },
+        )
+        .expect("candidate provenance");
+        let trusted = trust_modepack_signer(
+            &store,
+            &ModePackTrustSignerParams {
+                authorize_trust: true,
+                signer_fingerprint: signer_fingerprint.clone(),
+                expires_at: Some("2099-01-01T00:00:00Z".to_string()),
+            },
+        )
+        .expect("trusted signer");
+        assert_eq!(
+            trusted.trusted_signer.expires_at.as_deref(),
+            Some("2099-01-01T00:00:00Z")
+        );
+
+        let signer_slug = signer_fingerprint
+            .strip_prefix("sha256:")
+            .unwrap_or(&signer_fingerprint);
+        let trusted_signer_path = temp
+            .path()
+            .join(".brownie/modepack-candidates")
+            .join(format!("trusted-signer-{signer_slug}.json"));
+        let mut trusted_signer_json: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&trusted_signer_path).expect("trusted signer json"),
+        )
+        .expect("trusted signer value");
+        trusted_signer_json["summary"]["expires_at"] =
+            serde_json::Value::String("2000-01-01T00:00:00Z".to_string());
+        std::fs::write(
+            &trusted_signer_path,
+            serde_json::to_string_pretty(&trusted_signer_json).expect("serialize trusted signer"),
+        )
+        .expect("rewrite trusted signer");
+
+        let approval = approve_remote_modepack_candidate(
+            &store,
+            &ModePackApproveCandidateParams {
+                authorize_trust: true,
+                expected_content_sha256: fetched.candidate.content_sha256,
+                expected_compiled_policy_fingerprint: fetched.candidate.compiled_policy_fingerprint,
+                expected_provenance_id: provenance.provenance.provenance_id,
+                expected_provenance_event_id: provenance.provenance.provenance_event_id,
+                expected_signer_fingerprint: provenance.provenance.signer_fingerprint,
+                expected_statement_sha256: provenance.provenance.statement_sha256,
+            },
+        );
+        assert!(approval
+            .expect_err("expired signer denied")
+            .contains("trusted signer expired"));
+        assert!(!temp
+            .path()
+            .join(".brownie/modepack-active/current.json")
+            .exists());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -64287,6 +64483,7 @@ mod tests {
             &ModePackTrustSignerParams {
                 authorize_trust: true,
                 signer_fingerprint: provenance.provenance.signer_fingerprint.clone(),
+                expires_at: None,
             },
         )
         .expect("trusted signer");

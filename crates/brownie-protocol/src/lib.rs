@@ -220,6 +220,8 @@ pub struct ModePackApproveCandidateParams {
 pub struct ModePackTrustSignerParams {
     pub authorize_trust: bool,
     pub signer_fingerprint: String,
+    #[serde(default)]
+    pub expires_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -329,6 +331,8 @@ pub struct ModePackTrustedSignerSummary {
     pub trust_id: String,
     pub signer_fingerprint: String,
     pub trusted_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<String>,
     pub trust_event_id: String,
 }
 

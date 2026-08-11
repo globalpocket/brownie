@@ -176,11 +176,15 @@ export class RuntimeClient {
     return result;
   }
 
-  async trustModePackSigner(authorizeTrust: boolean, signerFingerprint: string): Promise<ModePackTrustSignerResult> {
-    const result = await this.call<ModePackTrustSignerResult>('modepack.trustSigner', {
+  async trustModePackSigner(authorizeTrust: boolean, signerFingerprint: string, expiresAt?: string): Promise<ModePackTrustSignerResult> {
+    const params: Record<string, unknown> = {
       authorize_trust: authorizeTrust,
       signer_fingerprint: signerFingerprint,
-    });
+    };
+    if (expiresAt !== undefined) {
+      params.expires_at = expiresAt;
+    }
+    const result = await this.call<ModePackTrustSignerResult>('modepack.trustSigner', params);
 
     if (!isModePackTrustSignerResult(result)) {
       throw new RuntimeProtocolError('modepack.trustSigner returned an invalid result');
