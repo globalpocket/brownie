@@ -43311,7 +43311,7 @@ mod tests {
             .unwrap_or_else(|| panic!("seed advance failed"));
         assert_eq!(seed["session_sequence"], 1);
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":1,"max_selected_index_chars":0}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
         let drive = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive failed"));
