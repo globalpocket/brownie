@@ -234,6 +234,35 @@ export interface ModePackFetchCandidateResult {
   next_action: string;
 }
 
+export interface ModePackRegistryUpdateSelectionSummary {
+  selection_id: string;
+  registry_url_host: string;
+  registry_url_fingerprint: string;
+  registry_manifest_sha256: string;
+  current_activation_fingerprint: string;
+  current_modepack_name: string;
+  current_source_kind: string;
+  candidate_url: string;
+  candidate_url_host: string;
+  candidate_url_fingerprint: string;
+  candidate_content_sha256: string;
+  candidate_compiled_policy_fingerprint: string;
+  provenance_statement_url: string;
+  provenance_statement_url_host: string;
+  provenance_statement_url_fingerprint: string;
+  provenance_statement_sha256: string;
+  signer_fingerprint: string;
+  selected_at: string;
+  selection_event_id: string;
+}
+
+export interface ModePackSelectRegistryUpdateResult {
+  selected: boolean;
+  replayed: boolean;
+  selection: ModePackRegistryUpdateSelectionSummary;
+  next_action: string;
+}
+
 export interface ModePackApprovedCandidateSummary {
   approval_id: string;
   candidate_id: string;
@@ -3194,6 +3223,20 @@ export function isModePackFetchCandidateResult(value: unknown): value is ModePac
   );
 }
 
+export function isModePackSelectRegistryUpdateResult(value: unknown): value is ModePackSelectRegistryUpdateResult {
+  return (
+    isRecord(value) &&
+    typeof value.selected === 'boolean' &&
+    typeof value.replayed === 'boolean' &&
+    isModePackRegistryUpdateSelectionSummary(value.selection) &&
+    typeof value.next_action === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_registry_manifest_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
 export function isModePackApproveCandidateResult(value: unknown): value is ModePackApproveCandidateResult {
   return (
     isRecord(value) &&
@@ -3247,6 +3290,44 @@ export function isModePackVerifyCandidateProvenanceResult(value: unknown): value
     !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'provenance_signature_base64') &&
     !Object.prototype.hasOwnProperty.call(value, 'provenance_public_key_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackRegistryUpdateSelectionSummary(value: unknown): value is ModePackRegistryUpdateSelectionSummary {
+  return (
+    isRecord(value) &&
+    typeof value.selection_id === 'string' &&
+    typeof value.registry_url_host === 'string' &&
+    typeof value.registry_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.registry_url_fingerprint) &&
+    typeof value.registry_manifest_sha256 === 'string' &&
+    isSha256Fingerprint(value.registry_manifest_sha256) &&
+    typeof value.current_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.current_activation_fingerprint) &&
+    typeof value.current_modepack_name === 'string' &&
+    typeof value.current_source_kind === 'string' &&
+    typeof value.candidate_url === 'string' &&
+    typeof value.candidate_url_host === 'string' &&
+    typeof value.candidate_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.candidate_url_fingerprint) &&
+    typeof value.candidate_content_sha256 === 'string' &&
+    isSha256Fingerprint(value.candidate_content_sha256) &&
+    typeof value.candidate_compiled_policy_fingerprint === 'string' &&
+    isSha256Fingerprint(value.candidate_compiled_policy_fingerprint) &&
+    typeof value.provenance_statement_url === 'string' &&
+    typeof value.provenance_statement_url_host === 'string' &&
+    typeof value.provenance_statement_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.provenance_statement_url_fingerprint) &&
+    typeof value.provenance_statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.provenance_statement_sha256) &&
+    typeof value.signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.signer_fingerprint) &&
+    typeof value.selected_at === 'string' &&
+    typeof value.selection_event_id === 'string' &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_registry_manifest_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }

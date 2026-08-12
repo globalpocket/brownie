@@ -42,9 +42,11 @@ use brownie_protocol::{
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
-    ModePackFetchCandidateParams, ModePackFetchCandidateResult, ModePackReplaceActiveParams,
+    ModePackFetchCandidateParams, ModePackFetchCandidateResult,
+    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveParams,
     ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
     ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
+    ModePackSelectRegistryUpdateParams, ModePackSelectRegistryUpdateResult,
     ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
     ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
@@ -233,7 +235,8 @@ use brownie_store::{
     HeadlessContinuationDecisionLookup, HeadlessRunCompletionFinalizationCheckpoint,
     HeadlessRunSessionCheckpoint, HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
-    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot, ModePackRevokedSignerSnapshot,
+    ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot,
+    ModePackRegistryUpdateSelectionSnapshot, ModePackRevokedSignerSnapshot,
     ModePackTrustedSignerSnapshot, ParentJoinContinuationRunAdmission,
     PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
     VerificationRecoveryTaskStartParams,
@@ -249,6 +252,7 @@ use brownie_tools::{
     VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
 };
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::{
@@ -297,6 +301,7 @@ const METHOD_MODE_LIST: &str = "mode.list";
 const METHOD_MODE_GET: &str = "mode.get";
 const METHOD_MODEPACK_ACTIVATE: &str = "modepack.activate";
 const METHOD_MODEPACK_FETCH_CANDIDATE: &str = "modepack.fetchCandidate";
+const METHOD_MODEPACK_SELECT_REGISTRY_UPDATE: &str = "modepack.selectRegistryUpdate";
 const METHOD_MODEPACK_APPROVE_CANDIDATE: &str = "modepack.approveCandidate";
 const METHOD_MODEPACK_TRUST_SIGNER: &str = "modepack.trustSigner";
 const METHOD_MODEPACK_REVOKE_SIGNER: &str = "modepack.revokeSigner";
@@ -472,6 +477,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
         METHOD_MODEPACK_FETCH_CANDIDATE => {
             handle_modepack_fetch_candidate(request.id, request.params)
+        }
+        METHOD_MODEPACK_SELECT_REGISTRY_UPDATE => {
+            handle_modepack_select_registry_update(request.id, request.params)
         }
         METHOD_MODEPACK_APPROVE_CANDIDATE => {
             handle_modepack_approve_candidate(request.id, request.params)
@@ -14254,6 +14262,46 @@ fn handle_modepack_fetch_candidate(id: Value, params: Option<Value>) -> JsonRpcR
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let result = match fetch_remote_modepack_candidate(&store, &params) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn handle_modepack_select_registry_update(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: ModePackSelectRegistryUpdateParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_registry_selection {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: Mode Pack registry update selection authorization required",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_registry_manifest_sha256) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_registry_manifest_sha256 must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_current_activation_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_current_activation_fingerprint must be a sha256 fingerprint",
+        );
+    }
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let result = match select_modepack_registry_update(&store, &params) {
         Ok(result) => result,
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
@@ -28851,6 +28899,26 @@ struct RemoteModePackFetchResponse {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModePackRegistryManifest {
+    schema_version: u64,
+    entries: Vec<ModePackRegistryManifestEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModePackRegistryManifestEntry {
+    modepack_name: String,
+    source_kind: String,
+    candidate_url: String,
+    candidate_content_sha256: String,
+    candidate_compiled_policy_fingerprint: String,
+    provenance_statement_url: String,
+    provenance_statement_sha256: String,
+    signer_fingerprint: String,
+}
+
 fn fetch_remote_modepack_candidate(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
@@ -28960,6 +29028,217 @@ where
         candidate: committed.snapshot.summary,
         next_action: "review_candidate_then_replace_active_modepack".to_string(),
     })
+}
+
+fn select_modepack_registry_update(
+    store: &BrownieStore,
+    params: &ModePackSelectRegistryUpdateParams,
+) -> Result<ModePackSelectRegistryUpdateResult, String> {
+    validate_modepack_fetch_url(&params.registry_url, true)?;
+    select_modepack_registry_update_with(store, params, |url| fetch_modepack_url(url))
+}
+
+fn select_modepack_registry_update_with<F>(
+    store: &BrownieStore,
+    params: &ModePackSelectRegistryUpdateParams,
+    fetcher: F,
+) -> Result<ModePackSelectRegistryUpdateResult, String>
+where
+    F: FnOnce(&str) -> Result<RemoteModePackFetchResponse, String>,
+{
+    let registry_url = validate_modepack_fetch_url(&params.registry_url, false)?;
+    let current = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("modepack registry update selection failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack registry update selection failed: active Mode Pack snapshot not found"
+                .to_string()
+        })?;
+    if current.summary.activation_fingerprint != params.expected_current_activation_fingerprint {
+        return Err(format!(
+            "modepack registry update selection failed: current activation fingerprint mismatch: expected {} but found {}",
+            params.expected_current_activation_fingerprint,
+            current.summary.activation_fingerprint
+        ));
+    }
+    if current.summary.source_kind != "remote_https_candidate" {
+        return Err(
+            "modepack registry update selection failed: active Mode Pack is not a remote HTTPS candidate"
+                .to_string(),
+        );
+    }
+
+    let response = fetcher(registry_url.as_str())?;
+    if response.status != 200 {
+        return Err(format!(
+            "modepack registry update selection failed: unsupported HTTP status {}",
+            response.status
+        ));
+    }
+    if !modepack_candidate_content_type_allowed(response.content_type.as_deref()) {
+        return Err(
+            "modepack registry update selection failed: unsupported content type".to_string(),
+        );
+    }
+    if response.body.len() > MODEPACK_REMOTE_FETCH_MAX_BYTES {
+        return Err(
+            "modepack registry update selection failed: manifest exceeds byte limit".to_string(),
+        );
+    }
+    let registry_manifest_sha256 = format!("sha256:{}", hex_sha256(&response.body));
+    if registry_manifest_sha256 != params.expected_registry_manifest_sha256 {
+        return Err(format!(
+            "modepack registry update selection failed: manifest fingerprint mismatch: expected {} but found {}",
+            params.expected_registry_manifest_sha256, registry_manifest_sha256
+        ));
+    }
+    let body = String::from_utf8(response.body).map_err(|_| {
+        "modepack registry update selection failed: manifest is not UTF-8".to_string()
+    })?;
+    if scan_text_for_sensitive_content(&body) {
+        return Err(
+            "modepack registry update selection failed: manifest contains sensitive-like content"
+                .to_string(),
+        );
+    }
+    let manifest: ModePackRegistryManifest = serde_json::from_str(&body).map_err(|error| {
+        format!("modepack registry update selection failed: invalid manifest JSON: {error}")
+    })?;
+    if manifest.schema_version != 1 {
+        return Err(
+            "modepack registry update selection failed: unsupported manifest schema_version"
+                .to_string(),
+        );
+    }
+    if manifest.entries.is_empty() || manifest.entries.len() > 32 {
+        return Err(
+            "modepack registry update selection failed: manifest entry count is out of range"
+                .to_string(),
+        );
+    }
+
+    let mut matches = Vec::new();
+    for entry in manifest.entries {
+        validate_modepack_registry_manifest_entry(&entry)?;
+        let candidate_url = validate_modepack_fetch_url(&entry.candidate_url, false)?;
+        let provenance_statement_url =
+            validate_modepack_fetch_url(&entry.provenance_statement_url, false)?;
+        if entry.modepack_name == current.summary.modepack_name
+            && entry.source_kind == current.summary.source_kind
+        {
+            matches.push((entry, candidate_url, provenance_statement_url));
+        }
+    }
+    if matches.is_empty() {
+        return Err(
+            "modepack registry update selection failed: no entry matches the active Mode Pack"
+                .to_string(),
+        );
+    }
+    if matches.len() > 1 {
+        return Err(
+            "modepack registry update selection failed: manifest contains duplicate matching entries"
+                .to_string(),
+        );
+    }
+
+    let (entry, candidate_url, provenance_statement_url) = matches.remove(0);
+    if entry.candidate_content_sha256 == current.summary.activation_fingerprint {
+        return Err(
+            "modepack registry update selection failed: candidate fingerprint matches the active activation"
+                .to_string(),
+        );
+    }
+    let selected_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
+    let selection_id_inputs = json!({
+        "version": "modepack_registry_update_selection_id_v1",
+        "current_activation_fingerprint": current.summary.activation_fingerprint,
+        "registry_manifest_sha256": registry_manifest_sha256,
+        "candidate_content_sha256": entry.candidate_content_sha256,
+    });
+    let selection_id = format!(
+        "modepack_registry_selection_{}",
+        &hex_sha256(selection_id_inputs.to_string().as_bytes())[..16]
+    );
+    let selection = ModePackRegistryUpdateSelectionSummary {
+        selection_id,
+        registry_url_host: registry_url.host_str().unwrap_or_default().to_string(),
+        registry_url_fingerprint: format!(
+            "sha256:{}",
+            hex_sha256(registry_url.as_str().as_bytes())
+        ),
+        registry_manifest_sha256,
+        current_activation_fingerprint: current.summary.activation_fingerprint,
+        current_modepack_name: current.summary.modepack_name,
+        current_source_kind: current.summary.source_kind,
+        candidate_url: candidate_url.as_str().to_string(),
+        candidate_url_host: candidate_url.host_str().unwrap_or_default().to_string(),
+        candidate_url_fingerprint: format!(
+            "sha256:{}",
+            hex_sha256(candidate_url.as_str().as_bytes())
+        ),
+        candidate_content_sha256: entry.candidate_content_sha256,
+        candidate_compiled_policy_fingerprint: entry.candidate_compiled_policy_fingerprint,
+        provenance_statement_url: provenance_statement_url.as_str().to_string(),
+        provenance_statement_url_host: provenance_statement_url
+            .host_str()
+            .unwrap_or_default()
+            .to_string(),
+        provenance_statement_url_fingerprint: format!(
+            "sha256:{}",
+            hex_sha256(provenance_statement_url.as_str().as_bytes())
+        ),
+        provenance_statement_sha256: entry.provenance_statement_sha256,
+        signer_fingerprint: entry.signer_fingerprint,
+        selected_at,
+        selection_event_id: String::new(),
+    };
+    let committed = store
+        .commit_modepack_registry_update_selection_snapshot(
+            &ModePackRegistryUpdateSelectionSnapshot { summary: selection },
+        )
+        .map_err(|error| format!("modepack registry update selection failed: {error}"))?;
+    Ok(ModePackSelectRegistryUpdateResult {
+        selected: !committed.replayed,
+        replayed: committed.replayed,
+        selection: committed.selection.summary,
+        next_action: "fetch_selected_modepack_candidate".to_string(),
+    })
+}
+
+fn validate_modepack_registry_manifest_entry(
+    entry: &ModePackRegistryManifestEntry,
+) -> Result<(), String> {
+    if entry.modepack_name.trim().is_empty() || entry.modepack_name.len() > 96 {
+        return Err(
+            "modepack registry update selection failed: entry modepack_name is invalid".to_string(),
+        );
+    }
+    if entry.source_kind != "remote_https_candidate" {
+        return Err(
+            "modepack registry update selection failed: entry source_kind is unsupported"
+                .to_string(),
+        );
+    }
+    for (field_name, value) in [
+        ("candidate_content_sha256", &entry.candidate_content_sha256),
+        (
+            "candidate_compiled_policy_fingerprint",
+            &entry.candidate_compiled_policy_fingerprint,
+        ),
+        (
+            "provenance_statement_sha256",
+            &entry.provenance_statement_sha256,
+        ),
+        ("signer_fingerprint", &entry.signer_fingerprint),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "modepack registry update selection failed: entry {field_name} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn approve_remote_modepack_candidate(
@@ -63698,6 +63977,110 @@ mod tests {
         })
         .expect_err("fingerprint mismatch");
         assert!(mismatch.contains("content fingerprint mismatch"));
+    }
+
+    #[test]
+    fn modepack_registry_update_selection_persists_bounded_candidate_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let current_activation_fingerprint = format!("sha256:{}", "1".repeat(64));
+        let candidate_content_sha256 = format!("sha256:{}", "2".repeat(64));
+        let candidate_policy_fingerprint = format!("sha256:{}", "3".repeat(64));
+        let provenance_statement_sha256 = format!("sha256:{}", "4".repeat(64));
+        let signer_fingerprint = format!("sha256:{}", "5".repeat(64));
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: "modepack_activation_current".to_string(),
+                    activation_fingerprint: current_activation_fingerprint.clone(),
+                    modepack_name: "remote-agentmodes".to_string(),
+                    schema_version: 1,
+                    source_kind: "remote_https_candidate".to_string(),
+                    source_path: ".brownie/modepack-active/current.json".to_string(),
+                    mode_count: 1,
+                    mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
+                    activated_at: "2026-08-12T00:00:00Z".to_string(),
+                    activation_event_id: String::new(),
+                },
+                policies: Vec::new(),
+            })
+            .expect("active snapshot");
+        let manifest = format!(
+            r#"{{
+              "schema_version": 1,
+              "entries": [
+                {{
+                  "modepack_name": "remote-agentmodes",
+                  "source_kind": "remote_https_candidate",
+                  "candidate_url": "https://example.com/modepack.json",
+                  "candidate_content_sha256": "{candidate_content_sha256}",
+                  "candidate_compiled_policy_fingerprint": "{candidate_policy_fingerprint}",
+                  "provenance_statement_url": "https://example.com/provenance.json",
+                  "provenance_statement_sha256": "{provenance_statement_sha256}",
+                  "signer_fingerprint": "{signer_fingerprint}"
+                }}
+              ]
+            }}"#
+        );
+        let params = ModePackSelectRegistryUpdateParams {
+            authorize_registry_selection: true,
+            registry_url: "https://registry.example.com/modepacks.json".to_string(),
+            expected_registry_manifest_sha256: format!(
+                "sha256:{}",
+                hex_sha256(manifest.as_bytes())
+            ),
+            expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
+        };
+
+        let selected = select_modepack_registry_update_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: manifest.as_bytes().to_vec(),
+            })
+        })
+        .expect("registry selection");
+        assert!(selected.selected);
+        assert!(!selected.replayed);
+        assert_eq!(
+            selected.selection.current_modepack_name,
+            "remote-agentmodes"
+        );
+        assert_eq!(
+            selected.selection.current_activation_fingerprint,
+            current_activation_fingerprint
+        );
+        assert_eq!(
+            selected.selection.candidate_content_sha256,
+            candidate_content_sha256
+        );
+        assert_eq!(selected.next_action, "fetch_selected_modepack_candidate");
+
+        let replay = select_modepack_registry_update_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: manifest.as_bytes().to_vec(),
+            })
+        })
+        .expect("registry selection replay");
+        assert!(!replay.selected);
+        assert!(replay.replayed);
+        assert_eq!(
+            replay.selection.selection_event_id,
+            selected.selection.selection_event_id
+        );
+        let cache_dir = temp.path().join(".brownie/modepack-candidates");
+        let ledger = std::fs::read_to_string(cache_dir.join("ledger.jsonl")).expect("ledger");
+        assert_eq!(ledger.lines().count(), 1);
+        assert!(!ledger.contains("raw_registry_manifest_json"));
+        assert!(!ledger.contains("raw_modepack_json"));
+        assert!(!ledger.contains("raw_provenance_statement_json"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

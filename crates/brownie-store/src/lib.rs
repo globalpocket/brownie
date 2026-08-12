@@ -11,7 +11,8 @@ use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
     ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
-    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackRevokedSignerSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
+    ModePackRegistryUpdateSelectionSummary, ModePackRevokedSignerSummary,
     ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary, PatchApplyRecoveryProvenance,
     RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
     VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
@@ -481,6 +482,97 @@ impl BrownieStore {
         })?))
     }
 
+    pub fn read_modepack_registry_update_selection_snapshot(
+        &self,
+        current_activation_fingerprint: &str,
+        candidate_content_sha256: &str,
+    ) -> Result<Option<ModePackRegistryUpdateSelectionSnapshot>> {
+        let path = self.modepack_registry_update_selection_path(
+            current_activation_fingerprint,
+            candidate_content_sha256,
+        );
+        if !path.exists() {
+            return Ok(None);
+        }
+        let content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        Ok(Some(serde_json::from_str(&content).with_context(|| {
+            format!("failed to parse {}", path.display())
+        })?))
+    }
+
+    pub fn commit_modepack_registry_update_selection_snapshot(
+        &self,
+        selection: &ModePackRegistryUpdateSelectionSnapshot,
+    ) -> Result<ModePackRegistryUpdateSelectionCommit> {
+        if let Some(existing) = self.read_modepack_registry_update_selection_snapshot(
+            &selection.summary.current_activation_fingerprint,
+            &selection.summary.candidate_content_sha256,
+        )? {
+            if existing.summary.registry_manifest_sha256
+                != selection.summary.registry_manifest_sha256
+                || existing.summary.registry_url_fingerprint
+                    != selection.summary.registry_url_fingerprint
+                || existing.summary.provenance_statement_sha256
+                    != selection.summary.provenance_statement_sha256
+            {
+                bail!(
+                    "conflicting Mode Pack registry update selection for {}",
+                    selection.summary.candidate_content_sha256
+                );
+            }
+            if !self.modepack_registry_update_selection_event_exists(
+                &existing.summary.selection_event_id,
+                &existing.summary.current_activation_fingerprint,
+                &existing.summary.candidate_content_sha256,
+            )? {
+                let event = ModePackCandidateLedgerEvent {
+                    event_id: existing.summary.selection_event_id.clone(),
+                    kind: "ModePackRegistryUpdateSelected".to_string(),
+                    timestamp: existing.summary.selected_at.clone(),
+                    payload: serde_json::to_value(&existing.summary).context(
+                        "failed to serialize Mode Pack registry update selection summary",
+                    )?,
+                };
+                self.append_modepack_candidate_event(&event)?;
+            }
+            return Ok(ModePackRegistryUpdateSelectionCommit {
+                replayed: true,
+                event_id: existing.summary.selection_event_id.clone(),
+                selection: existing,
+            });
+        }
+
+        let root = self.modepack_candidates_dir();
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let mut committed = selection.clone();
+        committed.summary.selection_event_id = format!("event_{}", Uuid::new_v4());
+        let body = serde_json::to_string_pretty(&committed)
+            .context("failed to serialize Mode Pack registry update selection")?;
+        write_file_atomically(
+            &self.modepack_registry_update_selection_path(
+                &committed.summary.current_activation_fingerprint,
+                &committed.summary.candidate_content_sha256,
+            ),
+            body.as_bytes(),
+        )
+        .context("failed to write Mode Pack registry update selection")?;
+        let event = ModePackCandidateLedgerEvent {
+            event_id: committed.summary.selection_event_id.clone(),
+            kind: "ModePackRegistryUpdateSelected".to_string(),
+            timestamp: committed.summary.selected_at.clone(),
+            payload: serde_json::to_value(&committed.summary)
+                .context("failed to serialize Mode Pack registry update selection summary")?,
+        };
+        self.append_modepack_candidate_event(&event)?;
+        Ok(ModePackRegistryUpdateSelectionCommit {
+            replayed: false,
+            event_id: event.event_id,
+            selection: committed,
+        })
+    }
+
     pub fn commit_modepack_candidate_snapshot(
         &self,
         snapshot: &ModePackCandidateSnapshot,
@@ -923,6 +1015,22 @@ impl BrownieStore {
         self.modepack_candidates_dir().join(format!("{slug}.json"))
     }
 
+    fn modepack_registry_update_selection_path(
+        &self,
+        current_activation_fingerprint: &str,
+        candidate_content_sha256: &str,
+    ) -> PathBuf {
+        let current_slug = current_activation_fingerprint
+            .strip_prefix("sha256:")
+            .unwrap_or(current_activation_fingerprint);
+        let candidate_slug = candidate_content_sha256
+            .strip_prefix("sha256:")
+            .unwrap_or(candidate_content_sha256);
+        self.modepack_candidates_dir().join(format!(
+            "registry-selection-{current_slug}-{candidate_slug}.json"
+        ))
+    }
+
     fn modepack_candidate_approval_path(&self, content_sha256: &str) -> PathBuf {
         let slug = content_sha256
             .strip_prefix("sha256:")
@@ -1036,6 +1144,54 @@ impl BrownieStore {
                     .get("compiled_policy_fingerprint")
                     .and_then(serde_json::Value::as_str)
                     == Some(compiled_policy_fingerprint)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    fn modepack_registry_update_selection_event_exists(
+        &self,
+        selection_event_id: &str,
+        current_activation_fingerprint: &str,
+        candidate_content_sha256: &str,
+    ) -> Result<bool> {
+        let ledger_path = self.modepack_candidates_dir().join("ledger.jsonl");
+        let file = match OpenOptions::new().read(true).open(&ledger_path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open Mode Pack candidate ledger {}",
+                        ledger_path.display()
+                    )
+                })
+            }
+        };
+        for line in BufReader::new(file).lines() {
+            let line = line.context("failed to read Mode Pack candidate ledger")?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let event: ModePackCandidateLedgerEvent = serde_json::from_str(&line)
+                .context("failed to parse Mode Pack candidate ledger")?;
+            if event.kind != "ModePackRegistryUpdateSelected"
+                || event.event_id != selection_event_id
+            {
+                continue;
+            }
+            if event
+                .payload
+                .get("current_activation_fingerprint")
+                .and_then(serde_json::Value::as_str)
+                == Some(current_activation_fingerprint)
+                && event
+                    .payload
+                    .get("candidate_content_sha256")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(candidate_content_sha256)
             {
                 return Ok(true);
             }
@@ -1319,6 +1475,18 @@ pub struct ModePackCandidateCommit {
     pub replayed: bool,
     pub event_id: String,
     pub snapshot: ModePackCandidateSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRegistryUpdateSelectionSnapshot {
+    pub summary: ModePackRegistryUpdateSelectionSummary,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRegistryUpdateSelectionCommit {
+    pub replayed: bool,
+    pub event_id: String,
+    pub selection: ModePackRegistryUpdateSelectionSnapshot,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
