@@ -9684,6 +9684,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         Ok(progress) => progress,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let latest_terminal_completion_evidence =
+        match headless_latest_completed_task_completion_evidence(&store, &post_tasks) {
+            Ok(evidence) => evidence,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    let terminal_completion_evidence =
+        latest_terminal_completion_evidence.or(terminal_completion_evidence);
     let completion_closure = headless_run_completion_closure(
         status.clone(),
         &stop_reason,
@@ -9882,6 +9891,20 @@ fn headless_run_completion_finalization(
     Ok(Some(finalization))
 }
 
+fn headless_latest_completed_task_completion_evidence(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+) -> Result<Option<TaskRunCompletionEvidence>, String> {
+    let Some(record) = tasks
+        .iter()
+        .filter(|record| record.status == TaskStatus::Completed)
+        .max_by_key(|record| record.updated_at.clone())
+    else {
+        return Ok(None);
+    };
+    task_run_completion_evidence_for_record(store, record, false)
+}
+
 fn headless_run_completion_closure(
     status: HeadlessContinueOnceStatus,
     stop_reason: &str,
@@ -9902,11 +9925,14 @@ fn headless_run_completion_closure(
         .and_then(|route| route.run_id.clone())
         .or_else(|| route_candidate.and_then(|candidate| candidate.run_id.clone()));
     let route_candidate_count = progress_overview.headless_route_candidates.len();
-    let all_known_tasks_terminal = progress_overview.task_count > 0
+    let all_known_tasks_completed = progress_overview.task_count > 0
         && progress_overview.terminal_task_ids.len() == progress_overview.task_count
         && progress_overview.status_counts.running == 0
         && progress_overview.status_counts.created == 0
-        && progress_overview.status_counts.queued == 0;
+        && progress_overview.status_counts.queued == 0
+        && progress_overview.status_counts.failed == 0
+        && progress_overview.status_counts.cancelled == 0
+        && progress_overview.status_counts.completed == progress_overview.task_count;
     let routed_explicit_action =
         progress_overview
             .headless_route_candidates
@@ -9929,13 +9955,29 @@ fn headless_run_completion_closure(
                     )
                 })
                 .unwrap_or(false);
-    let closure_status = if all_known_tasks_terminal && !routed_explicit_action {
-        HeadlessRunCompletionClosureStatus::Complete
+    let has_valid_terminal_completion_evidence = terminal_completion_evidence
+        .as_ref()
+        .map(|evidence| {
+            evidence.final_state == "Completed" && evidence.task_status == TaskStatus::Completed
+        })
+        .unwrap_or(false);
+    let no_remaining_headless_route = next_route.is_none() && route_candidate_count == 0;
+    let closure_status = if status == HeadlessContinueOnceStatus::StaleProgress {
+        HeadlessRunCompletionClosureStatus::StaleNoProgress
+    } else if status == HeadlessContinueOnceStatus::TaskInProgress
+        || progress_overview.status_counts.running > 0
+    {
+        HeadlessRunCompletionClosureStatus::TaskInProgress
     } else if routed_explicit_action {
         HeadlessRunCompletionClosureStatus::RoutedExplicitAction
+    } else if all_known_tasks_completed
+        && no_remaining_headless_route
+        && has_valid_terminal_completion_evidence
+    {
+        HeadlessRunCompletionClosureStatus::Complete
     } else if drive_budget_spent
         && matches!(status, HeadlessContinueOnceStatus::TaskExecuted)
-        && !all_known_tasks_terminal
+        && !all_known_tasks_completed
     {
         HeadlessRunCompletionClosureStatus::BudgetExhausted
     } else {
@@ -44001,7 +44043,17 @@ mod tests {
             "no_eligible_task",
             None,
             "inspect_progress_overview",
-            &None,
+            &Some(TaskRunCompletionEvidence {
+                final_state: "Completed".to_string(),
+                task_status: TaskStatus::Completed,
+                completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                completion_summary_preview: "done".to_string(),
+                completion_summary_chars: 4,
+                completion_summary_truncated: false,
+                final_response_present: false,
+                final_response_chars: 0,
+                replayed: false,
+            }),
             &progress,
             false,
         );
@@ -44119,7 +44171,17 @@ mod tests {
             "no_eligible_task",
             None,
             "inspect_progress_overview",
-            &None,
+            &Some(TaskRunCompletionEvidence {
+                final_state: "Completed".to_string(),
+                task_status: TaskStatus::Completed,
+                completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                completion_summary_preview: "done".to_string(),
+                completion_summary_chars: 4,
+                completion_summary_truncated: false,
+                final_response_present: false,
+                final_response_chars: 0,
+                replayed: false,
+            }),
             &progress,
             false,
         );
@@ -44128,6 +44190,100 @@ mod tests {
         assert_eq!(closure.runnable_task_count, 0);
         assert_eq!(closure.route_candidate_count, 0);
         assert!(closure.closure_fingerprint.starts_with("sha256:"));
+    }
+
+    #[test]
+    fn headless_run_drive_completion_closure_requires_terminal_completion_evidence() {
+        let progress = TaskListProgressOverview {
+            source_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            aggregate_sequence: 8,
+            task_count: 1,
+            root_task_ids: vec!["task_done".to_string()],
+            runnable_task_ids: Vec::new(),
+            blocked_task_ids: Vec::new(),
+            terminal_task_ids: vec!["task_done".to_string()],
+            parent_join_ready_task_ids: Vec::new(),
+            status_counts: TaskStatusCounts {
+                created: 0,
+                queued: 0,
+                running: 0,
+                completed: 1,
+                failed: 0,
+                cancelled: 0,
+            },
+            stage_counts: Vec::new(),
+            next_action_sets: Vec::new(),
+            blocked_sets: Vec::new(),
+            headless_route_candidates: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &None,
+            &progress,
+            false,
+        );
+        assert_eq!(
+            closure.status,
+            HeadlessRunCompletionClosureStatus::NoEligibleTask
+        );
+        assert!(closure.terminal_completion_fingerprint.is_none());
+    }
+
+    #[test]
+    fn headless_run_drive_completion_closure_rejects_failed_terminal_scope() {
+        let progress = TaskListProgressOverview {
+            source_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            aggregate_sequence: 9,
+            task_count: 1,
+            root_task_ids: vec!["task_failed".to_string()],
+            runnable_task_ids: Vec::new(),
+            blocked_task_ids: Vec::new(),
+            terminal_task_ids: vec!["task_failed".to_string()],
+            parent_join_ready_task_ids: Vec::new(),
+            status_counts: TaskStatusCounts {
+                created: 0,
+                queued: 0,
+                running: 0,
+                completed: 0,
+                failed: 1,
+                cancelled: 0,
+            },
+            stage_counts: Vec::new(),
+            next_action_sets: Vec::new(),
+            blocked_sets: Vec::new(),
+            headless_route_candidates: Vec::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        };
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &Some(TaskRunCompletionEvidence {
+                final_state: "Failed".to_string(),
+                task_status: TaskStatus::Failed,
+                completion_result_fingerprint: format!("sha256:{}", "f".repeat(64)),
+                completion_summary_preview: "failed".to_string(),
+                completion_summary_chars: 6,
+                completion_summary_truncated: false,
+                final_response_present: false,
+                final_response_chars: 0,
+                replayed: false,
+            }),
+            &progress,
+            false,
+        );
+        assert_eq!(
+            closure.status,
+            HeadlessRunCompletionClosureStatus::NoEligibleTask
+        );
+        assert_ne!(closure.status, HeadlessRunCompletionClosureStatus::Complete);
     }
 
     #[test]
