@@ -9793,6 +9793,25 @@ fn headless_run_completion_finalization(
     authorized: bool,
     expected_closure_fingerprint: Option<&str>,
 ) -> Result<Option<HeadlessRunCompletionFinalization>, String> {
+    if result.completion_closure.status != HeadlessRunCompletionClosureStatus::Complete {
+        if authorized {
+            return Err(
+                "invalid params: completion finalization requires completion_closure.status complete"
+                    .to_string(),
+            );
+        }
+        return Ok(None);
+    }
+    if result.next_route.is_some() || result.completion_closure.route_candidate_count > 0 {
+        if authorized {
+            return Err(
+                "invalid params: completion finalization requires no remaining headless route"
+                    .to_string(),
+            );
+        }
+        return Ok(None);
+    }
+    let owner = headless_run_completion_finalization_owner(store, result)?;
     let existing = store
         .tasks()
         .read_headless_run_completion_finalization_checkpoint(&result.session_id, &result.drive_id)
@@ -9808,9 +9827,28 @@ fn headless_run_completion_finalization(
             if expected != checkpoint.closure_fingerprint {
                 return Err(
                     "invalid params: expected_completion_closure_fingerprint does not match persisted finalization"
-                        .to_string(),
+                    .to_string(),
                 );
             }
+        }
+        if checkpoint.owner_task_id.as_deref() != Some(owner.task_id.as_str())
+            || checkpoint.owner_run_id.as_deref() != Some(owner.run_id.as_str())
+            || checkpoint.terminal_completion_fingerprint.as_deref()
+                != Some(owner.terminal_completion_fingerprint.as_str())
+            || checkpoint.result.owner_task_id.as_deref() != Some(owner.task_id.as_str())
+            || checkpoint.result.owner_run_id.as_deref() != Some(owner.run_id.as_str())
+            || checkpoint.result.terminal_completion_fingerprint.as_deref()
+                != Some(owner.terminal_completion_fingerprint.as_str())
+            || checkpoint.result.progress_fingerprint
+                != result.completion_closure.progress_fingerprint
+            || checkpoint.result.aggregate_sequence != result.completion_closure.aggregate_sequence
+            || checkpoint.result.start_session_sequence != result.start_session_sequence
+            || checkpoint.result.end_session_sequence != result.end_session_sequence
+        {
+            return Err(
+                "invalid params: persisted completion finalization conflicts with current owner"
+                    .to_string(),
+            );
         }
         let mut finalization = checkpoint.result;
         finalization.replayed = true;
@@ -9832,18 +9870,6 @@ fn headless_run_completion_finalization(
                 .to_string(),
         );
     }
-    if result.completion_closure.status != HeadlessRunCompletionClosureStatus::Complete {
-        return Err(
-            "invalid params: completion finalization requires completion_closure.status complete"
-                .to_string(),
-        );
-    }
-    if result.next_route.is_some() || result.completion_closure.route_candidate_count > 0 {
-        return Err(
-            "invalid params: completion finalization requires no remaining headless route"
-                .to_string(),
-        );
-    }
     let seed = json!({
         "version": "headless_completion_finalization_v1",
         "session_id": result.session_id,
@@ -9853,6 +9879,9 @@ fn headless_run_completion_finalization(
         "closure_fingerprint": result.completion_closure.closure_fingerprint,
         "progress_fingerprint": result.completion_closure.progress_fingerprint,
         "aggregate_sequence": result.completion_closure.aggregate_sequence,
+        "owner_task_id": owner.task_id,
+        "owner_run_id": owner.run_id,
+        "terminal_completion_fingerprint": owner.terminal_completion_fingerprint,
         "terminal_task_count": result.completion_closure.terminal_task_count,
         "total_task_count": result.completion_closure.total_task_count
     });
@@ -9865,6 +9894,9 @@ fn headless_run_completion_finalization(
         closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
         progress_fingerprint: result.completion_closure.progress_fingerprint.clone(),
         aggregate_sequence: result.completion_closure.aggregate_sequence,
+        owner_task_id: Some(owner.task_id.clone()),
+        owner_run_id: Some(owner.run_id.clone()),
+        terminal_completion_fingerprint: Some(owner.terminal_completion_fingerprint.clone()),
         terminal_task_count: result.completion_closure.terminal_task_count,
         total_task_count: result.completion_closure.total_task_count,
         finalization_fingerprint: format!("sha256:{}", hex_sha256(seed.to_string().as_bytes())),
@@ -9875,15 +9907,112 @@ fn headless_run_completion_finalization(
         session_id: result.session_id.clone(),
         drive_id: result.drive_id.clone(),
         closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
+        owner_task_id: Some(owner.task_id.clone()),
+        owner_run_id: Some(owner.run_id.clone()),
+        terminal_completion_fingerprint: Some(owner.terminal_completion_fingerprint.clone()),
         result: finalization.clone(),
     };
     store
         .tasks()
         .write_headless_run_completion_finalization_checkpoint(&checkpoint)
         .map_err(|error| format!("failed to write completion finalization checkpoint: {error}"))?;
-    append_headless_run_completion_finalized_event(store, &finalization)
+    append_headless_run_completion_finalized_event(store, &finalization, &owner)
         .map_err(|error| format!("failed to record completion finalization event: {error}"))?;
     Ok(Some(finalization))
+}
+
+#[derive(Debug, Clone)]
+struct HeadlessRunCompletionFinalizationOwner {
+    task_id: String,
+    run_id: String,
+    terminal_completion_fingerprint: String,
+}
+
+fn headless_run_completion_finalization_owner(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+) -> Result<HeadlessRunCompletionFinalizationOwner, String> {
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| format!("invalid params: failed to read current tasks: {error}"))?;
+    let progress = task_list_progress_overview(store, &tasks)?;
+    if progress.source_fingerprint != result.completion_closure.progress_fingerprint
+        || progress.aggregate_sequence != result.completion_closure.aggregate_sequence
+    {
+        return Err(
+            "invalid params: completion finalization requires current progress to match closure"
+                .to_string(),
+        );
+    }
+    if progress.root_task_ids.len() != 1 {
+        return Err(
+            "invalid params: completion finalization requires exactly one root task owner"
+                .to_string(),
+        );
+    }
+    let task_id = progress.root_task_ids[0].clone();
+    if !progress.terminal_task_ids.iter().any(|id| id == &task_id) {
+        return Err(
+            "invalid params: completion finalization owner task is not terminal".to_string(),
+        );
+    }
+    let record = tasks
+        .iter()
+        .find(|record| record.task_id == task_id)
+        .ok_or_else(|| {
+            "invalid params: completion finalization owner task is missing".to_string()
+        })?;
+    if record.status != TaskStatus::Completed {
+        return Err(
+            "invalid params: completion finalization owner task must be completed".to_string(),
+        );
+    }
+    let evidence =
+        task_run_completion_evidence_for_record(store, record, false)?.ok_or_else(|| {
+            "invalid params: completion finalization owner task is missing completion evidence"
+                .to_string()
+        })?;
+    if evidence.final_state != "Completed" || evidence.task_status != TaskStatus::Completed {
+        return Err(
+            "invalid params: completion finalization owner evidence must be completed".to_string(),
+        );
+    }
+    let Some(closure_fingerprint) = result
+        .completion_closure
+        .terminal_completion_fingerprint
+        .as_deref()
+    else {
+        return Err(
+            "invalid params: completion finalization requires terminal completion fingerprint"
+                .to_string(),
+        );
+    };
+    if evidence.completion_result_fingerprint != closure_fingerprint {
+        return Err(
+            "invalid params: completion finalization owner evidence does not match closure"
+                .to_string(),
+        );
+    }
+    if result
+        .terminal_completion_evidence
+        .as_ref()
+        .is_some_and(|result_evidence| {
+            result_evidence.completion_result_fingerprint != evidence.completion_result_fingerprint
+                || result_evidence.task_status != evidence.task_status
+                || result_evidence.final_state != evidence.final_state
+        })
+    {
+        return Err(
+            "invalid params: completion finalization result evidence does not match owner"
+                .to_string(),
+        );
+    }
+    Ok(HeadlessRunCompletionFinalizationOwner {
+        task_id,
+        run_id: record.run_id.clone(),
+        terminal_completion_fingerprint: evidence.completion_result_fingerprint,
+    })
 }
 
 fn headless_latest_completed_task_completion_evidence(
@@ -13063,20 +13192,13 @@ fn append_headless_run_session_drive_completed_events(
 fn append_headless_run_completion_finalized_event(
     store: &BrownieStore,
     finalization: &HeadlessRunCompletionFinalization,
+    owner: &HeadlessRunCompletionFinalizationOwner,
 ) -> anyhow::Result<()> {
     let tasks = store.tasks().list_tasks()?;
-    let Some(record) = tasks
+    let record = tasks
         .iter()
-        .filter(|record| {
-            matches!(
-                record.status,
-                TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
-            )
-        })
-        .max_by_key(|record| record.updated_at.clone())
-    else {
-        return Ok(());
-    };
+        .find(|record| record.task_id == owner.task_id && record.run_id == owner.run_id)
+        .ok_or_else(|| anyhow::anyhow!("completion finalization owner task disappeared"))?;
     store.tasks().append_task_event_with_payload(
         record,
         LedgerEventKind::HeadlessRunCompletionFinalized,
@@ -13088,6 +13210,9 @@ fn append_headless_run_completion_finalized_event(
             "closure_fingerprint": finalization.closure_fingerprint,
             "progress_fingerprint": finalization.progress_fingerprint,
             "aggregate_sequence": finalization.aggregate_sequence,
+            "owner_task_id": owner.task_id,
+            "owner_run_id": owner.run_id,
+            "terminal_completion_fingerprint": owner.terminal_completion_fingerprint,
             "terminal_task_count": finalization.terminal_task_count,
             "total_task_count": finalization.total_task_count,
             "finalization_fingerprint": finalization.finalization_fingerprint,
@@ -44002,53 +44127,37 @@ mod tests {
             .expect("start task");
         store
             .tasks()
-            .update_task_status(
+            .update_task_status_with_payload(
                 &task.task_id,
                 TaskStatus::Completed,
                 LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "done".to_string(),
+                        completion_summary_chars: 4,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
             )
             .expect("complete task");
 
-        let progress = TaskListProgressOverview {
-            source_fingerprint: format!("sha256:{}", "a".repeat(64)),
-            aggregate_sequence: 11,
-            task_count: 1,
-            root_task_ids: vec![task.task_id.clone()],
-            runnable_task_ids: Vec::new(),
-            blocked_task_ids: Vec::new(),
-            terminal_task_ids: vec![task.task_id.clone()],
-            parent_join_ready_task_ids: Vec::new(),
-            status_counts: TaskStatusCounts {
-                created: 0,
-                queued: 0,
-                running: 0,
-                completed: 1,
-                failed: 0,
-                cancelled: 0,
-            },
-            stage_counts: Vec::new(),
-            next_action_sets: Vec::new(),
-            blocked_sets: Vec::new(),
-            headless_route_candidates: Vec::new(),
-            nodes: Vec::new(),
-            edges: Vec::new(),
-        };
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress = task_list_progress_overview(&store, &tasks).expect("progress overview");
+        let terminal_evidence = headless_latest_completed_task_completion_evidence(&store, &tasks)
+            .expect("latest evidence")
+            .expect("terminal evidence");
         let closure = headless_run_completion_closure(
             HeadlessContinueOnceStatus::NoEligibleTask,
             "no_eligible_task",
             None,
             "inspect_progress_overview",
-            &Some(TaskRunCompletionEvidence {
-                final_state: "Completed".to_string(),
-                task_status: TaskStatus::Completed,
-                completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
-                completion_summary_preview: "done".to_string(),
-                completion_summary_chars: 4,
-                completion_summary_truncated: false,
-                final_response_present: false,
-                final_response_chars: 0,
-                replayed: false,
-            }),
+            &Some(terminal_evidence.clone()),
             &progress,
             false,
         );
@@ -44067,7 +44176,7 @@ mod tests {
             replayed_count: 0,
             stop_reason: "no_eligible_task".to_string(),
             drive_fingerprint: format!("sha256:{}", "d".repeat(64)),
-            terminal_completion_evidence: None,
+            terminal_completion_evidence: Some(terminal_evidence.clone()),
             completion_closure: closure.clone(),
             completion_finalization: None,
             start_progress: HeadlessRunProgressCheckpoint {
@@ -44094,6 +44203,18 @@ mod tests {
         assert_eq!(finalized.status, "finalized");
         assert_eq!(finalized.closure_fingerprint, closure.closure_fingerprint);
         assert_eq!(finalized.next_action, "close_headless_run");
+        assert_eq!(
+            finalized.owner_task_id.as_deref(),
+            Some(task.task_id.as_str())
+        );
+        assert_eq!(
+            finalized.owner_run_id.as_deref(),
+            Some(task.run_id.as_str())
+        );
+        assert_eq!(
+            finalized.terminal_completion_fingerprint.as_deref(),
+            Some(terminal_evidence.completion_result_fingerprint.as_str())
+        );
         assert!(!finalized.replayed);
         assert!(finalized
             .finalization_fingerprint
@@ -44124,6 +44245,30 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            events
+                .iter()
+                .find(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .expect("finalization event")
+                .payload
+                .as_ref()
+                .expect("payload")
+                .get("owner_task_id")
+                .and_then(Value::as_str),
+            Some(task.task_id.as_str())
+        );
+        assert_eq!(
+            events
+                .iter()
+                .find(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .expect("finalization event")
+                .payload
+                .as_ref()
+                .expect("payload")
+                .get("owner_run_id")
+                .and_then(Value::as_str),
+            Some(task.run_id.as_str())
+        );
         assert!(events
             .iter()
             .find(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
@@ -44133,6 +44278,272 @@ mod tests {
             .expect("payload")
             .get("raw_ledger_payload")
             .is_none());
+    }
+
+    #[test]
+    fn headless_run_completion_finalization_rejects_current_owner_mismatch() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let owner = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "owner".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start owner");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &owner.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "done".to_string(),
+                        completion_summary_chars: 4,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete owner");
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress = task_list_progress_overview(&store, &tasks).expect("progress");
+        let terminal_evidence = headless_latest_completed_task_completion_evidence(&store, &tasks)
+            .expect("evidence")
+            .expect("terminal evidence");
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &Some(terminal_evidence.clone()),
+            &progress,
+            false,
+        );
+        assert_eq!(closure.status, HeadlessRunCompletionClosureStatus::Complete);
+        let drive = HeadlessRunDriveResult {
+            status: HeadlessContinueOnceStatus::NoEligibleTask,
+            session_id: "r4.2.owner-mismatch".to_string(),
+            drive_id: "r4.2.owner-mismatch.1".to_string(),
+            start_session_sequence: 1,
+            end_session_sequence: 2,
+            replayed: false,
+            max_advances: 1,
+            max_steps_per_advance: 1,
+            advance_count: 1,
+            executed_count: 0,
+            replayed_count: 0,
+            stop_reason: "no_eligible_task".to_string(),
+            drive_fingerprint: format!("sha256:{}", "d".repeat(64)),
+            terminal_completion_evidence: Some(terminal_evidence),
+            completion_closure: closure.clone(),
+            completion_finalization: None,
+            start_progress: HeadlessRunProgressCheckpoint {
+                progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
+                aggregate_sequence: 10,
+            },
+            post_progress: Some(HeadlessRunProgressCheckpoint {
+                progress_fingerprint: progress.source_fingerprint.clone(),
+                aggregate_sequence: progress.aggregate_sequence,
+            }),
+            next_route: None,
+            advances: Vec::new(),
+            next_action: "inspect_progress_overview".to_string(),
+        };
+
+        let other = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "new root after closure".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start other");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &other.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                        completion_summary_preview: "other done".to_string(),
+                        completion_summary_chars: 10,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete other");
+
+        let err = headless_run_completion_finalization(
+            &store,
+            &drive,
+            true,
+            Some(&closure.closure_fingerprint),
+        )
+        .expect_err("owner mismatch");
+        assert!(err.contains("current progress"));
+        assert!(store
+            .tasks()
+            .read_headless_run_completion_finalization_checkpoint(
+                &drive.session_id,
+                &drive.drive_id
+            )
+            .expect("checkpoint read")
+            .is_none());
+        assert!(store
+            .tasks()
+            .read_ledger_events(&owner.run_id)
+            .expect("owner events")
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::HeadlessRunCompletionFinalized));
+    }
+
+    #[test]
+    fn headless_run_completion_finalization_rejects_conflicting_owner_checkpoint() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "owner".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start task");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &task.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "done".to_string(),
+                        completion_summary_chars: 4,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete task");
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress = task_list_progress_overview(&store, &tasks).expect("progress");
+        let terminal_evidence = headless_latest_completed_task_completion_evidence(&store, &tasks)
+            .expect("latest evidence")
+            .expect("terminal evidence");
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &Some(terminal_evidence.clone()),
+            &progress,
+            false,
+        );
+        let drive = HeadlessRunDriveResult {
+            status: HeadlessContinueOnceStatus::NoEligibleTask,
+            session_id: "r4.2.conflict".to_string(),
+            drive_id: "r4.2.conflict.1".to_string(),
+            start_session_sequence: 1,
+            end_session_sequence: 2,
+            replayed: false,
+            max_advances: 1,
+            max_steps_per_advance: 1,
+            advance_count: 1,
+            executed_count: 0,
+            replayed_count: 0,
+            stop_reason: "no_eligible_task".to_string(),
+            drive_fingerprint: format!("sha256:{}", "d".repeat(64)),
+            terminal_completion_evidence: Some(terminal_evidence),
+            completion_closure: closure.clone(),
+            completion_finalization: None,
+            start_progress: HeadlessRunProgressCheckpoint {
+                progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
+                aggregate_sequence: 10,
+            },
+            post_progress: Some(HeadlessRunProgressCheckpoint {
+                progress_fingerprint: progress.source_fingerprint.clone(),
+                aggregate_sequence: progress.aggregate_sequence,
+            }),
+            next_route: None,
+            advances: Vec::new(),
+            next_action: "inspect_progress_overview".to_string(),
+        };
+        let wrong_finalization = HeadlessRunCompletionFinalization {
+            status: "finalized".to_string(),
+            session_id: drive.session_id.clone(),
+            drive_id: drive.drive_id.clone(),
+            start_session_sequence: drive.start_session_sequence,
+            end_session_sequence: drive.end_session_sequence,
+            closure_fingerprint: closure.closure_fingerprint.clone(),
+            progress_fingerprint: closure.progress_fingerprint.clone(),
+            aggregate_sequence: closure.aggregate_sequence,
+            owner_task_id: Some("other-task".to_string()),
+            owner_run_id: Some("other-run".to_string()),
+            terminal_completion_fingerprint: Some(format!("sha256:{}", "f".repeat(64))),
+            terminal_task_count: closure.terminal_task_count,
+            total_task_count: closure.total_task_count,
+            finalization_fingerprint: format!("sha256:{}", "1".repeat(64)),
+            replayed: false,
+            next_action: "close_headless_run".to_string(),
+        };
+        store
+            .tasks()
+            .write_headless_run_completion_finalization_checkpoint(
+                &HeadlessRunCompletionFinalizationCheckpoint {
+                    session_id: drive.session_id.clone(),
+                    drive_id: drive.drive_id.clone(),
+                    closure_fingerprint: closure.closure_fingerprint.clone(),
+                    owner_task_id: Some("other-task".to_string()),
+                    owner_run_id: Some("other-run".to_string()),
+                    terminal_completion_fingerprint: Some(format!("sha256:{}", "f".repeat(64))),
+                    result: wrong_finalization,
+                },
+            )
+            .expect("write wrong checkpoint");
+
+        let err = headless_run_completion_finalization(
+            &store,
+            &drive,
+            true,
+            Some(&closure.closure_fingerprint),
+        )
+        .expect_err("conflicting checkpoint");
+        assert!(err.contains("current owner"));
+        assert!(store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events")
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::HeadlessRunCompletionFinalized));
     }
 
     #[test]

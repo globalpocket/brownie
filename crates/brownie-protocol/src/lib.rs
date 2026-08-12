@@ -1735,6 +1735,12 @@ pub struct HeadlessRunCompletionFinalization {
     pub closure_fingerprint: String,
     pub progress_fingerprint: String,
     pub aggregate_sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_task_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner_run_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_fingerprint: Option<String>,
     pub terminal_task_count: usize,
     pub total_task_count: usize,
     pub finalization_fingerprint: String,

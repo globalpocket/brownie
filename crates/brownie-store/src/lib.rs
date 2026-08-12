@@ -1595,6 +1595,12 @@ pub struct HeadlessRunCompletionFinalizationCheckpoint {
     pub session_id: String,
     pub drive_id: String,
     pub closure_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_completion_fingerprint: Option<String>,
     pub result: HeadlessRunCompletionFinalization,
 }
 
