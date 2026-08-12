@@ -9664,10 +9664,6 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
 
     let executed_count = advances.iter().map(|advance| advance.executed_count).sum();
     let replayed_count = advances.iter().map(|advance| advance.replayed_count).sum();
-    let terminal_completion_evidence = advances
-        .iter()
-        .rev()
-        .find_map(|advance| advance.terminal_completion_evidence.clone());
     let end_session_sequence = advances
         .last()
         .map(|advance| advance.session_sequence)
@@ -9691,8 +9687,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 return error_response(id, -32603, &format!("internal error: {message}"))
             }
         };
-    let terminal_completion_evidence =
-        latest_terminal_completion_evidence.or(terminal_completion_evidence);
+    let terminal_completion_evidence = latest_terminal_completion_evidence;
     let completion_closure = headless_run_completion_closure(
         status.clone(),
         &stop_reason,
@@ -44224,6 +44219,108 @@ mod tests {
             None,
             "inspect_progress_overview",
             &None,
+            &progress,
+            false,
+        );
+        assert_eq!(
+            closure.status,
+            HeadlessRunCompletionClosureStatus::NoEligibleTask
+        );
+        assert!(closure.terminal_completion_fingerprint.is_none());
+    }
+
+    #[test]
+    fn headless_run_drive_completion_closure_uses_only_latest_persisted_completion_evidence() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let old_task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "old completed task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start old task");
+        let stale_evidence = TaskRunCompletionEvidence {
+            final_state: "Completed".to_string(),
+            task_status: TaskStatus::Completed,
+            completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+            completion_summary_preview: "old done".to_string(),
+            completion_summary_chars: 8,
+            completion_summary_truncated: false,
+            final_response_present: false,
+            final_response_chars: 0,
+            replayed: false,
+        };
+        let old_task = store
+            .tasks()
+            .update_task_status_with_payload(
+                &old_task.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": stale_evidence
+                })),
+            )
+            .expect("complete old task with evidence");
+        let mut latest_task = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "latest completed task missing completion evidence".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+            })
+            .expect("start latest task");
+        latest_task.status = TaskStatus::Completed;
+        latest_task.updated_at = "9999-01-01T00:00:00Z".to_string();
+        std::fs::write(
+            store
+                .tasks()
+                .run_dir(&latest_task.run_id)
+                .join("state.json"),
+            serde_json::to_string_pretty(&latest_task).expect("serialize latest task"),
+        )
+        .expect("write latest task state without terminal ledger event");
+
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let progress = task_list_progress_overview(&store, &tasks).expect("progress overview");
+        assert_eq!(progress.task_count, 2);
+        assert_eq!(progress.status_counts.completed, 2);
+        let stale_terminal_completion_evidence =
+            task_run_completion_evidence_for_record(&store, &old_task, false)
+                .expect("old evidence lookup")
+                .expect("old completion evidence");
+        let latest_terminal_completion_evidence =
+            headless_latest_completed_task_completion_evidence(&store, &tasks)
+                .expect("latest evidence lookup");
+        assert!(latest_terminal_completion_evidence.is_none());
+
+        let stale_fallback_closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &Some(stale_terminal_completion_evidence),
+            &progress,
+            false,
+        );
+        assert_eq!(
+            stale_fallback_closure.status,
+            HeadlessRunCompletionClosureStatus::Complete
+        );
+
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &latest_terminal_completion_evidence,
             &progress,
             false,
         );
