@@ -15,7 +15,7 @@ import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestH
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult } from '../runtime/protocol';
 import { isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult } from '../runtime/protocol';
-import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRevokeSignerResult, isModePackRollbackActiveResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
+import { isModePackActivateResult, isModePackApproveCandidateResult, isModePackFetchCandidateResult, isModePackReplaceActiveResult, isModePackRevokeSignerResult, isModePackRollbackActiveResult, isModePackSelectRegistryUpdateResult, isModePackTrustSignerResult, isModePackVerifyCandidateProvenanceResult } from '../runtime/protocol';
 import { RuntimeClient } from '../runtime/runtimeClient';
 import type { RuntimeTransport } from '../runtime/runtimeProcess';
 
@@ -552,6 +552,43 @@ describe('protocol validation', () => {
     expect(isModePackFetchCandidateResult({ ...result, candidate: { ...candidate, modepack_json: '{}' } })).toBe(false);
     expect(isModePackFetchCandidateResult({ ...result, raw_modepack_json: '{}' })).toBe(false);
     expect(isModePackFetchCandidateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
+  });
+
+  it('accepts bounded modepack.selectRegistryUpdate results and rejects raw registry fields', () => {
+    const selection = {
+      selection_id: 'modepack_registry_selection_123',
+      registry_url_host: 'registry.example.com',
+      registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+      registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
+      current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+      current_modepack_name: 'remote-agentmodes',
+      current_source_kind: 'remote_https_candidate',
+      candidate_url: 'https://example.com/modepack.json',
+      candidate_url_host: 'example.com',
+      candidate_url_fingerprint: `sha256:${'d'.repeat(64)}`,
+      candidate_content_sha256: `sha256:${'e'.repeat(64)}`,
+      candidate_compiled_policy_fingerprint: `sha256:${'f'.repeat(64)}`,
+      provenance_statement_url: 'https://example.com/provenance.json',
+      provenance_statement_url_host: 'example.com',
+      provenance_statement_url_fingerprint: `sha256:${'1'.repeat(64)}`,
+      provenance_statement_sha256: `sha256:${'2'.repeat(64)}`,
+      signer_fingerprint: `sha256:${'3'.repeat(64)}`,
+      selected_at: '2026-08-12T00:00:00Z',
+      selection_event_id: 'event_1',
+    };
+    const result = {
+      selected: true,
+      replayed: false,
+      selection,
+      next_action: 'fetch_selected_modepack_candidate',
+    };
+
+    expect(isModePackSelectRegistryUpdateResult(result)).toBe(true);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, selection: { ...selection, candidate_content_sha256: 'bad' } })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, selection: { ...selection, raw_registry_manifest_json: '{}' } })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, raw_registry_manifest_json: '{}' })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, raw_provenance_statement_json: '{}' })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
   });
 
   it('accepts bounded modepack.approveCandidate results and rejects raw fields', () => {
@@ -2443,6 +2480,55 @@ describe('RuntimeClient', () => {
         authorize_fetch: true,
         url: 'https://example.com/modepack.json',
         expected_content_sha256: result.candidate.content_sha256,
+      },
+    }]);
+  });
+
+  it('creates a modepack.selectRegistryUpdate request', async () => {
+    const result = {
+      selected: true,
+      replayed: false,
+      selection: {
+        selection_id: 'modepack_registry_selection_123',
+        registry_url_host: 'registry.example.com',
+        registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+        registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
+        current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+        current_modepack_name: 'remote-agentmodes',
+        current_source_kind: 'remote_https_candidate',
+        candidate_url: 'https://example.com/modepack.json',
+        candidate_url_host: 'example.com',
+        candidate_url_fingerprint: `sha256:${'d'.repeat(64)}`,
+        candidate_content_sha256: `sha256:${'e'.repeat(64)}`,
+        candidate_compiled_policy_fingerprint: `sha256:${'f'.repeat(64)}`,
+        provenance_statement_url: 'https://example.com/provenance.json',
+        provenance_statement_url_host: 'example.com',
+        provenance_statement_url_fingerprint: `sha256:${'1'.repeat(64)}`,
+        provenance_statement_sha256: `sha256:${'2'.repeat(64)}`,
+        signer_fingerprint: `sha256:${'3'.repeat(64)}`,
+        selected_at: '2026-08-12T00:00:00Z',
+        selection_event_id: 'event_1',
+      },
+      next_action: 'fetch_selected_modepack_candidate',
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    await expect(client.selectModePackRegistryUpdate(
+      true,
+      'https://registry.example.com/modepacks.json',
+      result.selection.registry_manifest_sha256,
+      result.selection.current_activation_fingerprint,
+    )).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'modepack.selectRegistryUpdate',
+      params: {
+        authorize_registry_selection: true,
+        registry_url: 'https://registry.example.com/modepacks.json',
+        expected_registry_manifest_sha256: result.selection.registry_manifest_sha256,
+        expected_current_activation_fingerprint: result.selection.current_activation_fingerprint,
       },
     }]);
   });

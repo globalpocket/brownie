@@ -221,6 +221,14 @@ pub struct ModePackFetchCandidateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackSelectRegistryUpdateParams {
+    pub authorize_registry_selection: bool,
+    pub registry_url: String,
+    pub expected_registry_manifest_sha256: String,
+    pub expected_current_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -409,6 +417,37 @@ pub struct ModePackFetchCandidateResult {
     pub fetched: bool,
     pub replayed: bool,
     pub candidate: ModePackCandidateSummary,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackRegistryUpdateSelectionSummary {
+    pub selection_id: String,
+    pub registry_url_host: String,
+    pub registry_url_fingerprint: String,
+    pub registry_manifest_sha256: String,
+    pub current_activation_fingerprint: String,
+    pub current_modepack_name: String,
+    pub current_source_kind: String,
+    pub candidate_url: String,
+    pub candidate_url_host: String,
+    pub candidate_url_fingerprint: String,
+    pub candidate_content_sha256: String,
+    pub candidate_compiled_policy_fingerprint: String,
+    pub provenance_statement_url: String,
+    pub provenance_statement_url_host: String,
+    pub provenance_statement_url_fingerprint: String,
+    pub provenance_statement_sha256: String,
+    pub signer_fingerprint: String,
+    pub selected_at: String,
+    pub selection_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackSelectRegistryUpdateResult {
+    pub selected: bool,
+    pub replayed: bool,
+    pub selection: ModePackRegistryUpdateSelectionSummary,
     pub next_action: String,
 }
 
