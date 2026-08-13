@@ -515,6 +515,14 @@ impl BrownieStore {
                     != selection.summary.registry_url_fingerprint
                 || existing.summary.provenance_statement_sha256
                     != selection.summary.provenance_statement_sha256
+                || existing.summary.registry_provenance_statement_sha256
+                    != selection.summary.registry_provenance_statement_sha256
+                || existing.summary.registry_signer_fingerprint
+                    != selection.summary.registry_signer_fingerprint
+                || existing.summary.registry_trusted_signer_trust_id
+                    != selection.summary.registry_trusted_signer_trust_id
+                || existing.summary.registry_trusted_signer_event_id
+                    != selection.summary.registry_trusted_signer_event_id
             {
                 bail!(
                     "conflicting Mode Pack registry update selection for {}",
