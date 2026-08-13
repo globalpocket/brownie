@@ -14702,6 +14702,42 @@ fn handle_modepack_replace_active(id: Value, params: Option<Value>) -> JsonRpcRe
             );
         }
     }
+    if let Some(expected) = params
+        .expected_approved_candidate_source_url_fingerprint
+        .as_deref()
+    {
+        if !is_sha256_fingerprint(expected) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_approved_candidate_source_url_fingerprint must be a sha256 fingerprint",
+            );
+        }
+    }
+    if let Some(expected) = params
+        .expected_approved_candidate_dns_resolution_fingerprint
+        .as_deref()
+    {
+        if !is_sha256_fingerprint(expected) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_approved_candidate_dns_resolution_fingerprint must be a sha256 fingerprint",
+            );
+        }
+    }
+    if let Some(expected) = params
+        .expected_approved_candidate_pinned_address_fingerprint
+        .as_deref()
+    {
+        if !is_sha256_fingerprint(expected) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_approved_candidate_pinned_address_fingerprint must be a sha256 fingerprint",
+            );
+        }
+    }
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -29608,6 +29644,7 @@ fn approve_remote_modepack_candidate(
         source_kind: cached.summary.source_kind,
         source_url_host: cached.summary.source_url_host,
         source_url_fingerprint: cached.summary.source_url_fingerprint,
+        dns_binding: Some(cached.summary.dns_binding),
         content_sha256: params.expected_content_sha256.clone(),
         modepack_name: recompiled.name,
         schema_version: recompiled.schema_version,
@@ -29891,6 +29928,7 @@ fn verify_modepack_candidate_provenance(
         source_kind: cached.summary.source_kind,
         source_url_host: cached.summary.source_url_host,
         source_url_fingerprint: cached.summary.source_url_fingerprint,
+        dns_binding: Some(cached.summary.dns_binding),
         content_sha256: params.expected_content_sha256.clone(),
         modepack_name: recompiled.name,
         schema_version: recompiled.schema_version,
@@ -30207,6 +30245,7 @@ fn replace_active_workspace_modepack(
             policy_fingerprint,
             build_active_modepack_snapshot_from_approved_candidate(
                 store,
+                params,
                 approval_id,
                 content_sha256,
                 policy_fingerprint,
@@ -30393,9 +30432,13 @@ fn validate_modepack_update_admission(
         || cached.summary.compiled_policy_fingerprint != approved.compiled_policy_fingerprint
         || cached.summary.modepack_name != approved.modepack_name
         || cached.summary.mode_ids != approved.mode_ids
+        || cached.summary.source_url_host != approved.source_url_host
+        || cached.summary.source_url_fingerprint != approved.source_url_fingerprint
     {
         return Err("modepack replacement failed: approved candidate cache is stale".to_string());
     }
+    validate_approved_modepack_candidate_identity_binding(params, approved, &cached.summary)
+        .map_err(|error| format!("modepack replacement failed: {error}"))?;
     let provenance = store
         .read_modepack_candidate_provenance_snapshot(&approved.content_sha256)
         .map_err(|error| format!("modepack replacement failed: {error}"))?
@@ -30405,6 +30448,8 @@ fn validate_modepack_update_admission(
     if provenance.summary.provenance_id != approved.provenance_id
         || provenance.summary.provenance_event_id != approved.provenance_event_id
         || provenance.summary.candidate_id != approved.candidate_id
+        || provenance.summary.source_url_host != approved.source_url_host
+        || provenance.summary.source_url_fingerprint != approved.source_url_fingerprint
         || provenance.summary.content_sha256 != approved.content_sha256
         || provenance.summary.modepack_name != approved.modepack_name
         || provenance.summary.mode_ids != approved.mode_ids
@@ -30453,6 +30498,9 @@ fn validate_modepack_update_admission(
         source_kind: candidate.source_kind.clone(),
         approval_id: approved.approval_id.clone(),
         candidate_id: approved.candidate_id.clone(),
+        source_url_host: approved.source_url_host.clone(),
+        source_url_fingerprint: approved.source_url_fingerprint.clone(),
+        dns_binding: cached.summary.dns_binding.clone(),
         content_sha256: approved.content_sha256.clone(),
         compiled_policy_fingerprint: approved.compiled_policy_fingerprint.clone(),
         provenance_id: approved.provenance_id.clone(),
@@ -30466,8 +30514,77 @@ fn validate_modepack_update_admission(
     })
 }
 
+fn validate_approved_modepack_candidate_identity_binding(
+    params: &ModePackReplaceActiveParams,
+    approved: &ModePackApprovedCandidateSummary,
+    cached: &ModePackCandidateSummary,
+) -> Result<(), String> {
+    let Some(expected_candidate_id) = params.expected_approved_candidate_id.as_deref() else {
+        return Err("approved candidate identity binding requires candidate id".to_string());
+    };
+    let Some(expected_source_url_host) = params
+        .expected_approved_candidate_source_url_host
+        .as_deref()
+    else {
+        return Err("approved candidate identity binding requires source url host".to_string());
+    };
+    let Some(expected_source_url_fingerprint) = params
+        .expected_approved_candidate_source_url_fingerprint
+        .as_deref()
+    else {
+        return Err(
+            "approved candidate identity binding requires source url fingerprint".to_string(),
+        );
+    };
+    let Some(expected_dns_resolution_fingerprint) = params
+        .expected_approved_candidate_dns_resolution_fingerprint
+        .as_deref()
+    else {
+        return Err(
+            "approved candidate identity binding requires DNS resolution fingerprint".to_string(),
+        );
+    };
+    let Some(expected_pinned_address_fingerprint) = params
+        .expected_approved_candidate_pinned_address_fingerprint
+        .as_deref()
+    else {
+        return Err(
+            "approved candidate identity binding requires pinned address fingerprint".to_string(),
+        );
+    };
+    let Some(expected_approval_event_id) = params
+        .expected_approved_candidate_approval_event_id
+        .as_deref()
+    else {
+        return Err("approved candidate identity binding requires approval event id".to_string());
+    };
+
+    if approved.candidate_id != expected_candidate_id
+        || cached.candidate_id != expected_candidate_id
+        || approved.source_url_host != expected_source_url_host
+        || cached.source_url_host != expected_source_url_host
+        || approved.source_url_fingerprint != expected_source_url_fingerprint
+        || cached.source_url_fingerprint != expected_source_url_fingerprint
+        || cached.dns_binding.resolution_fingerprint != expected_dns_resolution_fingerprint
+        || cached.dns_binding.pinned_address_fingerprint != expected_pinned_address_fingerprint
+        || approved.approval_event_id != expected_approval_event_id
+    {
+        return Err("approved candidate identity evidence mismatch".to_string());
+    }
+    if let Some(approved_dns_binding) = approved.dns_binding.as_ref() {
+        if approved_dns_binding.resolution_fingerprint != cached.dns_binding.resolution_fingerprint
+            || approved_dns_binding.pinned_address_fingerprint
+                != cached.dns_binding.pinned_address_fingerprint
+        {
+            return Err("approved candidate DNS binding is stale".to_string());
+        }
+    }
+    Ok(())
+}
+
 fn build_active_modepack_snapshot_from_approved_candidate(
     store: &BrownieStore,
+    params: &ModePackReplaceActiveParams,
     approval_id: &str,
     content_sha256: &str,
     compiled_policy_fingerprint: &str,
@@ -30551,12 +30668,20 @@ fn build_active_modepack_snapshot_from_approved_candidate(
         || cached.summary.content_sha256 != content_sha256
         || cached.summary.mode_ids != mode_ids
         || approved.summary.candidate_id != cached.summary.candidate_id
+        || approved.summary.source_url_host != cached.summary.source_url_host
+        || approved.summary.source_url_fingerprint != cached.summary.source_url_fingerprint
     {
         return Err(
             "approved modepack candidate load failed: cached candidate summary is stale"
                 .to_string(),
         );
     }
+    validate_approved_modepack_candidate_identity_binding(
+        params,
+        &approved.summary,
+        &cached.summary,
+    )
+    .map_err(|error| format!("approved modepack candidate load failed: {error}"))?;
     let activated_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let activation_fingerprint = active_modepack_activation_fingerprint(
         &snapshot.name,
@@ -65913,17 +66038,77 @@ mod tests {
         .expect("candidate approval");
         let (candidate_snapshot, _) = build_active_modepack_snapshot_from_approved_candidate(
             &store,
+            &ModePackReplaceActiveParams {
+                authorize_replacement: true,
+                expected_current_activation_fingerprint: current_fingerprint.clone(),
+                expected_candidate_activation_fingerprint: String::new(),
+                approved_candidate_approval_id: Some(approved.approval.approval_id.clone()),
+                expected_approved_candidate_content_sha256: Some(
+                    approved.approval.content_sha256.clone(),
+                ),
+                expected_approved_candidate_compiled_policy_fingerprint: Some(
+                    approved.approval.compiled_policy_fingerprint.clone(),
+                ),
+                expected_approved_candidate_id: Some(approved.approval.candidate_id.clone()),
+                expected_approved_candidate_source_url_host: Some(
+                    approved.approval.source_url_host.clone(),
+                ),
+                expected_approved_candidate_source_url_fingerprint: Some(
+                    approved.approval.source_url_fingerprint.clone(),
+                ),
+                expected_approved_candidate_dns_resolution_fingerprint: Some(
+                    fetched.candidate.dns_binding.resolution_fingerprint.clone(),
+                ),
+                expected_approved_candidate_pinned_address_fingerprint: Some(
+                    fetched
+                        .candidate
+                        .dns_binding
+                        .pinned_address_fingerprint
+                        .clone(),
+                ),
+                expected_approved_candidate_approval_event_id: Some(
+                    approved.approval.approval_event_id.clone(),
+                ),
+                update_admission: None,
+            },
             &approved.approval.approval_id,
             &approved.approval.content_sha256,
             &approved.approval.compiled_policy_fingerprint,
         )
         .expect("candidate active snapshot");
         let candidate_fingerprint = candidate_snapshot.summary.activation_fingerprint.clone();
-        let replace_request = format!(
-            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}"}}}}"#,
+        let bad_identity_request = format!(
+            r#"{{"jsonrpc":"2.0","id":22,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"modepack_candidate_other","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
             approved.approval.approval_id,
             approved.approval.content_sha256,
-            approved.approval.compiled_policy_fingerprint
+            approved.approval.compiled_policy_fingerprint,
+            approved.approval.source_url_host,
+            approved.approval.source_url_fingerprint,
+            fetched.candidate.dns_binding.resolution_fingerprint,
+            fetched.candidate.dns_binding.pinned_address_fingerprint,
+            approved.approval.approval_event_id
+        );
+        let bad_identity = parse_line(&bad_identity_request);
+        assert!(bad_identity.error.is_some());
+        assert!(
+            !store
+                .read_approved_modepack_candidate_snapshot(&approved.approval.content_sha256)
+                .expect("approval read")
+                .expect("approval")
+                .summary
+                .consumed
+        );
+        let replace_request = format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{current_fingerprint}","expected_candidate_activation_fingerprint":"{candidate_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}"}}}}"#,
+            approved.approval.approval_id,
+            approved.approval.content_sha256,
+            approved.approval.compiled_policy_fingerprint,
+            approved.approval.candidate_id,
+            approved.approval.source_url_host,
+            approved.approval.source_url_fingerprint,
+            fetched.candidate.dns_binding.resolution_fingerprint,
+            fetched.candidate.dns_binding.pinned_address_fingerprint,
+            approved.approval.approval_event_id
         );
 
         let replaced = parse_line(&replace_request);
@@ -66074,6 +66259,43 @@ mod tests {
         .expect("update candidate approval");
         let (update_snapshot, _) = build_active_modepack_snapshot_from_approved_candidate(
             &store,
+            &ModePackReplaceActiveParams {
+                authorize_replacement: true,
+                expected_current_activation_fingerprint: candidate_fingerprint.clone(),
+                expected_candidate_activation_fingerprint: String::new(),
+                approved_candidate_approval_id: Some(update_approved.approval.approval_id.clone()),
+                expected_approved_candidate_content_sha256: Some(
+                    update_approved.approval.content_sha256.clone(),
+                ),
+                expected_approved_candidate_compiled_policy_fingerprint: Some(
+                    update_approved.approval.compiled_policy_fingerprint.clone(),
+                ),
+                expected_approved_candidate_id: Some(update_approved.approval.candidate_id.clone()),
+                expected_approved_candidate_source_url_host: Some(
+                    update_approved.approval.source_url_host.clone(),
+                ),
+                expected_approved_candidate_source_url_fingerprint: Some(
+                    update_approved.approval.source_url_fingerprint.clone(),
+                ),
+                expected_approved_candidate_dns_resolution_fingerprint: Some(
+                    update_fetched
+                        .candidate
+                        .dns_binding
+                        .resolution_fingerprint
+                        .clone(),
+                ),
+                expected_approved_candidate_pinned_address_fingerprint: Some(
+                    update_fetched
+                        .candidate
+                        .dns_binding
+                        .pinned_address_fingerprint
+                        .clone(),
+                ),
+                expected_approved_candidate_approval_event_id: Some(
+                    update_approved.approval.approval_event_id.clone(),
+                ),
+                update_admission: None,
+            },
             &update_approved.approval.approval_id,
             &update_approved.approval.content_sha256,
             &update_approved.approval.compiled_policy_fingerprint,
@@ -66081,10 +66303,19 @@ mod tests {
         .expect("update active snapshot");
         let update_fingerprint = update_snapshot.summary.activation_fingerprint.clone();
         let update_request = format!(
-            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{candidate_fingerprint}","expected_candidate_activation_fingerprint":"{update_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","update_admission":{{"authorize_update":true,"expected_current_modepack_name":"remote-agentmodes","expected_current_source_kind":"remote_https_candidate","expected_approved_candidate_provenance_id":"{}","expected_approved_candidate_provenance_event_id":"{}","expected_approved_candidate_signer_fingerprint":"{}","expected_approved_candidate_statement_sha256":"{}","expected_trusted_signer_trust_id":"{}","expected_trusted_signer_event_id":"{}"}}}}}}"#,
+            r#"{{"jsonrpc":"2.0","id":5,"method":"modepack.replaceActive","params":{{"authorize_replacement":true,"expected_current_activation_fingerprint":"{candidate_fingerprint}","expected_candidate_activation_fingerprint":"{update_fingerprint}","approved_candidate_approval_id":"{}","expected_approved_candidate_content_sha256":"{}","expected_approved_candidate_compiled_policy_fingerprint":"{}","expected_approved_candidate_id":"{}","expected_approved_candidate_source_url_host":"{}","expected_approved_candidate_source_url_fingerprint":"{}","expected_approved_candidate_dns_resolution_fingerprint":"{}","expected_approved_candidate_pinned_address_fingerprint":"{}","expected_approved_candidate_approval_event_id":"{}","update_admission":{{"authorize_update":true,"expected_current_modepack_name":"remote-agentmodes","expected_current_source_kind":"remote_https_candidate","expected_approved_candidate_provenance_id":"{}","expected_approved_candidate_provenance_event_id":"{}","expected_approved_candidate_signer_fingerprint":"{}","expected_approved_candidate_statement_sha256":"{}","expected_trusted_signer_trust_id":"{}","expected_trusted_signer_event_id":"{}"}}}}}}"#,
             update_approved.approval.approval_id,
             update_approved.approval.content_sha256,
             update_approved.approval.compiled_policy_fingerprint,
+            update_approved.approval.candidate_id,
+            update_approved.approval.source_url_host,
+            update_approved.approval.source_url_fingerprint,
+            update_fetched.candidate.dns_binding.resolution_fingerprint,
+            update_fetched
+                .candidate
+                .dns_binding
+                .pinned_address_fingerprint,
+            update_approved.approval.approval_event_id,
             update_approved.approval.provenance_id,
             update_approved.approval.provenance_event_id,
             update_approved.approval.signer_fingerprint,

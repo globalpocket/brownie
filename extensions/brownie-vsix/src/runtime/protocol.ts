@@ -199,6 +199,9 @@ export interface ModePackUpdateAdmissionSummary {
   source_kind: string;
   approval_id: string;
   candidate_id: string;
+  source_url_host: string;
+  source_url_fingerprint: string;
+  dns_binding: ModePackDnsBindingSummary;
   content_sha256: string;
   compiled_policy_fingerprint: string;
   provenance_id: string;
@@ -278,6 +281,7 @@ export interface ModePackApprovedCandidateSummary {
   source_kind: string;
   source_url_host: string;
   source_url_fingerprint: string;
+  dns_binding?: ModePackDnsBindingSummary | null;
   content_sha256: string;
   modepack_name: string;
   schema_version: number;
@@ -339,6 +343,7 @@ export interface ModePackCandidateProvenanceSummary {
   source_kind: string;
   source_url_host: string;
   source_url_fingerprint: string;
+  dns_binding?: ModePackDnsBindingSummary | null;
   content_sha256: string;
   modepack_name: string;
   schema_version: number;
@@ -3184,6 +3189,10 @@ function isModePackUpdateAdmissionSummary(value: unknown): value is ModePackUpda
     typeof value.source_kind === 'string' &&
     typeof value.approval_id === 'string' &&
     typeof value.candidate_id === 'string' &&
+    typeof value.source_url_host === 'string' &&
+    typeof value.source_url_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_url_fingerprint) &&
+    isModePackDnsBindingSummary(value.dns_binding) &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
     typeof value.compiled_policy_fingerprint === 'string' &&
@@ -3352,6 +3361,7 @@ function isModePackApprovedCandidateSummary(value: unknown): value is ModePackAp
     typeof value.source_url_host === 'string' &&
     typeof value.source_url_fingerprint === 'string' &&
     isSha256Fingerprint(value.source_url_fingerprint) &&
+    (value.dns_binding === undefined || value.dns_binding === null || isModePackDnsBindingSummary(value.dns_binding)) &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
     typeof value.modepack_name === 'string' &&
@@ -3424,6 +3434,7 @@ function isModePackCandidateProvenanceSummary(value: unknown): value is ModePack
     typeof value.source_url_host === 'string' &&
     typeof value.source_url_fingerprint === 'string' &&
     isSha256Fingerprint(value.source_url_fingerprint) &&
+    (value.dns_binding === undefined || value.dns_binding === null || isModePackDnsBindingSummary(value.dns_binding)) &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
     typeof value.modepack_name === 'string' &&
