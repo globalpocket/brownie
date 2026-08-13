@@ -1216,7 +1216,86 @@ describe('protocol validation', () => {
       ...headlessParams,
       parent_join_run_target: { ...parentJoinRunTarget, raw_child_output: 'do not expose' },
     })).toBe(false);
+    const modePackSelectedCandidateFetchTarget = {
+      authorize_selected_candidate_fetch: true,
+      selection_id: 'modepack_registry_selection_123',
+      selection_event_id: 'event_registry_selection_123',
+      expected_registry_manifest_sha256: `sha256:${'1'.repeat(64)}`,
+      expected_candidate_url_fingerprint: `sha256:${'2'.repeat(64)}`,
+      expected_candidate_content_sha256: `sha256:${'3'.repeat(64)}`,
+      expected_candidate_compiled_policy_fingerprint: `sha256:${'4'.repeat(64)}`,
+      expected_provenance_statement_url_fingerprint: `sha256:${'5'.repeat(64)}`,
+      expected_provenance_statement_sha256: `sha256:${'6'.repeat(64)}`,
+      expected_signer_fingerprint: `sha256:${'7'.repeat(64)}`,
+      expected_current_activation_fingerprint: `sha256:${'8'.repeat(64)}`,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, authorize_selected_candidate_fetch: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, expected_candidate_content_sha256: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, candidate_url: 'https://example.com/modepack.json' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_provenance_statement_json: '{}' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    const selectedCandidateFetchResult = {
+      fetched: true,
+      replayed: false,
+      candidate: {
+        candidate_id: 'modepack_candidate_123',
+        source_kind: 'remote_https',
+        source_url_host: 'example.com',
+        source_url_fingerprint: modePackSelectedCandidateFetchTarget.expected_candidate_url_fingerprint,
+        dns_binding: modePackDnsBinding,
+        content_sha256: modePackSelectedCandidateFetchTarget.expected_candidate_content_sha256,
+        byte_count: 512,
+        modepack_name: 'remote-agentmodes',
+        schema_version: 1,
+        mode_count: 1,
+        mode_ids: ['remote-reviewer-lite'],
+        compiled_policy_fingerprint: modePackSelectedCandidateFetchTarget.expected_candidate_compiled_policy_fingerprint,
+        cached_at: '2026-08-13T21:03:01Z',
+        cache_event_id: 'event_candidate_cache_123',
+      },
+      next_action: 'verify_selected_modepack_candidate_provenance_explicitly',
+    };
+    const modePackHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      modepack_fetch_candidate_result: selectedCandidateFetchResult,
+      next_route: {
+        kind: 'verify_selected_modepack_candidate_provenance_explicitly',
+        reason: 'Selected Mode Pack candidate fetched; verify provenance explicitly.',
+        next_action: 'verify_selected_modepack_candidate_provenance_explicitly',
+      },
+      next_action: 'verify_selected_modepack_candidate_provenance_explicitly',
+    };
+    expect(isHeadlessContinueOnceResult(modePackHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackHeadlessResult,
+      modepack_fetch_candidate_result: { ...selectedCandidateFetchResult, raw_modepack_json: '{}' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackHeadlessResult,
+      modepack_fetch_candidate_result: {
+        ...selectedCandidateFetchResult,
+        candidate: { ...selectedCandidateFetchResult.candidate, modepack_json: '{}' },
+      },
+    })).toBe(false);
     const headlessBudgetResult = {
       ...headlessResult,
       continuation_id: 'continue.once:budget',

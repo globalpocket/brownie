@@ -11,7 +11,7 @@ use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
     ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
-    ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackRevokedSignerSummary,
     ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary, PatchApplyRecoveryProvenance,
     RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
@@ -581,6 +581,48 @@ impl BrownieStore {
         })
     }
 
+    pub fn read_headless_modepack_selected_candidate_fetch_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessModePackSelectedCandidateFetchCheckpoint>> {
+        let path = self.headless_modepack_selected_candidate_fetch_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_modepack_selected_candidate_fetch_checkpoint(
+        &self,
+        checkpoint: &HeadlessModePackSelectedCandidateFetchCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path =
+            self.headless_modepack_selected_candidate_fetch_path(&checkpoint.continuation_id);
+        if let Some(existing) = self.read_headless_modepack_selected_candidate_fetch_checkpoint(
+            &checkpoint.continuation_id,
+        )? {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless modepack selected candidate fetch checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless modepack selected candidate fetch checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn commit_modepack_candidate_snapshot(
         &self,
         snapshot: &ModePackCandidateSnapshot,
@@ -1039,6 +1081,13 @@ impl BrownieStore {
         ))
     }
 
+    fn headless_modepack_selected_candidate_fetch_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!("modepack-selected-fetch-{continuation_id}.json"))
+    }
+
     fn modepack_candidate_approval_path(&self, content_sha256: &str) -> PathBuf {
         let slug = content_sha256
             .strip_prefix("sha256:")
@@ -1495,6 +1544,21 @@ pub struct ModePackRegistryUpdateSelectionCommit {
     pub replayed: bool,
     pub event_id: String,
     pub selection: ModePackRegistryUpdateSelectionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub result: ModePackFetchCandidateResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
