@@ -190,6 +190,18 @@ pub struct ModePackReplaceActiveParams {
     pub expected_approved_candidate_content_sha256: Option<String>,
     pub expected_approved_candidate_compiled_policy_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_source_url_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_source_url_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_dns_resolution_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_pinned_address_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_approved_candidate_approval_event_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub update_admission: Option<ModePackUpdateAdmissionParams>,
 }
 
@@ -341,6 +353,8 @@ pub struct ModePackApprovedCandidateSummary {
     pub source_kind: String,
     pub source_url_host: String,
     pub source_url_fingerprint: String,
+    #[serde(default)]
+    pub dns_binding: Option<ModePackDnsBindingSummary>,
     pub content_sha256: String,
     pub modepack_name: String,
     pub schema_version: u64,
@@ -389,6 +403,9 @@ pub struct ModePackUpdateAdmissionSummary {
     pub source_kind: String,
     pub approval_id: String,
     pub candidate_id: String,
+    pub source_url_host: String,
+    pub source_url_fingerprint: String,
+    pub dns_binding: ModePackDnsBindingSummary,
     pub content_sha256: String,
     pub compiled_policy_fingerprint: String,
     pub provenance_id: String,
@@ -408,6 +425,8 @@ pub struct ModePackCandidateProvenanceSummary {
     pub source_kind: String,
     pub source_url_host: String,
     pub source_url_fingerprint: String,
+    #[serde(default)]
+    pub dns_binding: Option<ModePackDnsBindingSummary>,
     pub content_sha256: String,
     pub modepack_name: String,
     pub schema_version: u64,

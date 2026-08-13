@@ -260,6 +260,12 @@ export class RuntimeClient {
       approvalId: string;
       contentSha256: string;
       compiledPolicyFingerprint: string;
+      candidateId?: string;
+      sourceUrlHost?: string;
+      sourceUrlFingerprint?: string;
+      dnsResolutionFingerprint?: string;
+      pinnedAddressFingerprint?: string;
+      approvalEventId?: string;
     } | null,
     updateAdmission?: {
       authorizeUpdate: boolean;
@@ -282,6 +288,24 @@ export class RuntimeClient {
       params.approved_candidate_approval_id = approvedCandidate.approvalId;
       params.expected_approved_candidate_content_sha256 = approvedCandidate.contentSha256;
       params.expected_approved_candidate_compiled_policy_fingerprint = approvedCandidate.compiledPolicyFingerprint;
+      if (approvedCandidate.candidateId) {
+        params.expected_approved_candidate_id = approvedCandidate.candidateId;
+      }
+      if (approvedCandidate.sourceUrlHost) {
+        params.expected_approved_candidate_source_url_host = approvedCandidate.sourceUrlHost;
+      }
+      if (approvedCandidate.sourceUrlFingerprint) {
+        params.expected_approved_candidate_source_url_fingerprint = approvedCandidate.sourceUrlFingerprint;
+      }
+      if (approvedCandidate.dnsResolutionFingerprint) {
+        params.expected_approved_candidate_dns_resolution_fingerprint = approvedCandidate.dnsResolutionFingerprint;
+      }
+      if (approvedCandidate.pinnedAddressFingerprint) {
+        params.expected_approved_candidate_pinned_address_fingerprint = approvedCandidate.pinnedAddressFingerprint;
+      }
+      if (approvedCandidate.approvalEventId) {
+        params.expected_approved_candidate_approval_event_id = approvedCandidate.approvalEventId;
+      }
     }
     if (updateAdmission) {
       params.update_admission = {
