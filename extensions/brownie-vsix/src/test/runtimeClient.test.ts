@@ -47,6 +47,13 @@ const modeSummary = {
   },
 };
 
+const modePackDnsBinding = {
+  resolution_fingerprint: `sha256:${'4'.repeat(64)}`,
+  pinned_address_fingerprint: `sha256:${'5'.repeat(64)}`,
+  resolved_address_count: 1,
+  pinned_address_family: 'ipv4',
+};
+
 const taskRecord = {
   task_id: 'task_1',
   run_id: 'run_1',
@@ -530,6 +537,7 @@ describe('protocol validation', () => {
       source_kind: 'remote_https',
       source_url_host: 'example.com',
       source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+      dns_binding: modePackDnsBinding,
       content_sha256: `sha256:${'b'.repeat(64)}`,
       byte_count: 512,
       modepack_name: 'remote-agentmodes',
@@ -559,6 +567,7 @@ describe('protocol validation', () => {
       selection_id: 'modepack_registry_selection_123',
       registry_url_host: 'registry.example.com',
       registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+      registry_dns_binding: modePackDnsBinding,
       registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
       current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
       current_modepack_name: 'remote-agentmodes',
@@ -2456,6 +2465,7 @@ describe('RuntimeClient', () => {
         source_kind: 'remote_https',
         source_url_host: 'example.com',
         source_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+        dns_binding: modePackDnsBinding,
         content_sha256: `sha256:${'b'.repeat(64)}`,
         byte_count: 512,
         modepack_name: 'remote-agentmodes',
@@ -2492,6 +2502,7 @@ describe('RuntimeClient', () => {
         selection_id: 'modepack_registry_selection_123',
         registry_url_host: 'registry.example.com',
         registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
+        registry_dns_binding: modePackDnsBinding,
         registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
         current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
         current_modepack_name: 'remote-agentmodes',

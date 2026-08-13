@@ -265,6 +265,14 @@ pub struct ModePackVerifyCandidateProvenanceParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ModePackDnsBindingSummary {
+    pub resolution_fingerprint: String,
+    pub pinned_address_fingerprint: String,
+    pub resolved_address_count: usize,
+    pub pinned_address_family: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackActiveSnapshotSummary {
     pub activation_id: String,
     pub activation_fingerprint: String,
@@ -314,6 +322,7 @@ pub struct ModePackCandidateSummary {
     pub source_kind: String,
     pub source_url_host: String,
     pub source_url_fingerprint: String,
+    pub dns_binding: ModePackDnsBindingSummary,
     pub content_sha256: String,
     pub byte_count: usize,
     pub modepack_name: String,
@@ -425,6 +434,7 @@ pub struct ModePackRegistryUpdateSelectionSummary {
     pub selection_id: String,
     pub registry_url_host: String,
     pub registry_url_fingerprint: String,
+    pub registry_dns_binding: ModePackDnsBindingSummary,
     pub registry_manifest_sha256: String,
     pub current_activation_fingerprint: String,
     pub current_modepack_name: String,

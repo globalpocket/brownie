@@ -108,7 +108,6 @@
       "crates/brownie-store/src/lib.rs",
       "extensions/brownie-vsix/src/runtime/protocol.ts",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.r4.2.json",
       "docs/architecture/phase-value-manifest.r5.1.json"
     ],
     "required_checks": [
@@ -124,5 +123,26 @@
     "ledger and RPC evidence exclude raw IPs, raw responses, raw Mode Pack JSON, raw registry manifests, prompts, provider responses, file content, command output, environment values, absolute paths, canonical paths, and secrets",
     "existing authorization, HTTPS-only, no-redirect, content-type, byte-limit, expected-hash, compile, provenance, signer trust, revocation, and replay invariants remain intact",
     "no new RPC, report, digest, history, readiness, inspection, preview, or wrapper surface is added"
-  ]
+  ],
+  "source_evidence": {
+    "runtime_tokens": [
+      "RemoteModePackFetchBinding",
+      "ModePackDnsBindingSummary",
+      "create_modepack_fetch_binding_with",
+      "fetch_modepack_url",
+      "registry_dns_binding"
+    ],
+    "test_tokens": [
+      "modepack_fetch_candidate_caches_summary_and_replays_without_raw_ledger_payload",
+      "modepack_fetch_candidate_rejects_unsafe_urls_and_fingerprint_mismatch",
+      "modepack_registry_update_selection_persists_bounded_candidate_and_replays"
+    ],
+    "forbidden_tokens_in_current_evidence": [
+      "ModePackDnsReport",
+      "ModePackDnsReadiness",
+      "ModePackFetchInspection",
+      "raw_ip_address"
+    ]
+  },
+  "next_phase_after_r5_1": "R5.2 Active Mode Pack Candidate Identity if phase completion review confirms the fetch boundary is closed"
 }
