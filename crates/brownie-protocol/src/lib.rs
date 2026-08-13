@@ -235,9 +235,17 @@ pub struct ModePackFetchCandidateParams {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackSelectRegistryUpdateParams {
     pub authorize_registry_selection: bool,
+    pub authorize_registry_trust: bool,
     pub registry_url: String,
     pub expected_registry_manifest_sha256: String,
     pub expected_current_activation_fingerprint: String,
+    pub expected_registry_provenance_statement_sha256: String,
+    pub expected_registry_signer_fingerprint: String,
+    pub expected_registry_trusted_signer_trust_id: String,
+    pub expected_registry_trusted_signer_event_id: String,
+    pub registry_provenance_statement_json: String,
+    pub registry_provenance_signature_base64: String,
+    pub registry_provenance_public_key_base64: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -455,6 +463,10 @@ pub struct ModePackRegistryUpdateSelectionSummary {
     pub registry_url_fingerprint: String,
     pub registry_dns_binding: ModePackDnsBindingSummary,
     pub registry_manifest_sha256: String,
+    pub registry_provenance_statement_sha256: String,
+    pub registry_signer_fingerprint: String,
+    pub registry_trusted_signer_trust_id: String,
+    pub registry_trusted_signer_event_id: String,
     pub current_activation_fingerprint: String,
     pub current_modepack_name: String,
     pub current_source_kind: String,

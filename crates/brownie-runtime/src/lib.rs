@@ -14445,11 +14445,32 @@ fn handle_modepack_select_registry_update(
             "invalid params: Mode Pack registry update selection authorization required",
         );
     }
+    if !params.authorize_registry_trust {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: Mode Pack registry trust authorization required",
+        );
+    }
     if !is_sha256_fingerprint(&params.expected_registry_manifest_sha256) {
         return error_response(
             id,
             -32602,
             "invalid params: expected_registry_manifest_sha256 must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_registry_provenance_statement_sha256) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_registry_provenance_statement_sha256 must be a sha256 fingerprint",
+        );
+    }
+    if !is_sha256_fingerprint(&params.expected_registry_signer_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_registry_signer_fingerprint must be a sha256 fingerprint",
         );
     }
     if !is_sha256_fingerprint(&params.expected_current_activation_fingerprint) {
@@ -29402,11 +29423,32 @@ where
                 .to_string(),
         );
     }
+    let registry_url_fingerprint =
+        format!("sha256:{}", hex_sha256(registry_url.as_str().as_bytes()));
+    let candidate_url_fingerprint =
+        format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
+    let provenance_statement_url_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(provenance_statement_url.as_str().as_bytes())
+    );
+    let registry_trust = verify_modepack_registry_manifest_trust(
+        store,
+        params,
+        &current.summary,
+        &registry_binding.summary,
+        &registry_url_fingerprint,
+        &registry_manifest_sha256,
+        &entry,
+        &candidate_url_fingerprint,
+        &provenance_statement_url_fingerprint,
+    )?;
     let selected_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let selection_id_inputs = json!({
         "version": "modepack_registry_update_selection_id_v1",
         "current_activation_fingerprint": current.summary.activation_fingerprint,
         "registry_manifest_sha256": registry_manifest_sha256,
+        "registry_provenance_statement_sha256": registry_trust.statement_sha256,
+        "registry_signer_fingerprint": registry_trust.signer_fingerprint,
         "candidate_content_sha256": entry.candidate_content_sha256,
     });
     let selection_id = format!(
@@ -29416,21 +29458,19 @@ where
     let selection = ModePackRegistryUpdateSelectionSummary {
         selection_id,
         registry_url_host: registry_url.host_str().unwrap_or_default().to_string(),
-        registry_url_fingerprint: format!(
-            "sha256:{}",
-            hex_sha256(registry_url.as_str().as_bytes())
-        ),
+        registry_url_fingerprint,
         registry_dns_binding: registry_binding.summary,
         registry_manifest_sha256,
+        registry_provenance_statement_sha256: registry_trust.statement_sha256,
+        registry_signer_fingerprint: registry_trust.signer_fingerprint,
+        registry_trusted_signer_trust_id: registry_trust.trusted_signer_trust_id,
+        registry_trusted_signer_event_id: registry_trust.trusted_signer_event_id,
         current_activation_fingerprint: current.summary.activation_fingerprint,
         current_modepack_name: current.summary.modepack_name,
         current_source_kind: current.summary.source_kind,
         candidate_url: candidate_url.as_str().to_string(),
         candidate_url_host: candidate_url.host_str().unwrap_or_default().to_string(),
-        candidate_url_fingerprint: format!(
-            "sha256:{}",
-            hex_sha256(candidate_url.as_str().as_bytes())
-        ),
+        candidate_url_fingerprint,
         candidate_content_sha256: entry.candidate_content_sha256,
         candidate_compiled_policy_fingerprint: entry.candidate_compiled_policy_fingerprint,
         provenance_statement_url: provenance_statement_url.as_str().to_string(),
@@ -29438,10 +29478,7 @@ where
             .host_str()
             .unwrap_or_default()
             .to_string(),
-        provenance_statement_url_fingerprint: format!(
-            "sha256:{}",
-            hex_sha256(provenance_statement_url.as_str().as_bytes())
-        ),
+        provenance_statement_url_fingerprint,
         provenance_statement_sha256: entry.provenance_statement_sha256,
         signer_fingerprint: entry.signer_fingerprint,
         selected_at,
@@ -29491,6 +29528,213 @@ fn validate_modepack_registry_manifest_entry(
                 "modepack registry update selection failed: entry {field_name} must be a sha256 fingerprint"
             ));
         }
+    }
+    Ok(())
+}
+
+struct ModePackRegistryManifestTrustEvidence {
+    statement_sha256: String,
+    signer_fingerprint: String,
+    trusted_signer_trust_id: String,
+    trusted_signer_event_id: String,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_modepack_registry_manifest_trust(
+    store: &BrownieStore,
+    params: &ModePackSelectRegistryUpdateParams,
+    current: &ModePackActiveSnapshotSummary,
+    registry_dns_binding: &ModePackDnsBindingSummary,
+    registry_url_fingerprint: &str,
+    registry_manifest_sha256: &str,
+    entry: &ModePackRegistryManifestEntry,
+    candidate_url_fingerprint: &str,
+    provenance_statement_url_fingerprint: &str,
+) -> Result<ModePackRegistryManifestTrustEvidence, String> {
+    let statement_json = &params.registry_provenance_statement_json;
+    if statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
+        return Err(
+            "modepack registry update selection failed: registry trust statement exceeds byte limit"
+                .to_string(),
+        );
+    }
+    if scan_text_for_sensitive_content(statement_json) {
+        return Err(
+            "modepack registry update selection failed: registry trust statement contains sensitive-like content"
+                .to_string(),
+        );
+    }
+    let statement_sha256 = format!("sha256:{}", hex_sha256(statement_json.as_bytes()));
+    if statement_sha256 != params.expected_registry_provenance_statement_sha256 {
+        return Err(format!(
+            "modepack registry update selection failed: registry trust statement fingerprint mismatch: expected {} but found {}",
+            params.expected_registry_provenance_statement_sha256, statement_sha256
+        ));
+    }
+    let public_key_bytes = general_purpose::STANDARD
+        .decode(&params.registry_provenance_public_key_base64)
+        .map_err(|_| {
+            "modepack registry update selection failed: registry trust public key is not base64"
+                .to_string()
+        })?;
+    if public_key_bytes.len() != 32 {
+        return Err(
+            "modepack registry update selection failed: registry trust public key must be 32 bytes"
+                .to_string(),
+        );
+    }
+    let signature_bytes = general_purpose::STANDARD
+        .decode(&params.registry_provenance_signature_base64)
+        .map_err(|_| {
+            "modepack registry update selection failed: registry trust signature is not base64"
+                .to_string()
+        })?;
+    if signature_bytes.len() != 64 {
+        return Err(
+            "modepack registry update selection failed: registry trust signature must be 64 bytes"
+                .to_string(),
+        );
+    }
+    let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+    if signer_fingerprint != params.expected_registry_signer_fingerprint {
+        return Err(format!(
+            "modepack registry update selection failed: registry trust signer fingerprint mismatch: expected {} but found {}",
+            params.expected_registry_signer_fingerprint, signer_fingerprint
+        ));
+    }
+    let verifying_key =
+        VerifyingKey::from_bytes(public_key_bytes.as_slice().try_into().map_err(|_| {
+            "modepack registry update selection failed: registry trust public key length invalid"
+                .to_string()
+        })?)
+        .map_err(|_| {
+            "modepack registry update selection failed: registry trust public key invalid"
+                .to_string()
+        })?;
+    let signature = Signature::from_slice(&signature_bytes).map_err(|_| {
+        "modepack registry update selection failed: registry trust signature invalid".to_string()
+    })?;
+    verifying_key
+        .verify(statement_json.as_bytes(), &signature)
+        .map_err(|_| {
+            "modepack registry update selection failed: registry trust bad signature".to_string()
+        })?;
+    let statement: Value = serde_json::from_str(statement_json).map_err(|_| {
+        "modepack registry update selection failed: registry trust statement is not JSON"
+            .to_string()
+    })?;
+    validate_modepack_registry_manifest_trust_statement(
+        &statement,
+        current,
+        registry_dns_binding,
+        registry_url_fingerprint,
+        registry_manifest_sha256,
+        entry,
+        candidate_url_fingerprint,
+        provenance_statement_url_fingerprint,
+        &signer_fingerprint,
+    )?;
+
+    let trusted_signer = store
+        .read_modepack_trusted_signer_snapshot(&signer_fingerprint)
+        .map_err(|error| format!("modepack registry update selection failed: {error}"))?
+        .ok_or_else(|| {
+            "modepack registry update selection failed: registry trusted signer not found"
+                .to_string()
+        })?;
+    if trusted_signer.summary.signer_fingerprint != signer_fingerprint
+        || trusted_signer.summary.trust_id != params.expected_registry_trusted_signer_trust_id
+        || trusted_signer.summary.trust_event_id != params.expected_registry_trusted_signer_event_id
+    {
+        return Err(
+            "modepack registry update selection failed: registry trusted signer is stale"
+                .to_string(),
+        );
+    }
+    if store
+        .read_modepack_revoked_signer_snapshot(&signer_fingerprint)
+        .map_err(|error| format!("modepack registry update selection failed: {error}"))?
+        .is_some()
+    {
+        return Err(
+            "modepack registry update selection failed: registry trusted signer revoked"
+                .to_string(),
+        );
+    }
+    if modepack_signer_trust_expired(&trusted_signer.summary)? {
+        return Err(
+            "modepack registry update selection failed: registry trusted signer expired"
+                .to_string(),
+        );
+    }
+    Ok(ModePackRegistryManifestTrustEvidence {
+        statement_sha256,
+        signer_fingerprint,
+        trusted_signer_trust_id: trusted_signer.summary.trust_id,
+        trusted_signer_event_id: trusted_signer.summary.trust_event_id,
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_modepack_registry_manifest_trust_statement(
+    statement: &Value,
+    current: &ModePackActiveSnapshotSummary,
+    registry_dns_binding: &ModePackDnsBindingSummary,
+    registry_url_fingerprint: &str,
+    registry_manifest_sha256: &str,
+    entry: &ModePackRegistryManifestEntry,
+    candidate_url_fingerprint: &str,
+    provenance_statement_url_fingerprint: &str,
+    signer_fingerprint: &str,
+) -> Result<(), String> {
+    for (field, expected) in [
+        ("registry_url_fingerprint", registry_url_fingerprint),
+        (
+            "registry_dns_resolution_fingerprint",
+            registry_dns_binding.resolution_fingerprint.as_str(),
+        ),
+        (
+            "registry_pinned_address_fingerprint",
+            registry_dns_binding.pinned_address_fingerprint.as_str(),
+        ),
+        ("registry_manifest_sha256", registry_manifest_sha256),
+        ("current_modepack_name", current.modepack_name.as_str()),
+        ("current_source_kind", current.source_kind.as_str()),
+        ("candidate_url_fingerprint", candidate_url_fingerprint),
+        (
+            "candidate_content_sha256",
+            entry.candidate_content_sha256.as_str(),
+        ),
+        (
+            "candidate_compiled_policy_fingerprint",
+            entry.candidate_compiled_policy_fingerprint.as_str(),
+        ),
+        (
+            "provenance_statement_url_fingerprint",
+            provenance_statement_url_fingerprint,
+        ),
+        (
+            "provenance_statement_sha256",
+            entry.provenance_statement_sha256.as_str(),
+        ),
+        ("signer_fingerprint", signer_fingerprint),
+    ] {
+        if statement.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(format!(
+                "modepack registry update selection failed: registry trust statement {field} mismatch"
+            ));
+        }
+    }
+    if !statement
+        .get("signer_identity")
+        .and_then(Value::as_str)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+    {
+        return Err(
+            "modepack registry update selection failed: registry trust signer identity missing"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -64923,6 +65167,9 @@ mod tests {
 
     #[test]
     fn modepack_registry_update_selection_persists_bounded_candidate_and_replays() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -64931,7 +65178,18 @@ mod tests {
         let candidate_content_sha256 = format!("sha256:{}", "2".repeat(64));
         let candidate_policy_fingerprint = format!("sha256:{}", "3".repeat(64));
         let provenance_statement_sha256 = format!("sha256:{}", "4".repeat(64));
-        let signer_fingerprint = format!("sha256:{}", "5".repeat(64));
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let trusted = trust_modepack_signer(
+            &store,
+            &ModePackTrustSignerParams {
+                authorize_trust: true,
+                signer_fingerprint: signer_fingerprint.clone(),
+                expires_at: None,
+            },
+        )
+        .expect("trusted signer");
         store
             .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
                 summary: ModePackActiveSnapshotSummary {
@@ -64967,15 +65225,84 @@ mod tests {
               ]
             }}"#
         );
+        let registry_url = "https://registry.example.com/modepacks.json";
+        let registry_manifest_sha256 = format!("sha256:{}", hex_sha256(manifest.as_bytes()));
+        let registry_binding =
+            create_modepack_fetch_binding_with(registry_url, test_modepack_dns_resolver)
+                .expect("registry binding");
+        let registry_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(registry_binding.url.as_str().as_bytes())
+        );
+        let candidate_url = validate_modepack_fetch_url("https://example.com/modepack.json", false)
+            .expect("candidate url");
+        let candidate_url_fingerprint =
+            format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
+        let provenance_statement_url =
+            validate_modepack_fetch_url("https://example.com/provenance.json", false)
+                .expect("provenance url");
+        let provenance_statement_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(provenance_statement_url.as_str().as_bytes())
+        );
+        let registry_trust_statement = json!({
+            "registry_url_fingerprint": registry_url_fingerprint,
+            "registry_dns_resolution_fingerprint": registry_binding.summary.resolution_fingerprint,
+            "registry_pinned_address_fingerprint": registry_binding.summary.pinned_address_fingerprint,
+            "registry_manifest_sha256": registry_manifest_sha256,
+            "current_modepack_name": "remote-agentmodes",
+            "current_source_kind": "remote_https_candidate",
+            "candidate_url_fingerprint": candidate_url_fingerprint,
+            "candidate_content_sha256": candidate_content_sha256,
+            "candidate_compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
+            "provenance_statement_sha256": provenance_statement_sha256,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "registry.example.com"
+        })
+        .to_string();
+        let registry_signature = signing_key.sign(registry_trust_statement.as_bytes());
         let params = ModePackSelectRegistryUpdateParams {
             authorize_registry_selection: true,
-            registry_url: "https://registry.example.com/modepacks.json".to_string(),
-            expected_registry_manifest_sha256: format!(
-                "sha256:{}",
-                hex_sha256(manifest.as_bytes())
-            ),
+            authorize_registry_trust: true,
+            registry_url: registry_url.to_string(),
+            expected_registry_manifest_sha256: registry_manifest_sha256.clone(),
             expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
+            expected_registry_provenance_statement_sha256: format!(
+                "sha256:{}",
+                hex_sha256(registry_trust_statement.as_bytes())
+            ),
+            expected_registry_signer_fingerprint: signer_fingerprint.clone(),
+            expected_registry_trusted_signer_trust_id: trusted.trusted_signer.trust_id.clone(),
+            expected_registry_trusted_signer_event_id: trusted
+                .trusted_signer
+                .trust_event_id
+                .clone(),
+            registry_provenance_statement_json: registry_trust_statement,
+            registry_provenance_signature_base64: general_purpose::STANDARD
+                .encode(registry_signature.to_bytes()),
+            registry_provenance_public_key_base64: general_purpose::STANDARD
+                .encode(public_key_bytes),
         };
+        let mut bad_trust_params = params.clone();
+        bad_trust_params.expected_registry_signer_fingerprint =
+            format!("sha256:{}", "9".repeat(64));
+        let denied = select_modepack_registry_update_with(&store, &bad_trust_params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: manifest.as_bytes().to_vec(),
+            })
+        })
+        .expect_err("registry trust mismatch denied");
+        assert!(denied.contains("registry trust signer fingerprint mismatch"));
+        assert!(store
+            .read_modepack_registry_update_selection_snapshot(
+                &current_activation_fingerprint,
+                &candidate_content_sha256
+            )
+            .expect("selection read")
+            .is_none());
 
         let selected = select_modepack_registry_update_with(&store, &params, |binding| {
             assert_eq!(binding.summary.resolved_address_count, 1);
@@ -65000,6 +65327,18 @@ mod tests {
         assert_eq!(
             selected.selection.candidate_content_sha256,
             candidate_content_sha256
+        );
+        assert_eq!(
+            selected.selection.registry_provenance_statement_sha256,
+            params.expected_registry_provenance_statement_sha256
+        );
+        assert_eq!(
+            selected.selection.registry_signer_fingerprint,
+            signer_fingerprint
+        );
+        assert_eq!(
+            selected.selection.registry_trusted_signer_trust_id,
+            trusted.trusted_signer.trust_id
         );
         assert_eq!(
             selected
@@ -65033,10 +65372,15 @@ mod tests {
         );
         let cache_dir = temp.path().join(".brownie/modepack-candidates");
         let ledger = std::fs::read_to_string(cache_dir.join("ledger.jsonl")).expect("ledger");
-        assert_eq!(ledger.lines().count(), 1);
+        assert_eq!(ledger.lines().count(), 2);
+        assert!(ledger.contains("ModePackSignerTrusted"));
+        assert!(ledger.contains("ModePackRegistryUpdateSelected"));
         assert!(!ledger.contains("raw_registry_manifest_json"));
         assert!(!ledger.contains("raw_modepack_json"));
         assert!(!ledger.contains("raw_provenance_statement_json"));
+        assert!(!ledger.contains("registry_provenance_statement_json"));
+        assert!(!ledger.contains("registry_provenance_signature_base64"));
+        assert!(!ledger.contains("registry_provenance_public_key_base64"));
         assert!(!ledger.contains("93.184.216.34"));
         assert!(!ledger.contains("raw_ip_address"));
 

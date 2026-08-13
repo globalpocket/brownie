@@ -155,12 +155,30 @@ export class RuntimeClient {
     registryUrl: string,
     expectedRegistryManifestSha256: string,
     expectedCurrentActivationFingerprint: string,
+    registryTrust: {
+      authorizeRegistryTrust: boolean;
+      expectedRegistryProvenanceStatementSha256: string;
+      expectedRegistrySignerFingerprint: string;
+      expectedRegistryTrustedSignerTrustId: string;
+      expectedRegistryTrustedSignerEventId: string;
+      registryProvenanceStatementJson: string;
+      registryProvenanceSignatureBase64: string;
+      registryProvenancePublicKeyBase64: string;
+    },
   ): Promise<ModePackSelectRegistryUpdateResult> {
     const result = await this.call<ModePackSelectRegistryUpdateResult>('modepack.selectRegistryUpdate', {
       authorize_registry_selection: authorizeRegistrySelection,
+      authorize_registry_trust: registryTrust.authorizeRegistryTrust,
       registry_url: registryUrl,
       expected_registry_manifest_sha256: expectedRegistryManifestSha256,
       expected_current_activation_fingerprint: expectedCurrentActivationFingerprint,
+      expected_registry_provenance_statement_sha256: registryTrust.expectedRegistryProvenanceStatementSha256,
+      expected_registry_signer_fingerprint: registryTrust.expectedRegistrySignerFingerprint,
+      expected_registry_trusted_signer_trust_id: registryTrust.expectedRegistryTrustedSignerTrustId,
+      expected_registry_trusted_signer_event_id: registryTrust.expectedRegistryTrustedSignerEventId,
+      registry_provenance_statement_json: registryTrust.registryProvenanceStatementJson,
+      registry_provenance_signature_base64: registryTrust.registryProvenanceSignatureBase64,
+      registry_provenance_public_key_base64: registryTrust.registryProvenancePublicKeyBase64,
     });
 
     if (!isModePackSelectRegistryUpdateResult(result)) {

@@ -573,6 +573,10 @@ describe('protocol validation', () => {
       registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
       registry_dns_binding: modePackDnsBinding,
       registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
+      registry_provenance_statement_sha256: `sha256:${'4'.repeat(64)}`,
+      registry_signer_fingerprint: `sha256:${'5'.repeat(64)}`,
+      registry_trusted_signer_trust_id: 'modepack_signer_trust_5555555555555555',
+      registry_trusted_signer_event_id: 'event_trust',
       current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
       current_modepack_name: 'remote-agentmodes',
       current_source_kind: 'remote_https_candidate',
@@ -601,6 +605,8 @@ describe('protocol validation', () => {
     expect(isModePackSelectRegistryUpdateResult({ ...result, selection: { ...selection, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isModePackSelectRegistryUpdateResult({ ...result, raw_registry_manifest_json: '{}' })).toBe(false);
     expect(isModePackSelectRegistryUpdateResult({ ...result, raw_provenance_statement_json: '{}' })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, selection: { ...selection, registry_provenance_signature_base64: 'raw' } })).toBe(false);
+    expect(isModePackSelectRegistryUpdateResult({ ...result, selection: { ...selection, registry_provenance_public_key_base64: 'raw' } })).toBe(false);
     expect(isModePackSelectRegistryUpdateResult({ ...result, raw_ledger_payload: {} })).toBe(false);
   });
 
@@ -2509,6 +2515,10 @@ describe('RuntimeClient', () => {
         registry_url_fingerprint: `sha256:${'a'.repeat(64)}`,
         registry_dns_binding: modePackDnsBinding,
         registry_manifest_sha256: `sha256:${'b'.repeat(64)}`,
+        registry_provenance_statement_sha256: `sha256:${'4'.repeat(64)}`,
+        registry_signer_fingerprint: `sha256:${'5'.repeat(64)}`,
+        registry_trusted_signer_trust_id: 'modepack_signer_trust_5555555555555555',
+        registry_trusted_signer_event_id: 'event_trust',
         current_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
         current_modepack_name: 'remote-agentmodes',
         current_source_kind: 'remote_https_candidate',
@@ -2535,6 +2545,16 @@ describe('RuntimeClient', () => {
       'https://registry.example.com/modepacks.json',
       result.selection.registry_manifest_sha256,
       result.selection.current_activation_fingerprint,
+      {
+        authorizeRegistryTrust: true,
+        expectedRegistryProvenanceStatementSha256: result.selection.registry_provenance_statement_sha256,
+        expectedRegistrySignerFingerprint: result.selection.registry_signer_fingerprint,
+        expectedRegistryTrustedSignerTrustId: result.selection.registry_trusted_signer_trust_id,
+        expectedRegistryTrustedSignerEventId: result.selection.registry_trusted_signer_event_id,
+        registryProvenanceStatementJson: '{"registry_manifest_sha256":"bounded"}',
+        registryProvenanceSignatureBase64: 'signature',
+        registryProvenancePublicKeyBase64: 'public-key',
+      },
     )).resolves.toEqual(result);
     expect(transport.requests).toEqual([{
       jsonrpc: '2.0',
@@ -2542,9 +2562,17 @@ describe('RuntimeClient', () => {
       method: 'modepack.selectRegistryUpdate',
       params: {
         authorize_registry_selection: true,
+        authorize_registry_trust: true,
         registry_url: 'https://registry.example.com/modepacks.json',
         expected_registry_manifest_sha256: result.selection.registry_manifest_sha256,
         expected_current_activation_fingerprint: result.selection.current_activation_fingerprint,
+        expected_registry_provenance_statement_sha256: result.selection.registry_provenance_statement_sha256,
+        expected_registry_signer_fingerprint: result.selection.registry_signer_fingerprint,
+        expected_registry_trusted_signer_trust_id: result.selection.registry_trusted_signer_trust_id,
+        expected_registry_trusted_signer_event_id: result.selection.registry_trusted_signer_event_id,
+        registry_provenance_statement_json: '{"registry_manifest_sha256":"bounded"}',
+        registry_provenance_signature_base64: 'signature',
+        registry_provenance_public_key_base64: 'public-key',
       },
     }]);
   });

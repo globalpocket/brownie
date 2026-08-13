@@ -251,6 +251,10 @@ export interface ModePackRegistryUpdateSelectionSummary {
   registry_url_fingerprint: string;
   registry_dns_binding: ModePackDnsBindingSummary;
   registry_manifest_sha256: string;
+  registry_provenance_statement_sha256: string;
+  registry_signer_fingerprint: string;
+  registry_trusted_signer_trust_id: string;
+  registry_trusted_signer_event_id: string;
   current_activation_fingerprint: string;
   current_modepack_name: string;
   current_source_kind: string;
@@ -3251,6 +3255,9 @@ export function isModePackSelectRegistryUpdateResult(value: unknown): value is M
     !Object.prototype.hasOwnProperty.call(value, 'raw_registry_manifest_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_public_key_base64') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
@@ -3322,6 +3329,12 @@ function isModePackRegistryUpdateSelectionSummary(value: unknown): value is Mode
     isModePackDnsBindingSummary(value.registry_dns_binding) &&
     typeof value.registry_manifest_sha256 === 'string' &&
     isSha256Fingerprint(value.registry_manifest_sha256) &&
+    typeof value.registry_provenance_statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.registry_provenance_statement_sha256) &&
+    typeof value.registry_signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.registry_signer_fingerprint) &&
+    typeof value.registry_trusted_signer_trust_id === 'string' &&
+    typeof value.registry_trusted_signer_event_id === 'string' &&
     typeof value.current_activation_fingerprint === 'string' &&
     isSha256Fingerprint(value.current_activation_fingerprint) &&
     typeof value.current_modepack_name === 'string' &&
@@ -3348,6 +3361,9 @@ function isModePackRegistryUpdateSelectionSummary(value: unknown): value is Mode
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ip_address') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_statement_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_signature_base64') &&
+    !Object.prototype.hasOwnProperty.call(value, 'registry_provenance_public_key_base64') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
