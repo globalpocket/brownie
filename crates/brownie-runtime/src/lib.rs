@@ -9506,7 +9506,7 @@ where
         .list_tasks()
         .map_err(|error| error.to_string())?;
     let post_progress = task_list_progress_overview(store, &post_tasks)?;
-    let decision_id = format!("headless_modepack_fetch_{}", uuid::Uuid::new_v4().simple());
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
     store
         .write_headless_modepack_selected_candidate_fetch_checkpoint(
             &HeadlessModePackSelectedCandidateFetchCheckpoint {
@@ -66001,6 +66001,11 @@ mod tests {
         )
         .expect("headless selected candidate fetch");
         assert_eq!(fetched.status, HeadlessContinueOnceStatus::TaskExecuted);
+        assert!(fetched
+            .decision_id
+            .as_deref()
+            .expect("decision id")
+            .starts_with("headless_decision_"));
         assert!(!fetched.replayed);
         assert_eq!(fetched.selected_task_id, None);
         assert_eq!(
