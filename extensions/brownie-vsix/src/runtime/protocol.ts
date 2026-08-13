@@ -216,6 +216,7 @@ export interface ModePackCandidateSummary {
   source_kind: string;
   source_url_host: string;
   source_url_fingerprint: string;
+  dns_binding: ModePackDnsBindingSummary;
   content_sha256: string;
   byte_count: number;
   modepack_name: string;
@@ -225,6 +226,13 @@ export interface ModePackCandidateSummary {
   compiled_policy_fingerprint: string;
   cached_at: string;
   cache_event_id: string;
+}
+
+export interface ModePackDnsBindingSummary {
+  resolution_fingerprint: string;
+  pinned_address_fingerprint: string;
+  resolved_address_count: number;
+  pinned_address_family: string;
 }
 
 export interface ModePackFetchCandidateResult {
@@ -238,6 +246,7 @@ export interface ModePackRegistryUpdateSelectionSummary {
   selection_id: string;
   registry_url_host: string;
   registry_url_fingerprint: string;
+  registry_dns_binding: ModePackDnsBindingSummary;
   registry_manifest_sha256: string;
   current_activation_fingerprint: string;
   current_modepack_name: string;
@@ -3301,6 +3310,7 @@ function isModePackRegistryUpdateSelectionSummary(value: unknown): value is Mode
     typeof value.registry_url_host === 'string' &&
     typeof value.registry_url_fingerprint === 'string' &&
     isSha256Fingerprint(value.registry_url_fingerprint) &&
+    isModePackDnsBindingSummary(value.registry_dns_binding) &&
     typeof value.registry_manifest_sha256 === 'string' &&
     isSha256Fingerprint(value.registry_manifest_sha256) &&
     typeof value.current_activation_fingerprint === 'string' &&
@@ -3327,6 +3337,7 @@ function isModePackRegistryUpdateSelectionSummary(value: unknown): value is Mode
     typeof value.selection_event_id === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_registry_manifest_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ip_address') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_provenance_statement_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
@@ -3449,6 +3460,7 @@ function isModePackCandidateSummary(value: unknown): value is ModePackCandidateS
     typeof value.source_url_host === 'string' &&
     typeof value.source_url_fingerprint === 'string' &&
     isSha256Fingerprint(value.source_url_fingerprint) &&
+    isModePackDnsBindingSummary(value.dns_binding) &&
     typeof value.content_sha256 === 'string' &&
     isSha256Fingerprint(value.content_sha256) &&
     typeof value.byte_count === 'number' &&
@@ -3467,7 +3479,25 @@ function isModePackCandidateSummary(value: unknown): value is ModePackCandidateS
     typeof value.cache_event_id === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ip_address') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackDnsBindingSummary(value: unknown): value is ModePackDnsBindingSummary {
+  return (
+    isRecord(value) &&
+    typeof value.resolution_fingerprint === 'string' &&
+    isSha256Fingerprint(value.resolution_fingerprint) &&
+    typeof value.pinned_address_fingerprint === 'string' &&
+    isSha256Fingerprint(value.pinned_address_fingerprint) &&
+    typeof value.resolved_address_count === 'number' &&
+    Number.isInteger(value.resolved_address_count) &&
+    value.resolved_address_count > 0 &&
+    (value.pinned_address_family === 'ipv4' || value.pinned_address_family === 'ipv6') &&
+    !Object.prototype.hasOwnProperty.call(value, 'address') &&
+    !Object.prototype.hasOwnProperty.call(value, 'ip') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ip_address')
   );
 }
 

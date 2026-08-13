@@ -42,7 +42,7 @@ use brownie_protocol::{
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
-    ModePackFetchCandidateParams, ModePackFetchCandidateResult,
+    ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveParams,
     ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
     ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
@@ -259,7 +259,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
     io::{Read, Write},
-    net::{IpAddr, ToSocketAddrs},
+    net::{IpAddr, SocketAddr, ToSocketAddrs},
     path::{Component, Path, PathBuf},
     time::Duration,
 };
@@ -29061,6 +29061,13 @@ struct RemoteModePackFetchResponse {
     body: Vec<u8>,
 }
 
+#[derive(Debug, Clone)]
+struct RemoteModePackFetchBinding {
+    url: url::Url,
+    pinned_addr: SocketAddr,
+    summary: ModePackDnsBindingSummary,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModePackRegistryManifest {
@@ -29085,20 +29092,43 @@ fn fetch_remote_modepack_candidate(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
 ) -> Result<ModePackFetchCandidateResult, String> {
-    validate_modepack_fetch_url(&params.url, true)?;
-    fetch_remote_modepack_candidate_with(store, params, |url| fetch_modepack_url(url))
+    fetch_remote_modepack_candidate_with_resolver(
+        store,
+        params,
+        default_modepack_dns_resolver,
+        fetch_modepack_url,
+    )
 }
 
+#[cfg(test)]
 fn fetch_remote_modepack_candidate_with<F>(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
     fetcher: F,
 ) -> Result<ModePackFetchCandidateResult, String>
 where
-    F: FnOnce(&str) -> Result<RemoteModePackFetchResponse, String>,
+    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
 {
-    let parsed = validate_modepack_fetch_url(&params.url, false)?;
-    let response = fetcher(parsed.as_str())?;
+    fetch_remote_modepack_candidate_with_resolver(
+        store,
+        params,
+        test_modepack_dns_resolver,
+        fetcher,
+    )
+}
+
+fn fetch_remote_modepack_candidate_with_resolver<R, F>(
+    store: &BrownieStore,
+    params: &ModePackFetchCandidateParams,
+    resolver: R,
+    fetcher: F,
+) -> Result<ModePackFetchCandidateResult, String>
+where
+    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
+    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+{
+    let binding = create_modepack_fetch_binding_with(&params.url, resolver)?;
+    let response = fetcher(&binding)?;
     if response.status != 200 {
         return Err(format!(
             "modepack candidate fetch failed: unsupported HTTP status {}",
@@ -29165,8 +29195,9 @@ where
     let summary = ModePackCandidateSummary {
         candidate_id: format!("modepack_candidate_{}", &content_sha256[7..23]),
         source_kind: "remote_https".to_string(),
-        source_url_host: parsed.host_str().unwrap_or_default().to_string(),
-        source_url_fingerprint: format!("sha256:{}", hex_sha256(parsed.as_str().as_bytes())),
+        source_url_host: binding.url.host_str().unwrap_or_default().to_string(),
+        source_url_fingerprint: format!("sha256:{}", hex_sha256(binding.url.as_str().as_bytes())),
+        dns_binding: binding.summary,
         content_sha256,
         byte_count: body.len(),
         modepack_name: snapshot.name,
@@ -29196,19 +29227,43 @@ fn select_modepack_registry_update(
     store: &BrownieStore,
     params: &ModePackSelectRegistryUpdateParams,
 ) -> Result<ModePackSelectRegistryUpdateResult, String> {
-    validate_modepack_fetch_url(&params.registry_url, true)?;
-    select_modepack_registry_update_with(store, params, |url| fetch_modepack_url(url))
+    select_modepack_registry_update_with_resolver(
+        store,
+        params,
+        default_modepack_dns_resolver,
+        fetch_modepack_url,
+    )
 }
 
+#[cfg(test)]
 fn select_modepack_registry_update_with<F>(
     store: &BrownieStore,
     params: &ModePackSelectRegistryUpdateParams,
     fetcher: F,
 ) -> Result<ModePackSelectRegistryUpdateResult, String>
 where
-    F: FnOnce(&str) -> Result<RemoteModePackFetchResponse, String>,
+    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
 {
-    let registry_url = validate_modepack_fetch_url(&params.registry_url, false)?;
+    select_modepack_registry_update_with_resolver(
+        store,
+        params,
+        test_modepack_dns_resolver,
+        fetcher,
+    )
+}
+
+fn select_modepack_registry_update_with_resolver<R, F>(
+    store: &BrownieStore,
+    params: &ModePackSelectRegistryUpdateParams,
+    resolver: R,
+    fetcher: F,
+) -> Result<ModePackSelectRegistryUpdateResult, String>
+where
+    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
+    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+{
+    let registry_binding = create_modepack_fetch_binding_with(&params.registry_url, resolver)?;
+    let registry_url = &registry_binding.url;
     let current = store
         .read_active_modepack_snapshot()
         .map_err(|error| format!("modepack registry update selection failed: {error}"))?
@@ -29230,7 +29285,7 @@ where
         );
     }
 
-    let response = fetcher(registry_url.as_str())?;
+    let response = fetcher(&registry_binding)?;
     if response.status != 200 {
         return Err(format!(
             "modepack registry update selection failed: unsupported HTTP status {}",
@@ -29329,6 +29384,7 @@ where
             "sha256:{}",
             hex_sha256(registry_url.as_str().as_bytes())
         ),
+        registry_dns_binding: registry_binding.summary,
         registry_manifest_sha256,
         current_activation_fingerprint: current.summary.activation_fingerprint,
         current_modepack_name: current.summary.modepack_name,
@@ -29984,6 +30040,67 @@ fn validate_modepack_fetch_url(value: &str, resolve_addresses: bool) -> Result<u
     Ok(parsed)
 }
 
+fn default_modepack_dns_resolver(host: &str) -> Result<Vec<SocketAddr>, String> {
+    (host, 443)
+        .to_socket_addrs()
+        .map(|addrs| addrs.collect::<Vec<_>>())
+        .map_err(|error| format!("modepack candidate URL resolution failed: {error}"))
+}
+
+#[cfg(test)]
+fn test_modepack_dns_resolver(_host: &str) -> Result<Vec<SocketAddr>, String> {
+    Ok(vec![SocketAddr::from(([93, 184, 216, 34], 443))])
+}
+
+fn create_modepack_fetch_binding_with<R>(
+    value: &str,
+    resolver: R,
+) -> Result<RemoteModePackFetchBinding, String>
+where
+    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
+{
+    let parsed = validate_modepack_fetch_url(value, false)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "modepack candidate URL host is required".to_string())?;
+    let mut addrs = resolver(host)?;
+    if addrs.is_empty() {
+        return Err("modepack candidate URL resolution returned no addresses".to_string());
+    }
+    addrs.sort_by_key(|addr| addr.to_string());
+    for addr in &addrs {
+        if private_or_special_ip(addr.ip()) {
+            return Err("modepack candidate URL resolves to a disallowed address".to_string());
+        }
+    }
+    let pinned_addr = addrs[0];
+    let address_fingerprints = addrs
+        .iter()
+        .map(|addr| hex_sha256(addr.to_string().as_bytes()))
+        .collect::<Vec<_>>();
+    let resolution_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(address_fingerprints.join("\n").as_bytes())
+    );
+    let pinned_address_fingerprint =
+        format!("sha256:{}", hex_sha256(pinned_addr.to_string().as_bytes()));
+    let pinned_address_family = match pinned_addr.ip() {
+        IpAddr::V4(_) => "ipv4",
+        IpAddr::V6(_) => "ipv6",
+    }
+    .to_string();
+    Ok(RemoteModePackFetchBinding {
+        url: parsed,
+        pinned_addr,
+        summary: ModePackDnsBindingSummary {
+            resolution_fingerprint,
+            pinned_address_fingerprint,
+            resolved_address_count: addrs.len(),
+            pinned_address_family,
+        },
+    })
+}
+
 fn private_or_special_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(ip) => {
@@ -30023,14 +30140,21 @@ fn modepack_candidate_content_type_allowed(content_type: Option<&str>) -> bool {
     )
 }
 
-fn fetch_modepack_url(url: &str) -> Result<RemoteModePackFetchResponse, String> {
+fn fetch_modepack_url(
+    binding: &RemoteModePackFetchBinding,
+) -> Result<RemoteModePackFetchResponse, String> {
+    let host = binding
+        .url
+        .host_str()
+        .ok_or_else(|| "modepack candidate URL host is required".to_string())?;
     let client = reqwest::blocking::Client::builder()
+        .resolve(host, binding.pinned_addr)
         .redirect(reqwest::redirect::Policy::none())
         .timeout(MODEPACK_REMOTE_FETCH_TIMEOUT)
         .build()
         .map_err(|error| format!("modepack candidate fetch client failed: {error}"))?;
     let mut response = client
-        .get(url)
+        .get(binding.url.as_str())
         .send()
         .map_err(|error| format!("modepack candidate fetch failed: {error}"))?;
     if response.status().is_redirection() {
@@ -64566,7 +64690,17 @@ mod tests {
             expected_content_sha256: Some(format!("sha256:{}", hex_sha256(body.as_bytes()))),
         };
 
-        let fetched = fetch_remote_modepack_candidate_with(&store, &params, |_| {
+        let fetched = fetch_remote_modepack_candidate_with(&store, &params, |binding| {
+            assert_eq!(binding.summary.resolved_address_count, 1);
+            assert_eq!(binding.summary.pinned_address_family, "ipv4");
+            assert!(binding
+                .summary
+                .resolution_fingerprint
+                .starts_with("sha256:"));
+            assert!(binding
+                .summary
+                .pinned_address_fingerprint
+                .starts_with("sha256:"));
             Ok(RemoteModePackFetchResponse {
                 status: 200,
                 content_type: Some("application/json".to_string()),
@@ -64583,6 +64717,8 @@ mod tests {
             .candidate
             .source_url_fingerprint
             .starts_with("sha256:"));
+        assert_eq!(fetched.candidate.dns_binding.resolved_address_count, 1);
+        assert_eq!(fetched.candidate.dns_binding.pinned_address_family, "ipv4");
         assert_eq!(
             fetched.next_action,
             "review_candidate_then_replace_active_modepack"
@@ -64607,6 +64743,8 @@ mod tests {
         assert_eq!(ledger.lines().count(), 1);
         assert!(!ledger.contains("Review local changes without writing files."));
         assert!(!ledger.contains("\"modepack_json\""));
+        assert!(!ledger.contains("93.184.216.34"));
+        assert!(!ledger.contains("raw_ip_address"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -64641,6 +64779,21 @@ mod tests {
         })
         .expect_err("fingerprint mismatch");
         assert!(mismatch.contains("content fingerprint mismatch"));
+
+        let unsafe_params = ModePackFetchCandidateParams {
+            authorize_fetch: true,
+            url: "https://rebind.example/modepack.json".to_string(),
+            expected_content_sha256: None,
+        };
+        let denied = fetch_remote_modepack_candidate_with_resolver(
+            &store,
+            &unsafe_params,
+            |_| Ok(vec![SocketAddr::from(([127, 0, 0, 1], 443))]),
+            |_| panic!("fetcher must not be invoked for unsafe DNS"),
+        )
+        .expect_err("unsafe DNS denied");
+        assert!(denied.contains("disallowed address"));
+        assert!(!temp.path().join(".brownie/modepack-candidates").exists());
     }
 
     #[test]
@@ -64699,7 +64852,9 @@ mod tests {
             expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
         };
 
-        let selected = select_modepack_registry_update_with(&store, &params, |_| {
+        let selected = select_modepack_registry_update_with(&store, &params, |binding| {
+            assert_eq!(binding.summary.resolved_address_count, 1);
+            assert_eq!(binding.summary.pinned_address_family, "ipv4");
             Ok(RemoteModePackFetchResponse {
                 status: 200,
                 content_type: Some("application/json".to_string()),
@@ -64720,6 +64875,20 @@ mod tests {
         assert_eq!(
             selected.selection.candidate_content_sha256,
             candidate_content_sha256
+        );
+        assert_eq!(
+            selected
+                .selection
+                .registry_dns_binding
+                .resolved_address_count,
+            1
+        );
+        assert_eq!(
+            selected
+                .selection
+                .registry_dns_binding
+                .pinned_address_family,
+            "ipv4"
         );
         assert_eq!(selected.next_action, "fetch_selected_modepack_candidate");
 
@@ -64743,6 +64912,8 @@ mod tests {
         assert!(!ledger.contains("raw_registry_manifest_json"));
         assert!(!ledger.contains("raw_modepack_json"));
         assert!(!ledger.contains("raw_provenance_statement_json"));
+        assert!(!ledger.contains("93.184.216.34"));
+        assert!(!ledger.contains("raw_ip_address"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
