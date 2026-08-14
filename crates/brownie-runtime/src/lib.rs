@@ -9385,6 +9385,11 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
     params: HeadlessContinueOnceParams,
     checkpoint: HeadlessModePackSelectedCandidateFetchCheckpoint,
 ) -> JsonRpcResponse<Value> {
+    if let Err(message) =
+        validate_headless_modepack_selected_candidate_fetch_replay_request(&params, &checkpoint)
+    {
+        return error_response(id, -32602, &message);
+    }
     let mut fetch_result = checkpoint.result;
     fetch_result.fetched = false;
     fetch_result.replayed = true;
@@ -9433,6 +9438,58 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
             next_action: "verify_selected_modepack_candidate_provenance_explicitly".to_string(),
         }),
     )
+}
+
+fn headless_modepack_selected_candidate_fetch_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .modepack_selected_candidate_fetch_target
+        .as_ref()
+        .ok_or_else(|| "modepack selected candidate fetch target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "modepack selected candidate fetch failed: continuation_id is required".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "modepack_selected_candidate_fetch",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "authorize_selected_candidate_fetch": target.authorize_selected_candidate_fetch,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "selection_id": target.selection_id,
+        "selection_event_id": target.selection_event_id,
+        "expected_registry_manifest_sha256": target.expected_registry_manifest_sha256,
+        "expected_candidate_url_fingerprint": target.expected_candidate_url_fingerprint,
+        "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
+        "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
+        "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
+        "expected_provenance_statement_sha256": target.expected_provenance_statement_sha256,
+        "expected_signer_fingerprint": target.expected_signer_fingerprint,
+        "expected_current_activation_fingerprint": target.expected_current_activation_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_headless_modepack_selected_candidate_fetch_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessModePackSelectedCandidateFetchCheckpoint,
+) -> Result<(), String> {
+    let current = headless_modepack_selected_candidate_fetch_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless selected candidate fetch continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless selected candidate fetch checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
 }
 
 fn headless_continue_modepack_selected_candidate_fetch(
@@ -9520,6 +9577,8 @@ where
                 .to_string(),
         );
     }
+    let request_fingerprint =
+        headless_modepack_selected_candidate_fetch_request_fingerprint(params)?;
 
     let selection = store
         .read_modepack_registry_update_selection_snapshot(
@@ -9599,6 +9658,7 @@ where
             &HeadlessModePackSelectedCandidateFetchCheckpoint {
                 continuation_id: continuation_id.clone(),
                 decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
                 expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
                 expected_aggregate_sequence: params.expected_aggregate_sequence,
                 current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
@@ -9678,6 +9738,14 @@ fn headless_continue_modepack_selected_candidate_provenance_verification_replay_
     params: HeadlessContinueOnceParams,
     checkpoint: HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
 ) -> JsonRpcResponse<Value> {
+    if let Err(message) =
+        validate_headless_modepack_selected_candidate_provenance_verification_replay_request(
+            &params,
+            &checkpoint,
+        )
+    {
+        return error_response(id, -32602, &message);
+    }
     let mut provenance_result = checkpoint.result;
     provenance_result.verified = false;
     provenance_result.replayed = true;
@@ -9727,6 +9795,66 @@ fn headless_continue_modepack_selected_candidate_provenance_verification_replay_
             next_action: "approve_verified_modepack_candidate_explicitly".to_string(),
         }),
     )
+}
+
+fn headless_modepack_selected_candidate_provenance_verification_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .modepack_selected_candidate_provenance_verification_target
+        .as_ref()
+        .ok_or_else(|| {
+            "modepack selected candidate provenance verification target missing".to_string()
+        })?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "modepack selected candidate provenance verification failed: continuation_id is required"
+            .to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "modepack_selected_candidate_provenance_verification",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "authorize_selected_candidate_provenance_verification": target.authorize_selected_candidate_provenance_verification,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "fetch_continuation_id": target.fetch_continuation_id,
+        "expected_fetch_decision_id": target.expected_fetch_decision_id,
+        "selection_id": target.selection_id,
+        "selection_event_id": target.selection_event_id,
+        "expected_candidate_url_fingerprint": target.expected_candidate_url_fingerprint,
+        "expected_candidate_content_sha256": target.expected_candidate_content_sha256,
+        "expected_candidate_compiled_policy_fingerprint": target.expected_candidate_compiled_policy_fingerprint,
+        "expected_provenance_statement_url_fingerprint": target.expected_provenance_statement_url_fingerprint,
+        "expected_provenance_statement_sha256": target.expected_provenance_statement_sha256,
+        "expected_signer_fingerprint": target.expected_signer_fingerprint,
+        "expected_current_activation_fingerprint": target.expected_current_activation_fingerprint,
+        "provenance_statement_json_sha256": format!("sha256:{}", hex_sha256(target.provenance_statement_json.as_bytes())),
+        "provenance_signature_base64_sha256": format!("sha256:{}", hex_sha256(target.provenance_signature_base64.as_bytes())),
+        "provenance_public_key_base64_sha256": format!("sha256:{}", hex_sha256(target.provenance_public_key_base64.as_bytes())),
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_headless_modepack_selected_candidate_provenance_verification_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
+) -> Result<(), String> {
+    let current =
+        headless_modepack_selected_candidate_provenance_verification_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless selected candidate provenance verification continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless selected candidate provenance verification checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
 }
 
 fn headless_continue_modepack_selected_candidate_provenance_verification(
@@ -9808,6 +9936,8 @@ fn headless_continue_modepack_selected_candidate_provenance_verification(
                 .to_string(),
         );
     }
+    let request_fingerprint =
+        headless_modepack_selected_candidate_provenance_verification_request_fingerprint(params)?;
     let actual_statement_sha256 = format!(
         "sha256:{}",
         hex_sha256(target.provenance_statement_json.as_bytes())
@@ -9933,6 +10063,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification(
             &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint {
                 continuation_id: continuation_id.clone(),
                 decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
                 fetch_continuation_id: target.fetch_continuation_id.clone(),
                 expected_fetch_decision_id: target.expected_fetch_decision_id.clone(),
                 expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
@@ -66489,11 +66620,12 @@ mod tests {
             )
             .expect("checkpoint read")
             .expect("checkpoint");
+        assert!(replay_checkpoint.request_fingerprint.is_some());
         let replay = headless_continue_modepack_selected_candidate_fetch_replay_result(
             json!(12),
             &progress,
             params.clone(),
-            replay_checkpoint,
+            replay_checkpoint.clone(),
         );
         assert!(replay.error.is_none());
         let replay_result: HeadlessContinueOnceResult =
@@ -66507,6 +66639,23 @@ mod tests {
         assert_eq!(
             replay_fetch.candidate.cache_event_id,
             fetch_result.candidate.cache_event_id
+        );
+        let mut mismatched_fetch_params = params.clone();
+        mismatched_fetch_params
+            .modepack_selected_candidate_fetch_target
+            .as_mut()
+            .expect("fetch target")
+            .expected_signer_fingerprint = format!("sha256:{}", "8".repeat(64));
+        let mismatched_fetch_replay =
+            headless_continue_modepack_selected_candidate_fetch_replay_result(
+                json!(14),
+                &progress,
+                mismatched_fetch_params,
+                replay_checkpoint,
+            );
+        assert_eq!(
+            mismatched_fetch_replay.error.expect("mismatch error").code,
+            -32602
         );
         let provenance_progress = task_list_progress_overview(&store, &[]).expect("progress");
         let mut provenance_params = params.clone();
@@ -66578,12 +66727,13 @@ mod tests {
             )
             .expect("provenance checkpoint read")
             .expect("provenance checkpoint");
+        assert!(provenance_checkpoint.request_fingerprint.is_some());
         let provenance_replay =
             headless_continue_modepack_selected_candidate_provenance_verification_replay_result(
                 json!(13),
                 &provenance_progress,
-                provenance_params,
-                provenance_checkpoint,
+                provenance_params.clone(),
+                provenance_checkpoint.clone(),
             );
         assert!(provenance_replay.error.is_none());
         let provenance_replay_result: HeadlessContinueOnceResult =
@@ -66595,6 +66745,27 @@ mod tests {
             .expect("replayed provenance");
         assert!(!replayed_provenance.verified);
         assert!(replayed_provenance.replayed);
+        let mut mismatched_provenance_params = provenance_params.clone();
+        mismatched_provenance_params
+            .modepack_selected_candidate_provenance_verification_target
+            .as_mut()
+            .expect("provenance target")
+            .provenance_signature_base64
+            .push_str("different-request");
+        let mismatched_provenance_replay =
+            headless_continue_modepack_selected_candidate_provenance_verification_replay_result(
+                json!(15),
+                &provenance_progress,
+                mismatched_provenance_params,
+                provenance_checkpoint,
+            );
+        assert_eq!(
+            mismatched_provenance_replay
+                .error
+                .expect("provenance mismatch error")
+                .code,
+            -32602
+        );
         let cache_ledger = std::fs::read_to_string(
             temp.path()
                 .join(".brownie/modepack-candidates/ledger.jsonl"),
