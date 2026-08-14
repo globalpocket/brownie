@@ -45289,7 +45289,7 @@ mod tests {
             .unwrap_or_else(|| panic!("seed advance failed"));
         assert_eq!(seed["session_sequence"], 1);
 
-        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
+        let drive_request = r#"{"jsonrpc":"2.0","id":3,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m17.drive","drive_id":"m17.drive.1","expected_start_session_sequence":1,"max_advances":3,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}"#;
         let drive = parse_line(drive_request)
             .result
             .unwrap_or_else(|| panic!("drive failed"));
@@ -45298,7 +45298,7 @@ mod tests {
         assert_eq!(drive["start_session_sequence"], 1);
         let advance_count = drive["advance_count"].as_u64().expect("advance count");
         assert!(advance_count >= 1, "{drive}");
-        assert!(advance_count <= 2, "{drive}");
+        assert!(advance_count <= 3, "{drive}");
         assert_eq!(drive["end_session_sequence"], 1 + advance_count);
         assert_eq!(drive["executed_count"], advance_count);
         assert_eq!(drive["replayed"], false);
