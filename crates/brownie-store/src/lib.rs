@@ -13,7 +13,8 @@ use brownie_protocol::{
     ModePackActiveSnapshotSummary, ModePackApprovedCandidateSummary,
     ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackRevokedSignerSummary,
-    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary, PatchApplyRecoveryProvenance,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
+    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
     RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
     VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
@@ -623,6 +624,53 @@ impl BrownieStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint>> {
+        let path =
+            self.headless_modepack_selected_candidate_provenance_verification_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+        &self,
+        checkpoint: &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path = self.headless_modepack_selected_candidate_provenance_verification_path(
+            &checkpoint.continuation_id,
+        );
+        if let Some(existing) = self
+            .read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+                &checkpoint.continuation_id,
+            )?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless modepack selected candidate provenance verification checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint).context(
+            "failed to serialize headless modepack selected candidate provenance verification checkpoint",
+        )?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn commit_modepack_candidate_snapshot(
         &self,
         snapshot: &ModePackCandidateSnapshot,
@@ -1086,6 +1134,18 @@ impl BrownieStore {
             .join(WORKSPACE_STATE_DIR)
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("modepack-selected-fetch-{continuation_id}.json"))
+    }
+
+    fn headless_modepack_selected_candidate_provenance_verification_path(
+        &self,
+        continuation_id: &str,
+    ) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!(
+                "modepack-selected-provenance-verification-{continuation_id}.json"
+            ))
     }
 
     fn modepack_candidate_approval_path(&self, content_sha256: &str) -> PathBuf {
@@ -1559,6 +1619,23 @@ pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
     pub selection_id: String,
     pub selection_event_id: String,
     pub result: ModePackFetchCandidateResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    pub fetch_continuation_id: String,
+    pub expected_fetch_decision_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub result: ModePackVerifyCandidateProvenanceResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

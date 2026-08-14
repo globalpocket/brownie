@@ -265,6 +265,26 @@ pub struct ModePackSelectedCandidateFetchTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePackSelectedCandidateProvenanceVerificationTarget {
+    pub authorize_selected_candidate_provenance_verification: bool,
+    pub fetch_continuation_id: String,
+    pub expected_fetch_decision_id: String,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub expected_candidate_url_fingerprint: String,
+    pub expected_candidate_content_sha256: String,
+    pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_provenance_statement_url_fingerprint: String,
+    pub expected_provenance_statement_sha256: String,
+    pub expected_signer_fingerprint: String,
+    pub expected_current_activation_fingerprint: String,
+    pub provenance_statement_json: String,
+    pub provenance_signature_base64: String,
+    pub provenance_public_key_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -962,6 +982,9 @@ pub struct HeadlessContinueOnceParams {
     pub parent_join_run_target: Option<ParentJoinRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_provenance_verification_target:
+        Option<ModePackSelectedCandidateProvenanceVerificationTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1656,6 +1679,7 @@ pub enum HeadlessContinueRouteKind {
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
     VerifySelectedModePackCandidateProvenanceExplicitly,
+    ApproveVerifiedModePackCandidateExplicitly,
     RunParentTaskExplicitly,
     NoEligibleTask,
     RefreshProgressOverview,
@@ -1707,6 +1731,9 @@ pub struct HeadlessContinueOnceResult {
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_fetch_candidate_result: Option<ModePackFetchCandidateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_verify_candidate_provenance_result:
+        Option<ModePackVerifyCandidateProvenanceResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
