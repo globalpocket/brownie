@@ -249,6 +249,22 @@ pub struct ModePackSelectRegistryUpdateParams {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePackSelectedCandidateFetchTarget {
+    pub authorize_selected_candidate_fetch: bool,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub expected_registry_manifest_sha256: String,
+    pub expected_candidate_url_fingerprint: String,
+    pub expected_candidate_content_sha256: String,
+    pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_provenance_statement_url_fingerprint: String,
+    pub expected_provenance_statement_sha256: String,
+    pub expected_signer_fingerprint: String,
+    pub expected_current_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -944,6 +960,8 @@ pub struct HeadlessContinueOnceParams {
     pub llm_provider_failure_retry_run_target: Option<LlmProviderFailureRetryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_join_run_target: Option<ParentJoinRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1637,6 +1655,7 @@ pub enum HeadlessContinueRouteKind {
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
+    VerifySelectedModePackCandidateProvenanceExplicitly,
     RunParentTaskExplicitly,
     NoEligibleTask,
     RefreshProgressOverview,
@@ -1686,6 +1705,8 @@ pub struct HeadlessContinueOnceResult {
     pub proposal_apply_result: Option<ProposalApplyResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_fetch_candidate_result: Option<ModePackFetchCandidateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
