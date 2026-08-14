@@ -233,6 +233,7 @@ use brownie_protocol::{
 use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
     HeadlessContinuationDecisionLookup, HeadlessModePackSelectedCandidateFetchCheckpoint,
+    HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
     HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
     LlmProviderFailureRetryTaskStartParams, ModePackApprovedCandidateSnapshot,
@@ -8535,6 +8536,17 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params
+        .modepack_selected_candidate_provenance_verification_target
+        .is_some()
+        && params.max_steps.unwrap_or(1) > 1
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_provenance_verification_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8803,7 +8815,10 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
-            || params.modepack_selected_candidate_fetch_target.is_some())
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some())
     {
         return error_response(
             id,
@@ -8837,6 +8852,37 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: modepack_selected_candidate_fetch_target cannot be combined with task, recovery, apply, retry, provider, context-read, or parent-join fields",
+        );
+    }
+    if params
+        .modepack_selected_candidate_provenance_verification_target
+        .is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_provenance_verification_target cannot be combined with task, recovery, apply, retry, provider, context-read, parent-join, or selected-candidate fetch fields",
         );
     }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
@@ -8881,7 +8927,10 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some()
             || params.parent_join_run_target.is_some()
-            || params.modepack_selected_candidate_fetch_target.is_some())
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some())
     {
         return error_response(
             id,
@@ -8909,6 +8958,28 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             {
                 Ok(Some(checkpoint)) => {
                     return headless_continue_modepack_selected_candidate_fetch_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
+        if params
+            .modepack_selected_candidate_provenance_verification_target
+            .is_some()
+        {
+            match store
+                .read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+                    continuation_id,
+                ) {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_modepack_selected_candidate_provenance_verification_replay_result(
                         id,
                         &progress_overview,
                         params,
@@ -8966,6 +9037,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
                 modepack_fetch_candidate_result: None,
+                modepack_verify_candidate_provenance_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -8980,6 +9052,17 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
 
     if params.modepack_selected_candidate_fetch_target.is_some() {
         return handle_headless_continue_modepack_selected_candidate_fetch(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params
+        .modepack_selected_candidate_provenance_verification_target
+        .is_some()
+    {
+        return handle_headless_continue_modepack_selected_candidate_provenance_verification(
             id,
             &store,
             &progress_overview,
@@ -9100,6 +9183,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
                 modepack_fetch_candidate_result: None,
+                modepack_verify_candidate_provenance_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -9146,6 +9230,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
                 modepack_fetch_candidate_result: None,
+                modepack_verify_candidate_provenance_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -9264,6 +9349,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -9336,6 +9422,7 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: Some(fetch_result),
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -9556,6 +9643,7 @@ where
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
         modepack_fetch_candidate_result: Some(fetch_result),
+        modepack_verify_candidate_provenance_result: None,
         next_route: Some(next_route),
         max_steps: None,
         step_count: None,
@@ -9564,6 +9652,342 @@ where
         stop_reason: None,
         steps: Vec::new(),
         next_action: "verify_selected_modepack_candidate_provenance_explicitly".to_string(),
+    })
+}
+
+fn handle_headless_continue_modepack_selected_candidate_provenance_verification(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result = match headless_continue_modepack_selected_candidate_provenance_verification(
+        store,
+        progress_overview,
+        &params,
+    ) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_modepack_selected_candidate_provenance_verification_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
+) -> JsonRpcResponse<Value> {
+    let mut provenance_result = checkpoint.result;
+    provenance_result.verified = false;
+    provenance_result.replayed = true;
+    provenance_result.next_action = "approve_verified_modepack_candidate_explicitly".to_string();
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
+        reason: "Registry-selected Mode Pack candidate provenance was already verified by this continuation; replaying bounded verification result.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "approve_verified_modepack_candidate_explicitly".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: None,
+            selected_run_id: None,
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: Some(provenance_result),
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action: "approve_verified_modepack_candidate_explicitly".to_string(),
+        }),
+    )
+}
+
+fn headless_continue_modepack_selected_candidate_provenance_verification(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    let target = params
+        .modepack_selected_candidate_provenance_verification_target
+        .as_ref()
+        .ok_or_else(|| {
+            "modepack selected candidate provenance verification target missing".to_string()
+        })?;
+    if !target.authorize_selected_candidate_provenance_verification {
+        return Err(
+            "modepack selected candidate provenance verification failed: authorization required"
+                .to_string(),
+        );
+    }
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "modepack selected candidate provenance verification failed: continuation_id is required"
+            .to_string()
+    })?;
+    if !is_valid_headless_continuation_id(&target.fetch_continuation_id) {
+        return Err(
+            "modepack selected candidate provenance verification failed: fetch_continuation_id is invalid"
+                .to_string(),
+        );
+    }
+    if target.expected_fetch_decision_id.trim().is_empty() {
+        return Err(
+            "modepack selected candidate provenance verification failed: expected_fetch_decision_id is required"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_candidate_url_fingerprint",
+            target.expected_candidate_url_fingerprint.as_str(),
+        ),
+        (
+            "expected_candidate_content_sha256",
+            target.expected_candidate_content_sha256.as_str(),
+        ),
+        (
+            "expected_candidate_compiled_policy_fingerprint",
+            target
+                .expected_candidate_compiled_policy_fingerprint
+                .as_str(),
+        ),
+        (
+            "expected_provenance_statement_url_fingerprint",
+            target
+                .expected_provenance_statement_url_fingerprint
+                .as_str(),
+        ),
+        (
+            "expected_provenance_statement_sha256",
+            target.expected_provenance_statement_sha256.as_str(),
+        ),
+        (
+            "expected_signer_fingerprint",
+            target.expected_signer_fingerprint.as_str(),
+        ),
+        (
+            "expected_current_activation_fingerprint",
+            target.expected_current_activation_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "modepack selected candidate provenance verification failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target.selection_id.trim().is_empty() || target.selection_event_id.trim().is_empty() {
+        return Err(
+            "modepack selected candidate provenance verification failed: selection id and event id are required"
+                .to_string(),
+        );
+    }
+    let actual_statement_sha256 = format!(
+        "sha256:{}",
+        hex_sha256(target.provenance_statement_json.as_bytes())
+    );
+    if actual_statement_sha256 != target.expected_provenance_statement_sha256 {
+        return Err(
+            "modepack selected candidate provenance verification failed: provenance statement fingerprint mismatch"
+                .to_string(),
+        );
+    }
+
+    let fetch_checkpoint = store
+        .read_headless_modepack_selected_candidate_fetch_checkpoint(&target.fetch_continuation_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "modepack selected candidate provenance verification failed: selected candidate fetch checkpoint not found"
+                .to_string()
+        })?;
+    if fetch_checkpoint.decision_id != target.expected_fetch_decision_id
+        || fetch_checkpoint.selection_id != target.selection_id
+        || fetch_checkpoint.selection_event_id != target.selection_event_id
+    {
+        return Err(
+            "modepack selected candidate provenance verification failed: selected candidate fetch checkpoint mismatch"
+                .to_string(),
+        );
+    }
+    let fetched_candidate = &fetch_checkpoint.result.candidate;
+    if fetched_candidate.content_sha256 != target.expected_candidate_content_sha256
+        || fetched_candidate.compiled_policy_fingerprint
+            != target.expected_candidate_compiled_policy_fingerprint
+        || fetched_candidate.source_url_fingerprint != target.expected_candidate_url_fingerprint
+    {
+        return Err(
+            "modepack selected candidate provenance verification failed: fetched candidate evidence mismatch"
+                .to_string(),
+        );
+    }
+
+    let selection = store
+        .read_modepack_registry_update_selection_snapshot(
+            &target.expected_current_activation_fingerprint,
+            &target.expected_candidate_content_sha256,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "modepack selected candidate provenance verification failed: registry selection evidence not found"
+                .to_string()
+        })?;
+    let summary = selection.summary;
+    if summary.selection_id != target.selection_id
+        || summary.selection_event_id != target.selection_event_id
+        || summary.candidate_url_fingerprint != target.expected_candidate_url_fingerprint
+        || summary.candidate_content_sha256 != target.expected_candidate_content_sha256
+        || summary.candidate_compiled_policy_fingerprint
+            != target.expected_candidate_compiled_policy_fingerprint
+        || summary.provenance_statement_url_fingerprint
+            != target.expected_provenance_statement_url_fingerprint
+        || summary.provenance_statement_sha256 != target.expected_provenance_statement_sha256
+        || summary.signer_fingerprint != target.expected_signer_fingerprint
+        || summary.current_activation_fingerprint != target.expected_current_activation_fingerprint
+    {
+        return Err(
+            "modepack selected candidate provenance verification failed: registry selection evidence mismatch"
+                .to_string(),
+        );
+    }
+    let current = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "modepack selected candidate provenance verification failed: active Mode Pack snapshot not found"
+                .to_string()
+        })?;
+    if current.summary.activation_fingerprint != summary.current_activation_fingerprint
+        || current.summary.modepack_name != summary.current_modepack_name
+        || current.summary.source_kind != summary.current_source_kind
+    {
+        return Err(
+            "modepack selected candidate provenance verification failed: active Mode Pack snapshot no longer matches registry selection"
+                .to_string(),
+        );
+    }
+
+    let mut provenance_result = verify_modepack_candidate_provenance(
+        store,
+        &ModePackVerifyCandidateProvenanceParams {
+            authorize_provenance_verification: true,
+            expected_content_sha256: target.expected_candidate_content_sha256.clone(),
+            expected_compiled_policy_fingerprint: target
+                .expected_candidate_compiled_policy_fingerprint
+                .clone(),
+            expected_signer_fingerprint: target.expected_signer_fingerprint.clone(),
+            provenance_statement_json: target.provenance_statement_json.clone(),
+            provenance_signature_base64: target.provenance_signature_base64.clone(),
+            provenance_public_key_base64: target.provenance_public_key_base64.clone(),
+        },
+    )?;
+    if provenance_result.provenance.content_sha256 != target.expected_candidate_content_sha256
+        || provenance_result.provenance.compiled_policy_fingerprint
+            != target.expected_candidate_compiled_policy_fingerprint
+        || provenance_result.provenance.source_url_fingerprint
+            != target.expected_candidate_url_fingerprint
+        || provenance_result.provenance.statement_sha256
+            != target.expected_provenance_statement_sha256
+        || provenance_result.provenance.signer_fingerprint != target.expected_signer_fingerprint
+    {
+        return Err(
+            "modepack selected candidate provenance verification failed: provenance result evidence mismatch"
+                .to_string(),
+        );
+    }
+    provenance_result.next_action = "approve_verified_modepack_candidate_explicitly".to_string();
+
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    store
+        .write_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+            &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                fetch_continuation_id: target.fetch_continuation_id.clone(),
+                expected_fetch_decision_id: target.expected_fetch_decision_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                selection_id: summary.selection_id,
+                selection_event_id: summary.selection_event_id,
+                result: provenance_result.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
+        reason: "Verified the registry-selected Mode Pack candidate provenance; candidate approval remains an explicit next step.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "approve_verified_modepack_candidate_explicitly".to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: None,
+        selected_run_id: None,
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: Some(provenance_result),
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "approve_verified_modepack_candidate_explicitly".to_string(),
     })
 }
 
@@ -10673,6 +11097,7 @@ fn handle_headless_continue_verification_recovery_retry_admission(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -10833,6 +11258,7 @@ fn handle_headless_continue_verification_recovery_admission(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -10995,6 +11421,7 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: Some(admission),
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11157,6 +11584,7 @@ fn handle_headless_continue_patch_apply_recovery_admission(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11313,6 +11741,7 @@ fn handle_headless_continue_llm_provider_failure_retry_run(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11470,6 +11899,7 @@ fn handle_headless_continue_patch_apply_recovery_run(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11663,6 +12093,7 @@ fn handle_headless_continue_patch_apply_recovery_apply(
             }),
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11818,6 +12249,7 @@ fn handle_headless_continue_verification_recovery_retry_run(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11987,6 +12419,7 @@ fn handle_headless_continue_verification_recovery_apply(
             }),
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12162,6 +12595,7 @@ fn handle_headless_continue_verification_recovery_run(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12313,6 +12747,7 @@ fn handle_headless_continue_parent_join_run(
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12445,6 +12880,7 @@ fn handle_headless_continue_budget(
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
         modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
         next_route: None,
         max_steps: None,
         step_count: None,
@@ -12519,6 +12955,9 @@ fn headless_continue_budget_stop_reason(
                 Some(
                     HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
                 ) => "explicit_modepack_candidate_provenance_boundary".to_string(),
+                Some(HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly) => {
+                    "explicit_modepack_candidate_approval_boundary".to_string()
+                }
                 Some(HeadlessContinueRouteKind::RunParentTaskExplicitly) => {
                     "explicit_parent_join_boundary".to_string()
                 }
@@ -12628,6 +13067,7 @@ fn headless_continue_once_replay_result(
             proposal_apply_result,
             llm_provider_failure_retry_admission,
             modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -65767,7 +66207,10 @@ mod tests {
     #[test]
     fn headless_continue_once_fetches_registry_selected_candidate_and_replays() {
         use base64::{engine::general_purpose, Engine as _};
-        use brownie_protocol::ModePackSelectedCandidateFetchTarget;
+        use brownie_protocol::{
+            ModePackSelectedCandidateFetchTarget,
+            ModePackSelectedCandidateProvenanceVerificationTarget,
+        };
         use ed25519_dalek::{Signer, SigningKey};
 
         let _guard = ENV_LOCK.lock().expect("env lock");
@@ -65820,10 +66263,33 @@ mod tests {
                 })
                 .collect::<Vec<_>>(),
         );
-        let provenance_statement_sha256 = format!("sha256:{}", "4".repeat(64));
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let public_key_bytes = signing_key.verifying_key().to_bytes();
         let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let candidate_url = validate_modepack_fetch_url("https://example.com/modepack.json", false)
+            .expect("candidate url");
+        let candidate_url_fingerprint =
+            format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
+        let provenance_statement_url =
+            validate_modepack_fetch_url("https://example.com/provenance.json", false)
+                .expect("provenance url");
+        let provenance_statement_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(provenance_statement_url.as_str().as_bytes())
+        );
+        let provenance_statement = json!({
+            "content_sha256": candidate_content_sha256.clone(),
+            "compiled_policy_fingerprint": candidate_policy_fingerprint.clone(),
+            "source_url_fingerprint": candidate_url_fingerprint.clone(),
+            "schema_version": candidate_snapshot.schema_version,
+            "signer_fingerprint": signer_fingerprint.clone(),
+            "signer_identity": "registry.example.com",
+            "mode_ids": ["remote-selected-reviewer"]
+        })
+        .to_string();
+        let provenance_signature = signing_key.sign(provenance_statement.as_bytes());
+        let provenance_statement_sha256 =
+            format!("sha256:{}", hex_sha256(provenance_statement.as_bytes()));
         let trusted = trust_modepack_signer(
             &store,
             &ModePackTrustSignerParams {
@@ -65876,17 +66342,6 @@ mod tests {
         let registry_url_fingerprint = format!(
             "sha256:{}",
             hex_sha256(registry_binding.url.as_str().as_bytes())
-        );
-        let candidate_url = validate_modepack_fetch_url("https://example.com/modepack.json", false)
-            .expect("candidate url");
-        let candidate_url_fingerprint =
-            format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
-        let provenance_statement_url =
-            validate_modepack_fetch_url("https://example.com/provenance.json", false)
-                .expect("provenance url");
-        let provenance_statement_url_fingerprint = format!(
-            "sha256:{}",
-            hex_sha256(provenance_statement_url.as_str().as_bytes())
         );
         let registry_trust_statement = json!({
             "registry_url_fingerprint": registry_url_fingerprint,
@@ -65976,15 +66431,17 @@ mod tests {
                     .candidate_url_fingerprint
                     .clone(),
                 expected_candidate_content_sha256: candidate_content_sha256.clone(),
-                expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint,
+                expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint
+                    .clone(),
                 expected_provenance_statement_url_fingerprint: selection
                     .selection
                     .provenance_statement_url_fingerprint
                     .clone(),
-                expected_provenance_statement_sha256: provenance_statement_sha256,
-                expected_signer_fingerprint: signer_fingerprint,
-                expected_current_activation_fingerprint: current_activation_fingerprint,
+                expected_provenance_statement_sha256: provenance_statement_sha256.clone(),
+                expected_signer_fingerprint: signer_fingerprint.clone(),
+                expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
             }),
+            modepack_selected_candidate_provenance_verification_target: None,
         };
         let fetched = headless_continue_modepack_selected_candidate_fetch_with_resolver(
             &store,
@@ -66051,6 +66508,93 @@ mod tests {
             replay_fetch.candidate.cache_event_id,
             fetch_result.candidate.cache_event_id
         );
+        let provenance_progress = task_list_progress_overview(&store, &[]).expect("progress");
+        let mut provenance_params = params.clone();
+        provenance_params.continuation_id = Some("continue.modepack:provenance:1".to_string());
+        provenance_params.expected_progress_fingerprint =
+            provenance_progress.source_fingerprint.clone();
+        provenance_params.expected_aggregate_sequence = provenance_progress.aggregate_sequence;
+        provenance_params.modepack_selected_candidate_fetch_target = None;
+        provenance_params.modepack_selected_candidate_provenance_verification_target =
+            Some(ModePackSelectedCandidateProvenanceVerificationTarget {
+                authorize_selected_candidate_provenance_verification: true,
+                fetch_continuation_id: params
+                    .continuation_id
+                    .as_deref()
+                    .expect("fetch continuation")
+                    .to_string(),
+                expected_fetch_decision_id: fetched
+                    .decision_id
+                    .as_deref()
+                    .expect("fetch decision")
+                    .to_string(),
+                selection_id: selection.selection.selection_id.clone(),
+                selection_event_id: selection.selection.selection_event_id.clone(),
+                expected_candidate_url_fingerprint: selection
+                    .selection
+                    .candidate_url_fingerprint
+                    .clone(),
+                expected_candidate_content_sha256: candidate_content_sha256.clone(),
+                expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint,
+                expected_provenance_statement_url_fingerprint: selection
+                    .selection
+                    .provenance_statement_url_fingerprint
+                    .clone(),
+                expected_provenance_statement_sha256: provenance_statement_sha256.clone(),
+                expected_signer_fingerprint: signer_fingerprint,
+                expected_current_activation_fingerprint: current_activation_fingerprint,
+                provenance_statement_json: provenance_statement,
+                provenance_signature_base64: general_purpose::STANDARD
+                    .encode(provenance_signature.to_bytes()),
+                provenance_public_key_base64: general_purpose::STANDARD.encode(public_key_bytes),
+            });
+        let verified = headless_continue_modepack_selected_candidate_provenance_verification(
+            &store,
+            &provenance_progress,
+            &provenance_params,
+        )
+        .expect("headless selected candidate provenance verification");
+        assert_eq!(verified.status, HeadlessContinueOnceStatus::TaskExecuted);
+        assert_eq!(
+            verified.next_route.as_ref().expect("route").kind,
+            HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly
+        );
+        let verified_provenance = verified
+            .modepack_verify_candidate_provenance_result
+            .as_ref()
+            .expect("provenance result");
+        assert!(verified_provenance.verified);
+        assert!(!verified_provenance.replayed);
+        assert_eq!(
+            verified_provenance.provenance.statement_sha256,
+            provenance_statement_sha256
+        );
+        let provenance_checkpoint = store
+            .read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+                provenance_params
+                    .continuation_id
+                    .as_deref()
+                    .expect("provenance continuation"),
+            )
+            .expect("provenance checkpoint read")
+            .expect("provenance checkpoint");
+        let provenance_replay =
+            headless_continue_modepack_selected_candidate_provenance_verification_replay_result(
+                json!(13),
+                &provenance_progress,
+                provenance_params,
+                provenance_checkpoint,
+            );
+        assert!(provenance_replay.error.is_none());
+        let provenance_replay_result: HeadlessContinueOnceResult =
+            serde_json::from_value(provenance_replay.result.expect("provenance replay"))
+                .expect("typed provenance replay");
+        assert!(provenance_replay_result.replayed);
+        let replayed_provenance = provenance_replay_result
+            .modepack_verify_candidate_provenance_result
+            .expect("replayed provenance");
+        assert!(!replayed_provenance.verified);
+        assert!(replayed_provenance.replayed);
         let cache_ledger = std::fs::read_to_string(
             temp.path()
                 .join(".brownie/modepack-candidates/ledger.jsonl"),
@@ -66063,8 +66607,18 @@ mod tests {
                 .count(),
             1
         );
+        assert_eq!(
+            cache_ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateProvenanceVerified"))
+                .count(),
+            1
+        );
         assert!(!cache_ledger.contains("Review local changes without writing files."));
         assert!(!cache_ledger.contains("\"modepack_json\""));
+        assert!(!cache_ledger.contains("provenance_statement_json"));
+        assert!(!cache_ledger.contains("provenance_signature_base64"));
+        assert!(!cache_ledger.contains("provenance_public_key_base64"));
         assert!(!cache_ledger.contains("93.184.216.34"));
         assert!(!cache_ledger.contains("raw_ip_address"));
 

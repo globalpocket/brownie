@@ -1249,6 +1249,43 @@ describe('protocol validation', () => {
       ...headlessParams,
       modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_provenance_statement_json: '{}' },
     })).toBe(false);
+    const modePackSelectedCandidateProvenanceVerificationTarget = {
+      authorize_selected_candidate_provenance_verification: true,
+      fetch_continuation_id: 'continue.once:modepack.fetch',
+      expected_fetch_decision_id: `headless_decision_${'a'.repeat(32)}`,
+      selection_id: modePackSelectedCandidateFetchTarget.selection_id,
+      selection_event_id: modePackSelectedCandidateFetchTarget.selection_event_id,
+      expected_candidate_url_fingerprint: modePackSelectedCandidateFetchTarget.expected_candidate_url_fingerprint,
+      expected_candidate_content_sha256: modePackSelectedCandidateFetchTarget.expected_candidate_content_sha256,
+      expected_candidate_compiled_policy_fingerprint: modePackSelectedCandidateFetchTarget.expected_candidate_compiled_policy_fingerprint,
+      expected_provenance_statement_url_fingerprint: modePackSelectedCandidateFetchTarget.expected_provenance_statement_url_fingerprint,
+      expected_provenance_statement_sha256: modePackSelectedCandidateFetchTarget.expected_provenance_statement_sha256,
+      expected_signer_fingerprint: modePackSelectedCandidateFetchTarget.expected_signer_fingerprint,
+      expected_current_activation_fingerprint: modePackSelectedCandidateFetchTarget.expected_current_activation_fingerprint,
+      provenance_statement_json: '{"content_sha256":"bounded"}',
+      provenance_signature_base64: 'a'.repeat(88),
+      provenance_public_key_base64: 'b'.repeat(44),
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_provenance_verification_target: modePackSelectedCandidateProvenanceVerificationTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, authorize_selected_candidate_provenance_verification: false },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, expected_fetch_decision_id: 'fetch_decision_bad' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, expected_signer_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, raw_provenance_statement_json: '{}' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const selectedCandidateFetchResult = {
       fetched: true,
@@ -1295,6 +1332,53 @@ describe('protocol validation', () => {
         ...selectedCandidateFetchResult,
         candidate: { ...selectedCandidateFetchResult.candidate, modepack_json: '{}' },
       },
+    })).toBe(false);
+    const selectedCandidateProvenanceResult = {
+      verified: true,
+      replayed: false,
+      provenance: {
+        provenance_id: 'modepack_candidate_provenance_123',
+        candidate_id: selectedCandidateFetchResult.candidate.candidate_id,
+        source_kind: selectedCandidateFetchResult.candidate.source_kind,
+        source_url_host: selectedCandidateFetchResult.candidate.source_url_host,
+        source_url_fingerprint: selectedCandidateFetchResult.candidate.source_url_fingerprint,
+        dns_binding: modePackDnsBinding,
+        content_sha256: selectedCandidateFetchResult.candidate.content_sha256,
+        modepack_name: selectedCandidateFetchResult.candidate.modepack_name,
+        schema_version: selectedCandidateFetchResult.candidate.schema_version,
+        mode_count: selectedCandidateFetchResult.candidate.mode_count,
+        mode_ids: selectedCandidateFetchResult.candidate.mode_ids,
+        compiled_policy_fingerprint: selectedCandidateFetchResult.candidate.compiled_policy_fingerprint,
+        signer_fingerprint: modePackSelectedCandidateFetchTarget.expected_signer_fingerprint,
+        statement_sha256: modePackSelectedCandidateFetchTarget.expected_provenance_statement_sha256,
+        signature_sha256: `sha256:${'9'.repeat(64)}`,
+        verified_at: '2026-08-14T05:08:33Z',
+        provenance_event_id: 'event_candidate_provenance_123',
+      },
+      next_action: 'approve_verified_modepack_candidate_explicitly',
+    };
+    const modePackProvenanceHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      modepack_fetch_candidate_result: null,
+      modepack_verify_candidate_provenance_result: selectedCandidateProvenanceResult,
+      next_route: {
+        kind: 'approve_verified_modepack_candidate_explicitly',
+        reason: 'Selected Mode Pack candidate provenance verified; approve explicitly.',
+        next_action: 'approve_verified_modepack_candidate_explicitly',
+      },
+      next_action: 'approve_verified_modepack_candidate_explicitly',
+    };
+    expect(isHeadlessContinueOnceResult(modePackProvenanceHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackProvenanceHeadlessResult,
+      modepack_verify_candidate_provenance_result: { ...selectedCandidateProvenanceResult, raw_provenance_statement_json: '{}' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackProvenanceHeadlessResult,
+      modepack_fetch_candidate_result: selectedCandidateFetchResult,
     })).toBe(false);
     const headlessBudgetResult = {
       ...headlessResult,
