@@ -1610,6 +1610,8 @@ pub struct ModePackRegistryUpdateSelectionCommit {
 pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
     pub continuation_id: String,
     pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
     pub expected_progress_fingerprint: String,
     pub expected_aggregate_sequence: u64,
     pub current_progress_fingerprint: String,
@@ -1625,6 +1627,8 @@ pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
 pub struct HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint {
     pub continuation_id: String,
     pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
     pub fetch_continuation_id: String,
     pub expected_fetch_decision_id: String,
     pub expected_progress_fingerprint: String,
