@@ -30365,9 +30365,9 @@ where
     }
 
     let (entry, candidate_url, provenance_statement_url) = matches.remove(0);
-    if entry.candidate_content_sha256 == current.summary.activation_fingerprint {
+    if modepack_registry_entry_matches_active_candidate(&entry, &current.summary) {
         return Err(
-            "modepack registry update selection failed: candidate fingerprint matches the active activation"
+            "modepack registry update selection failed: candidate identity matches the active Mode Pack"
                 .to_string(),
         );
     }
@@ -30443,6 +30443,15 @@ where
         selection: committed.selection.summary,
         next_action: "fetch_selected_modepack_candidate".to_string(),
     })
+}
+
+fn modepack_registry_entry_matches_active_candidate(
+    entry: &ModePackRegistryManifestEntry,
+    current: &ModePackActiveSnapshotSummary,
+) -> bool {
+    entry.modepack_name == current.modepack_name
+        && entry.source_kind == current.source_kind
+        && entry.candidate_compiled_policy_fingerprint == current.compiled_policy_fingerprint
 }
 
 fn validate_modepack_registry_manifest_entry(
@@ -66111,6 +66120,151 @@ mod tests {
         .expect_err("unsafe DNS denied");
         assert!(denied.contains("disallowed address"));
         assert!(!temp.path().join(".brownie/modepack-candidates").exists());
+    }
+
+    #[test]
+    fn modepack_registry_update_selection_rejects_active_candidate_identity() {
+        use base64::{engine::general_purpose, Engine as _};
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let current_activation_fingerprint = format!("sha256:{}", "1".repeat(64));
+        let candidate_content_sha256 = format!("sha256:{}", "2".repeat(64));
+        let active_policy_fingerprint = format!("sha256:{}", "6".repeat(64));
+        assert_ne!(candidate_content_sha256, current_activation_fingerprint);
+        let provenance_statement_sha256 = format!("sha256:{}", "4".repeat(64));
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let trusted = trust_modepack_signer(
+            &store,
+            &ModePackTrustSignerParams {
+                authorize_trust: true,
+                signer_fingerprint: signer_fingerprint.clone(),
+                expires_at: None,
+            },
+        )
+        .expect("trusted signer");
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: "modepack_activation_current".to_string(),
+                    activation_fingerprint: current_activation_fingerprint.clone(),
+                    modepack_name: "remote-agentmodes".to_string(),
+                    schema_version: 1,
+                    source_kind: "remote_https_candidate".to_string(),
+                    source_path: ".brownie/modepack-active/current.json".to_string(),
+                    mode_count: 1,
+                    mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    compiled_policy_fingerprint: active_policy_fingerprint.clone(),
+                    activated_at: "2026-08-12T00:00:00Z".to_string(),
+                    activation_event_id: String::new(),
+                },
+                policies: Vec::new(),
+            })
+            .expect("active snapshot");
+        let manifest = format!(
+            r#"{{
+              "schema_version": 1,
+              "entries": [
+                {{
+                  "modepack_name": "remote-agentmodes",
+                  "source_kind": "remote_https_candidate",
+                  "candidate_url": "https://example.com/modepack.json",
+                  "candidate_content_sha256": "{candidate_content_sha256}",
+                  "candidate_compiled_policy_fingerprint": "{active_policy_fingerprint}",
+                  "provenance_statement_url": "https://example.com/provenance.json",
+                  "provenance_statement_sha256": "{provenance_statement_sha256}",
+                  "signer_fingerprint": "{signer_fingerprint}"
+                }}
+              ]
+            }}"#
+        );
+        let registry_url = "https://registry.example.com/modepacks.json";
+        let registry_manifest_sha256 = format!("sha256:{}", hex_sha256(manifest.as_bytes()));
+        let registry_binding =
+            create_modepack_fetch_binding_with(registry_url, test_modepack_dns_resolver)
+                .expect("registry binding");
+        let registry_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(registry_binding.url.as_str().as_bytes())
+        );
+        let candidate_url = validate_modepack_fetch_url("https://example.com/modepack.json", false)
+            .expect("candidate url");
+        let candidate_url_fingerprint =
+            format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
+        let provenance_statement_url =
+            validate_modepack_fetch_url("https://example.com/provenance.json", false)
+                .expect("provenance url");
+        let provenance_statement_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(provenance_statement_url.as_str().as_bytes())
+        );
+        let registry_trust_statement = json!({
+            "registry_url_fingerprint": registry_url_fingerprint,
+            "registry_dns_resolution_fingerprint": registry_binding.summary.resolution_fingerprint,
+            "registry_pinned_address_fingerprint": registry_binding.summary.pinned_address_fingerprint,
+            "registry_manifest_sha256": registry_manifest_sha256,
+            "current_modepack_name": "remote-agentmodes",
+            "current_source_kind": "remote_https_candidate",
+            "candidate_url_fingerprint": candidate_url_fingerprint,
+            "candidate_content_sha256": candidate_content_sha256,
+            "candidate_compiled_policy_fingerprint": active_policy_fingerprint,
+            "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
+            "provenance_statement_sha256": provenance_statement_sha256,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "registry.example.com"
+        })
+        .to_string();
+        let registry_signature = signing_key.sign(registry_trust_statement.as_bytes());
+        let params = ModePackSelectRegistryUpdateParams {
+            authorize_registry_selection: true,
+            authorize_registry_trust: true,
+            registry_url: registry_url.to_string(),
+            expected_registry_manifest_sha256: registry_manifest_sha256,
+            expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
+            expected_registry_provenance_statement_sha256: format!(
+                "sha256:{}",
+                hex_sha256(registry_trust_statement.as_bytes())
+            ),
+            expected_registry_signer_fingerprint: signer_fingerprint,
+            expected_registry_trusted_signer_trust_id: trusted.trusted_signer.trust_id,
+            expected_registry_trusted_signer_event_id: trusted.trusted_signer.trust_event_id,
+            registry_provenance_statement_json: registry_trust_statement,
+            registry_provenance_signature_base64: general_purpose::STANDARD
+                .encode(registry_signature.to_bytes()),
+            registry_provenance_public_key_base64: general_purpose::STANDARD
+                .encode(public_key_bytes),
+        };
+
+        let denied = select_modepack_registry_update_with(&store, &params, |_| {
+            Ok(RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: manifest.as_bytes().to_vec(),
+            })
+        })
+        .expect_err("active candidate denied");
+        assert!(denied.contains("candidate identity matches the active Mode Pack"));
+        assert!(store
+            .read_modepack_registry_update_selection_snapshot(
+                &current_activation_fingerprint,
+                &candidate_content_sha256
+            )
+            .expect("selection read")
+            .is_none());
+        let ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/modepack-candidates/ledger.jsonl"),
+        )
+        .expect("ledger");
+        assert!(ledger.contains("ModePackSignerTrusted"));
+        assert!(!ledger.contains("ModePackRegistryUpdateSelected"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
