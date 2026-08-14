@@ -285,6 +285,27 @@ pub struct ModePackSelectedCandidateProvenanceVerificationTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePackSelectedCandidateApprovalTarget {
+    pub authorize_selected_candidate_approval: bool,
+    pub fetch_continuation_id: String,
+    pub expected_fetch_decision_id: String,
+    pub provenance_verification_continuation_id: String,
+    pub expected_provenance_verification_decision_id: String,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub expected_candidate_url_fingerprint: String,
+    pub expected_candidate_content_sha256: String,
+    pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_provenance_id: String,
+    pub expected_provenance_event_id: String,
+    pub expected_provenance_statement_url_fingerprint: String,
+    pub expected_provenance_statement_sha256: String,
+    pub expected_signer_fingerprint: String,
+    pub expected_current_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -985,6 +1006,9 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_provenance_verification_target:
         Option<ModePackSelectedCandidateProvenanceVerificationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_approval_target:
+        Option<ModePackSelectedCandidateApprovalTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1734,6 +1758,8 @@ pub struct HeadlessContinueOnceResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_verify_candidate_provenance_result:
         Option<ModePackVerifyCandidateProvenanceResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_approve_candidate_result: Option<ModePackApproveCandidateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
