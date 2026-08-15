@@ -306,6 +306,33 @@ pub struct ModePackSelectedCandidateApprovalTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePackSelectedApprovedCandidateReplacementTarget {
+    pub authorize_selected_candidate_replacement: bool,
+    pub fetch_continuation_id: String,
+    pub expected_fetch_decision_id: String,
+    pub provenance_verification_continuation_id: String,
+    pub expected_provenance_verification_decision_id: String,
+    pub approval_continuation_id: String,
+    pub expected_approval_decision_id: String,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub expected_candidate_url_fingerprint: String,
+    pub expected_candidate_content_sha256: String,
+    pub expected_candidate_compiled_policy_fingerprint: String,
+    pub expected_candidate_activation_fingerprint: String,
+    pub expected_provenance_id: String,
+    pub expected_provenance_event_id: String,
+    pub expected_provenance_statement_url_fingerprint: String,
+    pub expected_provenance_statement_sha256: String,
+    pub expected_signer_fingerprint: String,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_approved_candidate_id: String,
+    pub expected_approved_candidate_approval_id: String,
+    pub expected_approved_candidate_approval_event_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -1009,6 +1036,9 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_approval_target:
         Option<ModePackSelectedCandidateApprovalTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_approved_candidate_replacement_target:
+        Option<ModePackSelectedApprovedCandidateReplacementTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1704,6 +1734,7 @@ pub enum HeadlessContinueRouteKind {
     RunLlmProviderRetryTaskExplicitly,
     VerifySelectedModePackCandidateProvenanceExplicitly,
     ApproveVerifiedModePackCandidateExplicitly,
+    ReplaceActiveWithApprovedModePackCandidateExplicitly,
     RunParentTaskExplicitly,
     NoEligibleTask,
     RefreshProgressOverview,
@@ -1760,6 +1791,8 @@ pub struct HeadlessContinueOnceResult {
         Option<ModePackVerifyCandidateProvenanceResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_approve_candidate_result: Option<ModePackApproveCandidateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_replace_active_result: Option<ModePackReplaceActiveResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
