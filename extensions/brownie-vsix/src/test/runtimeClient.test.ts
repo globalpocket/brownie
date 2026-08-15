@@ -1320,6 +1320,42 @@ describe('protocol validation', () => {
       ...headlessParams,
       modepack_selected_candidate_approval_target: { ...modePackSelectedCandidateApprovalTarget, raw_provenance_statement_json: '{}' },
     })).toBe(false);
+    const modePackSelectedApprovedCandidateReplacementTarget = {
+      authorize_selected_candidate_replacement: true,
+      fetch_continuation_id: modePackSelectedCandidateApprovalTarget.fetch_continuation_id,
+      expected_fetch_decision_id: modePackSelectedCandidateApprovalTarget.expected_fetch_decision_id,
+      provenance_verification_continuation_id: modePackSelectedCandidateApprovalTarget.provenance_verification_continuation_id,
+      expected_provenance_verification_decision_id: modePackSelectedCandidateApprovalTarget.expected_provenance_verification_decision_id,
+      approval_continuation_id: 'continue.once:modepack.approval',
+      expected_approval_decision_id: `headless_decision_${'c'.repeat(32)}`,
+      selection_id: modePackSelectedCandidateApprovalTarget.selection_id,
+      selection_event_id: modePackSelectedCandidateApprovalTarget.selection_event_id,
+      expected_candidate_url_fingerprint: modePackSelectedCandidateApprovalTarget.expected_candidate_url_fingerprint,
+      expected_candidate_content_sha256: modePackSelectedCandidateApprovalTarget.expected_candidate_content_sha256,
+      expected_candidate_compiled_policy_fingerprint: modePackSelectedCandidateApprovalTarget.expected_candidate_compiled_policy_fingerprint,
+      expected_candidate_activation_fingerprint: `sha256:${'c'.repeat(64)}`,
+      expected_provenance_id: modePackSelectedCandidateApprovalTarget.expected_provenance_id,
+      expected_provenance_event_id: modePackSelectedCandidateApprovalTarget.expected_provenance_event_id,
+      expected_provenance_statement_url_fingerprint: modePackSelectedCandidateApprovalTarget.expected_provenance_statement_url_fingerprint,
+      expected_provenance_statement_sha256: modePackSelectedCandidateApprovalTarget.expected_provenance_statement_sha256,
+      expected_signer_fingerprint: modePackSelectedCandidateApprovalTarget.expected_signer_fingerprint,
+      expected_current_activation_fingerprint: modePackSelectedCandidateApprovalTarget.expected_current_activation_fingerprint,
+      expected_approved_candidate_id: 'modepack_candidate_123',
+      expected_approved_candidate_approval_id: 'modepack_candidate_approval_123',
+      expected_approved_candidate_approval_event_id: 'event_candidate_approval_123',
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_approved_candidate_replacement_target: modePackSelectedApprovedCandidateReplacementTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, expected_candidate_activation_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, raw_modepack_json: '{}' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const selectedCandidateFetchResult = {
       fetched: true,
@@ -1465,6 +1501,63 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceResult({
       ...modePackApprovalHeadlessResult,
       modepack_verify_candidate_provenance_result: selectedCandidateProvenanceResult,
+    })).toBe(false);
+    const previousModePackSnapshot = {
+      activation_id: 'modepack_activation_previous',
+      activation_fingerprint: modePackSelectedApprovedCandidateReplacementTarget.expected_current_activation_fingerprint,
+      modepack_name: 'remote-agentmodes',
+      schema_version: 1,
+      source_kind: 'remote_https_candidate',
+      source_path: 'modepack_candidate_previous',
+      mode_count: 1,
+      mode_ids: ['remote-reviewer-lite'],
+      compiled_policy_fingerprint: `sha256:${'6'.repeat(64)}`,
+      activated_at: '2026-08-14T05:00:00Z',
+      activation_event_id: 'event_activation_previous',
+    };
+    const replacementModePackSnapshot = {
+      ...previousModePackSnapshot,
+      activation_id: 'modepack_activation_replacement',
+      activation_fingerprint: modePackSelectedApprovedCandidateReplacementTarget.expected_candidate_activation_fingerprint,
+      source_path: selectedCandidateApprovalResult.approval.candidate_id,
+      mode_ids: selectedCandidateApprovalResult.approval.mode_ids,
+      compiled_policy_fingerprint: selectedCandidateApprovalResult.approval.compiled_policy_fingerprint,
+      activated_at: '2026-08-14T05:12:00Z',
+      activation_event_id: 'event_activation_replacement',
+    };
+    const selectedApprovedReplacementResult = {
+      replaced: true,
+      replayed: false,
+      previous_snapshot: previousModePackSnapshot,
+      replacement_snapshot: replacementModePackSnapshot,
+      replacement_event_id: 'event_active_replacement_123',
+      approved_candidate: { ...selectedCandidateApprovalResult.approval, consumed: true },
+      candidate_consumed_event_id: 'event_candidate_consumed_123',
+    };
+    const modePackReplacementHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      modepack_fetch_candidate_result: null,
+      modepack_verify_candidate_provenance_result: null,
+      modepack_approve_candidate_result: null,
+      modepack_replace_active_result: selectedApprovedReplacementResult,
+      next_route: {
+        kind: 'refresh_progress_overview',
+        reason: 'Selected approved Mode Pack candidate replaced active modepack.',
+        next_action: 'refresh_progress_overview',
+      },
+      next_action: 'refresh_progress_overview',
+    };
+    expect(isHeadlessContinueOnceResult(modePackReplacementHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackReplacementHeadlessResult,
+      modepack_replace_active_result: { ...selectedApprovedReplacementResult, raw_ledger_payload: '{}' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackReplacementHeadlessResult,
+      modepack_approve_candidate_result: selectedCandidateApprovalResult,
     })).toBe(false);
     const headlessBudgetResult = {
       ...headlessResult,
