@@ -13,10 +13,11 @@ use brownie_protocol::{
     ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
-    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
-    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
+    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -280,6 +281,43 @@ impl BrownieStore {
             current_snapshot: current,
             restored_snapshot: rollback_snapshot,
         })
+    }
+
+    pub fn active_modepack_replacement_event_matches(
+        &self,
+        replacement_event_id: &str,
+        expected_current_activation_fingerprint: &str,
+        expected_rollback_activation_fingerprint: &str,
+    ) -> Result<bool> {
+        for event in self.read_active_modepack_events()? {
+            if event.kind != "ModePackReplaced" || event.event_id != replacement_event_id {
+                continue;
+            }
+            let previous = event
+                .payload
+                .get("previous_snapshot")
+                .cloned()
+                .and_then(|value| {
+                    serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                });
+            let replacement =
+                event
+                    .payload
+                    .get("replacement_snapshot")
+                    .cloned()
+                    .and_then(|value| {
+                        serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                    });
+            let (Some(previous), Some(replacement)) = (previous, replacement) else {
+                return Ok(false);
+            };
+            return Ok(
+                previous.activation_fingerprint == expected_rollback_activation_fingerprint
+                    && replacement.activation_fingerprint
+                        == expected_current_activation_fingerprint,
+            );
+        }
+        Ok(false)
     }
 
     fn find_replayed_active_modepack_replacement(
@@ -756,6 +794,48 @@ impl BrownieStore {
         let body = serde_json::to_string_pretty(checkpoint).context(
             "failed to serialize headless modepack selected candidate replacement checkpoint",
         )?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
+    pub fn read_headless_modepack_selected_active_rollback_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessModePackSelectedActiveRollbackCheckpoint>> {
+        let path = self.headless_modepack_selected_active_rollback_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_modepack_selected_active_rollback_checkpoint(
+        &self,
+        checkpoint: &HeadlessModePackSelectedActiveRollbackCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path =
+            self.headless_modepack_selected_active_rollback_path(&checkpoint.continuation_id);
+        if let Some(existing) = self.read_headless_modepack_selected_active_rollback_checkpoint(
+            &checkpoint.continuation_id,
+        )? {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless modepack selected active rollback checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless modepack selected active rollback checkpoint")?;
         write_file_atomically(&path, body.as_bytes())
     }
 
@@ -1254,6 +1334,15 @@ impl BrownieStore {
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "modepack-selected-candidate-replacement-{continuation_id}.json"
+            ))
+    }
+
+    fn headless_modepack_selected_active_rollback_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!(
+                "modepack-selected-active-rollback-{continuation_id}.json"
             ))
     }
 
@@ -1793,6 +1882,24 @@ pub struct HeadlessModePackSelectedCandidateReplacementCheckpoint {
     pub selection_id: String,
     pub selection_event_id: String,
     pub result: ModePackReplaceActiveResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessModePackSelectedActiveRollbackCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+    pub replacement_event_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_rollback_activation_fingerprint: String,
+    pub result: ModePackRollbackActiveResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

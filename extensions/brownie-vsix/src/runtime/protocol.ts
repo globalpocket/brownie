@@ -571,6 +571,7 @@ export interface HeadlessContinueOnceParams {
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
   modepack_selected_candidate_approval_target?: ModePackSelectedCandidateApprovalTarget | null;
   modepack_selected_approved_candidate_replacement_target?: ModePackSelectedApprovedCandidateReplacementTarget | null;
+  modepack_selected_active_rollback_target?: ModePackSelectedActiveRollbackTarget | null;
 }
 
 export interface HeadlessRunAdvanceParams {
@@ -846,6 +847,7 @@ export interface HeadlessContinueOnceResult {
   modepack_verify_candidate_provenance_result?: ModePackVerifyCandidateProvenanceResult | null;
   modepack_approve_candidate_result?: ModePackApproveCandidateResult | null;
   modepack_replace_active_result?: ModePackReplaceActiveResult | null;
+  modepack_rollback_active_result?: ModePackRollbackActiveResult | null;
   llm_provider_failure_retry_admission?: LlmProviderFailureRetryAdmission | null;
   next_route?: HeadlessContinueRoute | null;
   max_steps?: number | null;
@@ -931,6 +933,13 @@ export interface ModePackSelectedApprovedCandidateReplacementTarget {
   expected_approved_candidate_id: string;
   expected_approved_candidate_approval_id: string;
   expected_approved_candidate_approval_event_id: string;
+}
+
+export interface ModePackSelectedActiveRollbackTarget {
+  authorize_selected_active_modepack_rollback: true;
+  replacement_event_id: string;
+  expected_current_activation_fingerprint: string;
+  expected_rollback_activation_fingerprint: string;
 }
 
 export interface HeadlessContinueStepResult {
@@ -5249,7 +5258,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -5280,7 +5289,8 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
     (value.modepack_selected_candidate_approval_target === undefined || value.modepack_selected_candidate_approval_target === null || isModePackSelectedCandidateApprovalTarget(value.modepack_selected_candidate_approval_target)) &&
-    (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target))
+    (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
+    (value.modepack_selected_active_rollback_target === undefined || value.modepack_selected_active_rollback_target === null || isModePackSelectedActiveRollbackTarget(value.modepack_selected_active_rollback_target))
   );
 }
 
@@ -5517,6 +5527,27 @@ function isModePackSelectedApprovedCandidateReplacementTarget(value: unknown): v
     value.expected_approved_candidate_approval_id.trim().length > 0 &&
     typeof value.expected_approved_candidate_approval_event_id === 'string' &&
     value.expected_approved_candidate_approval_event_id.trim().length > 0 &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
+  );
+}
+
+function isModePackSelectedActiveRollbackTarget(value: unknown): value is ModePackSelectedActiveRollbackTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_selected_active_modepack_rollback',
+      'replacement_event_id',
+      'expected_current_activation_fingerprint',
+      'expected_rollback_activation_fingerprint',
+    ]) &&
+    value.authorize_selected_active_modepack_rollback === true &&
+    typeof value.replacement_event_id === 'string' &&
+    value.replacement_event_id.trim().length > 0 &&
+    typeof value.expected_current_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_current_activation_fingerprint) &&
+    typeof value.expected_rollback_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_rollback_activation_fingerprint) &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_modepack_json') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
@@ -5845,6 +5876,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'modepack_verify_candidate_provenance_result',
       'modepack_approve_candidate_result',
       'modepack_replace_active_result',
+      'modepack_rollback_active_result',
       'llm_provider_failure_retry_admission',
       'next_route',
       'max_steps',
@@ -5878,6 +5910,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     (value.modepack_verify_candidate_provenance_result !== undefined && value.modepack_verify_candidate_provenance_result !== null && !isModePackVerifyCandidateProvenanceResult(value.modepack_verify_candidate_provenance_result)) ||
     (value.modepack_approve_candidate_result !== undefined && value.modepack_approve_candidate_result !== null && !isModePackApproveCandidateResult(value.modepack_approve_candidate_result)) ||
     (value.modepack_replace_active_result !== undefined && value.modepack_replace_active_result !== null && !isModePackReplaceActiveResult(value.modepack_replace_active_result)) ||
+    (value.modepack_rollback_active_result !== undefined && value.modepack_rollback_active_result !== null && !isModePackRollbackActiveResult(value.modepack_rollback_active_result)) ||
     (value.llm_provider_failure_retry_admission !== undefined && value.llm_provider_failure_retry_admission !== null && !isLlmProviderFailureRetryAdmission(value.llm_provider_failure_retry_admission)) ||
     (value.next_route !== undefined && value.next_route !== null && !isHeadlessContinueRoute(value.next_route)) ||
     (value.max_steps !== undefined && value.max_steps !== null && (!isNonNegativeInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 3)) ||
@@ -5926,7 +5959,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_fetch_candidate_result !== undefined &&
     value.modepack_fetch_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_selected_modepack_candidate_provenance_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_selected_modepack_candidate_provenance_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5936,7 +5969,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_verify_candidate_provenance_result !== undefined &&
     value.modepack_verify_candidate_provenance_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'approve_verified_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'approve_verified_modepack_candidate_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5946,7 +5979,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_approve_candidate_result !== undefined &&
     value.modepack_approve_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.next_action === 'replace_active_with_approved_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.next_action === 'replace_active_with_approved_modepack_candidate_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5956,7 +5989,17 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_replace_active_result !== undefined &&
     value.modepack_replace_active_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+  }
+  if (
+    value.status === 'task_executed' &&
+    value.stale === false &&
+    value.decision_id !== undefined &&
+    value.decision_id !== null &&
+    value.modepack_rollback_active_result !== undefined &&
+    value.modepack_rollback_active_result !== null
+  ) {
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
   }
   return (
     value.status === 'task_executed' &&
@@ -5972,7 +6015,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_fetch_candidate_result == null &&
     value.modepack_verify_candidate_provenance_result == null &&
     value.modepack_approve_candidate_result == null &&
-    value.modepack_replace_active_result == null
+    value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null
   );
 }
 

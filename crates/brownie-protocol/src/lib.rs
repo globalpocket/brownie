@@ -333,6 +333,15 @@ pub struct ModePackSelectedApprovedCandidateReplacementTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ModePackSelectedActiveRollbackTarget {
+    pub authorize_selected_active_modepack_rollback: bool,
+    pub replacement_event_id: String,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_rollback_activation_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackApproveCandidateParams {
     pub authorize_trust: bool,
     pub expected_content_sha256: String,
@@ -1039,6 +1048,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_approved_candidate_replacement_target:
         Option<ModePackSelectedApprovedCandidateReplacementTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_active_rollback_target: Option<ModePackSelectedActiveRollbackTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1793,6 +1804,8 @@ pub struct HeadlessContinueOnceResult {
     pub modepack_approve_candidate_result: Option<ModePackApproveCandidateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_replace_active_result: Option<ModePackReplaceActiveResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_rollback_active_result: Option<ModePackRollbackActiveResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(skip_serializing_if = "Option::is_none")]
