@@ -43,13 +43,14 @@ use brownie_protocol::{
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
-    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveParams,
-    ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
-    ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
-    ModePackSelectRegistryUpdateParams, ModePackSelectRegistryUpdateResult,
-    ModePackSelectedActiveRollbackTarget, ModePackSelectedApprovedCandidateReplacementTarget,
-    ModePackSelectedCandidateApprovalTarget, ModePackTrustSignerParams, ModePackTrustSignerResult,
-    ModePackTrustedSignerSummary, ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
+    ModePackRegistryUpdateSelectionSummary, ModePackRegistryUpdateSelectionTarget,
+    ModePackReplaceActiveParams, ModePackReplaceActiveResult, ModePackRevokeSignerParams,
+    ModePackRevokeSignerResult, ModePackRevokedSignerSummary, ModePackRollbackActiveParams,
+    ModePackRollbackActiveResult, ModePackSelectRegistryUpdateParams,
+    ModePackSelectRegistryUpdateResult, ModePackSelectedActiveRollbackTarget,
+    ModePackSelectedApprovedCandidateReplacementTarget, ModePackSelectedCandidateApprovalTarget,
+    ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
+    ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
@@ -233,7 +234,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
-    HeadlessContinuationDecisionLookup, HeadlessModePackSelectedActiveRollbackCheckpoint,
+    HeadlessContinuationDecisionLookup, HeadlessModePackRegistryUpdateSelectionCheckpoint,
+    HeadlessModePackSelectedActiveRollbackCheckpoint,
     HeadlessModePackSelectedCandidateApprovalCheckpoint,
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
@@ -8531,6 +8533,15 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: parent_join_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some()
+        && params.max_steps.unwrap_or(1) > 1
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_registry_update_selection_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.modepack_selected_candidate_fetch_target.is_some()
         && params.max_steps.unwrap_or(1) > 1
     {
@@ -8848,6 +8859,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_apply_target.is_some()
             || params.verification_recovery_retry_run_target.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
             || params.modepack_selected_candidate_fetch_target.is_some()
             || params
                 .modepack_selected_candidate_provenance_verification_target
@@ -8885,6 +8897,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_retry_run_target.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
             || params.parent_join_run_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
             || params
                 .modepack_selected_candidate_provenance_verification_target
                 .is_some()
@@ -8897,6 +8910,43 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: modepack_selected_candidate_fetch_target cannot be combined with task, recovery, apply, retry, provider, context-read, or parent-join fields",
+        );
+    }
+    if params.modepack_registry_update_selection_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_registry_update_selection_target cannot be combined with task, recovery, apply, retry, provider, context-read, parent-join, or selected-candidate fields",
         );
     }
     if params
@@ -8922,6 +8972,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_retry_run_target.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
             || params.parent_join_run_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
             || params.modepack_selected_candidate_fetch_target.is_some()
             || params.modepack_selected_candidate_approval_target.is_some()
             || params
@@ -9112,6 +9163,23 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     };
 
     if let Some(continuation_id) = params.continuation_id.as_deref() {
+        if params.modepack_registry_update_selection_target.is_some() {
+            match store.read_headless_modepack_registry_update_selection_checkpoint(continuation_id)
+            {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_modepack_registry_update_selection_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
         if params.modepack_selected_candidate_fetch_target.is_some() {
             match store.read_headless_modepack_selected_candidate_fetch_checkpoint(continuation_id)
             {
@@ -9251,6 +9319,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 task_run_result: None,
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
+                modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
@@ -9268,6 +9337,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         );
     }
 
+    if params.modepack_registry_update_selection_target.is_some() {
+        return handle_headless_continue_modepack_registry_update_selection(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
     if params.modepack_selected_candidate_fetch_target.is_some() {
         return handle_headless_continue_modepack_selected_candidate_fetch(
             id,
@@ -9427,6 +9504,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 task_run_result: None,
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
+                modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
@@ -9477,6 +9555,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 task_run_result: None,
                 proposal_apply_result: None,
                 llm_provider_failure_retry_admission: None,
+                modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
@@ -9599,6 +9678,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -9614,6 +9694,343 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             next_action,
         }),
     )
+}
+
+fn handle_headless_continue_modepack_registry_update_selection(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result = match headless_continue_modepack_registry_update_selection(
+        store,
+        progress_overview,
+        &params,
+    ) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_modepack_registry_update_selection_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessModePackRegistryUpdateSelectionCheckpoint,
+) -> JsonRpcResponse<Value> {
+    if let Err(message) =
+        validate_headless_modepack_registry_update_selection_replay_request(&params, &checkpoint)
+    {
+        return error_response(id, -32602, &message);
+    }
+    let mut selection_result = checkpoint.result;
+    selection_result.selected = false;
+    selection_result.replayed = true;
+    selection_result.next_action = "fetch_selected_modepack_candidate_explicitly".to_string();
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly,
+        reason: "Registry update selection was already executed by this continuation; replaying bounded selection result.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "fetch_selected_modepack_candidate_explicitly".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: None,
+            selected_run_id: None,
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: Some(selection_result),
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action: "fetch_selected_modepack_candidate_explicitly".to_string(),
+        }),
+    )
+}
+
+fn headless_modepack_registry_update_selection_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .modepack_registry_update_selection_target
+        .as_ref()
+        .ok_or_else(|| "modepack registry update selection target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "modepack registry update selection failed: continuation_id is required".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "modepack_registry_update_selection",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "authorize_modepack_registry_update_selection": target.authorize_modepack_registry_update_selection,
+        "authorize_registry_trust": target.authorize_registry_trust,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "registry_url": target.registry_url,
+        "expected_registry_manifest_sha256": target.expected_registry_manifest_sha256,
+        "expected_current_activation_fingerprint": target.expected_current_activation_fingerprint,
+        "expected_registry_provenance_statement_sha256": target.expected_registry_provenance_statement_sha256,
+        "expected_registry_signer_fingerprint": target.expected_registry_signer_fingerprint,
+        "expected_registry_trusted_signer_trust_id": target.expected_registry_trusted_signer_trust_id,
+        "expected_registry_trusted_signer_event_id": target.expected_registry_trusted_signer_event_id,
+        "registry_provenance_statement_sha256": format!("sha256:{}", hex_sha256(target.registry_provenance_statement_json.as_bytes())),
+        "registry_provenance_signature_sha256": format!("sha256:{}", hex_sha256(target.registry_provenance_signature_base64.as_bytes())),
+        "registry_provenance_public_key_sha256": format!("sha256:{}", hex_sha256(target.registry_provenance_public_key_base64.as_bytes())),
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_headless_modepack_registry_update_selection_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessModePackRegistryUpdateSelectionCheckpoint,
+) -> Result<(), String> {
+    let current = headless_modepack_registry_update_selection_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless registry update selection continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless registry update selection checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
+}
+
+fn validate_modepack_registry_update_selection_target(
+    target: &ModePackRegistryUpdateSelectionTarget,
+) -> Result<(), String> {
+    for (field, value) in [
+        (
+            "expected_registry_manifest_sha256",
+            target.expected_registry_manifest_sha256.as_str(),
+        ),
+        (
+            "expected_current_activation_fingerprint",
+            target.expected_current_activation_fingerprint.as_str(),
+        ),
+        (
+            "expected_registry_provenance_statement_sha256",
+            target
+                .expected_registry_provenance_statement_sha256
+                .as_str(),
+        ),
+        (
+            "expected_registry_signer_fingerprint",
+            target.expected_registry_signer_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "modepack registry update selection failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target
+        .expected_registry_trusted_signer_trust_id
+        .trim()
+        .is_empty()
+        || target
+            .expected_registry_trusted_signer_event_id
+            .trim()
+            .is_empty()
+    {
+        return Err(
+            "modepack registry update selection failed: registry trusted signer handles are required"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn headless_continue_modepack_registry_update_selection(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    headless_continue_modepack_registry_update_selection_with_resolver(
+        store,
+        progress_overview,
+        params,
+        default_modepack_dns_resolver,
+        fetch_modepack_url,
+    )
+}
+
+fn headless_continue_modepack_registry_update_selection_with_resolver<R, F>(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+    resolver: R,
+    fetcher: F,
+) -> Result<HeadlessContinueOnceResult, String>
+where
+    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
+    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+{
+    let target = params
+        .modepack_registry_update_selection_target
+        .as_ref()
+        .ok_or_else(|| "modepack registry update selection target missing".to_string())?;
+    if !target.authorize_modepack_registry_update_selection {
+        return Err(
+            "modepack registry update selection failed: authorization required".to_string(),
+        );
+    }
+    validate_modepack_registry_update_selection_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "modepack registry update selection failed: continuation_id is required".to_string()
+    })?;
+    let request_fingerprint =
+        headless_modepack_registry_update_selection_request_fingerprint(params)?;
+    let selection_result = select_modepack_registry_update_with_resolver(
+        store,
+        &ModePackSelectRegistryUpdateParams {
+            authorize_registry_selection: target.authorize_modepack_registry_update_selection,
+            authorize_registry_trust: target.authorize_registry_trust,
+            registry_url: target.registry_url.clone(),
+            expected_registry_manifest_sha256: target.expected_registry_manifest_sha256.clone(),
+            expected_current_activation_fingerprint: target
+                .expected_current_activation_fingerprint
+                .clone(),
+            expected_registry_provenance_statement_sha256: target
+                .expected_registry_provenance_statement_sha256
+                .clone(),
+            expected_registry_signer_fingerprint: target
+                .expected_registry_signer_fingerprint
+                .clone(),
+            expected_registry_trusted_signer_trust_id: target
+                .expected_registry_trusted_signer_trust_id
+                .clone(),
+            expected_registry_trusted_signer_event_id: target
+                .expected_registry_trusted_signer_event_id
+                .clone(),
+            registry_provenance_statement_json: target.registry_provenance_statement_json.clone(),
+            registry_provenance_signature_base64: target
+                .registry_provenance_signature_base64
+                .clone(),
+            registry_provenance_public_key_base64: target
+                .registry_provenance_public_key_base64
+                .clone(),
+        },
+        resolver,
+        fetcher,
+    )?;
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    store
+        .write_headless_modepack_registry_update_selection_checkpoint(
+            &HeadlessModePackRegistryUpdateSelectionCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                expected_current_activation_fingerprint: target
+                    .expected_current_activation_fingerprint
+                    .clone(),
+                expected_registry_manifest_sha256: target.expected_registry_manifest_sha256.clone(),
+                expected_registry_provenance_statement_sha256: target
+                    .expected_registry_provenance_statement_sha256
+                    .clone(),
+                expected_registry_signer_fingerprint: target
+                    .expected_registry_signer_fingerprint
+                    .clone(),
+                selection_id: selection_result.selection.selection_id.clone(),
+                selection_event_id: selection_result.selection.selection_event_id.clone(),
+                result: selection_result.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly,
+        reason: "Selected a trusted registry update candidate; fetching the selected candidate remains an explicit next step.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "fetch_selected_modepack_candidate_explicitly".to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: None,
+        selected_run_id: None,
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: Some(selection_result),
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "fetch_selected_modepack_candidate_explicitly".to_string(),
+    })
 }
 
 fn handle_headless_continue_modepack_selected_candidate_fetch(
@@ -9680,6 +10097,7 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: Some(fetch_result),
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -9959,6 +10377,7 @@ where
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: Some(fetch_result),
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
@@ -10043,6 +10462,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification_replay_
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: Some(provenance_result),
             modepack_approve_candidate_result: None,
@@ -10372,6 +10792,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification(
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: Some(provenance_result),
         modepack_approve_candidate_result: None,
@@ -10454,6 +10875,7 @@ fn headless_continue_modepack_selected_candidate_approval_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: Some(approval_result),
@@ -10797,6 +11219,7 @@ fn headless_continue_modepack_selected_candidate_approval(
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: Some(approval_result),
@@ -10878,6 +11301,7 @@ fn headless_continue_modepack_selected_candidate_replacement_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -11332,6 +11756,7 @@ fn headless_continue_modepack_selected_candidate_replacement(
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
@@ -11412,6 +11837,7 @@ fn headless_continue_modepack_selected_active_rollback_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -11627,6 +12053,7 @@ fn headless_continue_modepack_selected_active_rollback(
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
@@ -12748,6 +13175,7 @@ fn handle_headless_continue_verification_recovery_retry_admission(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -12912,6 +13340,7 @@ fn handle_headless_continue_verification_recovery_admission(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13078,6 +13507,7 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: Some(admission),
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13244,6 +13674,7 @@ fn handle_headless_continue_patch_apply_recovery_admission(
             task_run_result: None,
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13404,6 +13835,7 @@ fn handle_headless_continue_llm_provider_failure_retry_run(
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13565,6 +13997,7 @@ fn handle_headless_continue_patch_apply_recovery_run(
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13762,6 +14195,7 @@ fn handle_headless_continue_patch_apply_recovery_apply(
                 apply_result,
             }),
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -13921,6 +14355,7 @@ fn handle_headless_continue_verification_recovery_retry_run(
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -14094,6 +14529,7 @@ fn handle_headless_continue_verification_recovery_apply(
                 apply_result,
             }),
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -14273,6 +14709,7 @@ fn handle_headless_continue_verification_recovery_run(
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -14428,6 +14865,7 @@ fn handle_headless_continue_parent_join_run(
             task_run_result: Some(task_run_result),
             proposal_apply_result: None,
             llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -14564,6 +15002,7 @@ fn handle_headless_continue_budget(
         task_run_result: None,
         proposal_apply_result: None,
         llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
@@ -14639,6 +15078,9 @@ fn headless_continue_budget_stop_reason(
                 }
                 Some(HeadlessContinueRouteKind::RunLlmProviderRetryTaskExplicitly) => {
                     "explicit_llm_provider_retry_task_run_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly) => {
+                    "explicit_modepack_candidate_fetch_boundary".to_string()
                 }
                 Some(
                     HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
@@ -14757,6 +15199,7 @@ fn headless_continue_once_replay_result(
             task_run_result,
             proposal_apply_result,
             llm_provider_failure_retry_admission,
+            modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
@@ -68056,7 +68499,8 @@ mod tests {
     fn headless_continue_once_fetches_registry_selected_candidate_and_replays() {
         use base64::{engine::general_purpose, Engine as _};
         use brownie_protocol::{
-            ModePackReplaceActiveParams, ModePackSelectedActiveRollbackTarget,
+            ModePackRegistryUpdateSelectionTarget, ModePackReplaceActiveParams,
+            ModePackSelectedActiveRollbackTarget,
             ModePackSelectedApprovedCandidateReplacementTarget,
             ModePackSelectedCandidateApprovalTarget, ModePackSelectedCandidateFetchTarget,
             ModePackSelectedCandidateProvenanceVerificationTarget,
@@ -68210,30 +68654,72 @@ mod tests {
         })
         .to_string();
         let registry_signature = signing_key.sign(registry_trust_statement.as_bytes());
-        let selection = select_modepack_registry_update_with(
+        let progress = task_list_progress_overview(&store, &[]).expect("progress");
+        let selection_params = HeadlessContinueOnceParams {
+            authorize: true,
+            expected_progress_fingerprint: progress.source_fingerprint.clone(),
+            expected_aggregate_sequence: progress.aggregate_sequence,
+            continuation_id: Some("continue.modepack:registry-selection:1".to_string()),
+            max_steps: None,
+            context_budget: None,
+            verification_recovery_source: None,
+            verification_recovery_goal: None,
+            verification_recovery_mode_id: None,
+            verification_recovery_retry_source: None,
+            verification_recovery_retry_goal: None,
+            verification_recovery_retry_mode_id: None,
+            llm_provider_failure_retry_source: None,
+            llm_provider_failure_retry_goal: None,
+            llm_provider_failure_retry_mode_id: None,
+            verification_recovery_run_target: None,
+            verification_recovery_context_read: None,
+            patch_apply_recovery_source: None,
+            patch_apply_recovery_goal: None,
+            patch_apply_recovery_mode_id: None,
+            patch_apply_recovery_run_target: None,
+            patch_apply_recovery_apply_target: None,
+            verification_recovery_apply_target: None,
+            verification_recovery_retry_run_target: None,
+            llm_provider_failure_retry_run_target: None,
+            parent_join_run_target: None,
+            modepack_registry_update_selection_target: Some(
+                ModePackRegistryUpdateSelectionTarget {
+                    authorize_modepack_registry_update_selection: true,
+                    authorize_registry_trust: true,
+                    registry_url: registry_url.to_string(),
+                    expected_registry_manifest_sha256: registry_manifest_sha256.clone(),
+                    expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
+                    expected_registry_provenance_statement_sha256: format!(
+                        "sha256:{}",
+                        hex_sha256(registry_trust_statement.as_bytes())
+                    ),
+                    expected_registry_signer_fingerprint: signer_fingerprint.clone(),
+                    expected_registry_trusted_signer_trust_id: trusted
+                        .trusted_signer
+                        .trust_id
+                        .clone(),
+                    expected_registry_trusted_signer_event_id: trusted
+                        .trusted_signer
+                        .trust_event_id
+                        .clone(),
+                    registry_provenance_statement_json: registry_trust_statement.clone(),
+                    registry_provenance_signature_base64: general_purpose::STANDARD
+                        .encode(registry_signature.to_bytes()),
+                    registry_provenance_public_key_base64: general_purpose::STANDARD
+                        .encode(public_key_bytes),
+                },
+            ),
+            modepack_selected_candidate_fetch_target: None,
+            modepack_selected_candidate_provenance_verification_target: None,
+            modepack_selected_candidate_approval_target: None,
+            modepack_selected_approved_candidate_replacement_target: None,
+            modepack_selected_active_rollback_target: None,
+        };
+        let selection_result = headless_continue_modepack_registry_update_selection_with_resolver(
             &store,
-            &ModePackSelectRegistryUpdateParams {
-                authorize_registry_selection: true,
-                authorize_registry_trust: true,
-                registry_url: registry_url.to_string(),
-                expected_registry_manifest_sha256: registry_manifest_sha256.clone(),
-                expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
-                expected_registry_provenance_statement_sha256: format!(
-                    "sha256:{}",
-                    hex_sha256(registry_trust_statement.as_bytes())
-                ),
-                expected_registry_signer_fingerprint: signer_fingerprint.clone(),
-                expected_registry_trusted_signer_trust_id: trusted.trusted_signer.trust_id.clone(),
-                expected_registry_trusted_signer_event_id: trusted
-                    .trusted_signer
-                    .trust_event_id
-                    .clone(),
-                registry_provenance_statement_json: registry_trust_statement,
-                registry_provenance_signature_base64: general_purpose::STANDARD
-                    .encode(registry_signature.to_bytes()),
-                registry_provenance_public_key_base64: general_purpose::STANDARD
-                    .encode(public_key_bytes),
-            },
+            &progress,
+            &selection_params,
+            test_modepack_dns_resolver,
             |_| {
                 Ok(RemoteModePackFetchResponse {
                     status: 200,
@@ -68242,8 +68728,72 @@ mod tests {
                 })
             },
         )
-        .expect("registry selection");
-        let progress = task_list_progress_overview(&store, &[]).expect("progress");
+        .expect("headless registry selection");
+        assert_eq!(
+            selection_result.status,
+            HeadlessContinueOnceStatus::TaskExecuted
+        );
+        assert_eq!(
+            selection_result.next_route.as_ref().expect("route").kind,
+            HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+        );
+        let selection = selection_result
+            .modepack_select_registry_update_result
+            .as_ref()
+            .expect("selection result")
+            .clone();
+        assert!(selection.selected);
+        assert!(!selection.replayed);
+        let selection_checkpoint = store
+            .read_headless_modepack_registry_update_selection_checkpoint(
+                selection_params
+                    .continuation_id
+                    .as_deref()
+                    .expect("selection continuation"),
+            )
+            .expect("selection checkpoint read")
+            .expect("selection checkpoint");
+        assert!(selection_checkpoint.request_fingerprint.is_some());
+        let selection_replay = headless_continue_modepack_registry_update_selection_replay_result(
+            json!(10),
+            &progress,
+            selection_params.clone(),
+            selection_checkpoint.clone(),
+        );
+        assert!(selection_replay.error.is_none());
+        let selection_replay_result: HeadlessContinueOnceResult =
+            serde_json::from_value(selection_replay.result.expect("selection replay result"))
+                .expect("typed selection replay");
+        assert!(selection_replay_result.replayed);
+        let replay_selection = selection_replay_result
+            .modepack_select_registry_update_result
+            .expect("replay selection");
+        assert!(!replay_selection.selected);
+        assert!(replay_selection.replayed);
+        assert_eq!(
+            replay_selection.selection.selection_event_id,
+            selection.selection.selection_event_id
+        );
+        let mut mismatched_selection_params = selection_params.clone();
+        mismatched_selection_params
+            .modepack_registry_update_selection_target
+            .as_mut()
+            .expect("selection target")
+            .expected_registry_signer_fingerprint = format!("sha256:{}", "8".repeat(64));
+        let mismatched_selection_replay =
+            headless_continue_modepack_registry_update_selection_replay_result(
+                json!(11),
+                &progress,
+                mismatched_selection_params,
+                selection_checkpoint,
+            );
+        assert_eq!(
+            mismatched_selection_replay
+                .error
+                .expect("mismatch error")
+                .code,
+            -32602
+        );
         let params = HeadlessContinueOnceParams {
             authorize: true,
             expected_progress_fingerprint: progress.source_fingerprint.clone(),
@@ -68271,6 +68821,7 @@ mod tests {
             verification_recovery_retry_run_target: None,
             llm_provider_failure_retry_run_target: None,
             parent_join_run_target: None,
+            modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(ModePackSelectedCandidateFetchTarget {
                 authorize_selected_candidate_fetch: true,
                 selection_id: selection.selection.selection_id.clone(),

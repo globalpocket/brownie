@@ -567,6 +567,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
   llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
   parent_join_run_target?: ParentJoinRunTarget | null;
+  modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
   modepack_selected_candidate_approval_target?: ModePackSelectedCandidateApprovalTarget | null;
@@ -805,6 +806,7 @@ export type HeadlessContinueRouteKind =
   | 'start_verification_retry_explicitly'
   | 'run_verification_retry_task_explicitly'
   | 'run_llm_provider_retry_task_explicitly'
+  | 'fetch_selected_modepack_candidate_explicitly'
   | 'verify_selected_modepack_candidate_provenance_explicitly'
   | 'approve_verified_modepack_candidate_explicitly'
   | 'replace_active_with_approved_modepack_candidate_explicitly'
@@ -843,6 +845,7 @@ export interface HeadlessContinueOnceResult {
   replayed: boolean;
   task_run_result?: TaskRunResult | null;
   proposal_apply_result?: ProposalApplyResult | null;
+  modepack_select_registry_update_result?: ModePackSelectRegistryUpdateResult | null;
   modepack_fetch_candidate_result?: ModePackFetchCandidateResult | null;
   modepack_verify_candidate_provenance_result?: ModePackVerifyCandidateProvenanceResult | null;
   modepack_approve_candidate_result?: ModePackApproveCandidateResult | null;
@@ -857,6 +860,21 @@ export interface HeadlessContinueOnceResult {
   stop_reason?: string | null;
   steps?: HeadlessContinueStepResult[];
   next_action: string;
+}
+
+export interface ModePackRegistryUpdateSelectionTarget {
+  authorize_modepack_registry_update_selection: true;
+  authorize_registry_trust: true;
+  registry_url: string;
+  expected_registry_manifest_sha256: string;
+  expected_current_activation_fingerprint: string;
+  expected_registry_provenance_statement_sha256: string;
+  expected_registry_signer_fingerprint: string;
+  expected_registry_trusted_signer_trust_id: string;
+  expected_registry_trusted_signer_event_id: string;
+  registry_provenance_statement_json: string;
+  registry_provenance_signature_base64: string;
+  registry_provenance_public_key_base64: string;
 }
 
 export interface ModePackSelectedCandidateFetchTarget {
@@ -5258,7 +5276,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -5286,11 +5304,54 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target)) &&
     (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target)) &&
     (value.parent_join_run_target === undefined || value.parent_join_run_target === null || isParentJoinRunTarget(value.parent_join_run_target)) &&
+    (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
     (value.modepack_selected_candidate_approval_target === undefined || value.modepack_selected_candidate_approval_target === null || isModePackSelectedCandidateApprovalTarget(value.modepack_selected_candidate_approval_target)) &&
     (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
     (value.modepack_selected_active_rollback_target === undefined || value.modepack_selected_active_rollback_target === null || isModePackSelectedActiveRollbackTarget(value.modepack_selected_active_rollback_target))
+  );
+}
+
+function isModePackRegistryUpdateSelectionTarget(value: unknown): value is ModePackRegistryUpdateSelectionTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_modepack_registry_update_selection',
+      'authorize_registry_trust',
+      'registry_url',
+      'expected_registry_manifest_sha256',
+      'expected_current_activation_fingerprint',
+      'expected_registry_provenance_statement_sha256',
+      'expected_registry_signer_fingerprint',
+      'expected_registry_trusted_signer_trust_id',
+      'expected_registry_trusted_signer_event_id',
+      'registry_provenance_statement_json',
+      'registry_provenance_signature_base64',
+      'registry_provenance_public_key_base64',
+    ]) &&
+    value.authorize_modepack_registry_update_selection === true &&
+    value.authorize_registry_trust === true &&
+    typeof value.registry_url === 'string' &&
+    value.registry_url.startsWith('https://') &&
+    typeof value.expected_registry_manifest_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_registry_manifest_sha256) &&
+    typeof value.expected_current_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_current_activation_fingerprint) &&
+    typeof value.expected_registry_provenance_statement_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_registry_provenance_statement_sha256) &&
+    typeof value.expected_registry_signer_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_registry_signer_fingerprint) &&
+    typeof value.expected_registry_trusted_signer_trust_id === 'string' &&
+    value.expected_registry_trusted_signer_trust_id.length > 0 &&
+    typeof value.expected_registry_trusted_signer_event_id === 'string' &&
+    value.expected_registry_trusted_signer_event_id.length > 0 &&
+    typeof value.registry_provenance_statement_json === 'string' &&
+    value.registry_provenance_statement_json.length > 0 &&
+    typeof value.registry_provenance_signature_base64 === 'string' &&
+    value.registry_provenance_signature_base64.length > 0 &&
+    typeof value.registry_provenance_public_key_base64 === 'string' &&
+    value.registry_provenance_public_key_base64.length > 0
   );
 }
 
@@ -5872,6 +5933,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'replayed',
       'task_run_result',
       'proposal_apply_result',
+      'modepack_select_registry_update_result',
       'modepack_fetch_candidate_result',
       'modepack_verify_candidate_provenance_result',
       'modepack_approve_candidate_result',
@@ -5906,6 +5968,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     typeof value.replayed !== 'boolean' ||
     (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
     (value.proposal_apply_result !== undefined && value.proposal_apply_result !== null && !isProposalApplyResult(value.proposal_apply_result)) ||
+    (value.modepack_select_registry_update_result !== undefined && value.modepack_select_registry_update_result !== null && !isModePackSelectRegistryUpdateResult(value.modepack_select_registry_update_result)) ||
     (value.modepack_fetch_candidate_result !== undefined && value.modepack_fetch_candidate_result !== null && !isModePackFetchCandidateResult(value.modepack_fetch_candidate_result)) ||
     (value.modepack_verify_candidate_provenance_result !== undefined && value.modepack_verify_candidate_provenance_result !== null && !isModePackVerifyCandidateProvenanceResult(value.modepack_verify_candidate_provenance_result)) ||
     (value.modepack_approve_candidate_result !== undefined && value.modepack_approve_candidate_result !== null && !isModePackApproveCandidateResult(value.modepack_approve_candidate_result)) ||
@@ -5956,10 +6019,20 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.stale === false &&
     value.decision_id !== undefined &&
     value.decision_id !== null &&
+    value.modepack_select_registry_update_result !== undefined &&
+    value.modepack_select_registry_update_result !== null
+  ) {
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'fetch_selected_modepack_candidate_explicitly';
+  }
+  if (
+    value.status === 'task_executed' &&
+    value.stale === false &&
+    value.decision_id !== undefined &&
+    value.decision_id !== null &&
     value.modepack_fetch_candidate_result !== undefined &&
     value.modepack_fetch_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_selected_modepack_candidate_provenance_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_selected_modepack_candidate_provenance_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5969,7 +6042,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_verify_candidate_provenance_result !== undefined &&
     value.modepack_verify_candidate_provenance_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'approve_verified_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'approve_verified_modepack_candidate_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5979,7 +6052,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_approve_candidate_result !== undefined &&
     value.modepack_approve_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.next_action === 'replace_active_with_approved_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.next_action === 'replace_active_with_approved_modepack_candidate_explicitly';
   }
   if (
     value.status === 'task_executed' &&
@@ -5989,7 +6062,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_replace_active_result !== undefined &&
     value.modepack_replace_active_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
   }
   if (
     value.status === 'task_executed' &&
@@ -5999,7 +6072,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_rollback_active_result !== undefined &&
     value.modepack_rollback_active_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
   }
   return (
     value.status === 'task_executed' &&
@@ -6296,7 +6369,7 @@ function isBoundedHandle(value: unknown): value is string {
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
-  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
 }
 
 function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute {

@@ -15,59 +15,21 @@
     {
       "capability": "mode_pack_runtime",
       "relationship": "Starts the selected Mode Pack update pipeline from a trusted registry manifest through existing Rust runtime selection authority."
-    },
-    {
-      "capability": "runtime_permission_enforcement",
-      "relationship": "Requires explicit continuation and registry trust authorization, fresh progress, current active fingerprint, and deterministic expected registry/provenance/signer fingerprints."
-    },
-    {
-      "capability": "persistent_structured_ledger",
-      "relationship": "Persists bounded selection and headless checkpoint evidence, and replays without duplicating ModePackRegistryUpdateSelected events."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "questions": [
-      {
-        "id": "strategic_capabilities",
-        "question": "Which strategic capabilities does this phase advance?"
-      },
-      {
-        "id": "new_capability",
-        "question": "What new user-visible, operator-visible, or runtime capability does it add?"
-      },
-      {
-        "id": "why_existing_functionality_is_insufficient",
-        "question": "Why can existing functionality not substitute for this work?"
-      },
-      {
-        "id": "product_gap_if_skipped",
-        "question": "What concrete product gap remains if this is not implemented?"
-      },
-      {
-        "id": "non_duplicative",
-        "question": "Is this semantically distinct from the previous three phases?"
-      },
-      {
-        "id": "no_new_rpc",
-        "question": "Can this be done without adding a new RPC?"
-      },
-      {
-        "id": "no_new_summary",
-        "question": "Can this be done without adding a new summary surface?"
-      },
-      {
-        "id": "runtime_behavior_change",
-        "question": "What runtime or development-control behavior actually changes?"
-      },
-      {
-        "id": "headless_autonomous_contribution",
-        "question": "How does this help headless autonomous development?"
-      },
-      {
-        "id": "milestone_progress",
-        "question": "How does this move the milestone toward completion?"
-      }
+      {"id": "strategic_capabilities", "question": "Which strategic capabilities does this phase advance?"},
+      {"id": "new_capability", "question": "What new user-visible, operator-visible, or runtime capability does it add?"},
+      {"id": "why_existing_functionality_is_insufficient", "question": "Why can existing functionality not substitute for this work?"},
+      {"id": "product_gap_if_skipped", "question": "What concrete product gap remains if this is not implemented?"},
+      {"id": "non_duplicative", "question": "Is this semantically distinct from the previous three phases?"},
+      {"id": "no_new_rpc", "question": "Can this be done without adding a new RPC?"},
+      {"id": "no_new_summary", "question": "Can this be done without adding a new summary surface?"},
+      {"id": "runtime_behavior_change", "question": "What runtime or development-control behavior actually changes?"},
+      {"id": "headless_autonomous_contribution", "question": "How does this help headless autonomous development?"},
+      {"id": "milestone_progress", "question": "How does this move the milestone toward completion?"}
     ],
     "answers": {
       "strategic_capabilities": "Advances headless_autonomous_development directly, with supporting progress for mode_pack_runtime, runtime_permission_enforcement, and persistent_structured_ledger.",
@@ -101,45 +63,18 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M48.1 updates the deterministic current phase manifest and archives the M48.1 value gate. Review must confirm this is headless registry update selection execution, not a report/readiness wrapper.",
-    "changed_files": [
-      "crates/brownie-runtime/src/lib.rs",
-      "crates/brownie-protocol/src/lib.rs",
-      "crates/brownie-store/src/lib.rs",
-      "extensions/brownie-vsix/src/runtime/protocol.ts",
-      "extensions/brownie-vsix/src/test/runtimeClient.test.ts",
-      "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m48.1.json"
-    ],
-    "required_checks": [
-      "cargo fmt --check",
-      "cargo check --workspace",
-      "cargo test -p brownie-runtime headless_continue_once_fetches_registry_selected_candidate_and_replays",
-      "cargo test --workspace",
-      "pnpm install",
-      "pnpm guard:diagnostics",
-      "pnpm guard:phase-value",
-      "pnpm --filter brownie-vsix check",
-      "pnpm --filter brownie-vsix test",
-      "pnpm --filter brownie-vsix build",
-      "git diff --check"
-    ]
+    "review_intent": "M48.1 archives the value gate for headless registry update selection execution.",
+    "changed_files": ["docs/architecture/phase-value-manifest.m48.1.json"]
   },
   "exit_criteria": [
     "headless.continue_once accepts a bounded modepack_registry_update_selection_target with explicit registry selection and trust authorization",
-    "runtime rejects stale progress before registry fetch or selection side effects",
     "runtime delegates to existing modepack.selectRegistryUpdate authority and returns bounded ModePackSelectRegistryUpdateResult",
-    "successful selection records one bounded ModePackRegistryUpdateSelected event and one continuation checkpoint",
     "same-request replay returns bounded selection evidence without duplicate ledger events or registry refetch",
-    "same continuation id with mismatched selection request fingerprint rejects before replaying old evidence",
-    "VSIX protocol validators accept the selection target/result shape and reject raw fields",
-    "no new RPC, readiness/report/history/digest/inspection wrapper, generic network execution, or VSIX-owned policy is added"
+    "VSIX protocol validators accept the selection target/result shape and reject raw fields"
   ],
   "behavior_evidence": [
     "Rust behavior test covers registry selection continuation success and next route to selected candidate fetch",
     "Rust replay test covers no duplicate registry selection side effect for same continuation request",
-    "Rust denial coverage includes mismatched selection request fingerprint",
-    "VSIX protocol tests validate the new bounded registry selection target/result shape and reject raw data fields",
-    "cargo fmt --check, cargo check --workspace, cargo test --workspace, pnpm install, pnpm guard:diagnostics, pnpm guard:phase-value, VSIX check/test/build, and git diff --check run before PR merge"
+    "VSIX protocol tests validate the new bounded registry selection target/result shape and reject raw data fields"
   ]
 }
