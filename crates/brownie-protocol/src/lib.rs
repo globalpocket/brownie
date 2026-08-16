@@ -250,6 +250,23 @@ pub struct ModePackSelectRegistryUpdateParams {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ModePackRegistryUpdateSelectionTarget {
+    pub authorize_modepack_registry_update_selection: bool,
+    pub authorize_registry_trust: bool,
+    pub registry_url: String,
+    pub expected_registry_manifest_sha256: String,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_registry_provenance_statement_sha256: String,
+    pub expected_registry_signer_fingerprint: String,
+    pub expected_registry_trusted_signer_trust_id: String,
+    pub expected_registry_trusted_signer_event_id: String,
+    pub registry_provenance_statement_json: String,
+    pub registry_provenance_signature_base64: String,
+    pub registry_provenance_public_key_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ModePackSelectedCandidateFetchTarget {
     pub authorize_selected_candidate_fetch: bool,
     pub selection_id: String,
@@ -1038,6 +1055,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_join_run_target: Option<ParentJoinRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_provenance_verification_target:
@@ -1743,6 +1762,7 @@ pub enum HeadlessContinueRouteKind {
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
+    FetchSelectedModePackCandidateExplicitly,
     VerifySelectedModePackCandidateProvenanceExplicitly,
     ApproveVerifiedModePackCandidateExplicitly,
     ReplaceActiveWithApprovedModePackCandidateExplicitly,
@@ -1795,6 +1815,8 @@ pub struct HeadlessContinueOnceResult {
     pub proposal_apply_result: Option<ProposalApplyResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modepack_select_registry_update_result: Option<ModePackSelectRegistryUpdateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_fetch_candidate_result: Option<ModePackFetchCandidateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]

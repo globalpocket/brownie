@@ -1375,6 +1375,87 @@ describe('protocol validation', () => {
       modepack_selected_active_rollback_target: { ...modePackSelectedActiveRollbackTarget, raw_ledger_payload: '{}' },
     })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    const modePackRegistryUpdateSelectionTarget = {
+      authorize_modepack_registry_update_selection: true,
+      authorize_registry_trust: true,
+      registry_url: 'https://registry.example.com/modepacks.json',
+      expected_registry_manifest_sha256: `sha256:${'1'.repeat(64)}`,
+      expected_current_activation_fingerprint: `sha256:${'2'.repeat(64)}`,
+      expected_registry_provenance_statement_sha256: `sha256:${'3'.repeat(64)}`,
+      expected_registry_signer_fingerprint: `sha256:${'4'.repeat(64)}`,
+      expected_registry_trusted_signer_trust_id: 'modepack_trusted_signer_123',
+      expected_registry_trusted_signer_event_id: 'event_registry_signer_trust_123',
+      registry_provenance_statement_json: '{"registry_manifest_sha256":"bounded"}',
+      registry_provenance_signature_base64: 'c2lnbmF0dXJl',
+      registry_provenance_public_key_base64: 'cHVibGljLWtleQ==',
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_registry_update_selection_target: {
+        ...modePackRegistryUpdateSelectionTarget,
+        expected_registry_signer_fingerprint: 'not-a-fingerprint',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_registry_update_selection_target: {
+        ...modePackRegistryUpdateSelectionTarget,
+        raw_registry_manifest_json: '{}',
+      },
+    })).toBe(false);
+    const modePackRegistryUpdateSelectionResult = {
+      selected: true,
+      replayed: false,
+      selection: {
+        selection_id: 'modepack_registry_selection_123',
+        registry_url_host: 'registry.example.com',
+        registry_url_fingerprint: `sha256:${'5'.repeat(64)}`,
+        registry_dns_binding: modePackDnsBinding,
+        registry_manifest_sha256: modePackRegistryUpdateSelectionTarget.expected_registry_manifest_sha256,
+        registry_provenance_statement_sha256: modePackRegistryUpdateSelectionTarget.expected_registry_provenance_statement_sha256,
+        registry_signer_fingerprint: modePackRegistryUpdateSelectionTarget.expected_registry_signer_fingerprint,
+        registry_trusted_signer_trust_id: modePackRegistryUpdateSelectionTarget.expected_registry_trusted_signer_trust_id,
+        registry_trusted_signer_event_id: modePackRegistryUpdateSelectionTarget.expected_registry_trusted_signer_event_id,
+        current_activation_fingerprint: modePackRegistryUpdateSelectionTarget.expected_current_activation_fingerprint,
+        current_modepack_name: 'remote-agentmodes',
+        current_source_kind: 'remote_https_candidate',
+        candidate_url: 'https://example.com/modepack.json',
+        candidate_url_host: 'example.com',
+        candidate_url_fingerprint: `sha256:${'6'.repeat(64)}`,
+        candidate_content_sha256: `sha256:${'7'.repeat(64)}`,
+        candidate_compiled_policy_fingerprint: `sha256:${'8'.repeat(64)}`,
+        provenance_statement_url: 'https://example.com/provenance.json',
+        provenance_statement_url_host: 'example.com',
+        provenance_statement_url_fingerprint: `sha256:${'9'.repeat(64)}`,
+        provenance_statement_sha256: `sha256:${'a'.repeat(64)}`,
+        signer_fingerprint: `sha256:${'b'.repeat(64)}`,
+        selected_at: '2026-08-16T17:47:23Z',
+        selection_event_id: 'event_registry_selection_123',
+      },
+      next_action: 'fetch_selected_modepack_candidate_explicitly',
+    };
+    const modePackRegistrySelectionHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      modepack_select_registry_update_result: modePackRegistryUpdateSelectionResult,
+      next_route: {
+        kind: 'fetch_selected_modepack_candidate_explicitly',
+        reason: 'Registry update selected; fetch selected candidate explicitly.',
+        next_action: 'fetch_selected_modepack_candidate_explicitly',
+      },
+      next_action: 'fetch_selected_modepack_candidate_explicitly',
+    };
+    expect(isHeadlessContinueOnceResult(modePackRegistrySelectionHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackRegistrySelectionHeadlessResult,
+      modepack_select_registry_update_result: { ...modePackRegistryUpdateSelectionResult, raw_registry_manifest_json: '{}' },
+    })).toBe(false);
     const selectedCandidateFetchResult = {
       fetched: true,
       replayed: false,

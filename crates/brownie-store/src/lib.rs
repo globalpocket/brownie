@@ -14,10 +14,10 @@ use brownie_protocol::{
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
     ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
-    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
-    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
-    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
+    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
+    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -659,6 +659,49 @@ impl BrownieStore {
         }
         let body = serde_json::to_string_pretty(checkpoint)
             .context("failed to serialize headless modepack selected candidate fetch checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
+    pub fn read_headless_modepack_registry_update_selection_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessModePackRegistryUpdateSelectionCheckpoint>> {
+        let path = self.headless_modepack_registry_update_selection_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_modepack_registry_update_selection_checkpoint(
+        &self,
+        checkpoint: &HeadlessModePackRegistryUpdateSelectionCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path =
+            self.headless_modepack_registry_update_selection_path(&checkpoint.continuation_id);
+        if let Some(existing) = self.read_headless_modepack_registry_update_selection_checkpoint(
+            &checkpoint.continuation_id,
+        )? {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless modepack registry update selection checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint).context(
+            "failed to serialize headless modepack registry update selection checkpoint",
+        )?;
         write_file_atomically(&path, body.as_bytes())
     }
 
@@ -1304,6 +1347,15 @@ impl BrownieStore {
             .join(format!("modepack-selected-fetch-{continuation_id}.json"))
     }
 
+    fn headless_modepack_registry_update_selection_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!(
+                "modepack-registry-update-selection-{continuation_id}.json"
+            ))
+    }
+
     fn headless_modepack_selected_candidate_provenance_verification_path(
         &self,
         continuation_id: &str,
@@ -1802,6 +1854,27 @@ pub struct ModePackRegistryUpdateSelectionCommit {
     pub replayed: bool,
     pub event_id: String,
     pub selection: ModePackRegistryUpdateSelectionSnapshot,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessModePackRegistryUpdateSelectionCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub expected_current_activation_fingerprint: String,
+    pub expected_registry_manifest_sha256: String,
+    pub expected_registry_provenance_statement_sha256: String,
+    pub expected_registry_signer_fingerprint: String,
+    pub selection_id: String,
+    pub selection_event_id: String,
+    pub result: ModePackSelectRegistryUpdateResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
