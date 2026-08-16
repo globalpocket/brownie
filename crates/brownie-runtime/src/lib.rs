@@ -47,9 +47,9 @@ use brownie_protocol::{
     ModePackReplaceActiveResult, ModePackRevokeSignerParams, ModePackRevokeSignerResult,
     ModePackRevokedSignerSummary, ModePackRollbackActiveParams, ModePackRollbackActiveResult,
     ModePackSelectRegistryUpdateParams, ModePackSelectRegistryUpdateResult,
-    ModePackSelectedApprovedCandidateReplacementTarget, ModePackSelectedCandidateApprovalTarget,
-    ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
+    ModePackSelectedActiveRollbackTarget, ModePackSelectedApprovedCandidateReplacementTarget,
+    ModePackSelectedCandidateApprovalTarget, ModePackTrustSignerParams, ModePackTrustSignerResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
@@ -233,7 +233,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
-    HeadlessContinuationDecisionLookup, HeadlessModePackSelectedCandidateApprovalCheckpoint,
+    HeadlessContinuationDecisionLookup, HeadlessModePackSelectedActiveRollbackCheckpoint,
+    HeadlessModePackSelectedCandidateApprovalCheckpoint,
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessModePackSelectedCandidateReplacementCheckpoint,
@@ -8570,6 +8571,15 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: modepack_selected_approved_candidate_replacement_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.modepack_selected_active_rollback_target.is_some()
+        && params.max_steps.unwrap_or(1) > 1
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_active_rollback_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -8845,7 +8855,8 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.modepack_selected_candidate_approval_target.is_some()
             || params
                 .modepack_selected_approved_candidate_replacement_target
-                .is_some())
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
     {
         return error_response(
             id,
@@ -8991,6 +9002,42 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: modepack_selected_approved_candidate_replacement_target cannot be combined with task, recovery, apply, retry, provider, context-read, parent-join, fetch, provenance verification, or approval fields",
+        );
+    }
+    if params.modepack_selected_active_rollback_target.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_active_rollback_target cannot be combined with task, recovery, apply, retry, provider, context-read, parent-join, fetch, provenance verification, approval, or replacement fields",
         );
     }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
@@ -9143,6 +9190,23 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 }
             }
         }
+        if params.modepack_selected_active_rollback_target.is_some() {
+            match store.read_headless_modepack_selected_active_rollback_checkpoint(continuation_id)
+            {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_modepack_selected_active_rollback_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
         match headless_continuation_decision_for_replay(&store, &tasks, continuation_id) {
             Ok(Some(decision)) => {
                 return headless_continue_once_replay_result(
@@ -9191,6 +9255,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
                 modepack_replace_active_result: None,
+                modepack_rollback_active_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -9235,6 +9300,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         .is_some()
     {
         return handle_headless_continue_modepack_selected_candidate_replacement(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.modepack_selected_active_rollback_target.is_some() {
+        return handle_headless_continue_modepack_selected_active_rollback(
             id,
             &store,
             &progress_overview,
@@ -9358,6 +9431,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
                 modepack_replace_active_result: None,
+                modepack_rollback_active_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -9407,6 +9481,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 modepack_verify_candidate_provenance_result: None,
                 modepack_approve_candidate_result: None,
                 modepack_replace_active_result: None,
+                modepack_rollback_active_result: None,
                 next_route: Some(next_route),
                 max_steps: None,
                 step_count: None,
@@ -9528,6 +9603,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -9608,6 +9684,7 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -9886,6 +9963,7 @@ where
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
         modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
         next_route: Some(next_route),
         max_steps: None,
         step_count: None,
@@ -9969,6 +10047,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification_replay_
             modepack_verify_candidate_provenance_result: Some(provenance_result),
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -10297,6 +10376,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification(
         modepack_verify_candidate_provenance_result: Some(provenance_result),
         modepack_approve_candidate_result: None,
         modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
         next_route: Some(next_route),
         max_steps: None,
         step_count: None,
@@ -10378,6 +10458,7 @@ fn headless_continue_modepack_selected_candidate_approval_replay_result(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: Some(approval_result),
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -10720,6 +10801,7 @@ fn headless_continue_modepack_selected_candidate_approval(
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: Some(approval_result),
         modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
         next_route: Some(next_route),
         max_steps: None,
         step_count: None,
@@ -10800,6 +10882,7 @@ fn headless_continue_modepack_selected_candidate_replacement_replay_result(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: Some(replacement_result),
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -11253,6 +11336,302 @@ fn headless_continue_modepack_selected_candidate_replacement(
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
         modepack_replace_active_result: Some(replacement_result),
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "refresh_progress_overview".to_string(),
+    })
+}
+
+fn handle_headless_continue_modepack_selected_active_rollback(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result = match headless_continue_modepack_selected_active_rollback(
+        store,
+        progress_overview,
+        &params,
+    ) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_modepack_selected_active_rollback_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessModePackSelectedActiveRollbackCheckpoint,
+) -> JsonRpcResponse<Value> {
+    if let Err(message) =
+        validate_headless_modepack_selected_active_rollback_replay_request(&params, &checkpoint)
+    {
+        return error_response(id, -32602, &message);
+    }
+    let mut rollback_result = checkpoint.result;
+    rollback_result.rolled_back = false;
+    rollback_result.replayed = true;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+        reason: "Selected active Mode Pack rollback was already completed by this continuation; replaying bounded rollback result.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "refresh_progress_overview".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: None,
+            selected_run_id: None,
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: Some(rollback_result),
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action: "refresh_progress_overview".to_string(),
+        }),
+    )
+}
+
+fn headless_modepack_selected_active_rollback_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .modepack_selected_active_rollback_target
+        .as_ref()
+        .ok_or_else(|| "modepack selected active rollback target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "modepack selected active rollback failed: continuation_id is required".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "modepack_selected_active_rollback",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "authorize_selected_active_modepack_rollback": target.authorize_selected_active_modepack_rollback,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "replacement_event_id": target.replacement_event_id,
+        "expected_current_activation_fingerprint": target.expected_current_activation_fingerprint,
+        "expected_rollback_activation_fingerprint": target.expected_rollback_activation_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_headless_modepack_selected_active_rollback_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessModePackSelectedActiveRollbackCheckpoint,
+) -> Result<(), String> {
+    let current = headless_modepack_selected_active_rollback_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless selected active modepack rollback continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless selected active modepack rollback checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
+}
+
+fn validate_selected_active_rollback_target(
+    target: &ModePackSelectedActiveRollbackTarget,
+) -> Result<(), String> {
+    if !target.authorize_selected_active_modepack_rollback {
+        return Err("modepack selected active rollback failed: authorization required".to_string());
+    }
+    if target.replacement_event_id.trim().is_empty() {
+        return Err(
+            "modepack selected active rollback failed: replacement_event_id is required"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_current_activation_fingerprint",
+            target.expected_current_activation_fingerprint.as_str(),
+        ),
+        (
+            "expected_rollback_activation_fingerprint",
+            target.expected_rollback_activation_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "modepack selected active rollback failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target.expected_current_activation_fingerprint
+        == target.expected_rollback_activation_fingerprint
+    {
+        return Err(
+            "modepack selected active rollback failed: current and rollback fingerprints must differ"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn headless_continue_modepack_selected_active_rollback(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    let target = params
+        .modepack_selected_active_rollback_target
+        .as_ref()
+        .ok_or_else(|| "modepack selected active rollback target missing".to_string())?;
+    validate_selected_active_rollback_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "modepack selected active rollback failed: continuation_id is required".to_string()
+    })?;
+    let request_fingerprint =
+        headless_modepack_selected_active_rollback_request_fingerprint(params)?;
+    if !store
+        .active_modepack_replacement_event_matches(
+            &target.replacement_event_id,
+            &target.expected_current_activation_fingerprint,
+            &target.expected_rollback_activation_fingerprint,
+        )
+        .map_err(|error| error.to_string())?
+    {
+        return Err(
+            "modepack selected active rollback failed: replacement event evidence mismatch"
+                .to_string(),
+        );
+    }
+    let current = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "modepack selected active rollback failed: active Mode Pack snapshot not found"
+                .to_string()
+        })?;
+    if current.summary.activation_fingerprint != target.expected_current_activation_fingerprint {
+        return Err(
+            "modepack selected active rollback failed: active Mode Pack snapshot no longer matches replacement evidence"
+                .to_string(),
+        );
+    }
+    let mut rollback_result = rollback_active_workspace_modepack(
+        store,
+        &ModePackRollbackActiveParams {
+            authorize_rollback: true,
+            expected_current_activation_fingerprint: target
+                .expected_current_activation_fingerprint
+                .clone(),
+            expected_rollback_activation_fingerprint: target
+                .expected_rollback_activation_fingerprint
+                .clone(),
+        },
+    )?;
+    rollback_result.replayed = false;
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    store
+        .write_headless_modepack_selected_active_rollback_checkpoint(
+            &HeadlessModePackSelectedActiveRollbackCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
+                replacement_event_id: target.replacement_event_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                expected_current_activation_fingerprint: target
+                    .expected_current_activation_fingerprint
+                    .clone(),
+                expected_rollback_activation_fingerprint: target
+                    .expected_rollback_activation_fingerprint
+                    .clone(),
+                result: rollback_result.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+        reason: "Rolled back the selected active Mode Pack replacement under explicit headless authorization.".to_string(),
+        task_id: None,
+        run_id: None,
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "refresh_progress_overview".to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: None,
+        selected_run_id: None,
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: Some(rollback_result),
         next_route: Some(next_route),
         max_steps: None,
         step_count: None,
@@ -12373,6 +12752,7 @@ fn handle_headless_continue_verification_recovery_retry_admission(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12536,6 +12916,7 @@ fn handle_headless_continue_verification_recovery_admission(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12701,6 +13082,7 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -12866,6 +13248,7 @@ fn handle_headless_continue_patch_apply_recovery_admission(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13025,6 +13408,7 @@ fn handle_headless_continue_llm_provider_failure_retry_run(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13185,6 +13569,7 @@ fn handle_headless_continue_patch_apply_recovery_run(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13381,6 +13766,7 @@ fn handle_headless_continue_patch_apply_recovery_apply(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13539,6 +13925,7 @@ fn handle_headless_continue_verification_recovery_retry_run(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13711,6 +14098,7 @@ fn handle_headless_continue_verification_recovery_apply(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -13889,6 +14277,7 @@ fn handle_headless_continue_verification_recovery_run(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -14043,6 +14432,7 @@ fn handle_headless_continue_parent_join_run(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -14178,6 +14568,7 @@ fn handle_headless_continue_budget(
         modepack_verify_candidate_provenance_result: None,
         modepack_approve_candidate_result: None,
         modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
         next_route: None,
         max_steps: None,
         step_count: None,
@@ -14370,6 +14761,7 @@ fn headless_continue_once_replay_result(
             modepack_verify_candidate_provenance_result: None,
             modepack_approve_candidate_result: None,
             modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
             next_route: Some(next_route),
             max_steps: None,
             step_count: None,
@@ -67664,7 +68056,8 @@ mod tests {
     fn headless_continue_once_fetches_registry_selected_candidate_and_replays() {
         use base64::{engine::general_purpose, Engine as _};
         use brownie_protocol::{
-            ModePackReplaceActiveParams, ModePackSelectedApprovedCandidateReplacementTarget,
+            ModePackReplaceActiveParams, ModePackSelectedActiveRollbackTarget,
+            ModePackSelectedApprovedCandidateReplacementTarget,
             ModePackSelectedCandidateApprovalTarget, ModePackSelectedCandidateFetchTarget,
             ModePackSelectedCandidateProvenanceVerificationTarget,
         };
@@ -67901,6 +68294,7 @@ mod tests {
             modepack_selected_candidate_provenance_verification_target: None,
             modepack_selected_candidate_approval_target: None,
             modepack_selected_approved_candidate_replacement_target: None,
+            modepack_selected_active_rollback_target: None,
         };
         let fetched = headless_continue_modepack_selected_candidate_fetch_with_resolver(
             &store,
@@ -68447,6 +68841,110 @@ mod tests {
             mismatched_replacement_replay
                 .error
                 .expect("replacement mismatch error")
+                .code,
+            -32602
+        );
+
+        let rollback_progress = task_list_progress_overview(&store, &[]).expect("progress");
+        let mut rollback_params = replacement_params.clone();
+        rollback_params.continuation_id = Some("continue.modepack:rollback:1".to_string());
+        rollback_params.expected_progress_fingerprint =
+            rollback_progress.source_fingerprint.clone();
+        rollback_params.expected_aggregate_sequence = rollback_progress.aggregate_sequence;
+        rollback_params.modepack_selected_approved_candidate_replacement_target = None;
+        rollback_params.modepack_selected_active_rollback_target =
+            Some(ModePackSelectedActiveRollbackTarget {
+                authorize_selected_active_modepack_rollback: true,
+                replacement_event_id: replacement_result.replacement_event_id.clone(),
+                expected_current_activation_fingerprint: replacement_result
+                    .replacement_snapshot
+                    .activation_fingerprint
+                    .clone(),
+                expected_rollback_activation_fingerprint: replacement_result
+                    .previous_snapshot
+                    .activation_fingerprint
+                    .clone(),
+            });
+        let rolled_back = headless_continue_modepack_selected_active_rollback(
+            &store,
+            &rollback_progress,
+            &rollback_params,
+        )
+        .expect("headless selected active rollback");
+        assert_eq!(rolled_back.status, HeadlessContinueOnceStatus::TaskExecuted);
+        assert_eq!(rolled_back.next_action, "refresh_progress_overview");
+        let rollback_result = rolled_back
+            .modepack_rollback_active_result
+            .as_ref()
+            .expect("rollback result");
+        assert!(rollback_result.rolled_back);
+        assert!(!rollback_result.replayed);
+        assert_eq!(
+            rollback_result.current_snapshot.activation_fingerprint,
+            replacement_result
+                .replacement_snapshot
+                .activation_fingerprint
+        );
+        assert_eq!(
+            rollback_result.restored_snapshot.activation_fingerprint,
+            replacement_result.previous_snapshot.activation_fingerprint
+        );
+        let restored = store
+            .read_active_modepack_snapshot()
+            .expect("active read")
+            .expect("active snapshot");
+        assert_eq!(
+            restored.summary.activation_fingerprint,
+            replacement_result.previous_snapshot.activation_fingerprint
+        );
+        let rollback_checkpoint = store
+            .read_headless_modepack_selected_active_rollback_checkpoint(
+                rollback_params
+                    .continuation_id
+                    .as_deref()
+                    .expect("rollback continuation"),
+            )
+            .expect("rollback checkpoint read")
+            .expect("rollback checkpoint");
+        assert!(rollback_checkpoint.request_fingerprint.is_some());
+        let rollback_replay = headless_continue_modepack_selected_active_rollback_replay_result(
+            json!(20),
+            &rollback_progress,
+            rollback_params.clone(),
+            rollback_checkpoint.clone(),
+        );
+        assert!(rollback_replay.error.is_none());
+        let rollback_replay_result: HeadlessContinueOnceResult =
+            serde_json::from_value(rollback_replay.result.expect("rollback replay"))
+                .expect("typed rollback replay");
+        assert!(rollback_replay_result.replayed);
+        let replayed_rollback = rollback_replay_result
+            .modepack_rollback_active_result
+            .expect("replayed rollback");
+        assert!(!replayed_rollback.rolled_back);
+        assert!(replayed_rollback.replayed);
+        assert_eq!(
+            replayed_rollback.rollback_event_id,
+            rollback_result.rollback_event_id
+        );
+        let mut mismatched_rollback_params = rollback_params.clone();
+        mismatched_rollback_params
+            .modepack_selected_active_rollback_target
+            .as_mut()
+            .expect("rollback target")
+            .replacement_event_id
+            .push_str("-different");
+        let mismatched_rollback_replay =
+            headless_continue_modepack_selected_active_rollback_replay_result(
+                json!(21),
+                &rollback_progress,
+                mismatched_rollback_params,
+                rollback_checkpoint,
+            );
+        assert_eq!(
+            mismatched_rollback_replay
+                .error
+                .expect("rollback mismatch error")
                 .code,
             -32602
         );

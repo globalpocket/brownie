@@ -1356,6 +1356,24 @@ describe('protocol validation', () => {
       ...headlessParams,
       modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, raw_modepack_json: '{}' },
     })).toBe(false);
+    const modePackSelectedActiveRollbackTarget = {
+      authorize_selected_active_modepack_rollback: true,
+      replacement_event_id: 'event_active_replacement_123',
+      expected_current_activation_fingerprint: modePackSelectedApprovedCandidateReplacementTarget.expected_candidate_activation_fingerprint,
+      expected_rollback_activation_fingerprint: modePackSelectedApprovedCandidateReplacementTarget.expected_current_activation_fingerprint,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_active_rollback_target: modePackSelectedActiveRollbackTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_active_rollback_target: { ...modePackSelectedActiveRollbackTarget, expected_rollback_activation_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      modepack_selected_active_rollback_target: { ...modePackSelectedActiveRollbackTarget, raw_ledger_payload: '{}' },
+    })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
     const selectedCandidateFetchResult = {
       fetched: true,
@@ -1558,6 +1576,39 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceResult({
       ...modePackReplacementHeadlessResult,
       modepack_approve_candidate_result: selectedCandidateApprovalResult,
+    })).toBe(false);
+    const selectedActiveRollbackResult = {
+      rolled_back: true,
+      replayed: false,
+      current_snapshot: replacementModePackSnapshot,
+      restored_snapshot: previousModePackSnapshot,
+      rollback_event_id: 'event_active_rollback_123',
+    };
+    const modePackRollbackHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      modepack_fetch_candidate_result: null,
+      modepack_verify_candidate_provenance_result: null,
+      modepack_approve_candidate_result: null,
+      modepack_replace_active_result: null,
+      modepack_rollback_active_result: selectedActiveRollbackResult,
+      next_route: {
+        kind: 'refresh_progress_overview',
+        reason: 'Selected active Mode Pack rollback completed.',
+        next_action: 'refresh_progress_overview',
+      },
+      next_action: 'refresh_progress_overview',
+    };
+    expect(isHeadlessContinueOnceResult(modePackRollbackHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackRollbackHeadlessResult,
+      modepack_rollback_active_result: { ...selectedActiveRollbackResult, raw_ledger_payload: '{}' },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackRollbackHeadlessResult,
+      modepack_replace_active_result: selectedApprovedReplacementResult,
     })).toBe(false);
     const headlessBudgetResult = {
       ...headlessResult,
