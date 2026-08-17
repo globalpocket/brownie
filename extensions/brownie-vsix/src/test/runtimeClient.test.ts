@@ -1867,6 +1867,7 @@ describe('protocol validation', () => {
       context_budget: contextBudget,
       expected_progress_fingerprint: taskListProgressOverview.source_fingerprint,
       expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
+      modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
     };
     const terminalCompletionEvidence = {
@@ -1915,6 +1916,7 @@ describe('protocol validation', () => {
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, session_id: 'x'.repeat(49) })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, expected_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, max_steps: 4 })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_registry_update_selection_target: { ...modePackRegistryUpdateSelectionTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_modepack_json: '{}' } })).toBe(false);
     expect(isHeadlessRunAdvanceResult(headlessRunAdvanceResult)).toBe(true);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, checkpoint_fingerprint: 'not-a-fingerprint' })).toBe(false);
@@ -1932,6 +1934,7 @@ describe('protocol validation', () => {
       context_budget: contextBudget,
       authorize_completion_finalization: true,
       expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
     };
     const headlessRunDriveResult = {
@@ -1992,6 +1995,7 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_registry_update_selection_target: { ...modePackRegistryUpdateSelectionTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);

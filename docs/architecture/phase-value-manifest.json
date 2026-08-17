@@ -1,28 +1,28 @@
 {
   "schema_version": 1,
-  "phase": "M49.1",
+  "phase": "M49.2",
   "current_milestone": "m49_headless_mode_pack_update_drive",
   "milestone": "M49 Headless Mode Pack Update Drive",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "headless_selected_candidate_fetch_route_drive",
-  "forbidden_pattern": "selected_candidate_fetch_route_drive_report_readiness_history_digest_verdict_inspection_preview_new_rpc_generic_route_executor_generic_network_executor_auto_full_modepack_update_auto_provenance_auto_approval_auto_replacement_auto_rollback_raw_registry_manifest_raw_candidate_body_raw_provenance_statement_raw_signature_raw_public_key_raw_dns_raw_ip_raw_response_raw_modepack_json_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path_secret_vsix_owned_policy",
+  "concrete_capability_transition": "headless_modepack_route_bootstrap_integrity",
+  "forbidden_pattern": "modepack_route_bootstrap_report_readiness_history_digest_verdict_inspection_preview_new_rpc_generic_route_executor_generic_network_executor_auto_full_modepack_update_auto_provenance_auto_approval_auto_replacement_auto_rollback_raw_registry_manifest_raw_candidate_body_raw_provenance_statement_raw_signature_raw_public_key_raw_dns_raw_ip_raw_response_raw_modepack_json_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path_secret_vsix_owned_policy",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Lets headless.run.advance and headless.run.drive execute one explicit Mode Pack selected-candidate fetch route from persisted session state."
+      "relationship": "Lets public headless.run.advance and headless.run.drive carry a registry-selection target into Rust-owned run-control instead of requiring caller-owned continue_once glue."
     },
     {
       "capability": "mode_pack_runtime",
-      "relationship": "Keeps the selected Mode Pack update pipeline inside Rust-owned run-control after registry selection."
+      "relationship": "Bootstraps the Mode Pack update route chain from registry selection into selected-candidate fetch using existing typed continuation authority."
     },
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Requires explicit selected-candidate fetch target, matching persisted route, current session sequence, and existing continuation authorization."
+      "relationship": "Requires explicit target authorization, route-boundary validation, bounded one-step execution, and matching replay identity before side effects."
     },
     {
       "capability": "persistent_structured_ledger",
-      "relationship": "Persists normal run-session and drive evidence while replaying without duplicate fetch checkpoints or side effects."
+      "relationship": "Preserves run-session evidence and fails closed when subordinate route evidence is absent or mismatched during replay."
     }
   ],
   "phase_value_gate": {
@@ -71,15 +71,15 @@
     ],
     "answers": {
       "strategic_capabilities": "Advances headless_autonomous_development directly, with supporting progress for mode_pack_runtime, runtime_permission_enforcement, and persistent_structured_ledger.",
-      "new_capability": "headless.run.advance and headless.run.drive can execute one fetch_selected_modepack_candidate_explicitly route step from a persisted run-session checkpoint by passing a bounded selected-candidate fetch target to existing continuation authority.",
-      "why_existing_functionality_is_insufficient": "headless.continue_once can fetch a selected candidate, but run-control could not cross this explicit route boundary while preserving session sequence, drive checkpoints, and replay-safe evidence.",
-      "product_gap_if_skipped": "A long-running scheduled caller would still leave headless.run.* after registry selection and own out-of-band route sequencing before provenance verification can proceed.",
-      "non_duplicative": "Yes. M46.4 replaced active state, M47.1 rolled back active replacement, and M48.1 selected a registry update candidate; M49.1 binds the already-existing selected-candidate fetch into run-control.",
-      "no_new_rpc": "Yes. This extends existing headless.run.advance/headless.run.drive request handling and delegates to existing headless.continue_once rather than adding a new RPC.",
-      "no_new_summary": "Yes. It reuses bounded run-control results and existing selected-candidate fetch evidence instead of creating a summary/report surface.",
-      "runtime_behavior_change": "The Rust runtime validates a persisted fetch route, derives progress from the checkpoint, delegates the fetch target through existing continuation authority, records run-control evidence, and replays without refetching.",
-      "headless_autonomous_contribution": "Scheduled callers can keep the first explicit Mode Pack update route boundary inside durable run-control instead of manually stitching continuation calls between sessions.",
-      "milestone_progress": "M49 gains its first route-drive vertical slice and establishes the bounded pattern for later distinct Mode Pack update route boundaries."
+      "new_capability": "headless.run.advance and headless.run.drive can route a bounded registry update selection target through public run-control and can reject corrupted routed replay when subordinate fetch evidence is missing.",
+      "why_existing_functionality_is_insufficient": "headless.continue_once can perform registry selection and M49.1 can fetch from an already-persisted route, but public run-control could not bootstrap the registry-selection-to-fetch boundary under session authority.",
+      "product_gap_if_skipped": "A scheduled caller would still own out-of-band route sequencing and replay could accept a persisted selected-candidate fetch route without the underlying fetch checkpoint.",
+      "non_duplicative": "Yes. M47.1 rolled back active replacement, M48.1 selected a registry update through continue_once, and M49.1 fetched an already-routed selected candidate; M49.2 bootstraps the public route chain and hardens replay evidence.",
+      "no_new_rpc": "Yes. Existing headless.run.advance and headless.run.drive are extended with a bounded target field and delegate to existing continuation authority.",
+      "no_new_summary": "Yes. It reuses bounded run-control and continuation evidence rather than adding reports, histories, digests, verdicts, inspections, or readiness summaries.",
+      "runtime_behavior_change": "The Rust runtime validates explicit Mode Pack run-control targets, forwards registry selection through typed continuation authority, preserves session checkpoints, and fails closed when subordinate routed evidence is missing.",
+      "headless_autonomous_contribution": "Scheduled callers can keep the Mode Pack update route chain inside durable Rust-owned run-control from the first registry-selection step.",
+      "milestone_progress": "M49 moves from one pre-existing fetch-route bridge toward a real public Mode Pack update drive with replay-safe route evidence."
     }
   },
   "review_value_gate": {
@@ -88,35 +88,35 @@
       "wrapper_only",
       "report_only",
       "inspection_only_without_runtime_behavior_change",
-      "new_json_rpc_method_for_route_drive",
+      "new_json_rpc_method_for_route_bootstrap",
       "generic_route_executor",
-      "duplicate_selected_candidate_fetch_implementation",
+      "duplicate_registry_or_fetch_policy",
       "automatic_full_modepack_update_pipeline",
       "raw_registry_candidate_provenance_or_modepack_data_returned_or_persisted",
-      "vsix_owned_route_policy",
-      "more_than_one_explicit_modepack_route_kind"
+      "vsix_owned_route_policy"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M49.1 updates the current and archived value manifests for the selected-candidate fetch route-drive phase.",
+    "review_intent": "M49.2 updates the current and archived value manifests for the route-bootstrap integrity phase.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/phase-value-manifest.m49.1.json",
-      "docs/architecture/phase-value-manifest.m48.1.json"
+      "docs/architecture/phase-value-manifest.m49.2.json"
     ]
   },
   "exit_criteria": [
-    "headless.run.advance accepts a bounded modepack_selected_candidate_fetch_target only for an existing session whose persisted next route is fetch_selected_modepack_candidate_explicitly",
-    "headless.run.drive passes the same bounded target through one runtime-owned routed advance and stops at the next explicit route boundary",
-    "runtime delegates selected-candidate fetch work to existing headless.continue_once authority and preserves run-session replay behavior",
-    "VSIX protocol validators accept the bounded run-control target and reject raw/unknown fields"
+    "headless.run.advance can carry a bounded modepack_registry_update_selection_target through public run-control into a persisted fetch route",
+    "headless.run.drive can pass the same bounded target through its first runtime-owned advance",
+    "routed selected-candidate fetch replay fails closed when subordinate fetch checkpoint evidence is missing",
+    "runtime rejects stale progress, wrong route, missing target, and request identity mismatch before side effects",
+    "VSIX protocol validators accept the bounded registry-selection run-control target and reject raw/unknown fields"
   ],
   "behavior_evidence": [
-    "Rust compile checks cover the new protocol/runtime request plumbing",
-    "VSIX protocol tests validate run-control params with selected-candidate fetch target and raw field rejection",
-    "Rust behavior tests cover selected-candidate fetch replay target validation, including matching replay, missing target denial, and request identity mismatch denial"
+    "Rust compile checks cover protocol/runtime request plumbing",
+    "Rust replay-integrity tests cover routed selected-candidate fetch missing evidence, missing target, and request identity mismatch",
+    "VSIX protocol tests validate run-control params with registry-selection target and raw field rejection"
   ]
 }
