@@ -12102,8 +12102,23 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: max_steps must be between 1 and 3",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
+    }
+    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
     }
     if params.expected_session_sequence == 0 {
         return error_response(
@@ -12149,11 +12164,34 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 "invalid params: expected_session_sequence must match the next runtime-owned session sequence",
             );
         }
+        if params.modepack_selected_candidate_fetch_target.is_some()
+            && !checkpoint
+                .result
+                .next_route
+                .as_ref()
+                .map(|route| {
+                    route.kind
+                        == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+                })
+                .unwrap_or(false)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+            );
+        }
     } else if params.expected_session_sequence != 1 {
         return error_response(
             id,
             -32602,
             "invalid params: new session expected_session_sequence must be 1",
+        );
+    } else if params.modepack_selected_candidate_fetch_target.is_some() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target requires an existing session checkpoint",
         );
     }
 
@@ -12202,17 +12240,18 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: session_id is too long for derived continuation IDs",
         );
     }
-    let response = handle_headless_continue_once(
-        id.clone(),
-        Some(json!({
-            "authorize": true,
-            "expected_progress_fingerprint": start_fingerprint,
-            "expected_aggregate_sequence": start_sequence,
-            "continuation_id": continuation_id,
-            "max_steps": max_steps,
-            "context_budget": params.context_budget.clone()
-        })),
-    );
+    let mut continue_params = json!({
+        "authorize": true,
+        "expected_progress_fingerprint": start_fingerprint,
+        "expected_aggregate_sequence": start_sequence,
+        "continuation_id": continuation_id,
+        "max_steps": max_steps,
+        "context_budget": params.context_budget.clone()
+    });
+    if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
+        continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
+    }
+    let response = handle_headless_continue_once(id.clone(), Some(continue_params));
     let Some(result_value) = response.result else {
         return JsonRpcResponse {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -12398,8 +12437,23 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: max_steps_per_advance must be between 1 and 3",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
+    }
+    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
     }
     if params.authorize_completion_finalization.unwrap_or(false)
         && params.expected_completion_closure_fingerprint.is_none()
@@ -12470,6 +12524,22 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: expected_start_session_sequence must match the current session checkpoint",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some()
+        && !start_checkpoint
+            .result
+            .next_route
+            .as_ref()
+            .map(|route| {
+                route.kind == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+            })
+            .unwrap_or(false)
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+        );
+    }
     let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
         return error_response(
             id,
@@ -12486,17 +12556,20 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     for index in 0..max_advances {
         let session_sequence = params.expected_start_session_sequence + u64::from(index) + 1;
         let advance_id = format!("{}.{}", drive_id, session_sequence);
-        let response = handle_headless_run_advance(
-            id.clone(),
-            Some(json!({
-                "authorize": true,
-                "session_id": params.session_id,
-                "advance_id": advance_id,
-                "expected_session_sequence": session_sequence,
-                "max_steps": max_steps_per_advance,
-                "context_budget": params.context_budget.clone()
-            })),
-        );
+        let mut advance_params = json!({
+            "authorize": true,
+            "session_id": params.session_id.clone(),
+            "advance_id": advance_id,
+            "expected_session_sequence": session_sequence,
+            "max_steps": max_steps_per_advance,
+            "context_budget": params.context_budget.clone()
+        });
+        if index == 0 {
+            if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
+                advance_params["modepack_selected_candidate_fetch_target"] = json!(target);
+            }
+        }
+        let response = handle_headless_run_advance(id.clone(), Some(advance_params));
         let Some(result_value) = response.result else {
             return JsonRpcResponse {
                 jsonrpc: JSONRPC_VERSION.to_string(),

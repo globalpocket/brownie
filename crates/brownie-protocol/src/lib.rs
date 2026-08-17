@@ -1087,6 +1087,8 @@ pub struct HeadlessRunAdvanceParams {
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_aggregate_sequence: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1107,6 +1109,8 @@ pub struct HeadlessRunDriveParams {
     pub authorize_completion_finalization: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_completion_closure_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
