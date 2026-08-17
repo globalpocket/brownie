@@ -49,8 +49,8 @@ use brownie_protocol::{
     ModePackRollbackActiveResult, ModePackSelectRegistryUpdateParams,
     ModePackSelectRegistryUpdateResult, ModePackSelectedActiveRollbackTarget,
     ModePackSelectedApprovedCandidateReplacementTarget, ModePackSelectedCandidateApprovalTarget,
-    ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
+    ModePackSelectedCandidateFetchTarget, ModePackTrustSignerParams, ModePackTrustSignerResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
@@ -12102,8 +12102,23 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: max_steps must be between 1 and 3",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
+    }
+    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
     }
     if params.expected_session_sequence == 0 {
         return error_response(
@@ -12138,6 +12153,13 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                     "invalid params: advance_id conflicts with persisted session sequence",
                 );
             }
+            if let Err(message) = validate_headless_run_selected_candidate_fetch_replay_target(
+                &store,
+                checkpoint,
+                params.modepack_selected_candidate_fetch_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
             let mut result = checkpoint.result.clone();
             result.replayed = true;
             return result_response(id, json!(result));
@@ -12149,11 +12171,34 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 "invalid params: expected_session_sequence must match the next runtime-owned session sequence",
             );
         }
+        if params.modepack_selected_candidate_fetch_target.is_some()
+            && !checkpoint
+                .result
+                .next_route
+                .as_ref()
+                .map(|route| {
+                    route.kind
+                        == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+                })
+                .unwrap_or(false)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+            );
+        }
     } else if params.expected_session_sequence != 1 {
         return error_response(
             id,
             -32602,
             "invalid params: new session expected_session_sequence must be 1",
+        );
+    } else if params.modepack_selected_candidate_fetch_target.is_some() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target requires an existing session checkpoint",
         );
     }
 
@@ -12202,17 +12247,18 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: session_id is too long for derived continuation IDs",
         );
     }
-    let response = handle_headless_continue_once(
-        id.clone(),
-        Some(json!({
-            "authorize": true,
-            "expected_progress_fingerprint": start_fingerprint,
-            "expected_aggregate_sequence": start_sequence,
-            "continuation_id": continuation_id,
-            "max_steps": max_steps,
-            "context_budget": params.context_budget.clone()
-        })),
-    );
+    let mut continue_params = json!({
+        "authorize": true,
+        "expected_progress_fingerprint": start_fingerprint,
+        "expected_aggregate_sequence": start_sequence,
+        "continuation_id": continuation_id,
+        "max_steps": max_steps,
+        "context_budget": params.context_budget.clone()
+    });
+    if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
+        continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
+    }
+    let response = handle_headless_continue_once(id.clone(), Some(continue_params));
     let Some(result_value) = response.result else {
         return JsonRpcResponse {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -12347,6 +12393,75 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
     result_response(id, json!(result))
 }
 
+fn validate_headless_run_selected_candidate_fetch_replay_target(
+    store: &BrownieStore,
+    checkpoint: &HeadlessRunSessionCheckpoint,
+    target: Option<&ModePackSelectedCandidateFetchTarget>,
+) -> Result<(), String> {
+    let continuation_id = checkpoint
+        .result
+        .steps
+        .iter()
+        .find_map(|step| step.continuation_id.as_deref());
+    let Some(continuation_id) = continuation_id else {
+        return Ok(());
+    };
+    let fetch_checkpoint = store
+        .read_headless_modepack_selected_candidate_fetch_checkpoint(continuation_id)
+        .map_err(|error| error.to_string())?;
+    let Some(fetch_checkpoint) = fetch_checkpoint else {
+        return Ok(());
+    };
+    let Some(target) = target.cloned() else {
+        return Err(
+            "invalid params: modepack_selected_candidate_fetch_target is required to replay a routed selected-candidate fetch advance"
+                .to_string(),
+        );
+    };
+    let replay_params = HeadlessContinueOnceParams {
+        authorize: true,
+        expected_progress_fingerprint: checkpoint
+            .result
+            .start_progress
+            .progress_fingerprint
+            .clone(),
+        expected_aggregate_sequence: checkpoint.result.start_progress.aggregate_sequence,
+        continuation_id: Some(continuation_id.to_string()),
+        max_steps: Some(checkpoint.result.max_steps),
+        context_budget: None,
+        verification_recovery_source: None,
+        verification_recovery_goal: None,
+        verification_recovery_mode_id: None,
+        verification_recovery_retry_source: None,
+        verification_recovery_retry_goal: None,
+        verification_recovery_retry_mode_id: None,
+        llm_provider_failure_retry_source: None,
+        llm_provider_failure_retry_goal: None,
+        llm_provider_failure_retry_mode_id: None,
+        verification_recovery_run_target: None,
+        verification_recovery_context_read: None,
+        patch_apply_recovery_source: None,
+        patch_apply_recovery_goal: None,
+        patch_apply_recovery_mode_id: None,
+        patch_apply_recovery_run_target: None,
+        patch_apply_recovery_apply_target: None,
+        verification_recovery_apply_target: None,
+        verification_recovery_retry_run_target: None,
+        llm_provider_failure_retry_run_target: None,
+        parent_join_run_target: None,
+        modepack_registry_update_selection_target: None,
+        modepack_selected_candidate_fetch_target: Some(target),
+        modepack_selected_candidate_provenance_verification_target: None,
+        modepack_selected_candidate_approval_target: None,
+        modepack_selected_approved_candidate_replacement_target: None,
+        modepack_selected_active_rollback_target: None,
+    };
+    validate_headless_modepack_selected_candidate_fetch_replay_request(
+        &replay_params,
+        &fetch_checkpoint,
+    )
+}
+
 fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
     let params: HeadlessRunDriveParams = match parse_params(params) {
         Ok(params) => params,
@@ -12398,8 +12513,23 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: max_steps_per_advance must be between 1 and 3",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
+    }
+    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
     }
     if params.authorize_completion_finalization.unwrap_or(false)
         && params.expected_completion_closure_fingerprint.is_none()
@@ -12434,6 +12564,21 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 -32602,
                 "invalid params: drive_id conflicts with persisted start session sequence",
             );
+        }
+        if let Some(first_advance) = checkpoint.result.advances.first() {
+            let replay_checkpoint = HeadlessRunSessionCheckpoint {
+                session_id: first_advance.session_id.clone(),
+                advance_id: first_advance.advance_id.clone(),
+                session_sequence: first_advance.session_sequence,
+                result: first_advance.clone(),
+            };
+            if let Err(message) = validate_headless_run_selected_candidate_fetch_replay_target(
+                &store,
+                &replay_checkpoint,
+                params.modepack_selected_candidate_fetch_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
         }
         let mut result = checkpoint.result;
         result.replayed = true;
@@ -12470,6 +12615,22 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: expected_start_session_sequence must match the current session checkpoint",
         );
     }
+    if params.modepack_selected_candidate_fetch_target.is_some()
+        && !start_checkpoint
+            .result
+            .next_route
+            .as_ref()
+            .map(|route| {
+                route.kind == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+            })
+            .unwrap_or(false)
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+        );
+    }
     let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
         return error_response(
             id,
@@ -12486,17 +12647,20 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     for index in 0..max_advances {
         let session_sequence = params.expected_start_session_sequence + u64::from(index) + 1;
         let advance_id = format!("{}.{}", drive_id, session_sequence);
-        let response = handle_headless_run_advance(
-            id.clone(),
-            Some(json!({
-                "authorize": true,
-                "session_id": params.session_id,
-                "advance_id": advance_id,
-                "expected_session_sequence": session_sequence,
-                "max_steps": max_steps_per_advance,
-                "context_budget": params.context_budget.clone()
-            })),
-        );
+        let mut advance_params = json!({
+            "authorize": true,
+            "session_id": params.session_id.clone(),
+            "advance_id": advance_id,
+            "expected_session_sequence": session_sequence,
+            "max_steps": max_steps_per_advance,
+            "context_budget": params.context_budget.clone()
+        });
+        if index == 0 {
+            if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
+                advance_params["modepack_selected_candidate_fetch_target"] = json!(target);
+            }
+        }
+        let response = handle_headless_run_advance(id.clone(), Some(advance_params));
         let Some(result_value) = response.result else {
             return JsonRpcResponse {
                 jsonrpc: JSONRPC_VERSION.to_string(),
@@ -48284,6 +48448,195 @@ mod tests {
             .all(|event| event.kind != LedgerEventKind::HeadlessRunSessionDriveCompleted));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_routed_fetch_replay_requires_matching_target() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let target = ModePackSelectedCandidateFetchTarget {
+            authorize_selected_candidate_fetch: true,
+            selection_id: "selection_1".to_string(),
+            selection_event_id: "event_selection".to_string(),
+            expected_registry_manifest_sha256: format!("sha256:{}", "1".repeat(64)),
+            expected_candidate_url_fingerprint: format!("sha256:{}", "2".repeat(64)),
+            expected_candidate_content_sha256: format!("sha256:{}", "3".repeat(64)),
+            expected_candidate_compiled_policy_fingerprint: format!("sha256:{}", "4".repeat(64)),
+            expected_provenance_statement_url_fingerprint: format!("sha256:{}", "5".repeat(64)),
+            expected_provenance_statement_sha256: format!("sha256:{}", "6".repeat(64)),
+            expected_signer_fingerprint: format!("sha256:{}", "7".repeat(64)),
+            expected_current_activation_fingerprint: format!("sha256:{}", "8".repeat(64)),
+        };
+        let replay_params = HeadlessContinueOnceParams {
+            authorize: true,
+            expected_progress_fingerprint: format!("sha256:{}", "a".repeat(64)),
+            expected_aggregate_sequence: 1,
+            continuation_id: Some("run.session.2".to_string()),
+            max_steps: Some(1),
+            context_budget: None,
+            verification_recovery_source: None,
+            verification_recovery_goal: None,
+            verification_recovery_mode_id: None,
+            verification_recovery_retry_source: None,
+            verification_recovery_retry_goal: None,
+            verification_recovery_retry_mode_id: None,
+            llm_provider_failure_retry_source: None,
+            llm_provider_failure_retry_goal: None,
+            llm_provider_failure_retry_mode_id: None,
+            verification_recovery_run_target: None,
+            verification_recovery_context_read: None,
+            patch_apply_recovery_source: None,
+            patch_apply_recovery_goal: None,
+            patch_apply_recovery_mode_id: None,
+            patch_apply_recovery_run_target: None,
+            patch_apply_recovery_apply_target: None,
+            verification_recovery_apply_target: None,
+            verification_recovery_retry_run_target: None,
+            llm_provider_failure_retry_run_target: None,
+            parent_join_run_target: None,
+            modepack_registry_update_selection_target: None,
+            modepack_selected_candidate_fetch_target: Some(target.clone()),
+            modepack_selected_candidate_provenance_verification_target: None,
+            modepack_selected_candidate_approval_target: None,
+            modepack_selected_approved_candidate_replacement_target: None,
+            modepack_selected_active_rollback_target: None,
+        };
+        let request_fingerprint =
+            headless_modepack_selected_candidate_fetch_request_fingerprint(&replay_params)
+                .expect("request fingerprint");
+        store
+            .write_headless_modepack_selected_candidate_fetch_checkpoint(
+                &HeadlessModePackSelectedCandidateFetchCheckpoint {
+                    continuation_id: "run.session.2".to_string(),
+                    decision_id: "decision_fetch".to_string(),
+                    request_fingerprint: Some(request_fingerprint),
+                    expected_progress_fingerprint: replay_params
+                        .expected_progress_fingerprint
+                        .clone(),
+                    expected_aggregate_sequence: replay_params.expected_aggregate_sequence,
+                    current_progress_fingerprint: replay_params
+                        .expected_progress_fingerprint
+                        .clone(),
+                    current_aggregate_sequence: replay_params.expected_aggregate_sequence,
+                    post_progress_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    post_aggregate_sequence: 2,
+                    selection_id: target.selection_id.clone(),
+                    selection_event_id: target.selection_event_id.clone(),
+                    result: ModePackFetchCandidateResult {
+                        fetched: true,
+                        replayed: false,
+                        candidate: ModePackCandidateSummary {
+                            candidate_id: "candidate_1".to_string(),
+                            source_kind: "remote_https_candidate".to_string(),
+                            source_url_host: "example.com".to_string(),
+                            source_url_fingerprint: target
+                                .expected_candidate_url_fingerprint
+                                .clone(),
+                            dns_binding: ModePackDnsBindingSummary {
+                                resolution_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                                pinned_address_fingerprint: format!("sha256:{}", "d".repeat(64)),
+                                resolved_address_count: 1,
+                                pinned_address_family: "ipv4".to_string(),
+                            },
+                            content_sha256: target.expected_candidate_content_sha256.clone(),
+                            byte_count: 128,
+                            modepack_name: "remote-agentmodes".to_string(),
+                            schema_version: 1,
+                            mode_count: 1,
+                            mode_ids: vec!["orchestrator".to_string()],
+                            compiled_policy_fingerprint: target
+                                .expected_candidate_compiled_policy_fingerprint
+                                .clone(),
+                            cached_at: "2026-08-17T00:00:00Z".to_string(),
+                            cache_event_id: "event_cache".to_string(),
+                        },
+                        next_action: "verify_selected_modepack_candidate_provenance_explicitly"
+                            .to_string(),
+                    },
+                },
+            )
+            .expect("write fetch checkpoint");
+        let checkpoint = HeadlessRunSessionCheckpoint {
+            session_id: "session".to_string(),
+            advance_id: "advance.2".to_string(),
+            session_sequence: 2,
+            result: HeadlessRunAdvanceResult {
+                status: HeadlessContinueOnceStatus::TaskExecuted,
+                session_id: "session".to_string(),
+                advance_id: "advance.2".to_string(),
+                session_sequence: 2,
+                replayed: false,
+                start_progress: HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: replay_params.expected_progress_fingerprint.clone(),
+                    aggregate_sequence: replay_params.expected_aggregate_sequence,
+                },
+                post_progress: Some(HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    aggregate_sequence: 2,
+                }),
+                max_steps: 1,
+                step_count: 1,
+                executed_count: 1,
+                replayed_count: 0,
+                stop_reason: "explicit_modepack_selected_candidate_fetch_boundary".to_string(),
+                checkpoint_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                terminal_completion_evidence: None,
+                next_route: Some(HeadlessContinueRoute {
+                    kind: HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
+                    reason: "Fetched candidate.".to_string(),
+                    task_id: None,
+                    run_id: None,
+                    proposal_id: None,
+                    apply_id: None,
+                    failure_fingerprint: None,
+                    apply_fingerprint: None,
+                    progress_fingerprint: Some(format!("sha256:{}", "b".repeat(64))),
+                    aggregate_sequence: Some(2),
+                    next_action: "verify_selected_modepack_candidate_provenance_explicitly"
+                        .to_string(),
+                }),
+                steps: vec![HeadlessContinueStepResult {
+                    step_index: 1,
+                    status: HeadlessContinueOnceStatus::TaskExecuted,
+                    decision_id: Some("decision_fetch".to_string()),
+                    continuation_id: Some("run.session.2".to_string()),
+                    selected_task_id: None,
+                    selected_run_id: None,
+                    candidate_count: 1,
+                    current_progress_fingerprint: replay_params.expected_progress_fingerprint.clone(),
+                    current_aggregate_sequence: replay_params.expected_aggregate_sequence,
+                    post_progress_fingerprint: Some(format!("sha256:{}", "b".repeat(64))),
+                    post_aggregate_sequence: Some(2),
+                    replayed: false,
+                    context_budget: None,
+                    terminal_completion_evidence: None,
+                    next_route: None,
+                    next_action: "verify_selected_modepack_candidate_provenance_explicitly"
+                        .to_string(),
+                }],
+                next_action: "verify_selected_modepack_candidate_provenance_explicitly".to_string(),
+            },
+        };
+
+        validate_headless_run_selected_candidate_fetch_replay_target(
+            &store,
+            &checkpoint,
+            Some(&target),
+        )
+        .expect("matching target");
+        let missing =
+            validate_headless_run_selected_candidate_fetch_replay_target(&store, &checkpoint, None)
+                .expect_err("missing target rejected");
+        assert!(missing.contains("required to replay"));
+        let mut mismatched = target;
+        mismatched.expected_signer_fingerprint = format!("sha256:{}", "9".repeat(64));
+        let mismatch = validate_headless_run_selected_candidate_fetch_replay_target(
+            &store,
+            &checkpoint,
+            Some(&mismatched),
+        )
+        .expect_err("mismatched target rejected");
+        assert!(mismatch.contains("request identity mismatch"));
     }
 
     #[test]
