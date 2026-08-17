@@ -1869,6 +1869,9 @@ describe('protocol validation', () => {
       expected_aggregate_sequence: taskListProgressOverview.aggregate_sequence,
       modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
+      modepack_selected_candidate_provenance_verification_target: modePackSelectedCandidateProvenanceVerificationTarget,
+      modepack_selected_candidate_approval_target: modePackSelectedCandidateApprovalTarget,
+      modepack_selected_approved_candidate_replacement_target: modePackSelectedApprovedCandidateReplacementTarget,
     };
     const terminalCompletionEvidence = {
       final_state: 'Completed',
@@ -1918,6 +1921,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, max_steps: 4 })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_registry_update_selection_target: { ...modePackRegistryUpdateSelectionTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_modepack_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, raw_provenance_statement_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_selected_candidate_approval_target: { ...modePackSelectedCandidateApprovalTarget, raw_provenance_statement_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, raw_modepack_json: '{}' } })).toBe(false);
     expect(isHeadlessRunAdvanceResult(headlessRunAdvanceResult)).toBe(true);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, checkpoint_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, step_count: 2 })).toBe(false);
@@ -1936,6 +1942,9 @@ describe('protocol validation', () => {
       expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
       modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
+      modepack_selected_candidate_provenance_verification_target: modePackSelectedCandidateProvenanceVerificationTarget,
+      modepack_selected_candidate_approval_target: modePackSelectedCandidateApprovalTarget,
+      modepack_selected_approved_candidate_replacement_target: modePackSelectedApprovedCandidateReplacementTarget,
     };
     const headlessRunDriveResult = {
       status: 'task_executed',
@@ -1997,6 +2006,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_registry_update_selection_target: { ...modePackRegistryUpdateSelectionTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_candidate_fetch_target: { ...modePackSelectedCandidateFetchTarget, raw_registry_manifest_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_candidate_provenance_verification_target: { ...modePackSelectedCandidateProvenanceVerificationTarget, raw_provenance_statement_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_candidate_approval_target: { ...modePackSelectedCandidateApprovalTarget, raw_provenance_statement_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, raw_modepack_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);

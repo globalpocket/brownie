@@ -1091,6 +1091,15 @@ pub struct HeadlessRunAdvanceParams {
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_provenance_verification_target:
+        Option<ModePackSelectedCandidateProvenanceVerificationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_approval_target:
+        Option<ModePackSelectedCandidateApprovalTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_approved_candidate_replacement_target:
+        Option<ModePackSelectedApprovedCandidateReplacementTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1115,6 +1124,15 @@ pub struct HeadlessRunDriveParams {
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_provenance_verification_target:
+        Option<ModePackSelectedCandidateProvenanceVerificationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_candidate_approval_target:
+        Option<ModePackSelectedCandidateApprovalTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modepack_selected_approved_candidate_replacement_target:
+        Option<ModePackSelectedApprovedCandidateReplacementTarget>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
