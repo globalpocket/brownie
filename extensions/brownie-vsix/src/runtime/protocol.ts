@@ -584,6 +584,7 @@ export interface HeadlessRunAdvanceParams {
   context_budget?: TaskRunContextBudget | null;
   expected_progress_fingerprint?: string | null;
   expected_aggregate_sequence?: number | null;
+  modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
 }
 
@@ -597,6 +598,7 @@ export interface HeadlessRunDriveParams {
   context_budget?: TaskRunContextBudget | null;
   authorize_completion_finalization?: boolean | null;
   expected_completion_closure_fingerprint?: string | null;
+  modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
 }
 
@@ -5619,7 +5621,7 @@ function isModePackSelectedActiveRollbackTarget(value: unknown): value is ModePa
 export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRunAdvanceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'context_budget', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_selected_candidate_fetch_target']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'context_budget', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.advance_id === undefined || value.advance_id === null || isHeadlessRunId(value.advance_id)) &&
@@ -5629,6 +5631,7 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.expected_progress_fingerprint === undefined || value.expected_progress_fingerprint === null || (typeof value.expected_progress_fingerprint === 'string' && isSha256Fingerprint(value.expected_progress_fingerprint))) &&
     (value.expected_aggregate_sequence === undefined || value.expected_aggregate_sequence === null || isNonNegativeInteger(value.expected_aggregate_sequence)) &&
+    (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target))
   );
 }
@@ -5636,7 +5639,7 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
 export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDriveParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_selected_candidate_fetch_target']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
@@ -5647,6 +5650,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.authorize_completion_finalization === undefined || value.authorize_completion_finalization === null || typeof value.authorize_completion_finalization === 'boolean') &&
     (value.expected_completion_closure_fingerprint === undefined || value.expected_completion_closure_fingerprint === null || (typeof value.expected_completion_closure_fingerprint === 'string' && isSha256Fingerprint(value.expected_completion_closure_fingerprint))) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
+    (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target))
   );
 }

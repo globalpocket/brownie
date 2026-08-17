@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "phase": "M49.2",
+  "current_milestone": "m49_headless_mode_pack_update_drive",
+  "milestone": "M49 Headless Mode Pack Update Drive",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "headless_modepack_route_bootstrap_integrity",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "headless_autonomous_development with supporting mode_pack_runtime, runtime_permission_enforcement, and persistent_structured_ledger.",
+      "new_capability": "Public run-control can bootstrap registry selection into selected-candidate fetch and fail closed on missing subordinate routed evidence.",
+      "why_existing_functionality_is_insufficient": "Continuation-only registry selection and M49.1 fetch-route execution do not prove public run-control bootstrap or missing-evidence replay rejection.",
+      "product_gap_if_skipped": "Scheduled callers keep owning route glue and corrupted routed fetch evidence can still appear replayable.",
+      "non_duplicative": "Distinct from M48.1 continuation selection and M49.1 already-routed selected-candidate fetch execution.",
+      "no_new_rpc": "No new RPC is needed; existing headless.run.* surfaces are extended with bounded target data.",
+      "no_new_summary": "No new summary surface is needed.",
+      "runtime_behavior_change": "Run-control validates and forwards registry-selection targets and rejects missing subordinate routed evidence.",
+      "headless_autonomous_contribution": "Keeps Mode Pack route sequencing under Rust-owned durable session authority.",
+      "milestone_progress": "Provides the route-bootstrap and replay-integrity base for the remaining M49 update drive."
+    }
+  },
+  "exit_criteria": [
+    "public run-control registry selection target reaches existing continuation authority",
+    "selected-candidate fetch replay fails closed when subordinate evidence is missing",
+    "no wrapper-only/report-only/readiness-only output is added"
+  ]
+}

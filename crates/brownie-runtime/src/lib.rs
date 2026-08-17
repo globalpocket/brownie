@@ -9883,6 +9883,16 @@ fn headless_continue_modepack_registry_update_selection(
     progress_overview: &TaskListProgressOverview,
     params: &HeadlessContinueOnceParams,
 ) -> Result<HeadlessContinueOnceResult, String> {
+    #[cfg(test)]
+    if headless_run_modepack_test_fetch_queue_is_configured() {
+        return headless_continue_modepack_registry_update_selection_with_resolver(
+            store,
+            progress_overview,
+            params,
+            test_modepack_dns_resolver,
+            fetch_headless_run_modepack_test_response,
+        );
+    }
     headless_continue_modepack_registry_update_selection_with_resolver(
         store,
         progress_overview,
@@ -10172,6 +10182,16 @@ fn headless_continue_modepack_selected_candidate_fetch(
     progress_overview: &TaskListProgressOverview,
     params: &HeadlessContinueOnceParams,
 ) -> Result<HeadlessContinueOnceResult, String> {
+    #[cfg(test)]
+    if headless_run_modepack_test_fetch_queue_is_configured() {
+        return headless_continue_modepack_selected_candidate_fetch_with_resolver(
+            store,
+            progress_overview,
+            params,
+            test_modepack_dns_resolver,
+            fetch_headless_run_modepack_test_response,
+        );
+    }
     headless_continue_modepack_selected_candidate_fetch_with_resolver(
         store,
         progress_overview,
@@ -12102,6 +12122,13 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: max_steps must be between 1 and 3",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_registry_update_selection_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.modepack_selected_candidate_fetch_target.is_some() && max_steps > 1 {
         return error_response(
             id,
@@ -12109,10 +12136,21 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some()
+        && params.modepack_selected_candidate_fetch_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: only one explicit modepack run-control target may be supplied",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
-    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    if (params.modepack_registry_update_selection_target.is_some()
+        || params.modepack_selected_candidate_fetch_target.is_some())
+        && params.context_budget.is_some()
     {
         return error_response(
             id,
@@ -12160,6 +12198,13 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             ) {
                 return error_response(id, -32602, &message);
             }
+            if let Err(message) = validate_headless_run_registry_selection_replay_target(
+                &store,
+                checkpoint,
+                params.modepack_registry_update_selection_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
             let mut result = checkpoint.result.clone();
             result.replayed = true;
             return result_response(id, json!(result));
@@ -12186,6 +12231,15 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 id,
                 -32602,
                 "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+            );
+        }
+        if params.modepack_registry_update_selection_target.is_some()
+            && !headless_run_checkpoint_is_progress_overview_boundary(checkpoint)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
             );
         }
     } else if params.expected_session_sequence != 1 {
@@ -12257,6 +12311,9 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
     });
     if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
         continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
+    }
+    if let Some(target) = params.modepack_registry_update_selection_target.clone() {
+        continue_params["modepack_registry_update_selection_target"] = json!(target);
     }
     let response = handle_headless_continue_once(id.clone(), Some(continue_params));
     let Some(result_value) = response.result else {
@@ -12406,10 +12463,21 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
     let Some(continuation_id) = continuation_id else {
         return Ok(());
     };
+    let routed_fetch_replay = target.is_some()
+        || matches!(
+            headless_run_checkpoint_next_route_kind(checkpoint),
+            Some(HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly)
+        );
     let fetch_checkpoint = store
         .read_headless_modepack_selected_candidate_fetch_checkpoint(continuation_id)
         .map_err(|error| error.to_string())?;
     let Some(fetch_checkpoint) = fetch_checkpoint else {
+        if routed_fetch_replay {
+            return Err(
+                "invalid params: routed selected-candidate fetch replay checkpoint is missing subordinate fetch evidence"
+                    .to_string(),
+            );
+        }
         return Ok(());
     };
     let Some(target) = target.cloned() else {
@@ -12459,6 +12527,113 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
     validate_headless_modepack_selected_candidate_fetch_replay_request(
         &replay_params,
         &fetch_checkpoint,
+    )
+}
+
+fn validate_headless_run_registry_selection_replay_target(
+    store: &BrownieStore,
+    checkpoint: &HeadlessRunSessionCheckpoint,
+    target: Option<&ModePackRegistryUpdateSelectionTarget>,
+) -> Result<(), String> {
+    let continuation_id = checkpoint
+        .result
+        .steps
+        .iter()
+        .find_map(|step| step.continuation_id.as_deref());
+    let Some(continuation_id) = continuation_id else {
+        return Ok(());
+    };
+    let routed_selection_replay = target.is_some()
+        || matches!(
+            headless_run_checkpoint_next_route_kind(checkpoint),
+            Some(HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly)
+        );
+    let selection_checkpoint = store
+        .read_headless_modepack_registry_update_selection_checkpoint(continuation_id)
+        .map_err(|error| error.to_string())?;
+    let Some(selection_checkpoint) = selection_checkpoint else {
+        if routed_selection_replay {
+            return Err(
+                "invalid params: routed registry selection replay checkpoint is missing subordinate selection evidence"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    };
+    let Some(target) = target.cloned() else {
+        return Err(
+            "invalid params: modepack_registry_update_selection_target is required to replay a routed registry selection advance"
+                .to_string(),
+        );
+    };
+    let replay_params = HeadlessContinueOnceParams {
+        authorize: true,
+        expected_progress_fingerprint: checkpoint
+            .result
+            .start_progress
+            .progress_fingerprint
+            .clone(),
+        expected_aggregate_sequence: checkpoint.result.start_progress.aggregate_sequence,
+        continuation_id: Some(continuation_id.to_string()),
+        max_steps: Some(checkpoint.result.max_steps),
+        context_budget: None,
+        verification_recovery_source: None,
+        verification_recovery_goal: None,
+        verification_recovery_mode_id: None,
+        verification_recovery_retry_source: None,
+        verification_recovery_retry_goal: None,
+        verification_recovery_retry_mode_id: None,
+        llm_provider_failure_retry_source: None,
+        llm_provider_failure_retry_goal: None,
+        llm_provider_failure_retry_mode_id: None,
+        verification_recovery_run_target: None,
+        verification_recovery_context_read: None,
+        patch_apply_recovery_source: None,
+        patch_apply_recovery_goal: None,
+        patch_apply_recovery_mode_id: None,
+        patch_apply_recovery_run_target: None,
+        patch_apply_recovery_apply_target: None,
+        verification_recovery_apply_target: None,
+        verification_recovery_retry_run_target: None,
+        llm_provider_failure_retry_run_target: None,
+        parent_join_run_target: None,
+        modepack_registry_update_selection_target: Some(target),
+        modepack_selected_candidate_fetch_target: None,
+        modepack_selected_candidate_provenance_verification_target: None,
+        modepack_selected_candidate_approval_target: None,
+        modepack_selected_approved_candidate_replacement_target: None,
+        modepack_selected_active_rollback_target: None,
+    };
+    validate_headless_modepack_registry_update_selection_replay_request(
+        &replay_params,
+        &selection_checkpoint,
+    )
+}
+
+fn headless_run_checkpoint_next_route_kind(
+    checkpoint: &HeadlessRunSessionCheckpoint,
+) -> Option<&HeadlessContinueRouteKind> {
+    checkpoint
+        .result
+        .next_route
+        .as_ref()
+        .map(|route| &route.kind)
+        .or_else(|| {
+            checkpoint
+                .result
+                .steps
+                .iter()
+                .find_map(|step| step.next_route.as_ref().map(|route| &route.kind))
+        })
+}
+
+fn headless_run_checkpoint_is_progress_overview_boundary(
+    checkpoint: &HeadlessRunSessionCheckpoint,
+) -> bool {
+    matches!(
+        headless_run_checkpoint_next_route_kind(checkpoint),
+        None | Some(HeadlessContinueRouteKind::InspectProgressOverview)
+            | Some(HeadlessContinueRouteKind::RefreshProgressOverview)
     )
 }
 
@@ -12513,6 +12688,13 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: max_steps_per_advance must be between 1 and 3",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_registry_update_selection_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
     if params.modepack_selected_candidate_fetch_target.is_some() && max_steps_per_advance > 1 {
         return error_response(
             id,
@@ -12520,10 +12702,21 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: modepack_selected_candidate_fetch_target cannot be combined with max_steps_per_advance greater than 1",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some()
+        && params.modepack_selected_candidate_fetch_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: only one explicit modepack run-control target may be supplied",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
-    if params.modepack_selected_candidate_fetch_target.is_some() && params.context_budget.is_some()
+    if (params.modepack_registry_update_selection_target.is_some()
+        || params.modepack_selected_candidate_fetch_target.is_some())
+        && params.context_budget.is_some()
     {
         return error_response(
             id,
@@ -12579,6 +12772,13 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             ) {
                 return error_response(id, -32602, &message);
             }
+            if let Err(message) = validate_headless_run_registry_selection_replay_target(
+                &store,
+                &replay_checkpoint,
+                params.modepack_registry_update_selection_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
         }
         let mut result = checkpoint.result;
         result.replayed = true;
@@ -12631,6 +12831,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
         );
     }
+    if params.modepack_registry_update_selection_target.is_some()
+        && !headless_run_checkpoint_is_progress_overview_boundary(&start_checkpoint)
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
+        );
+    }
     let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
         return error_response(
             id,
@@ -12658,6 +12867,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         if index == 0 {
             if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
                 advance_params["modepack_selected_candidate_fetch_target"] = json!(target);
+            }
+            if let Some(target) = params.modepack_registry_update_selection_target.clone() {
+                advance_params["modepack_registry_update_selection_target"] = json!(target);
             }
         }
         let response = handle_headless_run_advance(id.clone(), Some(advance_params));
@@ -32243,6 +32455,55 @@ struct RemoteModePackFetchBinding {
     summary: ModePackDnsBindingSummary,
 }
 
+#[cfg(test)]
+static HEADLESS_RUN_MODEPACK_TEST_FETCH_QUEUE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::VecDeque<RemoteModePackFetchResponse>>,
+> = std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn set_headless_run_modepack_test_fetch_responses(responses: Vec<RemoteModePackFetchResponse>) {
+    let queue = HEADLESS_RUN_MODEPACK_TEST_FETCH_QUEUE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let mut queue = queue.lock().expect("headless run modepack fetch queue");
+    queue.clear();
+    queue.extend(responses);
+}
+
+#[cfg(test)]
+fn clear_headless_run_modepack_test_fetch_responses() {
+    if let Some(queue) = HEADLESS_RUN_MODEPACK_TEST_FETCH_QUEUE.get() {
+        queue
+            .lock()
+            .expect("headless run modepack fetch queue")
+            .clear();
+    }
+}
+
+#[cfg(test)]
+fn headless_run_modepack_test_fetch_queue_is_configured() -> bool {
+    HEADLESS_RUN_MODEPACK_TEST_FETCH_QUEUE
+        .get()
+        .map(|queue| {
+            !queue
+                .lock()
+                .expect("headless run modepack fetch queue")
+                .is_empty()
+        })
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+fn fetch_headless_run_modepack_test_response(
+    _binding: &RemoteModePackFetchBinding,
+) -> Result<RemoteModePackFetchResponse, String> {
+    HEADLESS_RUN_MODEPACK_TEST_FETCH_QUEUE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
+        .lock()
+        .expect("headless run modepack fetch queue")
+        .pop_front()
+        .ok_or_else(|| "headless run modepack test fetch queue is empty".to_string())
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModePackRegistryManifest {
@@ -48617,6 +48878,16 @@ mod tests {
                 next_action: "verify_selected_modepack_candidate_provenance_explicitly".to_string(),
             },
         };
+
+        let missing_temp = tempfile::tempdir().expect("missing tempdir");
+        let missing_store = BrownieStore::new(missing_temp.path());
+        let missing_checkpoint = validate_headless_run_selected_candidate_fetch_replay_target(
+            &missing_store,
+            &checkpoint,
+            Some(&target),
+        )
+        .expect_err("missing subordinate checkpoint rejected");
+        assert!(missing_checkpoint.contains("missing subordinate fetch evidence"));
 
         validate_headless_run_selected_candidate_fetch_replay_target(
             &store,
@@ -69893,6 +70164,277 @@ mod tests {
         assert!(!cache_ledger.contains("93.184.216.34"));
         assert!(!cache_ledger.contains("raw_ip_address"));
 
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_advance_bootstraps_modepack_registry_selection_into_fetch_route() {
+        use base64::{engine::general_purpose, Engine as _};
+        use brownie_protocol::{
+            ModePackRegistryUpdateSelectionTarget, ModePackSelectedCandidateFetchTarget,
+        };
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        let current_activation_fingerprint = format!("sha256:{}", "1".repeat(64));
+        let body = r#"{
+          "name": "remote-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "remote-selected-reviewer",
+              "display_name": "Remote Selected Reviewer",
+              "role_definition": "Review local changes without writing files.",
+              "permissions": {
+                "read_only": true,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false
+              },
+              "completion_rules": ["Stop after bounded findings."]
+            }
+          ]
+        }"#;
+        let candidate_content_sha256 = format!("sha256:{}", hex_sha256(body.as_bytes()));
+        let candidate_snapshot = load_modepack_from_str(body, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
+            .expect("candidate snapshot");
+        let candidate_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+            &candidate_snapshot.name,
+            candidate_snapshot.schema_version,
+            &candidate_snapshot
+                .modes
+                .iter()
+                .map(|policy| ActiveModePackPolicySnapshot {
+                    mode_id: policy.mode_id.clone(),
+                    display_name: policy.display_name.clone(),
+                    role_definition: policy.role_definition.clone(),
+                    permissions: mode_permissions_payload(policy),
+                    allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                    completion_rules: policy.completion_rules.clone(),
+                    policy_fingerprint: external_modepack_policy_fingerprint(
+                        &candidate_snapshot.name,
+                        candidate_snapshot.schema_version,
+                        policy,
+                    ),
+                })
+                .collect::<Vec<_>>(),
+        );
+        let signing_key = SigningKey::from_bytes(&[7u8; 32]);
+        let public_key_bytes = signing_key.verifying_key().to_bytes();
+        let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+        let candidate_url = validate_modepack_fetch_url("https://example.com/modepack.json", false)
+            .expect("candidate url");
+        let candidate_url_fingerprint =
+            format!("sha256:{}", hex_sha256(candidate_url.as_str().as_bytes()));
+        let provenance_statement_url =
+            validate_modepack_fetch_url("https://example.com/provenance.json", false)
+                .expect("provenance url");
+        let provenance_statement_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(provenance_statement_url.as_str().as_bytes())
+        );
+        let provenance_statement = json!({
+            "content_sha256": candidate_content_sha256,
+            "compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "source_url_fingerprint": candidate_url_fingerprint,
+            "schema_version": candidate_snapshot.schema_version,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "registry.example.com",
+            "mode_ids": ["remote-selected-reviewer"]
+        })
+        .to_string();
+        let provenance_statement_sha256 =
+            format!("sha256:{}", hex_sha256(provenance_statement.as_bytes()));
+        let trusted = trust_modepack_signer(
+            &store,
+            &ModePackTrustSignerParams {
+                authorize_trust: true,
+                signer_fingerprint: signer_fingerprint.clone(),
+                expires_at: None,
+            },
+        )
+        .expect("trusted signer");
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: "modepack_activation_current".to_string(),
+                    activation_fingerprint: current_activation_fingerprint.clone(),
+                    modepack_name: "remote-agentmodes".to_string(),
+                    schema_version: 1,
+                    source_kind: "remote_https_candidate".to_string(),
+                    source_path: ".brownie/modepack-active/current.json".to_string(),
+                    mode_count: 1,
+                    mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
+                    activated_at: "2026-08-13T00:00:00Z".to_string(),
+                    activation_event_id: String::new(),
+                },
+                policies: Vec::new(),
+            })
+            .expect("active snapshot");
+        let manifest = format!(
+            r#"{{
+              "schema_version": 1,
+              "entries": [
+                {{
+                  "modepack_name": "remote-agentmodes",
+                  "source_kind": "remote_https_candidate",
+                  "candidate_url": "https://example.com/modepack.json",
+                  "candidate_content_sha256": "{candidate_content_sha256}",
+                  "candidate_compiled_policy_fingerprint": "{candidate_policy_fingerprint}",
+                  "provenance_statement_url": "https://example.com/provenance.json",
+                  "provenance_statement_sha256": "{provenance_statement_sha256}",
+                  "signer_fingerprint": "{signer_fingerprint}"
+                }}
+              ]
+            }}"#
+        );
+        let registry_url = "https://registry.example.com/modepacks.json";
+        let registry_manifest_sha256 = format!("sha256:{}", hex_sha256(manifest.as_bytes()));
+        let registry_binding =
+            create_modepack_fetch_binding_with(registry_url, test_modepack_dns_resolver)
+                .expect("registry binding");
+        let registry_url_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(registry_binding.url.as_str().as_bytes())
+        );
+        let registry_trust_statement = json!({
+            "registry_url_fingerprint": registry_url_fingerprint,
+            "registry_dns_resolution_fingerprint": registry_binding.summary.resolution_fingerprint,
+            "registry_pinned_address_fingerprint": registry_binding.summary.pinned_address_fingerprint,
+            "registry_manifest_sha256": registry_manifest_sha256,
+            "current_modepack_name": "remote-agentmodes",
+            "current_source_kind": "remote_https_candidate",
+            "candidate_url_fingerprint": candidate_url_fingerprint,
+            "candidate_content_sha256": candidate_content_sha256,
+            "candidate_compiled_policy_fingerprint": candidate_policy_fingerprint,
+            "provenance_statement_url_fingerprint": provenance_statement_url_fingerprint,
+            "provenance_statement_sha256": provenance_statement_sha256,
+            "signer_fingerprint": signer_fingerprint,
+            "signer_identity": "registry.example.com"
+        })
+        .to_string();
+        let registry_signature = signing_key.sign(registry_trust_statement.as_bytes());
+        let progress = task_list_progress_overview(&store, &[]).expect("progress");
+        let selection_target = ModePackRegistryUpdateSelectionTarget {
+            authorize_modepack_registry_update_selection: true,
+            authorize_registry_trust: true,
+            registry_url: registry_url.to_string(),
+            expected_registry_manifest_sha256: registry_manifest_sha256.clone(),
+            expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
+            expected_registry_provenance_statement_sha256: format!(
+                "sha256:{}",
+                hex_sha256(registry_trust_statement.as_bytes())
+            ),
+            expected_registry_signer_fingerprint: signer_fingerprint.clone(),
+            expected_registry_trusted_signer_trust_id: trusted.trusted_signer.trust_id.clone(),
+            expected_registry_trusted_signer_event_id: trusted
+                .trusted_signer
+                .trust_event_id
+                .clone(),
+            registry_provenance_statement_json: registry_trust_statement,
+            registry_provenance_signature_base64: general_purpose::STANDARD
+                .encode(registry_signature.to_bytes()),
+            registry_provenance_public_key_base64: general_purpose::STANDARD
+                .encode(public_key_bytes),
+        };
+        set_headless_run_modepack_test_fetch_responses(vec![RemoteModePackFetchResponse {
+            status: 200,
+            content_type: Some("application/json".to_string()),
+            body: manifest.as_bytes().to_vec(),
+        }]);
+        let selection_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.advance",
+            "params": {
+                "authorize": true,
+                "session_id": "m49.route",
+                "advance_id": "m49.route.selection",
+                "expected_session_sequence": 1,
+                "expected_progress_fingerprint": progress.source_fingerprint,
+                "expected_aggregate_sequence": progress.aggregate_sequence,
+                "max_steps": 1,
+                "modepack_registry_update_selection_target": selection_target,
+            }
+        });
+        let selection_response = parse_line(&selection_request.to_string());
+        let selection_advance = selection_response
+            .result
+            .unwrap_or_else(|| panic!("selection advance: {:?}", selection_response.error));
+        assert_eq!(
+            selection_advance["next_route"]["kind"],
+            "fetch_selected_mode_pack_candidate_explicitly"
+        );
+        let selection_replay = parse_line(&selection_request.to_string())
+            .result
+            .expect("selection replay");
+        assert_eq!(selection_replay["replayed"], true);
+        assert_eq!(
+            selection_replay["checkpoint_fingerprint"],
+            selection_advance["checkpoint_fingerprint"]
+        );
+        let selection_checkpoint = store
+            .read_headless_modepack_registry_update_selection_checkpoint("run.m49.route.1")
+            .expect("selection checkpoint read")
+            .expect("selection checkpoint");
+        let selected = selection_checkpoint.result.selection.clone();
+        let fetch_target = ModePackSelectedCandidateFetchTarget {
+            authorize_selected_candidate_fetch: true,
+            selection_id: selected.selection_id,
+            selection_event_id: selected.selection_event_id,
+            expected_registry_manifest_sha256: registry_manifest_sha256,
+            expected_candidate_url_fingerprint: selected.candidate_url_fingerprint,
+            expected_candidate_content_sha256: candidate_content_sha256,
+            expected_candidate_compiled_policy_fingerprint: candidate_policy_fingerprint,
+            expected_provenance_statement_url_fingerprint: selected
+                .provenance_statement_url_fingerprint,
+            expected_provenance_statement_sha256: provenance_statement_sha256,
+            expected_signer_fingerprint: signer_fingerprint,
+            expected_current_activation_fingerprint: current_activation_fingerprint,
+        };
+        set_headless_run_modepack_test_fetch_responses(vec![RemoteModePackFetchResponse {
+            status: 200,
+            content_type: Some("application/json".to_string()),
+            body: body.as_bytes().to_vec(),
+        }]);
+        let fetch_request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.run.advance",
+            "params": {
+                "authorize": true,
+                "session_id": "m49.route",
+                "advance_id": "m49.route.fetch",
+                "expected_session_sequence": 2,
+                "max_steps": 1,
+                "modepack_selected_candidate_fetch_target": fetch_target,
+            }
+        });
+        let fetch_response = parse_line(&fetch_request.to_string());
+        let fetch_advance = fetch_response
+            .result
+            .unwrap_or_else(|| panic!("fetch advance: {:?}", fetch_response.error));
+        assert_eq!(
+            fetch_advance["next_route"]["kind"],
+            "verify_selected_mode_pack_candidate_provenance_explicitly"
+        );
+        let fetch_replay = parse_line(&fetch_request.to_string())
+            .result
+            .expect("fetch replay");
+        assert_eq!(fetch_replay["replayed"], true);
+        assert_eq!(
+            fetch_replay["checkpoint_fingerprint"],
+            fetch_advance["checkpoint_fingerprint"]
+        );
+
+        clear_headless_run_modepack_test_fetch_responses();
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
