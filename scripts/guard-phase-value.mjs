@@ -24,6 +24,9 @@ const requiredValueGateAnswerIds = [
 const guardEngineFiles = [
   '.github/workflows/ci.yml',
   'package.json',
+  'extensions/brownie-vsix/package.json',
+  'scripts/guard-control-plane-authority.mjs',
+  'scripts/guard-control-plane-authority.test.mjs',
   'scripts/guard-diagnostics-api.mjs',
   'scripts/guard-phase-value.mjs',
   'scripts/guard-phase-value.test.mjs',

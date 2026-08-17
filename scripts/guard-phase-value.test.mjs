@@ -100,6 +100,64 @@ test('requires explicit review metadata when guard engine files change', () => {
   });
 });
 
+test('treats control-plane authority guard changes as guard engine changes', () => {
+  withTempRepo((repoRoot) => {
+    writeManifest(repoRoot, validManifest());
+    const missingReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['scripts/guard-control-plane-authority.mjs']
+    });
+    assert(missingReview.errors.some((error) => error.includes('guard_engine_change_review.required')));
+
+    writeManifest(
+      repoRoot,
+      validManifest({
+        guard_engine_change_review: {
+          required: true,
+          strict_review_required: true,
+          no_self_approval: true,
+          review_intent: 'Exercise stricter review for control-plane authority guard changes.',
+          changed_files: ['scripts/guard-control-plane-authority.mjs']
+        }
+      })
+    );
+    const withReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['scripts/guard-control-plane-authority.mjs']
+    });
+    assert.deepEqual(withReview.errors, []);
+  });
+});
+
+test('treats VSIX check script changes as guard engine changes', () => {
+  withTempRepo((repoRoot) => {
+    writeManifest(repoRoot, validManifest());
+    const missingReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['extensions/brownie-vsix/package.json']
+    });
+    assert(missingReview.errors.some((error) => error.includes('guard_engine_change_review.required')));
+
+    writeManifest(
+      repoRoot,
+      validManifest({
+        guard_engine_change_review: {
+          required: true,
+          strict_review_required: true,
+          no_self_approval: true,
+          review_intent: 'Exercise stricter review for VSIX guard script wiring changes.',
+          changed_files: ['extensions/brownie-vsix/package.json']
+        }
+      })
+    );
+    const withReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['extensions/brownie-vsix/package.json']
+    });
+    assert.deepEqual(withReview.errors, []);
+  });
+});
+
 test('detects guard engine changes from GitHub Actions shallow pull request checkouts', () => {
   const calls = [];
   const execGit = (_file, args) => {

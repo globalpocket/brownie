@@ -1,0 +1,34 @@
+{
+  "schema_version": 1,
+  "phase": "R7.1",
+  "current_milestone": "r7_control_plane_authority_and_completion_gates",
+  "milestone": "R7 Control-plane Authority and Completion Gates",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "control_plane_source_of_truth_unification",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "headless_autonomous_development with support for runtime_permission_enforcement at the controller boundary.",
+      "new_capability": "CI rejects stale repo-internal phase-loop authority claims before they can steer scheduled planning or review.",
+      "why_existing_functionality_is_insufficient": "Existing guards do not scan `.brownie-control` or `.codex/tasks` for contradictory source-of-truth declarations.",
+      "product_gap_if_skipped": "Autonomous runs can still regress to stale Phase 3.4 state or old hard-stop rules after context resets.",
+      "non_duplicative": "Distinct from M49.1-M49.3 runtime Mode Pack route-drive work.",
+      "no_new_rpc": "No new RPC is added.",
+      "no_new_summary": "No new summary/report surface is added.",
+      "runtime_behavior_change": "Development-control behavior changes through CI-enforced pointer-only authority; product runtime behavior is unchanged.",
+      "headless_autonomous_contribution": "Scheduled callers can deterministically find live state in the external automation root and trust repo files as non-authoritative pointers.",
+      "milestone_progress": "Removes the first R7 control-plane drift blocker before Product Completion Gate work."
+    }
+  },
+  "exit_criteria": [
+    "repo-local control-plane files are pointer-only",
+    "stale authority fixture tests fail as expected",
+    "CI runs the control-plane authority guard",
+    "no product runtime behavior or new RPC is added"
+  ],
+  "behavior_evidence": [
+    "scripts/guard-control-plane-authority.test.mjs covers stale and accepted repository authority cases",
+    "scripts/guard-control-plane-authority.mjs validates the real repository pointer files"
+  ]
+}
