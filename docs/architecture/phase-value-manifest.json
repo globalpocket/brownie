@@ -1,28 +1,20 @@
 {
   "schema_version": 1,
-  "phase": "M49.3",
-  "current_milestone": "m49_headless_mode_pack_update_drive",
-  "milestone": "M49 Headless Mode Pack Update Drive",
+  "phase": "R7.1",
+  "current_milestone": "r7_control_plane_authority_and_completion_gates",
+  "milestone": "R7 Control-plane Authority and Completion Gates",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "headless_modepack_closed_typed_route_dispatcher_expansion",
-  "forbidden_pattern": "modepack_route_dispatcher_report_readiness_history_digest_verdict_inspection_preview_new_rpc_generic_route_executor_generic_network_executor_auto_full_modepack_update_auto_provenance_auto_approval_auto_replacement_auto_rollback_raw_registry_manifest_raw_candidate_body_raw_provenance_statement_raw_signature_raw_public_key_raw_dns_raw_ip_raw_response_raw_modepack_json_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path_secret_vsix_owned_policy_fabricated_rollback_route_kind",
+  "concrete_capability_transition": "control_plane_source_of_truth_unification",
+  "forbidden_pattern": "control_plane_authority_report_readiness_history_digest_verdict_inspection_preview_new_rpc_runtime_behavior_change_product_runtime_change_vsix_owned_controller_policy_repo_local_phase_state_live_authority_only_source_of_truth_phase_3_4_live_state_permanent_no_auto_merge_hard_stop_external_state_commit_secret_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Lets public headless.run.advance and headless.run.drive carry existing post-fetch Mode Pack route targets through durable session authority."
-    },
-    {
-      "capability": "mode_pack_runtime",
-      "relationship": "Connects provenance verification, approval, and replacement continuation targets to the public Mode Pack update drive path."
+      "relationship": "Keeps scheduled autonomous development decisions bound to the external automation authority instead of stale repo-local phase files."
     },
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Requires explicit target authorization, persisted route agreement, bounded one-step execution, and matching replay identity before side effects."
-    },
-    {
-      "capability": "persistent_structured_ledger",
-      "relationship": "Preserves run-session evidence and fails closed when subordinate route evidence is absent or mismatched during replay."
+      "relationship": "Preserves the separation between controller authority and runtime product authority by preventing VSIX or repo task files from becoming policy owners."
     }
   ],
   "phase_value_gate": {
@@ -70,16 +62,16 @@
       }
     ],
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development directly, with supporting progress for mode_pack_runtime, runtime_permission_enforcement, and persistent_structured_ledger.",
-      "new_capability": "headless.run.advance and headless.run.drive can carry bounded provenance verification, approval, and replacement Mode Pack targets through public run-control after selected-candidate fetch.",
-      "why_existing_functionality_is_insufficient": "headless.continue_once can perform these later continuations, but public run-control only exposed registry-selection and selected-candidate fetch targets, leaving scheduled callers to own later route glue.",
-      "product_gap_if_skipped": "A scheduled caller would still stall after fetch or leave durable session authority to complete verification, approval, and replacement.",
-      "non_duplicative": "Yes. M49.1 fetched an already-routed selected candidate and M49.2 bootstrapped registry selection into fetch with fetch replay integrity; M49.3 expands later route dispatch.",
-      "no_new_rpc": "Yes. Existing headless.run.advance and headless.run.drive are extended with bounded target fields and delegate to existing continuation authority.",
-      "no_new_summary": "Yes. It reuses bounded run-control and continuation evidence rather than adding reports, histories, digests, verdicts, inspections, or readiness summaries.",
-      "runtime_behavior_change": "The Rust runtime validates explicit later Mode Pack run-control targets, forwards them through typed continuation authority, preserves session checkpoints, and fails closed when subordinate routed evidence is missing or mismatched.",
-      "headless_autonomous_contribution": "Scheduled callers can keep the Mode Pack update route chain inside durable Rust-owned run-control beyond selected-candidate fetch.",
-      "milestone_progress": "M49 moves from bootstrap/fetch reachability toward public drive coverage of the existing post-fetch Mode Pack update route boundaries."
+      "strategic_capabilities": "Advances headless_autonomous_development by making scheduled control-plane authority deterministic and guarded across context resets and fresh checkouts.",
+      "new_capability": "CI can now reject stale repo-internal phase-loop authority claims, stale Phase 3.4 live state, and old hard-stop rules before they steer autonomous planning or review.",
+      "why_existing_functionality_is_insufficient": "The existing diagnostics and phase-value guards validate wrapper/value-gate behavior but do not scan repo control-plane files for contradictory source-of-truth declarations.",
+      "product_gap_if_skipped": "Future runs can still follow obsolete `.brownie-control` or `.codex/tasks` instructions and stop or implement against stale state despite the external authority having advanced.",
+      "non_duplicative": "Yes. M49.1-M49.3 changed runtime Mode Pack run-control routing; R7.1 changes CI-enforced development-control authority.",
+      "no_new_rpc": "Yes. The phase adds no JSON-RPC method.",
+      "no_new_summary": "Yes. The phase adds no runtime or VSIX summary/report surface.",
+      "runtime_behavior_change": "Product runtime behavior does not change. Development-control behavior changes because CI enforces pointer-only repository authority and rejects stale live-state files.",
+      "headless_autonomous_contribution": "A scheduled caller can trust repository control-plane files as pointers and rely on the external automation root for live state, reducing stale-stop and wrong-phase recovery failures.",
+      "milestone_progress": "This opens R7 by removing source-of-truth drift before the Product Completion Gate is implemented."
     }
   },
   "review_value_gate": {
@@ -87,38 +79,51 @@
     "reject_when": [
       "wrapper_only",
       "report_only",
-      "inspection_only_without_runtime_behavior_change",
-      "new_json_rpc_method_for_route_dispatch",
-      "generic_route_executor",
-      "duplicate_modepack_policy",
-      "automatic_full_modepack_update_pipeline",
-      "raw_registry_candidate_provenance_or_modepack_data_returned_or_persisted",
-      "vsix_owned_route_policy",
-      "fabricated_rollback_route_kind"
+      "inspection_only_without_control_plane_enforcement",
+      "new_json_rpc_method",
+      "product_runtime_behavior_mixed_into_control_plane_phase",
+      "repo_local_phase_state_remains_live_authority",
+      "stale_phase_3_4_state_remains_interpretable_as_current",
+      "control_plane_guard_not_wired_to_ci",
+      "acceptance_criteria_are_string_presence_only",
+      "product_completion_gate_bundled_into_r7_1"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M49.3 updates the current and archived value manifests for the closed typed Mode Pack route dispatcher expansion.",
+    "review_intent": "R7.1 changes package/CI guard wiring and extends the phase-value guard engine file inventory. Review must confirm the new control-plane authority guard cannot silently weaken phase-value enforcement.",
     "changed_files": [
+      "package.json",
+      "extensions/brownie-vsix/package.json",
+      "scripts/guard-control-plane-authority.mjs",
+      "scripts/guard-control-plane-authority.test.mjs",
+      "scripts/guard-phase-value.mjs",
+      "scripts/guard-phase-value.test.mjs",
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m49.2.json",
+      "docs/architecture/phase-value-manifest.r7.1.json",
       "docs/architecture/phase-value-manifest.m49.3.json"
+    ],
+    "required_checks": [
+      "pnpm guard:control-plane-authority",
+      "pnpm guard:control-plane-authority:test",
+      "pnpm guard:phase-value",
+      "pnpm guard:phase-value:test",
+      "pnpm --filter brownie-vsix check"
     ]
   },
   "exit_criteria": [
-    "headless.run.advance can carry bounded provenance verification, approval, and replacement targets from matching persisted route boundaries",
-    "headless.run.drive can pass the same bounded targets through its first runtime-owned advance",
-    "routed later Mode Pack replay fails closed when subordinate checkpoint evidence is missing or mismatched",
-    "runtime rejects stale progress, wrong route, mixed target, missing target, and invalid budget before side effects",
-    "VSIX protocol validators accept the bounded later Mode Pack run-control targets and reject raw/unknown fields"
+    "repository control-plane files under `.brownie-control/` and `.codex/tasks/` are pointer-only and no longer encode live scheduled state",
+    "the control-plane authority guard fails on stale sole-source-of-truth wording, stale Phase 3.4 live state, stale PR 35 live state, and repo-local status hard-stop rules",
+    "the control-plane authority guard passes on the repository pointer files",
+    "CI runs the control-plane authority guard through the existing VSIX check path and runs guard tests through the root scripts",
+    "phase-value guard detects future changes to the new control-plane authority guard files as guard-engine changes",
+    "no new RPC, runtime product behavior, VSIX-owned controller policy, report, readiness, history, digest, verdict, inspection, or preview surface is added"
   ],
   "behavior_evidence": [
-    "Rust behavior tests cover public headless.run.advance dispatch for provenance verification and approval after selected-candidate fetch",
-    "Rust behavior tests cover public headless.run.drive first-advance dispatch for selected approved candidate replacement",
-    "Rust replay tests cover missing and mismatched later Mode Pack targets before returning replayed run-control evidence",
-    "VSIX protocol tests validate run-control params with later typed targets and raw field rejection"
+    "Node guard fixture tests cover pointer-only acceptance and stale authority rejection",
+    "pnpm guard:control-plane-authority validates the real repository files",
+    "pnpm guard:phase-value validates the R7.1 current manifest and strict guard-engine review metadata"
   ]
 }

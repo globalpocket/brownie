@@ -1,3 +1,11 @@
-# Next Phase Prompt
+# Brownie Next Phase Prompt Pointer
 
-No next phase prompt has been generated yet.
+This repository file is not the live next phase prompt.
+
+The scheduled controller writes phase prompts under:
+
+```text
+~/.codex/automations/brownie-phase-loop/prompts/
+```
+
+Use the external authoritative `phase-state.json` to determine whether a next prompt exists and which phase should be reviewed or implemented.
