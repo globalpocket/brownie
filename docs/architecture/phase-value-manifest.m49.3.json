@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "phase": "M49.3",
+  "current_milestone": "m49_headless_mode_pack_update_drive",
+  "milestone": "M49 Headless Mode Pack Update Drive",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "headless_modepack_closed_typed_route_dispatcher_expansion",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "headless_autonomous_development with supporting mode_pack_runtime, runtime_permission_enforcement, and persistent_structured_ledger.",
+      "new_capability": "Public headless.run.advance and headless.run.drive can carry existing typed Mode Pack provenance verification, approval, and replacement targets after selected-candidate fetch.",
+      "why_existing_functionality_is_insufficient": "Direct headless.continue_once supports the later Mode Pack continuation targets, but durable public run-control exposed only registry-selection and selected-candidate fetch targets.",
+      "product_gap_if_skipped": "Scheduled callers would stall after fetch or need caller-owned continue_once route glue outside the run-session replay authority.",
+      "non_duplicative": "Distinct from M49.1 selected-candidate fetch route-drive and M49.2 registry-to-fetch bootstrap plus fetch replay integrity.",
+      "no_new_rpc": "No new RPC is needed; existing headless.run.advance and headless.run.drive are expanded with bounded typed target fields.",
+      "no_new_summary": "No new summary surface is needed; the phase uses bounded run-control results and checkpoint replay evidence.",
+      "runtime_behavior_change": "Run-control validates route-kind agreement, forwards later Mode Pack targets to existing continuation authority, and fails closed on routed replay evidence mismatch.",
+      "headless_autonomous_contribution": "Scheduled callers can keep the Mode Pack update chain inside Rust-owned durable session/drive authority.",
+      "milestone_progress": "Completes the public run-control reachability gap for existing post-fetch Mode Pack update route boundaries."
+    }
+  },
+  "exit_criteria": [
+    "headless.run.advance can execute bounded provenance verification, approval, and replacement targets from matching persisted route boundaries",
+    "headless.run.drive can carry the same bounded targets through its first runtime-owned advance",
+    "routed replay for the later Mode Pack steps validates subordinate checkpoint request identity before returning replayed run-control evidence",
+    "wrong route, mixed target, stale progress, invalid budget, and raw payload attempts are rejected before side effects",
+    "no new RPC, generic route executor, report, readiness, history, digest, or fabricated rollback route kind is added"
+  ],
+  "behavior_evidence": [
+    "Rust behavior tests cover public headless.run.advance dispatch for provenance verification and approval after selected-candidate fetch",
+    "Rust behavior tests cover public headless.run.drive first-advance dispatch for selected approved candidate replacement",
+    "Rust replay tests cover missing and mismatched later Mode Pack targets before returning replayed run-control evidence",
+    "VSIX protocol tests validate run-control params with later typed targets and raw field rejection"
+  ]
+}
