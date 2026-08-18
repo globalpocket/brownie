@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "phase": "R7.2",
+  "current_milestone": "r7_control_plane_authority_and_completion_gates",
+  "milestone": "R7 Control-plane Authority and Completion Gates",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "product_completion_gate_enforced_by_ci",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Makes unattended phase and milestone completion decisions depend on Product Charter capability evidence rather than CI or PR status alone."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "headless_autonomous_development",
+      "new_capability": "CI rejects weak completion evidence before phase or milestone completion can be accepted.",
+      "why_existing_functionality_is_insufficient": "Existing guards do not validate completion claims themselves.",
+      "product_gap_if_skipped": "Brownie can still close phases on CI or manifest presence without product evidence.",
+      "non_duplicative": "Distinct from M49.3 runtime route execution and R7.1 source-of-truth unification.",
+      "no_new_rpc": "No new RPC is added.",
+      "no_new_summary": "No new summary/report surface is added.",
+      "runtime_behavior_change": "Development-control behavior changes through CI-enforced completion evidence.",
+      "headless_autonomous_contribution": "Headless callers can trust completion decisions only after deterministic evidence passes.",
+      "milestone_progress": "Completes the intended R7 completion-proof gate after R7.1 authority unification."
+    }
+  },
+  "exit_criteria": [
+    "product completion guard validates current evidence",
+    "fixture tests reject weak completion claims",
+    "CI runs the guard through VSIX check",
+    "no new RPC or report surface is added"
+  ],
+  "behavior_evidence": [
+    "scripts/guard-product-completion.test.mjs covers accepted and rejected completion evidence",
+    "scripts/guard-product-completion.mjs validates the current manifest"
+  ]
+}

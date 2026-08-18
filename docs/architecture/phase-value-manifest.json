@@ -1,20 +1,20 @@
 {
   "schema_version": 1,
-  "phase": "R7.1",
+  "phase": "R7.2",
   "current_milestone": "r7_control_plane_authority_and_completion_gates",
   "milestone": "R7 Control-plane Authority and Completion Gates",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "control_plane_source_of_truth_unification",
-  "forbidden_pattern": "control_plane_authority_report_readiness_history_digest_verdict_inspection_preview_new_rpc_runtime_behavior_change_product_runtime_change_vsix_owned_controller_policy_repo_local_phase_state_live_authority_only_source_of_truth_phase_3_4_live_state_permanent_no_auto_merge_hard_stop_external_state_commit_secret_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path",
+  "concrete_capability_transition": "product_completion_gate_enforced_by_ci",
+  "forbidden_pattern": "product_completion_report_readiness_history_digest_verdict_inspection_preview_new_rpc_runtime_behavior_change_product_runtime_change_vsix_owned_policy_ci_only_completion_pr_only_completion_manifest_only_completion_endpoint_count_source_token_string_presence_wrapper_only_completion_external_state_read_secret_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_absolute_path_canonical_path",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Keeps scheduled autonomous development decisions bound to the external automation authority instead of stale repo-local phase files."
+      "relationship": "Makes unattended phase and milestone completion decisions depend on Product Charter capability evidence rather than CI or PR status alone."
     },
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "Preserves the separation between controller authority and runtime product authority by preventing VSIX or repo task files from becoming policy owners."
+      "relationship": "Keeps completion authority in repository control-plane guard evidence without moving policy into the VSIX or bypassing runtime safety boundaries."
     }
   ],
   "phase_value_gate": {
@@ -62,16 +62,16 @@
       }
     ],
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development by making scheduled control-plane authority deterministic and guarded across context resets and fresh checkouts.",
-      "new_capability": "CI can now reject stale repo-internal phase-loop authority claims, stale Phase 3.4 live state, and old hard-stop rules before they steer autonomous planning or review.",
-      "why_existing_functionality_is_insufficient": "The existing diagnostics and phase-value guards validate wrapper/value-gate behavior but do not scan repo control-plane files for contradictory source-of-truth declarations.",
-      "product_gap_if_skipped": "Future runs can still follow obsolete `.brownie-control` or `.codex/tasks` instructions and stop or implement against stale state despite the external authority having advanced.",
-      "non_duplicative": "Yes. M49.1-M49.3 changed runtime Mode Pack run-control routing; R7.1 changes CI-enforced development-control authority.",
+      "strategic_capabilities": "Advances headless_autonomous_development, with supporting runtime_permission_enforcement at the controller boundary.",
+      "new_capability": "CI can reject phase or milestone completion evidence that lacks Product Charter mapping, concrete capability transition, behavior evidence, safety/debt classification, or anti-wrapper proof.",
+      "why_existing_functionality_is_insufficient": "Diagnostics, phase-value, and control-plane authority guards prevent wrapper drift and stale source-of-truth files, but none validates completion claims themselves.",
+      "product_gap_if_skipped": "Brownie could still close phases or milestones on PR merge, CI success, endpoint count, string presence, or manifest existence without proving product progress.",
+      "non_duplicative": "Yes. M49.3 changed runtime Mode Pack route execution and R7.1 changed source-of-truth authority; R7.2 adds completion-evidence enforcement.",
       "no_new_rpc": "Yes. The phase adds no JSON-RPC method.",
-      "no_new_summary": "Yes. The phase adds no runtime or VSIX summary/report surface.",
-      "runtime_behavior_change": "Product runtime behavior does not change. Development-control behavior changes because CI enforces pointer-only repository authority and rejects stale live-state files.",
-      "headless_autonomous_contribution": "A scheduled caller can trust repository control-plane files as pointers and rely on the external automation root for live state, reducing stale-stop and wrong-phase recovery failures.",
-      "milestone_progress": "This opens R7 by removing source-of-truth drift before the Product Completion Gate is implemented."
+      "no_new_summary": "Yes. The phase adds no runtime or VSIX summary/report surface; it adds an executable guard.",
+      "runtime_behavior_change": "Product runtime behavior does not change. Development-control behavior changes because weak completion claims now fail the guard path.",
+      "headless_autonomous_contribution": "A scheduled caller can trust completion state only after deterministic evidence categories pass, reducing autonomous drift into wrapper-only closeouts.",
+      "milestone_progress": "R7 gains the completion-proof half of its authority and completion gate objective after R7.1 source-of-truth unification."
     }
   },
   "review_value_gate": {
@@ -79,51 +79,99 @@
     "reject_when": [
       "wrapper_only",
       "report_only",
-      "inspection_only_without_control_plane_enforcement",
+      "inspection_only_without_completion_enforcement",
       "new_json_rpc_method",
       "product_runtime_behavior_mixed_into_control_plane_phase",
-      "repo_local_phase_state_remains_live_authority",
-      "stale_phase_3_4_state_remains_interpretable_as_current",
-      "control_plane_guard_not_wired_to_ci",
-      "acceptance_criteria_are_string_presence_only",
-      "product_completion_gate_bundled_into_r7_1"
+      "ci_only_completion_allowed",
+      "manifest_only_completion_allowed",
+      "technical_debt_omitted",
+      "product_charter_mapping_omitted",
+      "behavior_evidence_omitted"
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "R7.1 changes package/CI guard wiring and extends the phase-value guard engine file inventory. Review must confirm the new control-plane authority guard cannot silently weaken phase-value enforcement.",
+    "review_intent": "R7.2 adds the product completion guard and wires it into package/VSIX checks. Review must confirm the guard cannot silently weaken phase-value, diagnostics, or source-of-truth enforcement.",
     "changed_files": [
       "package.json",
       "extensions/brownie-vsix/package.json",
       "scripts/guard-control-plane-authority.mjs",
       "scripts/guard-control-plane-authority.test.mjs",
+      "scripts/guard-product-completion.mjs",
+      "scripts/guard-product-completion.test.mjs",
       "scripts/guard-phase-value.mjs",
       "scripts/guard-phase-value.test.mjs",
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/phase-value-manifest.r7.1.json",
-      "docs/architecture/phase-value-manifest.m49.3.json"
+      "docs/architecture/phase-value-manifest.r7.2.json"
     ],
     "required_checks": [
+      "pnpm guard:product-completion",
+      "pnpm guard:product-completion:test",
       "pnpm guard:control-plane-authority",
-      "pnpm guard:control-plane-authority:test",
+      "pnpm guard:diagnostics",
       "pnpm guard:phase-value",
       "pnpm guard:phase-value:test",
       "pnpm --filter brownie-vsix check"
     ]
   },
   "exit_criteria": [
-    "repository control-plane files under `.brownie-control/` and `.codex/tasks/` are pointer-only and no longer encode live scheduled state",
-    "the control-plane authority guard fails on stale sole-source-of-truth wording, stale Phase 3.4 live state, stale PR 35 live state, and repo-local status hard-stop rules",
-    "the control-plane authority guard passes on the repository pointer files",
-    "CI runs the control-plane authority guard through the existing VSIX check path and runs guard tests through the root scripts",
-    "phase-value guard detects future changes to the new control-plane authority guard files as guard-engine changes",
-    "no new RPC, runtime product behavior, VSIX-owned controller policy, report, readiness, history, digest, verdict, inspection, or preview surface is added"
+    "product completion guard validates the current R7.2 completion evidence block",
+    "fixture tests reject CI-only, PR-only, manifest-only, endpoint-count, and source-token completion evidence",
+    "fixture tests reject missing Product Charter capability mapping",
+    "fixture tests reject missing concrete transition or behavior evidence",
+    "fixture tests reject wrapper/report-only completion without bounded blocker-removal classification",
+    "fixture tests reject missing technical debt classification",
+    "CI runs the product completion guard through the existing VSIX check path",
+    "phase-value guard detects future product completion guard changes as guard-engine changes",
+    "no new RPC, runtime route, diagnostics wrapper, readiness, history, digest, verdict, inspection, preview, or VSIX-owned policy is added"
   ],
   "behavior_evidence": [
-    "Node guard fixture tests cover pointer-only acceptance and stale authority rejection",
-    "pnpm guard:control-plane-authority validates the real repository files",
-    "pnpm guard:phase-value validates the R7.1 current manifest and strict guard-engine review metadata"
-  ]
+    "scripts/guard-product-completion.test.mjs covers accepted completion evidence and negative CI-only, missing mapping, missing behavior, wrapper-only, blocker-removal, and missing technical-debt cases",
+    "scripts/guard-product-completion.mjs validates the real current phase-value manifest",
+    "pnpm --filter brownie-vsix check runs diagnostics, control-plane authority, product-completion, and phase-value guards before TypeScript typecheck"
+  ],
+  "product_completion_gate": {
+    "required": true,
+    "completion_scope": "phase",
+    "product_completion_claim": true,
+    "accepted_capability": [
+      "Executable Product Completion Gate for phase and milestone completion evidence"
+    ],
+    "behavior_evidence": [
+      "Node fixture tests reject weak completion evidence and accept bounded Product Charter-aligned evidence",
+      "Repository guard validates the current R7.2 manifest before CI can pass"
+    ],
+    "safety_boundary": [
+      "reads bounded repository JSON/text only",
+      "does not read external automation state",
+      "does not expose raw prompts, provider responses, file content, stdout, stderr, command text, environment values, absolute paths, canonical paths, or secrets",
+      "does not mutate repository, workspace, Git, runtime, ledger, provider, or external automation state"
+    ],
+    "non_goals": [
+      "no new runtime RPC",
+      "no product runtime behavior change",
+      "no completion report, readiness, history, digest, verdict, inspection, preview, or summary surface",
+      "no VSIX-owned completion policy"
+    ],
+    "rejected_alternatives": [
+      "CI-only completion",
+      "PR-merge-only completion",
+      "manifest-existence completion",
+      "source-token or string-presence completion",
+      "endpoint-count completion",
+      "wrapper/report-only completion",
+      "Product Completion Gate bundled into R7.1"
+    ],
+    "technical_debt": [
+      "R7.2 gates completion evidence but does not itself implement future product runtime milestones after R7",
+      "External automation state still records long historical fields; R7.2 intentionally validates repository completion evidence rather than migrating external state"
+    ],
+    "next_capability_rationale": [
+      "After R7.2 merges, an independent phase-complete assessment should decide whether R7 can move to milestone closeout",
+      "If R7 closes, the next milestone should return to Product Charter runtime capability progression rather than another control-plane wrapper"
+    ]
+  }
 }
