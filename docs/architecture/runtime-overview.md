@@ -524,6 +524,24 @@ automatic apply/recovery/provider/Mode Pack/parent-join step, shell/git/
 network/service action, VSIX-owned policy, or raw prompt/provider/file/command/
 output/environment/path exposure.
 
+M50.2 extends `headless.run.drive` with one bounded `journey_route_resume`
+envelope for an already-admitted journey whose current route is
+`FetchSelectedModePackCandidateExplicitly`. The caller supplies explicit resume
+authorization, the journey id, expected journey fingerprint, expected current
+session sequence, route kind, drive id, and expected source registry-selection
+checkpoint fingerprint. The Rust runtime rejects mixed caller-supplied Mode
+Pack targets, journey admission, context budgets, completion finalization, stale
+fingerprints, missing checkpoints, and unsupported route kinds before side
+effects. For the supported route, it derives
+`modepack_selected_candidate_fetch_target` from persisted registry-selection
+evidence, delegates execution to existing run-control continuation authority,
+persists bounded route-resume ledger evidence, and returns
+`journey_route_resume` metadata. Replaying the same drive id and resume identity
+returns the committed metadata without duplicating fetch, drive, or resume
+evidence. The metadata is limited to bounded handles, route kind, source
+checkpoint fingerprint, derived target class, result advance/continuation ids,
+post-route progress, replay state, next action, and resume fingerprint.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

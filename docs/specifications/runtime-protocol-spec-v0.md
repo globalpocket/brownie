@@ -1525,3 +1525,34 @@ the committed journey evidence without creating another task or drive. This is
 not a scheduler, generic workflow engine, automatic apply/recovery/provider/
 Mode Pack/parent-join step, shell/git/network/service expansion, VSIX policy
 decision, or raw prompt/provider/file/content/output/environment/path exposure.
+
+## M50.2 headless journey route resume
+
+`headless.run.drive` can resume one already-admitted journey across the
+`FetchSelectedModePackCandidateExplicitly` route boundary by accepting a bounded
+`journey_route_resume` object. The resume request contains
+`authorize_journey_route_resume=true`, a bounded `journey_id`, the expected
+journey fingerprint, expected route kind, expected source registry-selection
+checkpoint fingerprint, the expected current session sequence, and an explicit
+drive id. The successful request must not include
+`modepack_selected_candidate_fetch_target`; Rust derives that target from the
+persisted registry-selection checkpoint.
+
+Before route side effects, the runtime validates the journey checkpoint, current
+session checkpoint, route kind, expected source checkpoint fingerprint, source
+selection identity, replay identity, unit route budget, and absence of mixed
+journey admission, explicit Mode Pack targets, context budgets, or completion
+finalization authorization. Stale, malformed, unsupported, or missing-checkpoint
+requests fail closed.
+
+On success, the runtime delegates to existing `headless.run.advance` /
+`headless.continue_once` selected-candidate fetch authority, persists the normal
+fetch and drive checkpoints, appends bounded `HeadlessJourneyRouteResumed`
+ledger evidence to the journey task, and returns
+`HeadlessRunDriveResult.journey_route_resume`. That metadata contains only
+journey/task/run/session/drive handles, route kind, source continuation and
+decision ids, source checkpoint fingerprint, derived target class, result
+advance/continuation ids, post-route progress, next action, replay flag, and a
+deterministic resume fingerprint. Replaying the same drive id and resume
+identity returns the committed metadata without duplicating selected-candidate
+fetch, drive, or journey-route resume evidence.
