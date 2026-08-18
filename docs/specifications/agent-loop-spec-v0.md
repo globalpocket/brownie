@@ -183,6 +183,19 @@ This is not a scheduler or background loop and does not add automatic apply,
 automatic recovery, provider, shell, git, network, service, or VSIX-owned policy
 behavior.
 
+M50.1 extends the existing `headless.run.drive` entry point with a bounded
+journey-admission path for the first development-objective step. A caller may
+set `expected_start_session_sequence=0` only with `journey_admission`, which
+requires `authorize_journey_start=true`, a bounded `journey_id`, and a normal
+task-start envelope. Rust validates the request before task creation, rejects
+malformed or mixed-route admission, delegates to existing `task.start`, derives
+the start progress checkpoint, and drives the new task through the same
+run-control stop boundaries. The returned `journey` metadata and persisted
+checkpoint contain only bounded handles, progress fingerprints, closure status,
+next action, replay state, and a journey fingerprint. Replaying the same
+journey with matching identity returns the committed result without duplicating
+task, advance, drive, or journey evidence.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

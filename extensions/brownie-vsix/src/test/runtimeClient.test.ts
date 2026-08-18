@@ -1999,7 +1999,65 @@ describe('protocol validation', () => {
       advances: [headlessRunAdvanceResult],
       next_action: 'inspect_progress_overview',
     };
+    const headlessRunJourneyAdmission = {
+      journey_id: 'm50.journey.1',
+      authorize_journey_start: true,
+      task_start: {
+        goal: 'Run a runtime-owned journey',
+        mode_id: 'implementer',
+      },
+    };
+    const headlessRunJourneyMetadata = {
+      journey_id: 'm50.journey.1',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      start_progress_fingerprint: `sha256:${'1'.repeat(64)}`,
+      start_aggregate_sequence: 0,
+      post_progress_fingerprint: `sha256:${'2'.repeat(64)}`,
+      post_aggregate_sequence: 1,
+      closure_status: 'budget_exhausted',
+      next_action: 'inspect_progress_overview',
+      replayed: false,
+      journey_fingerprint: `sha256:${'3'.repeat(64)}`,
+    };
     expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_start_session_sequence: 0 })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      context_budget: contextBudget,
+      journey_admission: headlessRunJourneyAdmission,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      expected_start_session_sequence: 1,
+      max_advances: 1,
+      journey_admission: headlessRunJourneyAdmission,
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      journey_admission: { ...headlessRunJourneyAdmission, authorize_journey_start: false },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      journey_admission: { ...headlessRunJourneyAdmission, task_start: { ...headlessRunJourneyAdmission.task_start, raw_prompt: 'secret' } },
+    })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_completion_closure_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
@@ -2010,6 +2068,10 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_candidate_approval_target: { ...modePackSelectedCandidateApprovalTarget, raw_provenance_statement_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, modepack_selected_approved_candidate_replacement_target: { ...modePackSelectedApprovedCandidateReplacementTarget, raw_modepack_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: headlessRunJourneyMetadata })).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0 })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, journey_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, raw_prompt: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);

@@ -606,6 +606,18 @@ export interface HeadlessRunDriveParams {
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
   modepack_selected_candidate_approval_target?: ModePackSelectedCandidateApprovalTarget | null;
   modepack_selected_approved_candidate_replacement_target?: ModePackSelectedApprovedCandidateReplacementTarget | null;
+  journey_admission?: HeadlessRunJourneyAdmission | null;
+}
+
+export interface HeadlessRunJourneyAdmission {
+  journey_id: string;
+  authorize_journey_start: true;
+  task_start: HeadlessRunJourneyTaskStartEnvelope;
+}
+
+export interface HeadlessRunJourneyTaskStartEnvelope {
+  goal: string;
+  mode_id?: string | null;
 }
 
 export interface VerificationRecoverySource {
@@ -1035,7 +1047,24 @@ export interface HeadlessRunDriveResult {
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
   advances?: HeadlessRunAdvanceResult[];
+  journey?: HeadlessRunJourneyMetadata | null;
   next_action: string;
+}
+
+export interface HeadlessRunJourneyMetadata {
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  drive_id: string;
+  start_progress_fingerprint: string;
+  start_aggregate_sequence: number;
+  post_progress_fingerprint?: string | null;
+  post_aggregate_sequence?: number | null;
+  closure_status: HeadlessRunCompletionClosureStatus;
+  next_action: string;
+  replayed: boolean;
+  journey_fingerprint: string;
 }
 
 export type HeadlessRunCompletionClosureStatus =
@@ -5648,12 +5677,12 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
 export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDriveParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
     isNonNegativeInteger(value.expected_start_session_sequence) &&
-    value.expected_start_session_sequence >= 1 &&
+    value.expected_start_session_sequence >= 0 &&
     (value.max_advances === undefined || value.max_advances === null || (isNonNegativeInteger(value.max_advances) && value.max_advances >= 1 && value.max_advances <= 3)) &&
     (value.max_steps_per_advance === undefined || value.max_steps_per_advance === null || (isNonNegativeInteger(value.max_steps_per_advance) && value.max_steps_per_advance >= 1 && value.max_steps_per_advance <= 3)) &&
     (value.authorize_completion_finalization === undefined || value.authorize_completion_finalization === null || typeof value.authorize_completion_finalization === 'boolean') &&
@@ -5663,7 +5692,31 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
     (value.modepack_selected_candidate_approval_target === undefined || value.modepack_selected_candidate_approval_target === null || isModePackSelectedCandidateApprovalTarget(value.modepack_selected_candidate_approval_target)) &&
-    (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target))
+    (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
+    (value.journey_admission === undefined || value.journey_admission === null || isHeadlessRunJourneyAdmission(value.journey_admission)) &&
+    (value.expected_start_session_sequence >= 1 || value.journey_admission !== undefined && value.journey_admission !== null) &&
+    (value.journey_admission === undefined || value.journey_admission === null || value.expected_start_session_sequence === 0)
+  );
+}
+
+export function isHeadlessRunJourneyAdmission(value: unknown): value is HeadlessRunJourneyAdmission {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['journey_id', 'authorize_journey_start', 'task_start']) &&
+    isHeadlessRunId(value.journey_id) &&
+    value.authorize_journey_start === true &&
+    isHeadlessRunJourneyTaskStartEnvelope(value.task_start)
+  );
+}
+
+export function isHeadlessRunJourneyTaskStartEnvelope(value: unknown): value is HeadlessRunJourneyTaskStartEnvelope {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['goal', 'mode_id']) &&
+    typeof value.goal === 'string' &&
+    value.goal.trim().length > 0 &&
+    value.goal.length <= 2000 &&
+    (value.mode_id === undefined || value.mode_id === null || isBoundedHandle(value.mode_id))
   );
 }
 
@@ -6238,13 +6291,15 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'post_progress',
       'next_route',
       'advances',
+      'journey',
       'next_action',
     ]) &&
     isHeadlessContinueOnceStatus(value.status) &&
     isHeadlessRunId(value.session_id) &&
     isHeadlessRunId(value.drive_id) &&
     isNonNegativeInteger(value.start_session_sequence) &&
-    value.start_session_sequence >= 1 &&
+    value.start_session_sequence >= 0 &&
+    (value.start_session_sequence >= 1 || value.journey !== undefined && value.journey !== null) &&
     isNonNegativeInteger(value.end_session_sequence) &&
     value.end_session_sequence >= value.start_session_sequence &&
     typeof value.replayed === 'boolean' &&
@@ -6269,7 +6324,32 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
     (value.advances === undefined || (Array.isArray(value.advances) && value.advances.length === value.advance_count && value.advances.every(isHeadlessRunAdvanceResult))) &&
+    (value.journey === undefined || value.journey === null || isHeadlessRunJourneyMetadata(value.journey)) &&
     typeof value.next_action === 'string'
+  );
+}
+
+export function isHeadlessRunJourneyMetadata(value: unknown): value is HeadlessRunJourneyMetadata {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'start_progress_fingerprint', 'start_aggregate_sequence', 'post_progress_fingerprint', 'post_aggregate_sequence', 'closure_status', 'next_action', 'replayed', 'journey_fingerprint']) &&
+    isHeadlessRunId(value.journey_id) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.drive_id) &&
+    typeof value.start_progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.start_progress_fingerprint) &&
+    isNonNegativeInteger(value.start_aggregate_sequence) &&
+    (value.post_progress_fingerprint === undefined || value.post_progress_fingerprint === null || (typeof value.post_progress_fingerprint === 'string' && isSha256Fingerprint(value.post_progress_fingerprint))) &&
+    (value.post_aggregate_sequence === undefined || value.post_aggregate_sequence === null || isNonNegativeInteger(value.post_aggregate_sequence)) &&
+    isHeadlessRunCompletionClosureStatus(value.closure_status) &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120 &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.journey_fingerprint === 'string' &&
+    isSha256Fingerprint(value.journey_fingerprint)
   );
 }
 
