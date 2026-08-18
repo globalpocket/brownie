@@ -196,6 +196,19 @@ next action, replay state, and a journey fingerprint. Replaying the same
 journey with matching identity returns the committed result without duplicating
 task, advance, drive, or journey evidence.
 
+M50.2 adds the first runtime-derived post-admission continuation on the same
+entry point. A caller may provide `journey_route_resume` for a current
+`FetchSelectedModePackCandidateExplicitly` boundary with explicit resume
+authorization, expected journey fingerprint, expected route kind, and expected
+registry-selection checkpoint fingerprint. The caller does not provide
+`modepack_selected_candidate_fetch_target` on the successful path. Rust derives
+that target from bounded registry-selection checkpoint evidence, executes it
+through existing run-control authority, records bounded route-resume evidence,
+and replays the same drive/resume identity without duplicating fetch, advance,
+drive, or resume ledger effects. Missing authorization, stale fingerprints,
+unsupported route kind, missing subordinate checkpoint, and mixed explicit
+targets fail closed before route side effects.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

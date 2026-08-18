@@ -1135,6 +1135,8 @@ pub struct HeadlessRunDriveParams {
         Option<ModePackSelectedApprovedCandidateReplacementTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journey_admission: Option<HeadlessRunJourneyAdmission>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_route_resume: Option<HeadlessRunJourneyRouteResume>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1143,6 +1145,16 @@ pub struct HeadlessRunJourneyAdmission {
     pub journey_id: String,
     pub authorize_journey_start: bool,
     pub task_start: HeadlessRunJourneyTaskStartEnvelope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyRouteResume {
+    pub journey_id: String,
+    pub authorize_journey_route_resume: bool,
+    pub expected_journey_fingerprint: String,
+    pub expected_route_kind: HeadlessContinueRouteKind,
+    pub expected_source_checkpoint_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2028,6 +2040,8 @@ pub struct HeadlessRunDriveResult {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advances: Vec<HeadlessRunAdvanceResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_route_resume: Option<HeadlessRunJourneyRouteResumeMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub journey: Option<HeadlessRunJourneyMetadata>,
     pub next_action: String,
 }
@@ -2049,6 +2063,31 @@ pub struct HeadlessRunJourneyMetadata {
     pub next_action: String,
     pub replayed: bool,
     pub journey_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunJourneyRouteResumeMetadata {
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub route_kind: HeadlessContinueRouteKind,
+    pub source_continuation_id: String,
+    pub source_decision_id: String,
+    pub source_checkpoint_fingerprint: String,
+    pub derived_target_class: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_advance_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result_continuation_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_route_progress_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_route_aggregate_sequence: Option<u64>,
+    pub next_action: String,
+    pub replayed: bool,
+    pub resume_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

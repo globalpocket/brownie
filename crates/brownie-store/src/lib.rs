@@ -3902,6 +3902,7 @@ pub enum LedgerEventKind {
     HeadlessRunSessionAdvanced,
     HeadlessRunSessionDriveCompleted,
     HeadlessJourneyStarted,
+    HeadlessJourneyRouteResumed,
     HeadlessRunCompletionFinalized,
     TaskRunning,
     AgentLoopStarted,
