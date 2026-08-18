@@ -9,15 +9,16 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
-    HeadlessRunCompletionFinalization, HeadlessRunDriveResult, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
-    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
-    ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
-    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
-    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
-    PatchApplyRecoveryProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    HeadlessRunCompletionFinalization, HeadlessRunDriveResult, HeadlessRunProgressCheckpoint,
+    LlmProviderFailureRetryProvenance, ModePackActiveSnapshotSummary,
+    ModePackApproveCandidateResult, ModePackApprovedCandidateSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
+    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveResult,
+    ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
+    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -27,6 +28,7 @@ pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
+const HEADLESS_JOURNEYS_DIR: &str = "headless-journeys";
 const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
 const MODEPACK_ACTIVE_DIR: &str = "modepack-active";
 const MODEPACK_CANDIDATES_DIR: &str = "modepack-candidates";
@@ -2077,6 +2079,18 @@ pub struct HeadlessRunSessionDriveCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessJourneyStartCheckpoint {
+    pub journey_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub task_start_fingerprint: String,
+    pub start_progress: HeadlessRunProgressCheckpoint,
+    pub journey_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessRunCompletionFinalizationCheckpoint {
     pub session_id: String,
     pub drive_id: String,
@@ -3503,6 +3517,41 @@ impl TaskStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_journey_start_checkpoint(
+        &self,
+        journey_id: &str,
+    ) -> Result<Option<HeadlessJourneyStartCheckpoint>> {
+        let path = self.headless_journey_start_path(journey_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_journey_start_checkpoint(
+        &self,
+        checkpoint: &HeadlessJourneyStartCheckpoint,
+    ) -> Result<()> {
+        let path = self.headless_journey_start_path(&checkpoint.journey_id);
+        if let Some(existing) =
+            self.read_headless_journey_start_checkpoint(&checkpoint.journey_id)?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless journey start checkpoint for {}",
+                checkpoint.journey_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless journey start checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn read_headless_run_completion_finalization_checkpoint(
         &self,
         session_id: &str,
@@ -3631,6 +3680,13 @@ impl TaskStore {
             .join(session_id)
             .join("drives")
             .join(format!("{drive_id}.json"))
+    }
+
+    fn headless_journey_start_path(&self, journey_id: &str) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_JOURNEYS_DIR)
+            .join(format!("{journey_id}.json"))
     }
 
     fn headless_run_completion_finalization_path(
@@ -3845,6 +3901,7 @@ pub enum LedgerEventKind {
     HeadlessContinuationDecisionRecorded,
     HeadlessRunSessionAdvanced,
     HeadlessRunSessionDriveCompleted,
+    HeadlessJourneyStarted,
     HeadlessRunCompletionFinalized,
     TaskRunning,
     AgentLoopStarted,

@@ -1500,3 +1500,28 @@ drive result with `replayed=true`; it does not duplicate task execution,
 background worker, automatic apply/recovery, provider execution expansion,
 shell/git/network/service expansion, VSIX policy decision, or raw
 prompt/provider/file/command/output/environment/path exposure.
+
+## M50.1 headless journey admission
+
+`headless.run.drive` can also admit the first step of one headless development
+journey when the caller supplies `expected_start_session_sequence=0` and a
+bounded `journey_admission` object. The admission contains a bounded
+`journey_id`, `authorize_journey_start=true`, and a task-start envelope with the
+normal objective fields already accepted by `task.start`. The runtime validates
+the admission before side effects, rejects malformed ids, missing authorization,
+raw or unknown task-start fields, invalid drive budgets, conflicting replay, and
+mixed explicit Mode Pack route targets, then delegates initial task creation to
+the existing `task.start` authority.
+
+After task admission, the runtime derives the journey's start progress
+checkpoint, drives the new task through existing `headless.run.advance` behavior
+to the first safe stop boundary, persists bounded journey/drive checkpoint
+evidence, and returns `HeadlessRunDriveResult.journey`. The journey metadata is
+limited to journey/session/drive/task/run handles, start/post progress
+fingerprints and aggregate sequences, completion closure status, next action,
+replay flag, and a deterministic journey fingerprint. Replaying the same
+`journey_id` with matching session, drive, and task-start fingerprint returns
+the committed journey evidence without creating another task or drive. This is
+not a scheduler, generic workflow engine, automatic apply/recovery/provider/
+Mode Pack/parent-join step, shell/git/network/service expansion, VSIX policy
+decision, or raw prompt/provider/file/content/output/environment/path exposure.

@@ -1133,6 +1133,24 @@ pub struct HeadlessRunDriveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_approved_candidate_replacement_target:
         Option<ModePackSelectedApprovedCandidateReplacementTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_admission: Option<HeadlessRunJourneyAdmission>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyAdmission {
+    pub journey_id: String,
+    pub authorize_journey_start: bool,
+    pub task_start: HeadlessRunJourneyTaskStartEnvelope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyTaskStartEnvelope {
+    pub goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mode_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2009,7 +2027,28 @@ pub struct HeadlessRunDriveResult {
     pub next_route: Option<HeadlessContinueRoute>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advances: Vec<HeadlessRunAdvanceResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey: Option<HeadlessRunJourneyMetadata>,
     pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunJourneyMetadata {
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub start_progress_fingerprint: String,
+    pub start_aggregate_sequence: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_progress_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_aggregate_sequence: Option<u64>,
+    pub closure_status: HeadlessRunCompletionClosureStatus,
+    pub next_action: String,
+    pub replayed: bool,
+    pub journey_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

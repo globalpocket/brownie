@@ -507,6 +507,23 @@ evidence. This remains explicit caller-driven work and does not add a
 scheduler, background worker, automatic recovery/apply, provider expansion,
 shell/git/network/service expansion, VSIX policy, or raw data exposure.
 
+M50.1 adds the first runtime-owned golden-journey admission boundary to the same
+drive method. When a caller supplies `expected_start_session_sequence=0` plus a
+bounded `journey_admission`, Rust validates the journey id, explicit
+authorization, task-start envelope, empty-session expectation, budgets, and
+route exclusivity before creating a task. The task is created through existing
+`task.start` authority, then driven through existing run-control behavior to the
+first safe stop boundary. The store persists a bounded journey checkpoint and
+the drive result returns bounded `journey` metadata: journey/task/run/session/
+drive handles, start/post progress fingerprints and aggregate sequences,
+closure status, next action, replay state, and deterministic fingerprint.
+Matching replay returns the committed journey without duplicate task, advance,
+drive, or journey evidence; conflicting admission fails closed without creating
+a new task. This does not add a new RPC, scheduler, generic workflow engine,
+automatic apply/recovery/provider/Mode Pack/parent-join step, shell/git/
+network/service action, VSIX-owned policy, or raw prompt/provider/file/command/
+output/environment/path exposure.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

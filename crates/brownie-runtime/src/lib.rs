@@ -35,9 +35,10 @@ use brownie_protocol::{
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
     HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunCompletionClosure,
     HeadlessRunCompletionClosureStatus, HeadlessRunCompletionFinalization, HeadlessRunDriveParams,
-    HeadlessRunDriveResult, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunDriveResult, HeadlessRunJourneyAdmission, HeadlessRunJourneyMetadata,
+    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
+    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -235,7 +236,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
-    HeadlessContinuationDecisionLookup, HeadlessModePackRegistryUpdateSelectionCheckpoint,
+    HeadlessContinuationDecisionLookup, HeadlessJourneyStartCheckpoint,
+    HeadlessModePackRegistryUpdateSelectionCheckpoint,
     HeadlessModePackSelectedActiveRollbackCheckpoint,
     HeadlessModePackSelectedCandidateApprovalCheckpoint,
     HeadlessModePackSelectedCandidateFetchCheckpoint,
@@ -12978,6 +12980,195 @@ fn headless_run_drive_has_explicit_modepack_target(params: &HeadlessRunDrivePara
     headless_run_drive_explicit_modepack_target_count(params) > 0
 }
 
+fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmission) -> String {
+    let seed = json!({
+        "journey_id": admission.journey_id,
+        "task_start": admission.task_start,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn validate_headless_journey_admission(
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+) -> Result<(), String> {
+    let Some(admission) = params.journey_admission.as_ref() else {
+        return Ok(());
+    };
+    if !is_valid_headless_run_id(&admission.journey_id) {
+        return Err("invalid params: journey_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+    }
+    if !admission.authorize_journey_start {
+        return Err("invalid params: authorize_journey_start must be true".to_string());
+    }
+    if admission.task_start.goal.trim().is_empty() {
+        return Err("invalid params: journey task_start.goal must not be empty".to_string());
+    }
+    if params.expected_start_session_sequence != 0 {
+        return Err(
+            "invalid params: journey admission requires expected_start_session_sequence 0"
+                .to_string(),
+        );
+    }
+    if drive_id.starts_with("drive.") {
+        return Err("invalid params: journey admission requires an explicit drive_id".to_string());
+    }
+    if headless_run_drive_has_explicit_modepack_target(params) {
+        return Err("invalid params: journey admission cannot be combined with explicit modepack run-control targets".to_string());
+    }
+    if params.authorize_completion_finalization.unwrap_or(false) {
+        return Err(
+            "invalid params: journey admission cannot authorize completion finalization"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn headless_journey_start_checkpoint_for_admission(
+    store: &BrownieStore,
+    admission: &HeadlessRunJourneyAdmission,
+    session_id: &str,
+    drive_id: &str,
+    id: &Value,
+) -> Result<HeadlessJourneyStartCheckpoint, JsonRpcResponse<Value>> {
+    let task_start_fingerprint = headless_journey_task_start_fingerprint(admission);
+    if let Some(existing) = store
+        .tasks()
+        .read_headless_journey_start_checkpoint(&admission.journey_id)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
+    {
+        if existing.session_id != session_id
+            || existing.drive_id != drive_id
+            || existing.task_start_fingerprint != task_start_fingerprint
+        {
+            return Err(error_response(
+                id.clone(),
+                -32602,
+                "invalid params: journey_id conflicts with persisted journey start checkpoint",
+            ));
+        }
+        return Ok(existing);
+    }
+    if store
+        .tasks()
+        .read_headless_run_session_checkpoint(session_id)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
+        .is_some()
+    {
+        return Err(error_response(
+            id.clone(),
+            -32602,
+            "invalid params: journey admission requires no existing session checkpoint",
+        ));
+    }
+    let start_response = handle_task_start(
+        id.clone(),
+        Some(json!({
+            "goal": admission.task_start.goal.clone(),
+            "mode_id": admission.task_start.mode_id.clone(),
+        })),
+    );
+    let Some(start_value) = start_response.result else {
+        return Err(JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id: id.clone(),
+            result: None,
+            error: start_response.error,
+        });
+    };
+    let start_result: TaskStartResult = serde_json::from_value(start_value)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+    let progress = task_list_progress_overview(store, &tasks)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+    let start_progress = HeadlessRunProgressCheckpoint {
+        progress_fingerprint: progress.source_fingerprint,
+        aggregate_sequence: progress.aggregate_sequence,
+    };
+    let journey_seed = json!({
+        "journey_id": admission.journey_id,
+        "session_id": session_id,
+        "drive_id": drive_id,
+        "task_id": start_result.task_id,
+        "run_id": start_result.run_id,
+        "task_start_fingerprint": task_start_fingerprint,
+        "start_progress": start_progress,
+    });
+    let checkpoint = HeadlessJourneyStartCheckpoint {
+        journey_id: admission.journey_id.clone(),
+        session_id: session_id.to_string(),
+        drive_id: drive_id.to_string(),
+        task_id: start_result.task_id,
+        run_id: start_result.run_id,
+        task_start_fingerprint,
+        start_progress,
+        journey_fingerprint: format!("sha256:{}", hex_sha256(journey_seed.to_string().as_bytes())),
+    };
+    store
+        .tasks()
+        .write_headless_journey_start_checkpoint(&checkpoint)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+    if let Some(record) = store
+        .tasks()
+        .get_task(&checkpoint.task_id)
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
+    {
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::HeadlessJourneyStarted,
+                Some(json!({
+                    "journey_id": checkpoint.journey_id,
+                    "session_id": checkpoint.session_id,
+                    "drive_id": checkpoint.drive_id,
+                    "task_id": checkpoint.task_id,
+                    "run_id": checkpoint.run_id,
+                    "task_start_fingerprint": checkpoint.task_start_fingerprint,
+                    "start_progress_fingerprint": checkpoint.start_progress.progress_fingerprint,
+                    "start_aggregate_sequence": checkpoint.start_progress.aggregate_sequence,
+                    "journey_fingerprint": checkpoint.journey_fingerprint,
+                    "next_action": "drive_headless_journey",
+                    "reason": "Headless journey admitted one initial task under bounded runtime-owned drive authority."
+                })),
+            )
+            .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+    }
+    Ok(checkpoint)
+}
+
+fn headless_journey_metadata(
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    result: &HeadlessRunDriveResult,
+    replayed: bool,
+) -> HeadlessRunJourneyMetadata {
+    HeadlessRunJourneyMetadata {
+        journey_id: checkpoint.journey_id.clone(),
+        task_id: checkpoint.task_id.clone(),
+        run_id: checkpoint.run_id.clone(),
+        session_id: result.session_id.clone(),
+        drive_id: result.drive_id.clone(),
+        start_progress_fingerprint: checkpoint.start_progress.progress_fingerprint.clone(),
+        start_aggregate_sequence: checkpoint.start_progress.aggregate_sequence,
+        post_progress_fingerprint: result
+            .post_progress
+            .as_ref()
+            .map(|progress| progress.progress_fingerprint.clone()),
+        post_aggregate_sequence: result
+            .post_progress
+            .as_ref()
+            .map(|progress| progress.aggregate_sequence),
+        closure_status: result.completion_closure.status.clone(),
+        next_action: result.next_action.clone(),
+        replayed,
+        journey_fingerprint: checkpoint.journey_fingerprint.clone(),
+    }
+}
+
 fn headless_run_checkpoint_is_progress_overview_boundary(
     checkpoint: &HeadlessRunSessionCheckpoint,
 ) -> bool {
@@ -13003,7 +13194,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: session_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
         );
     }
-    if params.expected_start_session_sequence == 0 {
+    if params.expected_start_session_sequence == 0 && params.journey_admission.is_none() {
         return error_response(
             id,
             -32602,
@@ -13020,6 +13211,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             -32602,
             "invalid params: drive_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
         );
+    }
+    if let Err(message) = validate_headless_journey_admission(&params, &drive_id) {
+        return error_response(id, -32602, &message);
     }
     let max_advances = params.max_advances.unwrap_or(1);
     if max_advances == 0 || max_advances > HEADLESS_RUN_DRIVE_MAX_ADVANCES {
@@ -13122,11 +13316,30 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let journey_checkpoint = if let Some(admission) = params.journey_admission.as_ref() {
+        match headless_journey_start_checkpoint_for_admission(
+            &store,
+            admission,
+            &params.session_id,
+            &drive_id,
+            &id,
+        ) {
+            Ok(checkpoint) => Some(checkpoint),
+            Err(response) => return response,
+        }
+    } else {
+        None
+    };
+    let drive_start_session_sequence = if journey_checkpoint.is_some() {
+        0
+    } else {
+        params.expected_start_session_sequence
+    };
     if let Ok(Some(checkpoint)) = store
         .tasks()
         .read_headless_run_session_drive_checkpoint(&params.session_id, &drive_id)
     {
-        if checkpoint.start_session_sequence != params.expected_start_session_sequence {
+        if checkpoint.start_session_sequence != drive_start_session_sequence {
             return error_response(
                 id,
                 -32602,
@@ -13184,6 +13397,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         }
         let mut result = checkpoint.result;
         result.replayed = true;
+        if let Some(checkpoint) = journey_checkpoint.as_ref() {
+            result.journey = Some(headless_journey_metadata(checkpoint, &result, true));
+        }
         match headless_run_completion_finalization(
             &store,
             &result,
@@ -13196,103 +13412,120 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         return result_response(id, json!(result));
     }
 
-    let start_checkpoint = match store
+    let existing_start_checkpoint = match store
         .tasks()
         .read_headless_run_session_checkpoint(&params.session_id)
     {
-        Ok(Some(checkpoint)) => checkpoint,
-        Ok(None) => {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if journey_checkpoint.is_none() && existing_start_checkpoint.is_none() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: existing session checkpoint is required",
+        );
+    }
+    if let Some(start_checkpoint) = existing_start_checkpoint.as_ref() {
+        if journey_checkpoint.is_none()
+            && start_checkpoint.session_sequence != params.expected_start_session_sequence
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: expected_start_session_sequence must match the current session checkpoint",
+            );
+        }
+        if params.modepack_selected_candidate_fetch_target.is_some()
+            && !start_checkpoint
+                .result
+                .next_route
+                .as_ref()
+                .map(|route| {
+                    route.kind
+                        == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
+                })
+                .unwrap_or(false)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
+            );
+        }
+        if params
+            .modepack_selected_candidate_provenance_verification_target
+            .is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_candidate_provenance_verification_target requires persisted session route verify_selected_modepack_candidate_provenance_explicitly",
+            );
+        }
+        if params.modepack_selected_candidate_approval_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_candidate_approval_target requires persisted session route approve_verified_modepack_candidate_explicitly",
+            );
+        }
+        if params
+            .modepack_selected_approved_candidate_replacement_target
+            .is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
+            )
+            && !headless_run_checkpoint_has_next_route_action(
+                start_checkpoint,
+                HeadlessContinueRouteKind::RefreshProgressOverview,
+                "replace_active_with_approved_modepack_candidate_explicitly",
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_selected_approved_candidate_replacement_target requires persisted session route replace_active_with_approved_modepack_candidate_explicitly",
+            );
+        }
+        if params.modepack_registry_update_selection_target.is_some()
+            && !headless_run_checkpoint_is_progress_overview_boundary(start_checkpoint)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
+            );
+        }
+    }
+    let start_progress = if let Some(checkpoint) = journey_checkpoint.as_ref() {
+        checkpoint.start_progress.clone()
+    } else {
+        let Some(start_checkpoint) = existing_start_checkpoint.as_ref() else {
             return error_response(
                 id,
                 -32602,
                 "invalid params: existing session checkpoint is required",
-            )
-        }
-        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
-    };
-    if start_checkpoint.session_sequence != params.expected_start_session_sequence {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: expected_start_session_sequence must match the current session checkpoint",
-        );
-    }
-    if params.modepack_selected_candidate_fetch_target.is_some()
-        && !start_checkpoint
-            .result
-            .next_route
-            .as_ref()
-            .map(|route| {
-                route.kind == HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
-            })
-            .unwrap_or(false)
-    {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: modepack_selected_candidate_fetch_target requires persisted session route fetch_selected_modepack_candidate_explicitly",
-        );
-    }
-    if params
-        .modepack_selected_candidate_provenance_verification_target
-        .is_some()
-        && !headless_run_checkpoint_has_next_route(
-            &start_checkpoint,
-            HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
-        )
-    {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: modepack_selected_candidate_provenance_verification_target requires persisted session route verify_selected_modepack_candidate_provenance_explicitly",
-        );
-    }
-    if params.modepack_selected_candidate_approval_target.is_some()
-        && !headless_run_checkpoint_has_next_route(
-            &start_checkpoint,
-            HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
-        )
-    {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: modepack_selected_candidate_approval_target requires persisted session route approve_verified_modepack_candidate_explicitly",
-        );
-    }
-    if params
-        .modepack_selected_approved_candidate_replacement_target
-        .is_some()
-        && !headless_run_checkpoint_has_next_route(
-            &start_checkpoint,
-            HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
-        )
-        && !headless_run_checkpoint_has_next_route_action(
-            &start_checkpoint,
-            HeadlessContinueRouteKind::RefreshProgressOverview,
-            "replace_active_with_approved_modepack_candidate_explicitly",
-        )
-    {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: modepack_selected_approved_candidate_replacement_target requires persisted session route replace_active_with_approved_modepack_candidate_explicitly",
-        );
-    }
-    if params.modepack_registry_update_selection_target.is_some()
-        && !headless_run_checkpoint_is_progress_overview_boundary(&start_checkpoint)
-    {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
-        );
-    }
-    let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
-        return error_response(
-            id,
-            -32603,
-            "internal error: persisted session checkpoint is missing post progress",
-        );
+            );
+        };
+        let Some(start_progress) = start_checkpoint.result.post_progress.clone() else {
+            return error_response(
+                id,
+                -32603,
+                "internal error: persisted session checkpoint is missing post progress",
+            );
+        };
+        start_progress
     };
 
     let mut advances = Vec::new();
@@ -13301,7 +13534,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     let mut next_route = None;
     let mut post_progress = Some(start_progress.clone());
     for index in 0..max_advances {
-        let session_sequence = params.expected_start_session_sequence + u64::from(index) + 1;
+        let session_sequence = drive_start_session_sequence + u64::from(index) + 1;
         let advance_id = format!("{}.{}", drive_id, session_sequence);
         let mut advance_params = json!({
             "authorize": true,
@@ -13312,6 +13545,12 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "context_budget": params.context_budget.clone()
         });
         if index == 0 {
+            if journey_checkpoint.is_some() {
+                advance_params["expected_progress_fingerprint"] =
+                    json!(start_progress.progress_fingerprint.clone());
+                advance_params["expected_aggregate_sequence"] =
+                    json!(start_progress.aggregate_sequence);
+            }
             if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
                 advance_params["modepack_selected_candidate_fetch_target"] = json!(target);
             }
@@ -13371,7 +13610,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     let end_session_sequence = advances
         .last()
         .map(|advance| advance.session_sequence)
-        .unwrap_or(params.expected_start_session_sequence);
+        .unwrap_or(drive_start_session_sequence);
     let status = advances
         .last()
         .map(|advance| advance.status.clone())
@@ -13405,7 +13644,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         status: status.clone(),
         session_id: params.session_id.clone(),
         drive_id: drive_id.clone(),
-        start_session_sequence: params.expected_start_session_sequence,
+        start_session_sequence: drive_start_session_sequence,
         end_session_sequence,
         replayed: false,
         max_advances,
@@ -13422,6 +13661,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         post_progress: post_progress.clone(),
         next_route: next_route.clone(),
         advances: advances.clone(),
+        journey: None,
         next_action: next_action.clone(),
     };
     let completion_finalization = match headless_run_completion_finalization(
@@ -13436,7 +13676,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     let drive_seed = json!({
         "session_id": params.session_id,
         "drive_id": drive_id,
-        "start_session_sequence": params.expected_start_session_sequence,
+        "start_session_sequence": drive_start_session_sequence,
         "end_session_sequence": end_session_sequence,
         "max_advances": max_advances,
         "max_steps_per_advance": max_steps_per_advance,
@@ -13450,11 +13690,11 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "next_action": next_action
     });
     let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
-    let result = HeadlessRunDriveResult {
+    let mut result = HeadlessRunDriveResult {
         status,
         session_id: params.session_id.clone(),
         drive_id: drive_id.clone(),
-        start_session_sequence: params.expected_start_session_sequence,
+        start_session_sequence: drive_start_session_sequence,
         end_session_sequence,
         replayed: false,
         max_advances,
@@ -13471,12 +13711,16 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         post_progress,
         next_route,
         advances,
+        journey: None,
         next_action,
     };
+    if let Some(checkpoint) = journey_checkpoint.as_ref() {
+        result.journey = Some(headless_journey_metadata(checkpoint, &result, false));
+    }
     let checkpoint = HeadlessRunSessionDriveCheckpoint {
         session_id: params.session_id,
         drive_id,
-        start_session_sequence: params.expected_start_session_sequence,
+        start_session_sequence: drive_start_session_sequence,
         result: result.clone(),
     };
     if let Err(error) = store
@@ -48534,6 +48778,7 @@ mod tests {
             }),
             next_route: None,
             advances: Vec::new(),
+            journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
 
@@ -48703,6 +48948,7 @@ mod tests {
             }),
             next_route: None,
             advances: Vec::new(),
+            journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
 
@@ -48840,6 +49086,7 @@ mod tests {
             }),
             next_route: None,
             advances: Vec::new(),
+            journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
         let wrong_finalization = HeadlessRunCompletionFinalization {
@@ -49171,6 +49418,306 @@ mod tests {
         assert!(events
             .iter()
             .all(|event| event.kind != LedgerEventKind::HeadlessRunSessionDriveCompleted));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_admission_starts_task_drives_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey","drive_id":"m50.journey.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
+        let response = parse_line(request);
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("journey drive result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["session_id"], "m50.journey");
+        assert_eq!(result["drive_id"], "m50.journey.drive");
+        assert_eq!(result["start_session_sequence"], 0);
+        assert_eq!(result["end_session_sequence"], 1);
+        assert_eq!(result["advance_count"], 1);
+        assert_eq!(result["journey"]["journey_id"], "m50.journey.1");
+        assert_eq!(result["journey"]["session_id"], "m50.journey");
+        assert_eq!(result["journey"]["drive_id"], "m50.journey.drive");
+        assert_eq!(result["journey"]["replayed"], false);
+        assert!(result["journey"]["journey_fingerprint"]
+            .as_str()
+            .expect("journey fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(
+            result["journey"]["task_id"],
+            result["advances"][0]["steps"][0]["selected_task_id"]
+        );
+        assert_eq!(
+            result["journey"]["run_id"],
+            result["advances"][0]["steps"][0]["selected_run_id"]
+        );
+        assert!(result["journey"].get("raw_prompt").is_none());
+        assert!(result["journey"].get("provider_response").is_none());
+        assert!(result["journey"].get("absolute_path").is_none());
+
+        let task_count_after_first_drive = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_first_drive, 1);
+        let replay = parse_line(request).result.expect("journey replay result");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey"]["replayed"], true);
+        assert_eq!(replay["journey"]["task_id"], result["journey"]["task_id"]);
+        assert_eq!(
+            replay["journey"]["journey_fingerprint"],
+            result["journey"]["journey_fingerprint"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_denial_fails_before_task_creation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.bad","drive_id":"m50.bad.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.bad.1","authorize_journey_start":false,"task_start":{"goal":"Should not start","mode_id":"orchestrator"}}}}"#,
+        );
+        assert!(response.result.is_none());
+        assert!(response
+            .error
+            .expect("error")
+            .message
+            .contains("authorize_journey_start must be true"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m50.bad.1")
+            .expect("journey checkpoint")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_invalid_admissions_fail_before_task_creation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let requests = [
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": false,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 1,
+                    "journey_admission": {
+                        "journey_id": "m50.invalid.auth",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 1,
+                    "journey_admission": {
+                        "journey_id": "../bad",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 1,
+                    "journey_admission": {
+                        "journey_id": "m50.invalid.raw",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator",
+                            "raw_prompt": "secret"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 1,
+                    "max_advances": 1,
+                    "journey_admission": {
+                        "journey_id": "m50.invalid.sequence",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 4,
+                    "journey_admission": {
+                        "journey_id": "m50.invalid.budget",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator"
+                        }
+                    }
+                }
+            }),
+            serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m50.invalid",
+                    "drive_id": "m50.invalid.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "journey_admission": {
+                        "journey_id": "m50.invalid.mixed",
+                        "authorize_journey_start": true,
+                        "task_start": {
+                            "goal": "Should not start",
+                            "mode_id": "orchestrator"
+                        }
+                    },
+                    "modepack_registry_update_selection_target": {
+                        "authorize_modepack_registry_update_selection": true,
+                        "authorize_registry_trust": true,
+                        "registry_url": "https://registry.example.com/modepacks.json",
+                        "expected_registry_manifest_sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                        "expected_current_activation_fingerprint": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+                        "expected_registry_provenance_statement_sha256": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+                        "expected_registry_signer_fingerprint": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                        "expected_registry_trusted_signer_trust_id": "trust_1",
+                        "expected_registry_trusted_signer_event_id": "event_1",
+                        "registry_provenance_statement_json": "{}",
+                        "registry_provenance_signature_base64": "ZmFrZQ==",
+                        "registry_provenance_public_key_base64": "ZmFrZQ=="
+                    }
+                }
+            }),
+        ];
+
+        for request in requests {
+            let response = parse_line(&request.to_string());
+            assert!(
+                response.result.is_none(),
+                "invalid journey admission unexpectedly succeeded: {request}"
+            );
+            assert!(response.error.is_some());
+            assert!(
+                store.tasks().list_tasks().expect("tasks").is_empty(),
+                "invalid journey admission created a task: {request}"
+            );
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_conflicting_replay_fails_without_new_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.conflict","drive_id":"m50.conflict.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.conflict.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
+        let result = parse_line(request).result.expect("journey result");
+        let initial_task_count = store.tasks().list_tasks().expect("tasks").len();
+        assert!(result["journey"]["journey_fingerprint"]
+            .as_str()
+            .expect("journey fingerprint")
+            .starts_with("sha256:"));
+
+        assert_eq!(initial_task_count, 1);
+
+        let conflicting_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.conflict","drive_id":"m50.conflict.other","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.conflict.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned journey","mode_id":"implementer"}}}}"#;
+        let conflict = parse_line(conflicting_request);
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict")
+            .message
+            .contains("journey_id conflicts"));
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            initial_task_count
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
