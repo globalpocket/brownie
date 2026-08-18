@@ -129,6 +129,35 @@ test('treats control-plane authority guard changes as guard engine changes', () 
   });
 });
 
+test('treats product completion guard changes as guard engine changes', () => {
+  withTempRepo((repoRoot) => {
+    writeManifest(repoRoot, validManifest());
+    const missingReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['scripts/guard-product-completion.mjs']
+    });
+    assert(missingReview.errors.some((error) => error.includes('guard_engine_change_review.required')));
+
+    writeManifest(
+      repoRoot,
+      validManifest({
+        guard_engine_change_review: {
+          required: true,
+          strict_review_required: true,
+          no_self_approval: true,
+          review_intent: 'Exercise stricter review for product completion guard changes.',
+          changed_files: ['scripts/guard-product-completion.mjs']
+        }
+      })
+    );
+    const withReview = runPhaseValueGuard({
+      repoRoot,
+      changedFiles: ['scripts/guard-product-completion.mjs']
+    });
+    assert.deepEqual(withReview.errors, []);
+  });
+});
+
 test('treats VSIX check script changes as guard engine changes', () => {
   withTempRepo((repoRoot) => {
     writeManifest(repoRoot, validManifest());
