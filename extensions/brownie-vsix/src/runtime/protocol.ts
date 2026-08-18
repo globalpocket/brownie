@@ -5749,8 +5749,8 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
       explicitModePackTargetCount === 0 &&
       (value.context_budget === undefined || value.context_budget === null) &&
       value.authorize_completion_finalization !== true &&
-      (value.max_advances === undefined || value.max_advances === null || value.max_advances === 1) &&
-      (value.max_steps_per_advance === undefined || value.max_steps_per_advance === null || value.max_steps_per_advance === 1)
+      value.max_advances === 1 &&
+      value.max_steps_per_advance === 1
     ))
   );
 }
@@ -6166,7 +6166,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_select_registry_update_result !== undefined &&
     value.modepack_select_registry_update_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'fetch_selected_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'fetch_selected_mode_pack_candidate_explicitly', 'fetch_selected_modepack_candidate_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6176,7 +6176,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_fetch_candidate_result !== undefined &&
     value.modepack_fetch_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'verify_selected_modepack_candidate_provenance_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'verify_selected_mode_pack_candidate_provenance_explicitly', 'verify_selected_modepack_candidate_provenance_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6186,7 +6186,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_verify_candidate_provenance_result !== undefined &&
     value.modepack_verify_candidate_provenance_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'approve_verified_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'approve_verified_mode_pack_candidate_explicitly', 'approve_verified_modepack_candidate_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6196,7 +6196,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_approve_candidate_result !== undefined &&
     value.modepack_approve_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.next_action === 'replace_active_with_approved_modepack_candidate_explicitly';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && (isModePackRouteKind(value.next_route.kind, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly') || (value.next_route.kind === 'refresh_progress_overview' && isModePackRouteKind(value.next_route.next_action, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly')));
   }
   if (
     value.status === 'task_executed' &&
@@ -6572,6 +6572,10 @@ function isBoundedHandle(value: unknown): value is string {
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
   return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+}
+
+function isModePackRouteKind(value: unknown, canonical: HeadlessContinueRouteKind, legacy: HeadlessContinueRouteKind): boolean {
+  return value === canonical || value === legacy;
 }
 
 function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute {

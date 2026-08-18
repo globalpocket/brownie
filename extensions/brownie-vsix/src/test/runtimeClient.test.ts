@@ -1454,6 +1454,13 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceResult(modePackRegistrySelectionHeadlessResult)).toBe(true);
     expect(isHeadlessContinueOnceResult({
       ...modePackRegistrySelectionHeadlessResult,
+      next_route: {
+        ...modePackRegistrySelectionHeadlessResult.next_route,
+        kind: 'fetch_selected_mode_pack_candidate_explicitly',
+      },
+    })).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackRegistrySelectionHeadlessResult,
       modepack_select_registry_update_result: { ...modePackRegistryUpdateSelectionResult, raw_registry_manifest_json: '{}' },
     })).toBe(false);
     const selectedCandidateFetchResult = {
@@ -1491,6 +1498,13 @@ describe('protocol validation', () => {
       next_action: 'verify_selected_modepack_candidate_provenance_explicitly',
     };
     expect(isHeadlessContinueOnceResult(modePackHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...modePackHeadlessResult,
+      next_route: {
+        ...modePackHeadlessResult.next_route,
+        kind: 'verify_selected_mode_pack_candidate_provenance_explicitly',
+      },
+    })).toBe(true);
     expect(isHeadlessContinueOnceResult({
       ...modePackHeadlessResult,
       modepack_fetch_candidate_result: { ...selectedCandidateFetchResult, raw_modepack_json: '{}' },
@@ -2075,6 +2089,14 @@ describe('protocol validation', () => {
       expected_start_session_sequence: 1,
       max_advances: 1,
       max_steps_per_advance: 1,
+      journey_route_resume: headlessRunJourneyRouteResume,
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.route.resume',
+      expected_start_session_sequence: 1,
+      max_advances: 1,
       journey_route_resume: headlessRunJourneyRouteResume,
     })).toBe(false);
     expect(isHeadlessRunDriveParams({

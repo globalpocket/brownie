@@ -13784,6 +13784,13 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             Ok(finalization) => result.completion_finalization = finalization,
             Err(message) => return error_response(id, -32602, &message),
         }
+        if let Some(metadata) = result.journey_route_resume.as_ref() {
+            if let Err(error) =
+                append_headless_journey_route_resume_event_if_missing(&store, metadata)
+            {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+        }
         return result_response(id, json!(result));
     }
 
@@ -17582,6 +17589,58 @@ fn append_headless_run_session_advanced_events(
     Ok(())
 }
 
+fn append_headless_journey_route_resume_event_if_missing(
+    store: &BrownieStore,
+    resume: &HeadlessRunJourneyRouteResumeMetadata,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&resume.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != resume.run_id {
+        return Ok(());
+    }
+    let already_recorded = store
+        .tasks()
+        .read_ledger_events(&record.run_id)?
+        .iter()
+        .any(|event| {
+            event.kind == LedgerEventKind::HeadlessJourneyRouteResumed
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("resume_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(resume.resume_fingerprint.as_str())
+        });
+    if already_recorded {
+        return Ok(());
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessJourneyRouteResumed,
+        Some(json!({
+            "journey_id": resume.journey_id,
+            "session_id": resume.session_id,
+            "drive_id": resume.drive_id,
+            "task_id": resume.task_id,
+            "run_id": resume.run_id,
+            "route_kind": resume.route_kind,
+            "source_continuation_id": resume.source_continuation_id,
+            "source_decision_id": resume.source_decision_id,
+            "source_checkpoint_fingerprint": resume.source_checkpoint_fingerprint,
+            "derived_target_class": resume.derived_target_class,
+            "result_advance_id": resume.result_advance_id,
+            "result_continuation_id": resume.result_continuation_id,
+            "post_route_progress_fingerprint": resume.post_route_progress_fingerprint,
+            "post_route_aggregate_sequence": resume.post_route_aggregate_sequence,
+            "next_action": resume.next_action,
+            "resume_fingerprint": resume.resume_fingerprint,
+            "reason": "Headless journey route resumed through bounded runtime-derived route target evidence."
+        })),
+    )?;
+    Ok(())
+}
+
 fn append_headless_run_session_drive_completed_events(
     store: &BrownieStore,
     result: &HeadlessRunDriveResult,
@@ -17626,35 +17685,7 @@ fn append_headless_run_session_drive_completed_events(
         }
     }
     if let Some(resume) = result.journey_route_resume.as_ref() {
-        if !resume.replayed {
-            if let Some(record) = store.tasks().get_task(&resume.task_id)? {
-                if record.run_id == resume.run_id {
-                    store.tasks().append_task_event_with_payload(
-                        &record,
-                        LedgerEventKind::HeadlessJourneyRouteResumed,
-                        Some(json!({
-                            "journey_id": resume.journey_id,
-                            "session_id": resume.session_id,
-                            "drive_id": resume.drive_id,
-                            "task_id": resume.task_id,
-                            "run_id": resume.run_id,
-                            "route_kind": resume.route_kind,
-                            "source_continuation_id": resume.source_continuation_id,
-                            "source_decision_id": resume.source_decision_id,
-                            "source_checkpoint_fingerprint": resume.source_checkpoint_fingerprint,
-                            "derived_target_class": resume.derived_target_class,
-                            "result_advance_id": resume.result_advance_id,
-                            "result_continuation_id": resume.result_continuation_id,
-                            "post_route_progress_fingerprint": resume.post_route_progress_fingerprint,
-                            "post_route_aggregate_sequence": resume.post_route_aggregate_sequence,
-                            "next_action": resume.next_action,
-                            "resume_fingerprint": resume.resume_fingerprint,
-                            "reason": "Headless journey route resumed through bounded runtime-derived route target evidence."
-                        })),
-                    )?;
-                }
-            }
-        }
+        append_headless_journey_route_resume_event_if_missing(store, resume)?;
     }
     Ok(())
 }
@@ -50566,6 +50597,69 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
                 .count(),
             1
+        );
+
+        let repair_drive_id = "m50.2.route.repair";
+        let mut repair_request = request.clone();
+        repair_request["id"] = json!(3);
+        repair_request["params"]["drive_id"] = json!(repair_drive_id);
+        let repair_params: HeadlessRunDriveParams =
+            serde_json::from_value(repair_request["params"].clone()).expect("repair params");
+        let mut repair_result: HeadlessRunDriveResult =
+            serde_json::from_value(result.clone()).expect("repair result");
+        repair_result.drive_id = repair_drive_id.to_string();
+        repair_result.replayed = false;
+        repair_result.drive_fingerprint = format!("sha256:{}", "2".repeat(64));
+        let repair_resume = repair_result
+            .journey_route_resume
+            .as_mut()
+            .expect("repair resume metadata");
+        repair_resume.drive_id = repair_drive_id.to_string();
+        repair_resume.replayed = false;
+        repair_resume.resume_fingerprint = headless_journey_route_resume_request_fingerprint(
+            &repair_params,
+            repair_drive_id,
+            &source_checkpoint_fingerprint,
+        )
+        .expect("repair resume fingerprint");
+        store
+            .tasks()
+            .write_headless_run_session_drive_checkpoint(&HeadlessRunSessionDriveCheckpoint {
+                session_id: "m50.2.route".to_string(),
+                drive_id: repair_drive_id.to_string(),
+                start_session_sequence: 1,
+                result: repair_result,
+            })
+            .expect("write repair checkpoint");
+        let repaired = parse_line(&repair_request.to_string())
+            .result
+            .expect("repair replay result");
+        assert_eq!(repaired["journey_route_resume"]["replayed"], true);
+        let repaired_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("repaired events");
+        assert_eq!(
+            repaired_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
+                .count(),
+            2
+        );
+        let repeated_repair = parse_line(&repair_request.to_string())
+            .result
+            .expect("second repair replay result");
+        assert_eq!(repeated_repair["journey_route_resume"]["replayed"], true);
+        let repeated_repair_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("repeated repair events");
+        assert_eq!(
+            repeated_repair_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
+                .count(),
+            2
         );
         let candidate_ledger = std::fs::read_to_string(
             temp.path()
