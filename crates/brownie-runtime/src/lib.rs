@@ -10209,11 +10209,11 @@ fn headless_continue_modepack_selected_candidate_fetch_with_resolver<R, F>(
     progress_overview: &TaskListProgressOverview,
     params: &HeadlessContinueOnceParams,
     resolver: R,
-    fetcher: F,
+    mut fetcher: F,
 ) -> Result<HeadlessContinueOnceResult, String>
 where
-    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
-    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+    R: Fn(&str) -> Result<Vec<SocketAddr>, String>,
+    F: FnMut(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
 {
     let target = params
         .modepack_selected_candidate_fetch_target
@@ -10331,8 +10331,16 @@ where
             url: summary.candidate_url.clone(),
             expected_content_sha256: Some(summary.candidate_content_sha256.clone()),
         },
-        resolver,
-        fetcher,
+        &resolver,
+        &mut fetcher,
+    )?;
+    let provenance_binding =
+        create_modepack_fetch_binding_with(&summary.provenance_statement_url, &resolver)?;
+    let provenance_response = fetcher(&provenance_binding)?;
+    let provenance_material = selected_candidate_provenance_material_from_response(
+        provenance_response,
+        &summary.provenance_statement_sha256,
+        &summary.signer_fingerprint,
     )?;
     if fetch_result.candidate.content_sha256 != summary.candidate_content_sha256
         || fetch_result.candidate.compiled_policy_fingerprint
@@ -10375,9 +10383,11 @@ where
                 expected_current_activation_fingerprint: Some(
                     summary.current_activation_fingerprint.clone(),
                 ),
-                provenance_statement_json: None,
-                provenance_signature_base64: None,
-                provenance_public_key_base64: None,
+                provenance_statement_json: Some(provenance_material.provenance_statement_json),
+                provenance_signature_base64: Some(provenance_material.provenance_signature_base64),
+                provenance_public_key_base64: Some(
+                    provenance_material.provenance_public_key_base64,
+                ),
                 result: fetch_result.clone(),
             },
         )
@@ -33871,6 +33881,14 @@ struct ModePackRegistryManifestEntry {
     signer_fingerprint: String,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectedCandidateProvenanceMaterial {
+    provenance_statement_json: String,
+    provenance_signature_base64: String,
+    provenance_public_key_base64: String,
+}
+
 fn fetch_remote_modepack_candidate(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
@@ -33887,16 +33905,16 @@ fn fetch_remote_modepack_candidate(
 fn fetch_remote_modepack_candidate_with<F>(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
-    fetcher: F,
+    mut fetcher: F,
 ) -> Result<ModePackFetchCandidateResult, String>
 where
-    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+    F: FnMut(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
 {
     fetch_remote_modepack_candidate_with_resolver(
         store,
         params,
         test_modepack_dns_resolver,
-        fetcher,
+        &mut fetcher,
     )
 }
 
@@ -33904,11 +33922,11 @@ fn fetch_remote_modepack_candidate_with_resolver<R, F>(
     store: &BrownieStore,
     params: &ModePackFetchCandidateParams,
     resolver: R,
-    fetcher: F,
+    mut fetcher: F,
 ) -> Result<ModePackFetchCandidateResult, String>
 where
-    R: FnOnce(&str) -> Result<Vec<SocketAddr>, String>,
-    F: FnOnce(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
+    R: Fn(&str) -> Result<Vec<SocketAddr>, String>,
+    F: FnMut(&RemoteModePackFetchBinding) -> Result<RemoteModePackFetchResponse, String>,
 {
     let binding = create_modepack_fetch_binding_with(&params.url, resolver)?;
     let response = fetcher(&binding)?;
@@ -34004,6 +34022,102 @@ where
         candidate: committed.snapshot.summary,
         next_action: "review_candidate_then_replace_active_modepack".to_string(),
     })
+}
+
+fn selected_candidate_provenance_material_from_response(
+    response: RemoteModePackFetchResponse,
+    expected_statement_sha256: &str,
+    expected_signer_fingerprint: &str,
+) -> Result<SelectedCandidateProvenanceMaterial, String> {
+    if response.status != 200 {
+        return Err(format!(
+            "modepack selected candidate fetch failed: provenance statement unsupported HTTP status {}",
+            response.status
+        ));
+    }
+    if !modepack_candidate_content_type_allowed(response.content_type.as_deref()) {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement unsupported content type"
+                .to_string(),
+        );
+    }
+    if response.body.len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement exceeds byte limit"
+                .to_string(),
+        );
+    }
+    let body = String::from_utf8(response.body).map_err(|_| {
+        "modepack selected candidate fetch failed: provenance statement response is not UTF-8"
+            .to_string()
+    })?;
+    if scan_text_for_sensitive_content(&body) {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement response contains sensitive-like content"
+                .to_string(),
+        );
+    }
+    let material: SelectedCandidateProvenanceMaterial =
+        serde_json::from_str(&body).map_err(|error| {
+            format!(
+                "modepack selected candidate fetch failed: invalid provenance statement response JSON: {error}"
+            )
+        })?;
+    if material.provenance_statement_json.as_bytes().len() > MODEPACK_PROVENANCE_STATEMENT_MAX_BYTES
+    {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement exceeds byte limit"
+                .to_string(),
+        );
+    }
+    if scan_text_for_sensitive_content(&material.provenance_statement_json) {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement contains sensitive-like content"
+                .to_string(),
+        );
+    }
+    let statement_sha256 = format!(
+        "sha256:{}",
+        hex_sha256(material.provenance_statement_json.as_bytes())
+    );
+    if statement_sha256 != expected_statement_sha256 {
+        return Err(
+            "modepack selected candidate fetch failed: provenance statement fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    let public_key_bytes = general_purpose::STANDARD
+        .decode(&material.provenance_public_key_base64)
+        .map_err(|_| {
+            "modepack selected candidate fetch failed: provenance public key is not base64"
+                .to_string()
+        })?;
+    if public_key_bytes.len() != 32 {
+        return Err(
+            "modepack selected candidate fetch failed: provenance public key must be 32 bytes"
+                .to_string(),
+        );
+    }
+    let signer_fingerprint = format!("sha256:{}", hex_sha256(&public_key_bytes));
+    if signer_fingerprint != expected_signer_fingerprint {
+        return Err(
+            "modepack selected candidate fetch failed: provenance signer fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    let signature_bytes = general_purpose::STANDARD
+        .decode(&material.provenance_signature_base64)
+        .map_err(|_| {
+            "modepack selected candidate fetch failed: provenance signature is not base64"
+                .to_string()
+        })?;
+    if signature_bytes.len() != 64 {
+        return Err(
+            "modepack selected candidate fetch failed: provenance signature must be 64 bytes"
+                .to_string(),
+        );
+    }
+    Ok(material)
 }
 
 fn select_modepack_registry_update(
@@ -50702,11 +50816,23 @@ mod tests {
             .message
             .contains("expected_source_checkpoint_fingerprint"));
 
-        set_headless_run_modepack_test_fetch_responses(vec![RemoteModePackFetchResponse {
-            status: 200,
-            content_type: Some("application/json".to_string()),
-            body: body.as_bytes().to_vec(),
-        }]);
+        let provenance_material_response = json!({
+            "provenance_statement_json": provenance_statement,
+            "provenance_signature_base64": general_purpose::STANDARD.encode(provenance_signature.to_bytes()),
+            "provenance_public_key_base64": general_purpose::STANDARD.encode(public_key_bytes)
+        });
+        set_headless_run_modepack_test_fetch_responses(vec![
+            RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: body.as_bytes().to_vec(),
+            },
+            RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: provenance_material_response.to_string().as_bytes().to_vec(),
+            },
+        ]);
         let request = json!({
             "jsonrpc": "2.0",
             "id": 2,
@@ -50764,23 +50890,13 @@ mod tests {
         assert!(result["journey_route_resume"]
             .get("absolute_path")
             .is_none());
-        let mut fetch_checkpoint = store
+        let fetch_checkpoint = store
             .read_headless_modepack_selected_candidate_fetch_checkpoint("run.m50.2.route.2")
             .expect("fetch checkpoint read")
             .expect("fetch checkpoint");
-        fetch_checkpoint.provenance_statement_json = Some(provenance_statement);
-        fetch_checkpoint.provenance_signature_base64 =
-            Some(general_purpose::STANDARD.encode(provenance_signature.to_bytes()));
-        fetch_checkpoint.provenance_public_key_base64 =
-            Some(general_purpose::STANDARD.encode(public_key_bytes));
-        std::fs::write(
-            temp.path().join(
-                ".brownie/headless-continuations/modepack-selected-fetch-run.m50.2.route.2.json",
-            ),
-            serde_json::to_string_pretty(&fetch_checkpoint)
-                .expect("serialize enriched fetch checkpoint"),
-        )
-        .expect("write enriched fetch checkpoint");
+        assert!(fetch_checkpoint.provenance_statement_json.is_some());
+        assert!(fetch_checkpoint.provenance_signature_base64.is_some());
+        assert!(fetch_checkpoint.provenance_public_key_base64.is_some());
 
         let replay = parse_line(&request.to_string())
             .result
@@ -71754,7 +71870,17 @@ mod tests {
             &progress,
             &params,
             test_modepack_dns_resolver,
-            |_| {
+            |binding| {
+                let body = if binding.url.path().ends_with("provenance.json") {
+                    json!({
+                        "provenance_statement_json": provenance_statement.clone(),
+                        "provenance_signature_base64": general_purpose::STANDARD.encode(provenance_signature.to_bytes()),
+                        "provenance_public_key_base64": general_purpose::STANDARD.encode(public_key_bytes)
+                    })
+                    .to_string()
+                } else {
+                    body.to_string()
+                };
                 Ok(RemoteModePackFetchResponse {
                     status: 200,
                     content_type: Some("application/json".to_string()),
@@ -72682,11 +72808,23 @@ mod tests {
             expected_signer_fingerprint: signer_fingerprint.clone(),
             expected_current_activation_fingerprint: current_activation_fingerprint.clone(),
         };
-        set_headless_run_modepack_test_fetch_responses(vec![RemoteModePackFetchResponse {
-            status: 200,
-            content_type: Some("application/json".to_string()),
-            body: body.as_bytes().to_vec(),
-        }]);
+        let provenance_material_response = json!({
+            "provenance_statement_json": provenance_statement.clone(),
+            "provenance_signature_base64": general_purpose::STANDARD.encode(provenance_signature.to_bytes()),
+            "provenance_public_key_base64": general_purpose::STANDARD.encode(public_key_bytes)
+        });
+        set_headless_run_modepack_test_fetch_responses(vec![
+            RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: body.as_bytes().to_vec(),
+            },
+            RemoteModePackFetchResponse {
+                status: 200,
+                content_type: Some("application/json".to_string()),
+                body: provenance_material_response.to_string().as_bytes().to_vec(),
+            },
+        ]);
         let fetch_request = json!({
             "jsonrpc": "2.0",
             "id": 2,
