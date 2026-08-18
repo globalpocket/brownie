@@ -1893,6 +1893,20 @@ pub struct HeadlessModePackSelectedCandidateFetchCheckpoint {
     pub post_aggregate_sequence: u64,
     pub selection_id: String,
     pub selection_event_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_provenance_statement_url_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_provenance_statement_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_signer_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_current_activation_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_statement_json: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_signature_base64: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provenance_public_key_base64: Option<String>,
     pub result: ModePackFetchCandidateResult,
 }
 

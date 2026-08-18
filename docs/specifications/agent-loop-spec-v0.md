@@ -209,6 +209,22 @@ drive, or resume ledger effects. Missing authorization, stale fingerprints,
 unsupported route kind, missing subordinate checkpoint, and mixed explicit
 targets fail closed before route side effects.
 
+M50.3 adds the next runtime-derived post-admission continuation on the same
+entry point. A caller may provide `journey_route_resume` for a current
+`VerifySelectedModePackCandidateProvenanceExplicitly` boundary with explicit
+resume authorization, expected journey fingerprint, expected route kind, and
+expected selected-candidate fetch checkpoint fingerprint. The caller does not
+provide `modepack_selected_candidate_provenance_verification_target` on the
+successful path. Rust derives that target from persisted selected-candidate
+fetch checkpoint evidence, executes it through existing run-control authority,
+records bounded route-resume evidence, and replays the same drive/resume
+identity without duplicating provenance verification, advance, drive, or resume
+ledger effects. Missing authorization, stale fingerprints, unsupported route
+kind, missing fetch checkpoint evidence, and mixed explicit targets fail closed
+before route side effects. The route resume does not expose raw provenance
+statements, signatures, public keys, Mode Pack payloads, prompts, file content,
+commands, stdout, stderr, environment values, secrets, or raw paths.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks
