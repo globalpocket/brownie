@@ -604,6 +604,24 @@ replay state, and next actions; raw Mode Pack payloads, provenance material,
 prompts, provider data, file content, command output, environment values,
 secrets, and raw paths stay out of route-resume responses and ledger payloads.
 
+M50.6 adds a bounded `journey_closure` envelope on existing
+`headless.run.drive` so the Rust runtime can close a Golden Journey from the
+approved-candidate replacement evidence produced by M50.5. The request supplies
+explicit closure authorization, journey identity, expected journey fingerprint,
+source replacement drive id, expected replacement resume fingerprint, expected
+current session sequence, unit budgets, and an explicit drive id. Rust loads the
+journey checkpoint, source replacement drive checkpoint, referenced selected
+approved candidate replacement checkpoint, and current active Mode Pack
+snapshot; verifies replacement route kind, resume fingerprint, committed
+replacement and candidate consumption evidence, active activation fingerprint,
+complete progress closure, no remaining routes, and terminal completion
+evidence; then records bounded completion finalization and
+`HeadlessJourneyClosed` evidence. Replay returns the committed closure metadata
+without duplicating finalization or closure ledger events. The closure path is
+not a new RPC and rejects journey admission, route resume, caller-supplied Mode
+Pack targets, context budgets, completion-finalization bypass fields, non-unit
+budgets, stale evidence, and raw payload exposure.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

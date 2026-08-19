@@ -35,10 +35,11 @@ use brownie_protocol::{
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
     HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunCompletionClosure,
     HeadlessRunCompletionClosureStatus, HeadlessRunCompletionFinalization, HeadlessRunDriveParams,
-    HeadlessRunDriveResult, HeadlessRunJourneyAdmission, HeadlessRunJourneyMetadata,
-    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunProgressCheckpoint, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunDriveResult, HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
+    HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
+    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
+    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -13207,6 +13208,17 @@ struct HeadlessJourneyRouteResumePlan {
     resume_fingerprint: String,
 }
 
+#[derive(Debug, Clone)]
+struct HeadlessJourneyClosurePlan {
+    journey_checkpoint: HeadlessJourneyStartCheckpoint,
+    source_replacement_drive_id: String,
+    source_replacement_resume_fingerprint: String,
+    replacement_continuation_id: String,
+    replacement_checkpoint_fingerprint: String,
+    active_modepack_activation_fingerprint: String,
+    request_fingerprint: String,
+}
+
 fn modepack_selected_candidate_fetch_target_from_selection_checkpoint(
     checkpoint: &HeadlessModePackRegistryUpdateSelectionCheckpoint,
 ) -> ModePackSelectedCandidateFetchTarget {
@@ -13703,6 +13715,43 @@ fn headless_selected_candidate_approval_checkpoint_fingerprint(
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
 }
 
+fn headless_selected_candidate_replacement_checkpoint_fingerprint(
+    checkpoint: &HeadlessModePackSelectedCandidateReplacementCheckpoint,
+) -> String {
+    let result = &checkpoint.result;
+    let approved_candidate = result.approved_candidate.as_ref();
+    let seed = json!({
+        "checkpoint_kind": "headless_modepack_selected_candidate_replacement",
+        "continuation_id": checkpoint.continuation_id,
+        "decision_id": checkpoint.decision_id,
+        "request_fingerprint": checkpoint.request_fingerprint,
+        "fetch_continuation_id": checkpoint.fetch_continuation_id,
+        "expected_fetch_decision_id": checkpoint.expected_fetch_decision_id,
+        "provenance_verification_continuation_id": checkpoint.provenance_verification_continuation_id,
+        "expected_provenance_verification_decision_id": checkpoint.expected_provenance_verification_decision_id,
+        "approval_continuation_id": checkpoint.approval_continuation_id,
+        "expected_approval_decision_id": checkpoint.expected_approval_decision_id,
+        "expected_progress_fingerprint": checkpoint.expected_progress_fingerprint,
+        "expected_aggregate_sequence": checkpoint.expected_aggregate_sequence,
+        "current_progress_fingerprint": checkpoint.current_progress_fingerprint,
+        "current_aggregate_sequence": checkpoint.current_aggregate_sequence,
+        "post_progress_fingerprint": checkpoint.post_progress_fingerprint,
+        "post_aggregate_sequence": checkpoint.post_aggregate_sequence,
+        "selection_id": checkpoint.selection_id,
+        "selection_event_id": checkpoint.selection_event_id,
+        "replaced": result.replaced,
+        "previous_activation_fingerprint": result.previous_snapshot.activation_fingerprint,
+        "replacement_activation_fingerprint": result.replacement_snapshot.activation_fingerprint,
+        "replacement_event_id": result.replacement_event_id,
+        "approved_candidate_id": approved_candidate.map(|candidate| candidate.candidate_id.clone()),
+        "approved_candidate_approval_id": approved_candidate.map(|candidate| candidate.approval_id.clone()),
+        "approved_candidate_content_sha256": approved_candidate.map(|candidate| candidate.content_sha256.clone()),
+        "approved_candidate_compiled_policy_fingerprint": approved_candidate.map(|candidate| candidate.compiled_policy_fingerprint.clone()),
+        "candidate_consumed_event_id": result.candidate_consumed_event_id,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
 fn headless_journey_route_resume_request_fingerprint(
     params: &HeadlessRunDriveParams,
     drive_id: &str,
@@ -14182,6 +14231,415 @@ fn headless_journey_route_resume_metadata(
     }
 }
 
+fn validate_headless_journey_closure(
+    params: &HeadlessRunDriveParams,
+    max_advances: u8,
+    max_steps_per_advance: u8,
+) -> Result<(), String> {
+    let Some(closure) = params.journey_closure.as_ref() else {
+        return Ok(());
+    };
+    if !is_valid_headless_run_id(&closure.journey_id) {
+        return Err("invalid params: journey closure journey_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+    }
+    if !closure.authorize_journey_closure {
+        return Err("invalid params: authorize_journey_closure must be true".to_string());
+    }
+    if !is_sha256_fingerprint(&closure.expected_journey_fingerprint) {
+        return Err(
+            "invalid params: journey closure expected_journey_fingerprint must be a sha256 fingerprint"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&closure.source_replacement_drive_id) {
+        return Err("invalid params: journey closure source_replacement_drive_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+    }
+    if !is_sha256_fingerprint(&closure.expected_replacement_resume_fingerprint) {
+        return Err(
+            "invalid params: expected_replacement_resume_fingerprint must be a sha256 fingerprint"
+                .to_string(),
+        );
+    }
+    if params.journey_admission.is_some() || params.journey_route_resume.is_some() {
+        return Err(
+            "invalid params: journey closure cannot be combined with journey admission or route resume"
+                .to_string(),
+        );
+    }
+    if headless_run_drive_has_explicit_modepack_target(params) {
+        return Err(
+            "invalid params: journey closure cannot be combined with explicit modepack run-control targets"
+                .to_string(),
+        );
+    }
+    if params.context_budget.is_some() {
+        return Err(
+            "invalid params: journey closure cannot be combined with context_budget".to_string(),
+        );
+    }
+    if params.authorize_completion_finalization.is_some()
+        || params.expected_completion_closure_fingerprint.is_some()
+    {
+        return Err(
+            "invalid params: journey closure cannot be combined with completion finalization fields"
+                .to_string(),
+        );
+    }
+    if max_advances != 1 || max_steps_per_advance != 1 {
+        return Err(
+            "invalid params: journey closure requires max_advances 1 and max_steps_per_advance 1"
+                .to_string(),
+        );
+    }
+    if params.drive_id.is_none() {
+        return Err("invalid params: journey closure requires an explicit drive_id".to_string());
+    }
+    Ok(())
+}
+
+fn headless_journey_closure_request_fingerprint(
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    replacement_checkpoint_fingerprint: &str,
+    active_modepack_activation_fingerprint: &str,
+) -> Result<String, String> {
+    let closure = params
+        .journey_closure
+        .as_ref()
+        .ok_or_else(|| "journey closure missing".to_string())?;
+    let seed = json!({
+        "closure_kind": "headless_journey_closure",
+        "authorize": params.authorize,
+        "session_id": params.session_id,
+        "drive_id": drive_id,
+        "expected_start_session_sequence": params.expected_start_session_sequence,
+        "journey_id": closure.journey_id,
+        "authorize_journey_closure": closure.authorize_journey_closure,
+        "expected_journey_fingerprint": closure.expected_journey_fingerprint,
+        "source_replacement_drive_id": closure.source_replacement_drive_id,
+        "expected_replacement_resume_fingerprint": closure.expected_replacement_resume_fingerprint,
+        "replacement_checkpoint_fingerprint": replacement_checkpoint_fingerprint,
+        "active_modepack_activation_fingerprint": active_modepack_activation_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn headless_journey_closure_plan(
+    store: &BrownieStore,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    start_checkpoint: Option<&HeadlessRunSessionCheckpoint>,
+) -> Result<Option<HeadlessJourneyClosurePlan>, String> {
+    let Some(closure) = params.journey_closure.as_ref() else {
+        return Ok(None);
+    };
+    if closure.source_replacement_drive_id == drive_id {
+        return Err(
+            "invalid params: journey closure source replacement drive must differ from closure drive"
+                .to_string(),
+        );
+    }
+    let journey_checkpoint = store
+        .tasks()
+        .read_headless_journey_start_checkpoint(&closure.journey_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: journey closure requires a persisted journey checkpoint".to_string()
+        })?;
+    if journey_checkpoint.session_id != params.session_id {
+        return Err(
+            "invalid params: journey closure session_id conflicts with persisted journey"
+                .to_string(),
+        );
+    }
+    if journey_checkpoint.journey_fingerprint != closure.expected_journey_fingerprint {
+        return Err(
+            "invalid params: expected_journey_fingerprint is stale for journey closure".to_string(),
+        );
+    }
+    validate_headless_journey_not_already_closed(
+        store,
+        &journey_checkpoint.journey_id,
+        &journey_checkpoint.run_id,
+        drive_id,
+    )?;
+    let start_checkpoint = start_checkpoint.ok_or_else(|| {
+        "invalid params: journey closure requires an existing session checkpoint".to_string()
+    })?;
+    if start_checkpoint.session_sequence != params.expected_start_session_sequence {
+        return Err(
+            "invalid params: journey closure expected_start_session_sequence must match the current session checkpoint"
+                .to_string(),
+        );
+    }
+    let source_drive = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(
+            &params.session_id,
+            &closure.source_replacement_drive_id,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: journey closure source replacement drive checkpoint not found"
+                .to_string()
+        })?;
+    if source_drive.result.session_id != params.session_id
+        || source_drive.result.drive_id != closure.source_replacement_drive_id
+        || source_drive.result.end_session_sequence != params.expected_start_session_sequence
+    {
+        return Err(
+            "invalid params: journey closure source replacement drive conflicts with current session"
+                .to_string(),
+        );
+    }
+    let resume = source_drive.result.journey_route_resume.as_ref().ok_or_else(|| {
+        "invalid params: journey closure source drive is missing replacement route resume metadata"
+            .to_string()
+    })?;
+    if resume.journey_id != closure.journey_id
+        || resume.task_id != journey_checkpoint.task_id
+        || resume.run_id != journey_checkpoint.run_id
+        || resume.route_kind
+            != HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly
+    {
+        return Err(
+            "invalid params: journey closure source drive is not the replacement route resume"
+                .to_string(),
+        );
+    }
+    if resume.resume_fingerprint != closure.expected_replacement_resume_fingerprint {
+        return Err(
+            "invalid params: expected_replacement_resume_fingerprint is stale for journey closure"
+                .to_string(),
+        );
+    }
+    let replacement_continuation_id = resume.result_continuation_id.clone().ok_or_else(|| {
+        "invalid params: journey closure replacement continuation id is missing".to_string()
+    })?;
+    let replacement_checkpoint = store
+        .read_headless_modepack_selected_candidate_replacement_checkpoint(
+            &replacement_continuation_id,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: journey closure selected approved candidate replacement checkpoint not found"
+                .to_string()
+        })?;
+    if !replacement_checkpoint.result.replaced
+        || replacement_checkpoint
+            .result
+            .candidate_consumed_event_id
+            .is_none()
+    {
+        return Err(
+            "invalid params: journey closure replacement checkpoint is not committed".to_string(),
+        );
+    }
+    if replacement_checkpoint.continuation_id != replacement_continuation_id
+        || replacement_checkpoint.post_progress_fingerprint
+            != resume
+                .post_route_progress_fingerprint
+                .clone()
+                .unwrap_or_default()
+        || replacement_checkpoint.post_aggregate_sequence
+            != resume.post_route_aggregate_sequence.unwrap_or_default()
+    {
+        return Err(
+            "invalid params: journey closure replacement checkpoint conflicts with route resume metadata"
+                .to_string(),
+        );
+    }
+    let active = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: journey closure active Mode Pack snapshot not found".to_string()
+        })?;
+    if active.summary.activation_fingerprint
+        != replacement_checkpoint
+            .result
+            .replacement_snapshot
+            .activation_fingerprint
+    {
+        return Err(
+            "invalid params: journey closure active Mode Pack no longer matches replacement evidence"
+                .to_string(),
+        );
+    }
+    let replacement_checkpoint_fingerprint =
+        headless_selected_candidate_replacement_checkpoint_fingerprint(&replacement_checkpoint);
+    let request_fingerprint = headless_journey_closure_request_fingerprint(
+        params,
+        drive_id,
+        &replacement_checkpoint_fingerprint,
+        &active.summary.activation_fingerprint,
+    )?;
+    Ok(Some(HeadlessJourneyClosurePlan {
+        journey_checkpoint,
+        source_replacement_drive_id: closure.source_replacement_drive_id.clone(),
+        source_replacement_resume_fingerprint: closure
+            .expected_replacement_resume_fingerprint
+            .clone(),
+        replacement_continuation_id,
+        replacement_checkpoint_fingerprint,
+        active_modepack_activation_fingerprint: active.summary.activation_fingerprint,
+        request_fingerprint,
+    }))
+}
+
+fn validate_headless_journey_not_already_closed(
+    store: &BrownieStore,
+    journey_id: &str,
+    run_id: &str,
+    drive_id: &str,
+) -> Result<(), String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(run_id)
+        .map_err(|error| format!("failed to read journey closure ledger evidence: {error}"))?;
+    for event in events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyClosed)
+    {
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        if payload.get("journey_id").and_then(Value::as_str) != Some(journey_id) {
+            continue;
+        }
+        if payload.get("drive_id").and_then(Value::as_str) == Some(drive_id) {
+            continue;
+        }
+        return Err(
+            "invalid params: journey closure is already committed under a different drive_id"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn validate_headless_journey_closure_replay(
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    result: &HeadlessRunDriveResult,
+) -> Result<(), String> {
+    match (
+        params.journey_closure.as_ref(),
+        result.journey_closure.as_ref(),
+    ) {
+        (None, None) => Ok(()),
+        (Some(_), None) => Err(
+            "invalid params: drive_id conflicts with a non-closure drive checkpoint".to_string(),
+        ),
+        (None, Some(_)) => Err(
+            "invalid params: journey_closure is required to replay a journey closure drive"
+                .to_string(),
+        ),
+        (Some(closure), Some(metadata)) => {
+            if metadata.session_id != params.session_id || metadata.drive_id != drive_id {
+                return Err(
+                    "invalid params: journey closure replay conflicts with persisted drive"
+                        .to_string(),
+                );
+            }
+            if metadata.journey_id != closure.journey_id
+                || metadata.source_replacement_drive_id != closure.source_replacement_drive_id
+                || metadata.source_replacement_resume_fingerprint
+                    != closure.expected_replacement_resume_fingerprint
+            {
+                return Err("invalid params: journey closure replay identity mismatch".to_string());
+            }
+            if !closure.authorize_journey_closure {
+                return Err("invalid params: authorize_journey_closure must be true".to_string());
+            }
+            let request_fingerprint = headless_journey_closure_request_fingerprint(
+                params,
+                drive_id,
+                &metadata.replacement_checkpoint_fingerprint,
+                &metadata.active_modepack_activation_fingerprint,
+            )?;
+            if metadata.journey_closure_fingerprint
+                != headless_journey_closure_metadata_fingerprint(metadata, &request_fingerprint)
+            {
+                return Err(
+                    "invalid params: journey closure replay fingerprint mismatch".to_string(),
+                );
+            }
+            Ok(())
+        }
+    }
+}
+
+fn headless_journey_closure_metadata_fingerprint(
+    metadata: &HeadlessRunJourneyClosureMetadata,
+    request_fingerprint: &str,
+) -> String {
+    let seed = json!({
+        "closure_kind": "headless_journey_closure_metadata",
+        "journey_id": metadata.journey_id,
+        "task_id": metadata.task_id,
+        "run_id": metadata.run_id,
+        "session_id": metadata.session_id,
+        "drive_id": metadata.drive_id,
+        "source_replacement_drive_id": metadata.source_replacement_drive_id,
+        "source_replacement_resume_fingerprint": metadata.source_replacement_resume_fingerprint,
+        "replacement_route_kind": metadata.replacement_route_kind,
+        "replacement_continuation_id": metadata.replacement_continuation_id,
+        "replacement_checkpoint_fingerprint": metadata.replacement_checkpoint_fingerprint,
+        "active_modepack_activation_fingerprint": metadata.active_modepack_activation_fingerprint,
+        "closure_fingerprint": metadata.closure_fingerprint,
+        "finalization_fingerprint": metadata.finalization_fingerprint,
+        "terminal_completion_fingerprint": metadata.terminal_completion_fingerprint,
+        "progress_fingerprint": metadata.progress_fingerprint,
+        "aggregate_sequence": metadata.aggregate_sequence,
+        "next_action": metadata.next_action,
+        "request_fingerprint": request_fingerprint,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn headless_journey_closure_metadata(
+    plan: &HeadlessJourneyClosurePlan,
+    session_id: &str,
+    drive_id: &str,
+    finalization: Option<&HeadlessRunCompletionFinalization>,
+    completion_closure: &HeadlessRunCompletionClosure,
+    replayed: bool,
+) -> HeadlessRunJourneyClosureMetadata {
+    let finalization_fingerprint =
+        finalization.map(|finalization| finalization.finalization_fingerprint.clone());
+    let terminal_completion_fingerprint =
+        completion_closure.terminal_completion_fingerprint.clone();
+    let mut metadata = HeadlessRunJourneyClosureMetadata {
+        journey_id: plan.journey_checkpoint.journey_id.clone(),
+        task_id: plan.journey_checkpoint.task_id.clone(),
+        run_id: plan.journey_checkpoint.run_id.clone(),
+        session_id: session_id.to_string(),
+        drive_id: drive_id.to_string(),
+        source_replacement_drive_id: plan.source_replacement_drive_id.clone(),
+        source_replacement_resume_fingerprint: plan.source_replacement_resume_fingerprint.clone(),
+        replacement_route_kind:
+            HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
+        replacement_continuation_id: plan.replacement_continuation_id.clone(),
+        replacement_checkpoint_fingerprint: plan.replacement_checkpoint_fingerprint.clone(),
+        active_modepack_activation_fingerprint: plan.active_modepack_activation_fingerprint.clone(),
+        closure_fingerprint: completion_closure.closure_fingerprint.clone(),
+        finalization_fingerprint,
+        terminal_completion_fingerprint,
+        progress_fingerprint: completion_closure.progress_fingerprint.clone(),
+        aggregate_sequence: completion_closure.aggregate_sequence,
+        next_action: "complete_headless_journey".to_string(),
+        replayed,
+        journey_closure_fingerprint: String::new(),
+    };
+    metadata.journey_closure_fingerprint =
+        headless_journey_closure_metadata_fingerprint(&metadata, &plan.request_fingerprint);
+    metadata
+}
+
 fn headless_run_checkpoint_is_progress_overview_boundary(
     checkpoint: &HeadlessRunSessionCheckpoint,
 ) -> bool {
@@ -14291,6 +14749,11 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     }
     if let Err(message) =
         validate_headless_journey_route_resume(&params, max_advances, max_steps_per_advance)
+    {
+        return error_response(id, -32602, &message);
+    }
+    if let Err(message) =
+        validate_headless_journey_closure(&params, max_advances, max_steps_per_advance)
     {
         return error_response(id, -32602, &message);
     }
@@ -14424,27 +14887,58 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         {
             return error_response(id, -32602, &message);
         }
+        if let Err(message) =
+            validate_headless_journey_closure_replay(&params, &drive_id, &checkpoint.result)
+        {
+            return error_response(id, -32602, &message);
+        }
         let mut result = checkpoint.result;
         result.replayed = true;
         if let Some(metadata) = result.journey_route_resume.as_mut() {
             metadata.replayed = true;
         }
+        if let Some(metadata) = result.journey_closure.as_mut() {
+            metadata.replayed = true;
+        }
         if let Some(checkpoint) = journey_checkpoint.as_ref() {
             result.journey = Some(headless_journey_metadata(checkpoint, &result, true));
         }
-        match headless_run_completion_finalization(
-            &store,
-            &result,
-            params.authorize_completion_finalization.unwrap_or(false),
-            params.expected_completion_closure_fingerprint.as_deref(),
-        ) {
-            Ok(finalization) => result.completion_finalization = finalization,
-            Err(message) => return error_response(id, -32602, &message),
+        let closure_expected_fingerprint = result
+            .journey_closure
+            .as_ref()
+            .map(|_| result.completion_closure.closure_fingerprint.clone());
+        let expected_closure_fingerprint = closure_expected_fingerprint
+            .as_deref()
+            .or(params.expected_completion_closure_fingerprint.as_deref());
+        if result.journey_closure.is_some() {
+            match headless_run_completion_finalization_replay_from_checkpoint(
+                &store,
+                &result,
+                expected_closure_fingerprint,
+            ) {
+                Ok(finalization) => result.completion_finalization = Some(finalization),
+                Err(message) => return error_response(id, -32602, &message),
+            }
+        } else {
+            match headless_run_completion_finalization(
+                &store,
+                &result,
+                params.authorize_completion_finalization.unwrap_or(false),
+                expected_closure_fingerprint,
+            ) {
+                Ok(finalization) => result.completion_finalization = finalization,
+                Err(message) => return error_response(id, -32602, &message),
+            }
         }
         if let Some(metadata) = result.journey_route_resume.as_ref() {
             if let Err(error) =
                 append_headless_journey_route_resume_event_if_missing(&store, metadata)
             {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+        }
+        if let Some(metadata) = result.journey_closure.as_ref() {
+            if let Err(error) = append_headless_journey_closed_event_if_missing(&store, metadata) {
                 return error_response(id, -32603, &format!("internal error: {error}"));
             }
         }
@@ -14556,6 +15050,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         Ok(plan) => plan,
         Err(message) => return error_response(id, -32602, &message),
     };
+    let journey_closure_plan = match headless_journey_closure_plan(
+        &store,
+        &params,
+        &drive_id,
+        existing_start_checkpoint.as_ref(),
+    ) {
+        Ok(plan) => plan,
+        Err(message) => return error_response(id, -32602, &message),
+    };
     let start_progress = if let Some(checkpoint) = journey_checkpoint.as_ref() {
         checkpoint.start_progress.clone()
     } else {
@@ -14575,6 +15078,153 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         };
         start_progress
     };
+    if let Some(plan) = journey_closure_plan.as_ref() {
+        let post_tasks = match store.tasks().list_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let post_overview = match task_list_progress_overview(&store, &post_tasks) {
+            Ok(progress) => progress,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let terminal_completion_evidence =
+            match headless_latest_completed_task_completion_evidence(&store, &post_tasks) {
+                Ok(evidence) => evidence,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+        let status = HeadlessContinueOnceStatus::NoEligibleTask;
+        let stop_reason = "journey_closure".to_string();
+        let next_action = "complete_headless_journey".to_string();
+        let post_progress = Some(HeadlessRunProgressCheckpoint {
+            progress_fingerprint: post_overview.source_fingerprint.clone(),
+            aggregate_sequence: post_overview.aggregate_sequence,
+        });
+        let completion_closure = headless_run_completion_closure(
+            status.clone(),
+            &stop_reason,
+            None,
+            &next_action,
+            &terminal_completion_evidence,
+            &post_overview,
+            false,
+        );
+        let result_without_fingerprint = HeadlessRunDriveResult {
+            status: status.clone(),
+            session_id: params.session_id.clone(),
+            drive_id: drive_id.clone(),
+            start_session_sequence: drive_start_session_sequence,
+            end_session_sequence: drive_start_session_sequence,
+            replayed: false,
+            max_advances,
+            max_steps_per_advance,
+            advance_count: 0,
+            executed_count: 0,
+            replayed_count: 0,
+            stop_reason: stop_reason.clone(),
+            drive_fingerprint: String::new(),
+            terminal_completion_evidence: terminal_completion_evidence.clone(),
+            completion_closure: completion_closure.clone(),
+            completion_finalization: None,
+            start_progress: start_progress.clone(),
+            post_progress: post_progress.clone(),
+            next_route: None,
+            advances: Vec::new(),
+            journey_route_resume: None,
+            journey_closure: None,
+            journey: None,
+            next_action: next_action.clone(),
+        };
+        let completion_finalization =
+            match headless_run_completion_finalization(
+                &store,
+                &result_without_fingerprint,
+                true,
+                Some(&completion_closure.closure_fingerprint),
+            ) {
+                Ok(Some(finalization)) => Some(finalization),
+                Ok(None) => return error_response(
+                    id,
+                    -32602,
+                    "invalid params: journey closure requires committed completion finalization",
+                ),
+                Err(message) => return error_response(id, -32602, &message),
+            };
+        let journey_closure_metadata = headless_journey_closure_metadata(
+            plan,
+            &params.session_id,
+            &drive_id,
+            completion_finalization.as_ref(),
+            &completion_closure,
+            false,
+        );
+        let drive_seed = json!({
+            "session_id": params.session_id,
+            "drive_id": drive_id,
+            "start_session_sequence": drive_start_session_sequence,
+            "end_session_sequence": drive_start_session_sequence,
+            "max_advances": max_advances,
+            "max_steps_per_advance": max_steps_per_advance,
+            "advance_count": 0,
+            "executed_count": 0,
+            "replayed_count": 0,
+            "stop_reason": stop_reason,
+            "terminal_completion_evidence": terminal_completion_evidence,
+            "completion_closure": completion_closure,
+            "completion_finalization": completion_finalization,
+            "journey_closure": journey_closure_metadata,
+            "next_action": next_action
+        });
+        let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
+        let mut result = HeadlessRunDriveResult {
+            status,
+            session_id: params.session_id.clone(),
+            drive_id: drive_id.clone(),
+            start_session_sequence: drive_start_session_sequence,
+            end_session_sequence: drive_start_session_sequence,
+            replayed: false,
+            max_advances,
+            max_steps_per_advance,
+            advance_count: 0,
+            executed_count: 0,
+            replayed_count: 0,
+            stop_reason,
+            drive_fingerprint,
+            terminal_completion_evidence,
+            completion_closure,
+            completion_finalization,
+            start_progress,
+            post_progress,
+            next_route: None,
+            advances: Vec::new(),
+            journey_route_resume: None,
+            journey_closure: Some(journey_closure_metadata),
+            journey: None,
+            next_action,
+        };
+        result.journey = Some(headless_journey_metadata(
+            &plan.journey_checkpoint,
+            &result,
+            false,
+        ));
+        let checkpoint = HeadlessRunSessionDriveCheckpoint {
+            session_id: params.session_id,
+            drive_id,
+            start_session_sequence: drive_start_session_sequence,
+            result: result.clone(),
+        };
+        if let Err(error) = store
+            .tasks()
+            .write_headless_run_session_drive_checkpoint(&checkpoint)
+        {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        if let Err(error) = append_headless_run_session_drive_completed_events(&store, &result) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        return result_response(id, json!(result));
+    }
 
     let mut advances = Vec::new();
     let mut stop_reason = "drive_budget_exhausted".to_string();
@@ -14736,6 +15386,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         next_route: next_route.clone(),
         advances: advances.clone(),
         journey_route_resume: journey_route_resume_metadata.clone(),
+        journey_closure: None,
         journey: None,
         next_action: next_action.clone(),
     };
@@ -14763,6 +15414,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "completion_closure": completion_closure,
         "completion_finalization": completion_finalization,
         "journey_route_resume": journey_route_resume_metadata,
+        "journey_closure": null,
         "next_action": next_action
     });
     let drive_fingerprint = format!("sha256:{}", hex_sha256(drive_seed.to_string().as_bytes()));
@@ -14788,6 +15440,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         next_route,
         advances,
         journey_route_resume: journey_route_resume_metadata,
+        journey_closure: None,
         journey: None,
         next_action,
     };
@@ -14876,6 +15529,8 @@ fn headless_run_completion_finalization(
             );
         }
         let mut finalization = checkpoint.result;
+        append_headless_run_completion_finalized_event(store, &finalization, &owner)
+            .map_err(|error| format!("failed to record completion finalization event: {error}"))?;
         finalization.replayed = true;
         return Ok(Some(finalization));
     }
@@ -14944,6 +15599,100 @@ fn headless_run_completion_finalization(
     append_headless_run_completion_finalized_event(store, &finalization, &owner)
         .map_err(|error| format!("failed to record completion finalization event: {error}"))?;
     Ok(Some(finalization))
+}
+
+fn headless_run_completion_finalization_replay_from_checkpoint(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+    expected_closure_fingerprint: Option<&str>,
+) -> Result<HeadlessRunCompletionFinalization, String> {
+    if result.completion_closure.status != HeadlessRunCompletionClosureStatus::Complete {
+        return Err(
+            "invalid params: persisted journey closure finalization requires completion_closure.status complete"
+                .to_string(),
+        );
+    }
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_completion_finalization_checkpoint(&result.session_id, &result.drive_id)
+        .map_err(|error| format!("failed to read completion finalization checkpoint: {error}"))?
+        .ok_or_else(|| {
+            "invalid params: persisted journey closure is missing completion finalization checkpoint"
+                .to_string()
+        })?;
+    if checkpoint.closure_fingerprint != result.completion_closure.closure_fingerprint {
+        return Err(
+            "invalid params: persisted journey closure finalization conflicts with drive closure"
+                .to_string(),
+        );
+    }
+    if let Some(expected) = expected_closure_fingerprint {
+        if expected != checkpoint.closure_fingerprint {
+            return Err(
+                "invalid params: expected_completion_closure_fingerprint does not match persisted finalization"
+                    .to_string(),
+            );
+        }
+    }
+    let Some(owner_task_id) = checkpoint.owner_task_id.as_deref() else {
+        return Err(
+            "invalid params: persisted completion finalization is missing owner_task_id"
+                .to_string(),
+        );
+    };
+    let Some(owner_run_id) = checkpoint.owner_run_id.as_deref() else {
+        return Err(
+            "invalid params: persisted completion finalization is missing owner_run_id".to_string(),
+        );
+    };
+    let Some(terminal_completion_fingerprint) =
+        checkpoint.terminal_completion_fingerprint.as_deref()
+    else {
+        return Err("invalid params: persisted completion finalization is missing terminal completion fingerprint"
+            .to_string());
+    };
+    if checkpoint.result.owner_task_id.as_deref() != Some(owner_task_id)
+        || checkpoint.result.owner_run_id.as_deref() != Some(owner_run_id)
+        || checkpoint.result.terminal_completion_fingerprint.as_deref()
+            != Some(terminal_completion_fingerprint)
+        || checkpoint.result.session_id != result.session_id
+        || checkpoint.result.drive_id != result.drive_id
+        || checkpoint.result.closure_fingerprint != result.completion_closure.closure_fingerprint
+        || checkpoint.result.progress_fingerprint != result.completion_closure.progress_fingerprint
+        || checkpoint.result.aggregate_sequence != result.completion_closure.aggregate_sequence
+        || checkpoint.result.start_session_sequence != result.start_session_sequence
+        || checkpoint.result.end_session_sequence != result.end_session_sequence
+        || result
+            .completion_closure
+            .terminal_completion_fingerprint
+            .as_deref()
+            != Some(terminal_completion_fingerprint)
+    {
+        return Err(
+            "invalid params: persisted completion finalization conflicts with journey closure drive"
+                .to_string(),
+        );
+    }
+    if let Some(result_finalization) = result.completion_finalization.as_ref() {
+        if result_finalization.finalization_fingerprint
+            != checkpoint.result.finalization_fingerprint
+        {
+            return Err(
+                "invalid params: drive checkpoint finalization conflicts with persisted finalization"
+                    .to_string(),
+            );
+        }
+    }
+    let owner = HeadlessRunCompletionFinalizationOwner {
+        task_id: owner_task_id.to_string(),
+        run_id: owner_run_id.to_string(),
+        terminal_completion_fingerprint: terminal_completion_fingerprint.to_string(),
+    };
+    append_headless_run_completion_finalized_event(store, &checkpoint.result, &owner)
+        .map_err(|error| format!("failed to record completion finalization event: {error}"))?;
+    let mut finalization = checkpoint.result;
+    finalization.replayed = true;
+    Ok(finalization)
 }
 
 #[derive(Debug, Clone)]
@@ -18310,6 +19059,60 @@ fn append_headless_journey_route_resume_event_if_missing(
     Ok(())
 }
 
+fn append_headless_journey_closed_event_if_missing(
+    store: &BrownieStore,
+    closure: &HeadlessRunJourneyClosureMetadata,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&closure.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != closure.run_id {
+        return Ok(());
+    }
+    let already_recorded = store
+        .tasks()
+        .read_ledger_events(&record.run_id)?
+        .iter()
+        .any(|event| {
+            event.kind == LedgerEventKind::HeadlessJourneyClosed
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("journey_closure_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(closure.journey_closure_fingerprint.as_str())
+        });
+    if already_recorded {
+        return Ok(());
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessJourneyClosed,
+        Some(json!({
+            "journey_id": closure.journey_id,
+            "session_id": closure.session_id,
+            "drive_id": closure.drive_id,
+            "task_id": closure.task_id,
+            "run_id": closure.run_id,
+            "source_replacement_drive_id": closure.source_replacement_drive_id,
+            "source_replacement_resume_fingerprint": closure.source_replacement_resume_fingerprint,
+            "replacement_route_kind": closure.replacement_route_kind,
+            "replacement_continuation_id": closure.replacement_continuation_id,
+            "replacement_checkpoint_fingerprint": closure.replacement_checkpoint_fingerprint,
+            "active_modepack_activation_fingerprint": closure.active_modepack_activation_fingerprint,
+            "closure_fingerprint": closure.closure_fingerprint,
+            "finalization_fingerprint": closure.finalization_fingerprint,
+            "terminal_completion_fingerprint": closure.terminal_completion_fingerprint,
+            "progress_fingerprint": closure.progress_fingerprint,
+            "aggregate_sequence": closure.aggregate_sequence,
+            "next_action": closure.next_action,
+            "journey_closure_fingerprint": closure.journey_closure_fingerprint,
+            "reason": "Headless Golden Journey closed from bounded replacement and completion evidence under runtime-owned drive authority."
+        })),
+    )?;
+    Ok(())
+}
+
 fn append_headless_run_session_drive_completed_events(
     store: &BrownieStore,
     result: &HeadlessRunDriveResult,
@@ -18356,6 +19159,9 @@ fn append_headless_run_session_drive_completed_events(
     if let Some(resume) = result.journey_route_resume.as_ref() {
         append_headless_journey_route_resume_event_if_missing(store, resume)?;
     }
+    if let Some(closure) = result.journey_closure.as_ref() {
+        append_headless_journey_closed_event_if_missing(store, closure)?;
+    }
     Ok(())
 }
 
@@ -18364,13 +19170,30 @@ fn append_headless_run_completion_finalized_event(
     finalization: &HeadlessRunCompletionFinalization,
     owner: &HeadlessRunCompletionFinalizationOwner,
 ) -> anyhow::Result<()> {
-    let tasks = store.tasks().list_tasks()?;
-    let record = tasks
+    let Some(record) = store.tasks().get_task(&owner.task_id)? else {
+        anyhow::bail!("completion finalization owner task disappeared");
+    };
+    if record.run_id != owner.run_id {
+        anyhow::bail!("completion finalization owner run changed");
+    }
+    let already_recorded = store
+        .tasks()
+        .read_ledger_events(&owner.run_id)?
         .iter()
-        .find(|record| record.task_id == owner.task_id && record.run_id == owner.run_id)
-        .ok_or_else(|| anyhow::anyhow!("completion finalization owner task disappeared"))?;
+        .any(|event| {
+            event.kind == LedgerEventKind::HeadlessRunCompletionFinalized
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("finalization_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(finalization.finalization_fingerprint.as_str())
+        });
+    if already_recorded {
+        return Ok(());
+    }
     store.tasks().append_task_event_with_payload(
-        record,
+        &record,
         LedgerEventKind::HeadlessRunCompletionFinalized,
         Some(json!({
             "session_id": finalization.session_id,
@@ -50015,6 +50838,7 @@ mod tests {
             next_route: None,
             advances: Vec::new(),
             journey_route_resume: None,
+            journey_closure: None,
             journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
@@ -50105,6 +50929,99 @@ mod tests {
             .expect("payload")
             .get("raw_ledger_payload")
             .is_none());
+
+        let mut repair_drive = drive.clone();
+        repair_drive.drive_id = "m36.finalize.repair".to_string();
+        let repair_seed = json!({
+            "version": "headless_completion_finalization_v1",
+            "session_id": repair_drive.session_id,
+            "drive_id": repair_drive.drive_id,
+            "start_session_sequence": repair_drive.start_session_sequence,
+            "end_session_sequence": repair_drive.end_session_sequence,
+            "closure_fingerprint": repair_drive.completion_closure.closure_fingerprint,
+            "progress_fingerprint": repair_drive.completion_closure.progress_fingerprint,
+            "aggregate_sequence": repair_drive.completion_closure.aggregate_sequence,
+            "owner_task_id": task.task_id.clone(),
+            "owner_run_id": task.run_id.clone(),
+            "terminal_completion_fingerprint": terminal_evidence.completion_result_fingerprint.clone(),
+            "terminal_task_count": repair_drive.completion_closure.terminal_task_count,
+            "total_task_count": repair_drive.completion_closure.total_task_count
+        });
+        let repair_finalization = HeadlessRunCompletionFinalization {
+            status: "finalized".to_string(),
+            session_id: repair_drive.session_id.clone(),
+            drive_id: repair_drive.drive_id.clone(),
+            start_session_sequence: repair_drive.start_session_sequence,
+            end_session_sequence: repair_drive.end_session_sequence,
+            closure_fingerprint: repair_drive.completion_closure.closure_fingerprint.clone(),
+            progress_fingerprint: repair_drive.completion_closure.progress_fingerprint.clone(),
+            aggregate_sequence: repair_drive.completion_closure.aggregate_sequence,
+            owner_task_id: Some(task.task_id.clone()),
+            owner_run_id: Some(task.run_id.clone()),
+            terminal_completion_fingerprint: Some(
+                terminal_evidence.completion_result_fingerprint.clone(),
+            ),
+            terminal_task_count: repair_drive.completion_closure.terminal_task_count,
+            total_task_count: repair_drive.completion_closure.total_task_count,
+            finalization_fingerprint: format!(
+                "sha256:{}",
+                hex_sha256(repair_seed.to_string().as_bytes())
+            ),
+            replayed: false,
+            next_action: "close_headless_run".to_string(),
+        };
+        store
+            .tasks()
+            .write_headless_run_completion_finalization_checkpoint(
+                &HeadlessRunCompletionFinalizationCheckpoint {
+                    session_id: repair_drive.session_id.clone(),
+                    drive_id: repair_drive.drive_id.clone(),
+                    closure_fingerprint: repair_drive
+                        .completion_closure
+                        .closure_fingerprint
+                        .clone(),
+                    owner_task_id: Some(task.task_id.clone()),
+                    owner_run_id: Some(task.run_id.clone()),
+                    terminal_completion_fingerprint: Some(
+                        terminal_evidence.completion_result_fingerprint.clone(),
+                    ),
+                    result: repair_finalization.clone(),
+                },
+            )
+            .expect("write finalization checkpoint without event");
+        let repaired = headless_run_completion_finalization(
+            &store,
+            &repair_drive,
+            true,
+            Some(&repair_drive.completion_closure.closure_fingerprint),
+        )
+        .expect("repair finalization")
+        .expect("repaired finalization");
+        assert!(repaired.replayed);
+        assert_eq!(
+            repaired.finalization_fingerprint,
+            repair_finalization.finalization_fingerprint
+        );
+        let repaired_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("repaired finalization events");
+        assert_eq!(
+            repaired_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .count(),
+            2
+        );
+        assert!(repaired_events.iter().any(|event| {
+            event.kind == LedgerEventKind::HeadlessRunCompletionFinalized
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("finalization_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(repair_finalization.finalization_fingerprint.as_str())
+        }));
     }
 
     #[test]
@@ -50186,6 +51103,7 @@ mod tests {
             next_route: None,
             advances: Vec::new(),
             journey_route_resume: None,
+            journey_closure: None,
             journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
@@ -50325,6 +51243,7 @@ mod tests {
             next_route: None,
             advances: Vec::new(),
             journey_route_resume: None,
+            journey_closure: None,
             journey: None,
             next_action: "inspect_progress_overview".to_string(),
         };
@@ -51810,6 +52729,271 @@ mod tests {
             candidate_ledger
                 .lines()
                 .filter(|line| line.contains("ModePackCandidateConsumed"))
+                .count(),
+            1
+        );
+
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &task.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "golden journey complete".to_string(),
+                        completion_summary_chars: 23,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete journey task");
+
+        let closure_request = json!({
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m50.2.route",
+                "drive_id": "m50.2.route.close",
+                "expected_start_session_sequence": 5,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_closure": {
+                    "journey_id": "m50.2.journey.1",
+                    "authorize_journey_closure": true,
+                    "expected_journey_fingerprint": journey_checkpoint.journey_fingerprint,
+                    "source_replacement_drive_id": "m50.2.route.replacement",
+                    "expected_replacement_resume_fingerprint": replacement["journey_route_resume"]["resume_fingerprint"]
+                }
+            }
+        });
+        let mut stale_closure_request = closure_request.clone();
+        stale_closure_request["params"]["drive_id"] = json!("m50.2.route.close.stale");
+        stale_closure_request["params"]["journey_closure"]
+            ["expected_replacement_resume_fingerprint"] =
+            json!(format!("sha256:{}", "4".repeat(64)));
+        let stale_closure = parse_line(&stale_closure_request.to_string());
+        assert!(stale_closure.result.is_none());
+        assert!(stale_closure
+            .error
+            .expect("stale closure error")
+            .message
+            .contains("expected_replacement_resume_fingerprint"));
+        let mut unauthorized_closure_request = closure_request.clone();
+        unauthorized_closure_request["params"]["drive_id"] =
+            json!("m50.2.route.close.unauthorized");
+        unauthorized_closure_request["params"]["journey_closure"]["authorize_journey_closure"] =
+            json!(false);
+        assert!(parse_line(&unauthorized_closure_request.to_string())
+            .error
+            .expect("unauthorized closure error")
+            .message
+            .contains("authorize_journey_closure"));
+        let mut mixed_closure_request = closure_request.clone();
+        mixed_closure_request["params"]["drive_id"] = json!("m50.2.route.close.mixed");
+        mixed_closure_request["params"]["modepack_selected_candidate_fetch_target"] = json!(
+            modepack_selected_candidate_fetch_target_from_selection_checkpoint(
+                &selection_checkpoint
+            )
+        );
+        assert!(parse_line(&mixed_closure_request.to_string())
+            .error
+            .expect("mixed closure error")
+            .message
+            .contains("explicit modepack"));
+        let mut non_unit_closure_request = closure_request.clone();
+        non_unit_closure_request["params"]["drive_id"] = json!("m50.2.route.close.budget");
+        non_unit_closure_request["params"]["max_advances"] = json!(2);
+        assert!(parse_line(&non_unit_closure_request.to_string())
+            .error
+            .expect("non-unit closure error")
+            .message
+            .contains("requires max_advances 1"));
+        let mut bypass_closure_request = closure_request.clone();
+        bypass_closure_request["params"]["drive_id"] = json!("m50.2.route.close.bypass");
+        bypass_closure_request["params"]["authorize_completion_finalization"] = json!(true);
+        assert!(parse_line(&bypass_closure_request.to_string())
+            .error
+            .expect("bypass closure error")
+            .message
+            .contains("completion finalization fields"));
+
+        let closure_response = parse_line(&closure_request.to_string());
+        let closure = closure_response.result.unwrap_or_else(|| {
+            panic!(
+                "journey closure from replacement evidence: {:?}",
+                closure_response.error
+            )
+        });
+        assert_eq!(closure["status"], "no_eligible_task");
+        assert_eq!(closure["stop_reason"], "journey_closure");
+        assert_eq!(closure["completion_closure"]["status"], "complete");
+        assert_eq!(
+            closure["journey_closure"]["replacement_route_kind"],
+            "replace_active_with_approved_mode_pack_candidate_explicitly"
+        );
+        assert_eq!(
+            closure["journey_closure"]["source_replacement_resume_fingerprint"],
+            replacement["journey_route_resume"]["resume_fingerprint"]
+        );
+        assert_eq!(
+            closure["journey_closure"]["replacement_continuation_id"],
+            "run.m50.2.route.5"
+        );
+        assert_eq!(
+            closure["journey_closure"]["active_modepack_activation_fingerprint"],
+            active_after_replacement.summary.activation_fingerprint
+        );
+        assert_eq!(
+            closure["journey_closure"]["finalization_fingerprint"],
+            closure["completion_finalization"]["finalization_fingerprint"]
+        );
+        assert_eq!(
+            closure["journey_closure"]["terminal_completion_fingerprint"],
+            closure["completion_closure"]["terminal_completion_fingerprint"]
+        );
+        assert!(closure["journey_closure"]
+            .get("raw_modepack_json")
+            .is_none());
+        assert!(closure["journey_closure"]
+            .get("provenance_statement_json")
+            .is_none());
+        assert!(closure["journey_closure"].get("absolute_path").is_none());
+        assert!(closure["completion_finalization"]
+            .get("raw_ledger_payload")
+            .is_none());
+
+        let closure_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("closure events");
+        assert_eq!(
+            closure_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyClosed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            closure_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .count(),
+            1
+        );
+        let closure_ledger = closure_events
+            .iter()
+            .filter_map(|event| event.payload.as_ref())
+            .map(|payload| payload.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!closure_ledger.contains("raw_modepack_json"));
+        assert!(!closure_ledger.contains("provenance_statement_json"));
+        assert!(!closure_ledger.contains("provenance_signature_base64"));
+        assert!(!closure_ledger.contains("absolute_path"));
+
+        let closure_replay_response = parse_line(&closure_request.to_string());
+        let closure_replay = closure_replay_response.result.unwrap_or_else(|| {
+            panic!(
+                "journey closure replay: {:?}",
+                closure_replay_response.error
+            )
+        });
+        assert_eq!(closure_replay["replayed"], true);
+        assert_eq!(closure_replay["journey_closure"]["replayed"], true);
+        assert_eq!(closure_replay["completion_finalization"]["replayed"], true);
+        assert_eq!(
+            closure_replay["journey_closure"]["journey_closure_fingerprint"],
+            closure["journey_closure"]["journey_closure_fingerprint"]
+        );
+        let closure_replay_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("closure replay events");
+        assert_eq!(
+            closure_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyClosed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            closure_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .count(),
+            1
+        );
+
+        let mut duplicate_closure_request = closure_request.clone();
+        duplicate_closure_request["params"]["drive_id"] = json!("m50.2.route.close.duplicate");
+        let duplicate_closure = parse_line(&duplicate_closure_request.to_string());
+        assert!(duplicate_closure.result.is_none());
+        assert!(duplicate_closure
+            .error
+            .expect("duplicate closure error")
+            .message
+            .contains("already committed"));
+        let duplicate_closure_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("duplicate closure events");
+        assert_eq!(
+            duplicate_closure_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyClosed)
+                .count(),
+            1
+        );
+
+        let later_start = parse_line(
+            r#"{"jsonrpc":"2.0","id":10,"method":"task.start","params":{"goal":"Later root task after closure","mode_id":"orchestrator"}}"#,
+        );
+        assert!(later_start.result.is_some(), "{:?}", later_start.error);
+        let closure_replay_after_later_root = parse_line(&closure_request.to_string());
+        let closure_replay_after_later_root =
+            closure_replay_after_later_root.result.unwrap_or_else(|| {
+                panic!(
+                    "journey closure replay after later root task: {:?}",
+                    closure_replay_after_later_root.error
+                )
+            });
+        assert_eq!(closure_replay_after_later_root["replayed"], true);
+        assert_eq!(
+            closure_replay_after_later_root["journey_closure"]["replayed"],
+            true
+        );
+        assert_eq!(
+            closure_replay_after_later_root["completion_finalization"]["replayed"],
+            true
+        );
+        assert_eq!(
+            closure_replay_after_later_root["journey_closure"]["journey_closure_fingerprint"],
+            closure["journey_closure"]["journey_closure_fingerprint"]
+        );
+        let closure_replay_after_later_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("closure replay after later root events");
+        assert_eq!(
+            closure_replay_after_later_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyClosed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            closure_replay_after_later_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
                 .count(),
             1
         );

@@ -260,6 +260,19 @@ route resume does not expose raw provenance statements, signatures, public
 keys, Mode Pack payloads, prompts, file content, commands, stdout, stderr,
 environment values, secrets, or raw paths.
 
+M50.6 adds the runtime-owned closure boundary for the same Golden Journey. A
+caller may provide `journey_closure` on `headless.run.drive` after the
+replacement route-resume drive has committed, with explicit closure
+authorization, expected journey fingerprint, source replacement drive id, and
+expected replacement resume fingerprint. The caller does not provide
+completion-finalization bypass fields or reconstruct ledger evidence. Rust
+validates the journey checkpoint, replacement route-resume checkpoint, selected
+approved candidate replacement checkpoint, active Mode Pack activation, current
+progress, no remaining routes, and terminal completion evidence before
+committing completion finalization and bounded `HeadlessJourneyClosed` ledger
+evidence. Replay is idempotent and returns the same closure metadata without
+duplicating finalization or closure events.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks
