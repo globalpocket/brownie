@@ -2047,6 +2047,20 @@ describe('protocol validation', () => {
       source_replacement_drive_id: 'm50.route.replacement',
       expected_replacement_resume_fingerprint: `sha256:${'6'.repeat(64)}`,
     };
+    const headlessRunJourneyExecutionAdmission = {
+      journey_id: 'm50.journey.1',
+      authorize_journey_execution: true,
+      task_start: {
+        goal: 'Run a runtime-owned journey',
+        mode_id: 'implementer',
+      },
+    };
+    const headlessRunJourneyExecution = {
+      journey_id: 'm50.journey.1',
+      authorize_journey_execution: true,
+      expected_journey_fingerprint: `sha256:${'3'.repeat(64)}`,
+      expected_execution_checkpoint_fingerprint: `sha256:${'a'.repeat(64)}`,
+    };
     const headlessRunJourneyMetadata = {
       journey_id: 'm50.journey.1',
       task_id: 'task_1',
@@ -2120,6 +2134,44 @@ describe('protocol validation', () => {
       replayed: false,
       journey_closure_fingerprint: `sha256:${'9'.repeat(64)}`,
     };
+    const headlessRunJourneyExecutionMetadata = {
+      journey_id: 'm50.journey.1',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.execute',
+      journey_fingerprint: `sha256:${'3'.repeat(64)}`,
+      completed_boundaries: [
+        {
+          boundary: 'admit_journey',
+          drive_id: 'm50.journey.execute.admit',
+          session_sequence: 1,
+          drive_fingerprint: `sha256:${'1'.repeat(64)}`,
+          replayed: false,
+        },
+        {
+          boundary: 'fetch_selected_candidate',
+          drive_id: 'm50.journey.execute.fetch',
+          route_kind: 'fetch_selected_mode_pack_candidate_explicitly',
+          session_sequence: 2,
+          drive_fingerprint: `sha256:${'2'.repeat(64)}`,
+          resume_fingerprint: `sha256:${'6'.repeat(64)}`,
+          replayed: false,
+        },
+        {
+          boundary: 'close_journey',
+          drive_id: 'm50.journey.execute.closure',
+          session_sequence: 5,
+          drive_fingerprint: `sha256:${'5'.repeat(64)}`,
+          journey_closure_fingerprint: `sha256:${'9'.repeat(64)}`,
+          replayed: false,
+        },
+      ],
+      complete: true,
+      next_action: 'complete_headless_journey',
+      replayed: false,
+      execution_checkpoint_fingerprint: `sha256:${'a'.repeat(64)}`,
+    };
     expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveParams({
@@ -2180,6 +2232,24 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({
       authorize: true,
       session_id: 'm50.journey',
+      drive_id: 'm50.journey.execute',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecutionAdmission,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.execute',
+      expected_start_session_sequence: 5,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecution,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
       drive_id: 'm50.journey.close',
       expected_start_session_sequence: 5,
       max_advances: 1,
@@ -2220,6 +2290,45 @@ describe('protocol validation', () => {
     })).toBe(false);
     expect(isHeadlessRunDriveParams({
       ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecution,
+      journey_route_resume: headlessRunJourneyRouteResume,
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecution,
+      journey_closure: headlessRunJourneyClosure,
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecution,
+      modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.execute',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: { ...headlessRunJourneyExecutionAdmission, task_start: null },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.execute',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: { ...headlessRunJourneyExecutionAdmission, expected_journey_fingerprint: `sha256:${'3'.repeat(64)}` },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
       max_advances: 2,
       max_steps_per_advance: 1,
       journey_route_resume: headlessRunJourneyRouteResume,
@@ -2235,6 +2344,30 @@ describe('protocol validation', () => {
       max_advances: 1,
       max_steps_per_advance: 1,
       journey_closure: { ...headlessRunJourneyClosure, authorize_journey_closure: false },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: { ...headlessRunJourneyExecution, authorize_journey_execution: false },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: { ...headlessRunJourneyExecution, expected_journey_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_execution: { ...headlessRunJourneyExecution, expected_execution_checkpoint_fingerprint: 'not-a-fingerprint' },
+    })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      ...headlessRunDriveParams,
+      max_advances: 2,
+      max_steps_per_advance: 1,
+      journey_execution: headlessRunJourneyExecution,
     })).toBe(false);
     expect(isHeadlessRunDriveParams({
       ...headlessRunDriveParams,
@@ -2283,6 +2416,7 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunReplacementJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: headlessRunJourneyMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: headlessRunJourneyClosureMetadata })).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: headlessRunJourneyExecutionMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, journey_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, raw_prompt: 'secret' } })).toBe(false);
@@ -2293,6 +2427,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: { ...headlessRunJourneyClosureMetadata, replacement_route_kind: 'approve_verified_mode_pack_candidate_explicitly' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: { ...headlessRunJourneyClosureMetadata, replacement_checkpoint_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: { ...headlessRunJourneyClosureMetadata, raw_modepack_json: '{}' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: { ...headlessRunJourneyExecutionMetadata, execution_checkpoint_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: { ...headlessRunJourneyExecutionMetadata, completed_boundaries: [{ ...headlessRunJourneyExecutionMetadata.completed_boundaries[0], boundary: 'unknown_boundary' }] } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: { ...headlessRunJourneyExecutionMetadata, raw_prompt: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);

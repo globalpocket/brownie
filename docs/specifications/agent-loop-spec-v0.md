@@ -273,6 +273,21 @@ committing completion finalization and bounded `HeadlessJourneyClosed` ledger
 evidence. Replay is idempotent and returns the same closure metadata without
 duplicating finalization or closure events.
 
+M50.7 adds a bounded `journey_execution` envelope to the same
+`headless.run.drive` entry point. A caller explicitly authorizes one Golden
+Journey execution and supplies either an initial bounded `task_start` for
+admission or a post-admission expected journey fingerprint plus optional latest
+execution checkpoint fingerprint. Rust then owns the next-boundary selection:
+it reuses the existing admission, route-resume, replacement, and closure
+authority, persists a bounded execution checkpoint after each committed
+boundary, and resumes from that checkpoint after an interrupted response
+without requiring caller-supplied `journey_route_resume`, `journey_closure`, or
+Mode Pack target envelopes on the successful execution path. Replay does not
+duplicate task start, drive, route-resume, replacement, finalization, closure,
+or execution ledger evidence, and execution metadata remains limited to
+bounded handles, boundary classes, route kinds, hashes, fingerprints, replay
+state, and next action.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks
