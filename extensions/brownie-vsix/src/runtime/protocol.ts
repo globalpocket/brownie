@@ -5777,7 +5777,8 @@ export function isHeadlessRunJourneyRouteResume(value: unknown): value is Headle
     (
       value.expected_route_kind === 'fetch_selected_mode_pack_candidate_explicitly' ||
       value.expected_route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' ||
-      value.expected_route_kind === 'approve_verified_mode_pack_candidate_explicitly'
+      value.expected_route_kind === 'approve_verified_mode_pack_candidate_explicitly' ||
+      value.expected_route_kind === 'replace_active_with_approved_mode_pack_candidate_explicitly'
     ) &&
     typeof value.expected_source_checkpoint_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_source_checkpoint_fingerprint)
@@ -6443,7 +6444,8 @@ export function isHeadlessRunJourneyRouteResumeMetadata(value: unknown): value i
     (
       value.route_kind === 'fetch_selected_mode_pack_candidate_explicitly' ||
       value.route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' ||
-      value.route_kind === 'approve_verified_mode_pack_candidate_explicitly'
+      value.route_kind === 'approve_verified_mode_pack_candidate_explicitly' ||
+      value.route_kind === 'replace_active_with_approved_mode_pack_candidate_explicitly'
     ) &&
     isBoundedHandle(value.source_continuation_id) &&
     isBoundedHandle(value.source_decision_id) &&
@@ -6455,7 +6457,9 @@ export function isHeadlessRunJourneyRouteResumeMetadata(value: unknown): value i
       (value.route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' &&
         value.derived_target_class === 'modepack_selected_candidate_provenance_verification_target') ||
       (value.route_kind === 'approve_verified_mode_pack_candidate_explicitly' &&
-        value.derived_target_class === 'modepack_selected_candidate_approval_target')
+        value.derived_target_class === 'modepack_selected_candidate_approval_target') ||
+      (value.route_kind === 'replace_active_with_approved_mode_pack_candidate_explicitly' &&
+        value.derived_target_class === 'modepack_selected_approved_candidate_replacement_target')
     ) &&
     (value.result_advance_id === undefined || value.result_advance_id === null || isHeadlessRunId(value.result_advance_id)) &&
     (value.result_continuation_id === undefined || value.result_continuation_id === null || isBoundedHandle(value.result_continuation_id)) &&

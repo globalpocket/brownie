@@ -242,6 +242,24 @@ effects. The route resume does not expose raw provenance statements,
 signatures, public keys, Mode Pack payloads, prompts, file content, commands,
 stdout, stderr, environment values, secrets, or raw paths.
 
+M50.5 adds the fourth runtime-derived post-admission Mode Pack continuation on
+the same entry point. A caller may provide `journey_route_resume` for a current
+`ReplaceActiveWithApprovedModePackCandidateExplicitly` boundary with explicit
+resume authorization, expected journey fingerprint, expected route kind, and
+expected selected-candidate approval checkpoint fingerprint. The caller does
+not provide `modepack_selected_approved_candidate_replacement_target` on the
+successful path. Rust derives that target from persisted approval, provenance,
+fetch, registry-selection, and active Mode Pack evidence, executes it through
+existing run-control replacement authority, records bounded route-resume
+evidence, and replays the same drive/resume identity without duplicating active
+replacement, candidate consumption, advance, drive, or resume ledger effects.
+Missing authorization, stale fingerprints, unsupported route kind, missing
+approval / provenance / fetch / selection / current-active evidence, checkpoint
+mismatch, and mixed explicit targets fail closed before route side effects. The
+route resume does not expose raw provenance statements, signatures, public
+keys, Mode Pack payloads, prompts, file content, commands, stdout, stderr,
+environment values, secrets, or raw paths.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks

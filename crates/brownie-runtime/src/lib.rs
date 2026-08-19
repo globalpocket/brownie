@@ -13202,6 +13202,7 @@ struct HeadlessJourneyRouteResumePlan {
     derived_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
     derived_provenance_target: Option<ModePackSelectedCandidateProvenanceVerificationTarget>,
     derived_approval_target: Option<ModePackSelectedCandidateApprovalTarget>,
+    derived_replacement_target: Option<ModePackSelectedApprovedCandidateReplacementTarget>,
     derived_target_class: String,
     resume_fingerprint: String,
 }
@@ -13471,6 +13472,237 @@ fn headless_selected_candidate_provenance_verification_checkpoint_fingerprint(
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
 }
 
+fn modepack_candidate_activation_fingerprint_from_approved_candidate(
+    store: &BrownieStore,
+    content_sha256: &str,
+    compiled_policy_fingerprint: &str,
+) -> Result<String, String> {
+    let cached = store
+        .read_modepack_candidate_snapshot(content_sha256)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: journey route resume cached approved candidate evidence is missing"
+                .to_string()
+        })?;
+    let actual_content_sha256 = format!("sha256:{}", hex_sha256(cached.modepack_json.as_bytes()));
+    if actual_content_sha256 != content_sha256
+        || cached.summary.content_sha256 != content_sha256
+        || cached.summary.compiled_policy_fingerprint != compiled_policy_fingerprint
+    {
+        return Err(
+            "invalid params: journey route resume cached approved candidate evidence is stale"
+                .to_string(),
+        );
+    }
+    let snapshot = load_modepack_from_str(
+        &cached.modepack_json,
+        MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+    )
+    .map_err(|error| {
+        format!("invalid params: journey route resume approved candidate compile failed: {error}")
+    })?;
+    let policies = snapshot
+        .modes
+        .iter()
+        .map(|policy| {
+            let policy_fingerprint = external_modepack_policy_fingerprint(
+                &snapshot.name,
+                snapshot.schema_version,
+                policy,
+            );
+            ActiveModePackPolicySnapshot {
+                mode_id: policy.mode_id.clone(),
+                display_name: policy.display_name.clone(),
+                role_definition: policy.role_definition.clone(),
+                permissions: mode_permissions_payload(policy),
+                allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                completion_rules: policy.completion_rules.clone(),
+                policy_fingerprint,
+            }
+        })
+        .collect::<Vec<_>>();
+    let mode_ids = policies
+        .iter()
+        .map(|policy| policy.mode_id.clone())
+        .collect::<Vec<_>>();
+    let actual_compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &policies,
+    );
+    if actual_compiled_policy_fingerprint != compiled_policy_fingerprint
+        || cached.summary.modepack_name != snapshot.name
+        || cached.summary.schema_version != snapshot.schema_version
+        || cached.summary.mode_ids != mode_ids
+    {
+        return Err(
+            "invalid params: journey route resume approved candidate compiled evidence is stale"
+                .to_string(),
+        );
+    }
+    Ok(active_modepack_activation_fingerprint(
+        &snapshot.name,
+        snapshot.schema_version,
+        &actual_compiled_policy_fingerprint,
+        &mode_ids,
+    ))
+}
+
+fn modepack_selected_approved_candidate_replacement_target_from_approval_checkpoint(
+    store: &BrownieStore,
+    approval_checkpoint: &HeadlessModePackSelectedCandidateApprovalCheckpoint,
+    provenance_checkpoint: &HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
+    fetch_checkpoint: &HeadlessModePackSelectedCandidateFetchCheckpoint,
+) -> Result<ModePackSelectedApprovedCandidateReplacementTarget, String> {
+    if provenance_checkpoint.continuation_id
+        != approval_checkpoint.provenance_verification_continuation_id
+        || provenance_checkpoint.decision_id
+            != approval_checkpoint.expected_provenance_verification_decision_id
+        || provenance_checkpoint.fetch_continuation_id != approval_checkpoint.fetch_continuation_id
+        || provenance_checkpoint.expected_fetch_decision_id
+            != approval_checkpoint.expected_fetch_decision_id
+        || fetch_checkpoint.continuation_id != approval_checkpoint.fetch_continuation_id
+        || fetch_checkpoint.decision_id != approval_checkpoint.expected_fetch_decision_id
+        || fetch_checkpoint.selection_id != approval_checkpoint.selection_id
+        || provenance_checkpoint.selection_id != approval_checkpoint.selection_id
+        || fetch_checkpoint.selection_event_id != approval_checkpoint.selection_event_id
+        || provenance_checkpoint.selection_event_id != approval_checkpoint.selection_event_id
+    {
+        return Err(
+            "invalid params: journey route resume approval checkpoint conflicts with referenced fetch or provenance checkpoint"
+                .to_string(),
+        );
+    }
+    let candidate = &fetch_checkpoint.result.candidate;
+    let provenance = &provenance_checkpoint.result.provenance;
+    let approval = &approval_checkpoint.result.approval;
+    if candidate.source_url_fingerprint != provenance.source_url_fingerprint
+        || candidate.source_url_fingerprint != approval.source_url_fingerprint
+        || candidate.content_sha256 != provenance.content_sha256
+        || candidate.content_sha256 != approval.content_sha256
+        || candidate.compiled_policy_fingerprint != provenance.compiled_policy_fingerprint
+        || candidate.compiled_policy_fingerprint != approval.compiled_policy_fingerprint
+        || provenance.provenance_id != approval.provenance_id
+        || provenance.provenance_event_id != approval.provenance_event_id
+        || provenance.statement_sha256 != approval.statement_sha256
+        || provenance.signer_fingerprint != approval.signer_fingerprint
+    {
+        return Err(
+            "invalid params: journey route resume approval evidence conflicts with referenced checkpoint evidence"
+                .to_string(),
+        );
+    }
+    let expected_provenance_statement_url_fingerprint = fetch_checkpoint
+        .expected_provenance_statement_url_fingerprint
+        .clone()
+        .ok_or_else(|| {
+            "invalid params: journey route resume selected-candidate fetch checkpoint is missing provenance statement URL fingerprint"
+                .to_string()
+        })?;
+    let expected_provenance_statement_sha256 = fetch_checkpoint
+        .expected_provenance_statement_sha256
+        .clone()
+        .ok_or_else(|| {
+            "invalid params: journey route resume selected-candidate fetch checkpoint is missing provenance statement fingerprint"
+                .to_string()
+        })?;
+    let expected_signer_fingerprint =
+        fetch_checkpoint
+            .expected_signer_fingerprint
+            .clone()
+            .ok_or_else(|| {
+                "invalid params: journey route resume selected-candidate fetch checkpoint is missing signer fingerprint"
+                    .to_string()
+            })?;
+    let expected_current_activation_fingerprint = fetch_checkpoint
+        .expected_current_activation_fingerprint
+        .clone()
+        .ok_or_else(|| {
+            "invalid params: journey route resume selected-candidate fetch checkpoint is missing current activation fingerprint"
+                .to_string()
+        })?;
+    if expected_provenance_statement_sha256 != provenance.statement_sha256
+        || expected_provenance_statement_sha256 != approval.statement_sha256
+        || expected_signer_fingerprint != provenance.signer_fingerprint
+        || expected_signer_fingerprint != approval.signer_fingerprint
+    {
+        return Err(
+            "invalid params: journey route resume approval trust evidence conflicts with fetch checkpoint"
+                .to_string(),
+        );
+    }
+    let expected_candidate_activation_fingerprint =
+        modepack_candidate_activation_fingerprint_from_approved_candidate(
+            store,
+            &approval.content_sha256,
+            &approval.compiled_policy_fingerprint,
+        )?;
+    Ok(ModePackSelectedApprovedCandidateReplacementTarget {
+        authorize_selected_candidate_replacement: true,
+        fetch_continuation_id: fetch_checkpoint.continuation_id.clone(),
+        expected_fetch_decision_id: fetch_checkpoint.decision_id.clone(),
+        provenance_verification_continuation_id: provenance_checkpoint.continuation_id.clone(),
+        expected_provenance_verification_decision_id: provenance_checkpoint.decision_id.clone(),
+        approval_continuation_id: approval_checkpoint.continuation_id.clone(),
+        expected_approval_decision_id: approval_checkpoint.decision_id.clone(),
+        selection_id: approval_checkpoint.selection_id.clone(),
+        selection_event_id: approval_checkpoint.selection_event_id.clone(),
+        expected_candidate_url_fingerprint: candidate.source_url_fingerprint.clone(),
+        expected_candidate_content_sha256: candidate.content_sha256.clone(),
+        expected_candidate_compiled_policy_fingerprint: candidate
+            .compiled_policy_fingerprint
+            .clone(),
+        expected_candidate_activation_fingerprint,
+        expected_provenance_id: provenance.provenance_id.clone(),
+        expected_provenance_event_id: provenance.provenance_event_id.clone(),
+        expected_provenance_statement_url_fingerprint,
+        expected_provenance_statement_sha256,
+        expected_signer_fingerprint,
+        expected_current_activation_fingerprint,
+        expected_approved_candidate_id: approval.candidate_id.clone(),
+        expected_approved_candidate_approval_id: approval.approval_id.clone(),
+        expected_approved_candidate_approval_event_id: approval.approval_event_id.clone(),
+    })
+}
+
+fn headless_selected_candidate_approval_checkpoint_fingerprint(
+    checkpoint: &HeadlessModePackSelectedCandidateApprovalCheckpoint,
+) -> String {
+    let approval = &checkpoint.result.approval;
+    let seed = json!({
+        "checkpoint_kind": "headless_modepack_selected_candidate_approval",
+        "continuation_id": checkpoint.continuation_id,
+        "decision_id": checkpoint.decision_id,
+        "request_fingerprint": checkpoint.request_fingerprint,
+        "fetch_continuation_id": checkpoint.fetch_continuation_id,
+        "expected_fetch_decision_id": checkpoint.expected_fetch_decision_id,
+        "provenance_verification_continuation_id": checkpoint.provenance_verification_continuation_id,
+        "expected_provenance_verification_decision_id": checkpoint.expected_provenance_verification_decision_id,
+        "expected_progress_fingerprint": checkpoint.expected_progress_fingerprint,
+        "expected_aggregate_sequence": checkpoint.expected_aggregate_sequence,
+        "current_progress_fingerprint": checkpoint.current_progress_fingerprint,
+        "current_aggregate_sequence": checkpoint.current_aggregate_sequence,
+        "post_progress_fingerprint": checkpoint.post_progress_fingerprint,
+        "post_aggregate_sequence": checkpoint.post_aggregate_sequence,
+        "selection_id": checkpoint.selection_id,
+        "selection_event_id": checkpoint.selection_event_id,
+        "approval_id": approval.approval_id,
+        "approval_event_id": approval.approval_event_id,
+        "candidate_id": approval.candidate_id,
+        "source_url_fingerprint": approval.source_url_fingerprint,
+        "content_sha256": approval.content_sha256,
+        "compiled_policy_fingerprint": approval.compiled_policy_fingerprint,
+        "provenance_id": approval.provenance_id,
+        "provenance_event_id": approval.provenance_event_id,
+        "signer_fingerprint": approval.signer_fingerprint,
+        "statement_sha256": approval.statement_sha256,
+        "trusted_signer_trust_id": approval.trusted_signer_trust_id,
+        "trusted_signer_event_id": approval.trusted_signer_event_id,
+        "consumed": approval.consumed,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
 fn headless_journey_route_resume_request_fingerprint(
     params: &HeadlessRunDriveParams,
     drive_id: &str,
@@ -13529,9 +13761,10 @@ fn validate_headless_journey_route_resume(
         HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
             | HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly
             | HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly
+            | HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly
     ) {
         return Err(
-            "invalid params: journey route resume only supports fetch_selected_mode_pack_candidate_explicitly, verify_selected_mode_pack_candidate_provenance_explicitly, or approve_verified_mode_pack_candidate_explicitly"
+            "invalid params: journey route resume only supports fetch_selected_mode_pack_candidate_explicitly, verify_selected_mode_pack_candidate_provenance_explicitly, approve_verified_mode_pack_candidate_explicitly, or replace_active_with_approved_modepack_candidate_explicitly"
                 .to_string(),
         );
     }
@@ -13608,8 +13841,18 @@ fn headless_journey_route_resume_plan(
                 .to_string(),
         );
     }
-    if !headless_run_checkpoint_has_next_route(start_checkpoint, resume.expected_route_kind.clone())
-    {
+    let has_expected_route = headless_run_checkpoint_has_next_route(
+        start_checkpoint,
+        resume.expected_route_kind.clone(),
+    );
+    let has_replacement_action = resume.expected_route_kind
+        == HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly
+        && headless_run_checkpoint_has_next_route_action(
+            start_checkpoint,
+            HeadlessContinueRouteKind::RefreshProgressOverview,
+            "replace_active_with_approved_modepack_candidate_explicitly",
+        );
+    if !has_expected_route && !has_replacement_action {
         return Err(format!(
             "invalid params: journey route resume requires persisted session route {}",
             serde_json::to_value(&resume.expected_route_kind)
@@ -13640,6 +13883,7 @@ fn headless_journey_route_resume_plan(
         derived_fetch_target,
         derived_provenance_target,
         derived_approval_target,
+        derived_replacement_target,
         derived_target_class,
     ) = match resume.expected_route_kind {
         HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly => {
@@ -13672,6 +13916,7 @@ fn headless_journey_route_resume_plan(
                 Some(derived_fetch_target),
                 None,
                 None,
+                None,
                 "modepack_selected_candidate_fetch_target".to_string(),
             )
         }
@@ -13702,6 +13947,7 @@ fn headless_journey_route_resume_plan(
                 source_checkpoint_fingerprint,
                 None,
                 Some(derived_provenance_target),
+                None,
                 None,
                 "modepack_selected_candidate_provenance_verification_target".to_string(),
             )
@@ -13750,7 +13996,63 @@ fn headless_journey_route_resume_plan(
                 None,
                 None,
                 Some(derived_approval_target),
+                None,
                 "modepack_selected_candidate_approval_target".to_string(),
+            )
+        }
+        HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly => {
+            let approval_checkpoint = store
+                .read_headless_modepack_selected_candidate_approval_checkpoint(
+                    &source_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey route resume selected-candidate approval checkpoint is missing"
+                        .to_string()
+                })?;
+            if approval_checkpoint.post_progress_fingerprint != start_progress.progress_fingerprint
+                || approval_checkpoint.post_aggregate_sequence != start_progress.aggregate_sequence
+            {
+                return Err(
+                    "invalid params: journey route resume selected-candidate approval checkpoint is stale"
+                        .to_string(),
+                );
+            }
+            let provenance_checkpoint = store
+                .read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+                    &approval_checkpoint.provenance_verification_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey route resume referenced selected-candidate provenance verification checkpoint is missing"
+                        .to_string()
+                })?;
+            let fetch_checkpoint = store
+                .read_headless_modepack_selected_candidate_fetch_checkpoint(
+                    &approval_checkpoint.fetch_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey route resume referenced selected-candidate fetch checkpoint is missing"
+                        .to_string()
+                })?;
+            let source_checkpoint_fingerprint =
+                headless_selected_candidate_approval_checkpoint_fingerprint(&approval_checkpoint);
+            let derived_replacement_target =
+                modepack_selected_approved_candidate_replacement_target_from_approval_checkpoint(
+                    store,
+                    &approval_checkpoint,
+                    &provenance_checkpoint,
+                    &fetch_checkpoint,
+                )?;
+            (
+                approval_checkpoint.decision_id,
+                source_checkpoint_fingerprint,
+                None,
+                None,
+                None,
+                Some(derived_replacement_target),
+                "modepack_selected_approved_candidate_replacement_target".to_string(),
             )
         }
         _ => unreachable!("validated route kind"),
@@ -13775,6 +14077,7 @@ fn headless_journey_route_resume_plan(
         derived_fetch_target,
         derived_provenance_target,
         derived_approval_target,
+        derived_replacement_target,
         derived_target_class,
         resume_fingerprint,
     }))
@@ -13818,9 +14121,10 @@ fn validate_headless_journey_route_resume_replay(
                 HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly
                     | HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly
                     | HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly
+                    | HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly
             ) {
                 return Err(
-                    "invalid params: journey route resume only supports fetch_selected_mode_pack_candidate_explicitly, verify_selected_mode_pack_candidate_provenance_explicitly, or approve_verified_mode_pack_candidate_explicitly"
+                    "invalid params: journey route resume only supports fetch_selected_mode_pack_candidate_explicitly, verify_selected_mode_pack_candidate_provenance_explicitly, approve_verified_mode_pack_candidate_explicitly, or replace_active_with_approved_modepack_candidate_explicitly"
                         .to_string(),
                 );
             }
@@ -14308,6 +14612,10 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 }
                 if let Some(target) = plan.derived_approval_target.clone() {
                     advance_params["modepack_selected_candidate_approval_target"] = json!(target);
+                }
+                if let Some(target) = plan.derived_replacement_target.clone() {
+                    advance_params["modepack_selected_approved_candidate_replacement_target"] =
+                        json!(target);
                 }
             }
             if let Some(target) = params.modepack_registry_update_selection_target.clone() {
@@ -51291,10 +51599,10 @@ mod tests {
         assert!(approval["journey_route_resume"]
             .get("provenance_public_key_base64")
             .is_none());
-        assert!(store
+        let approval_checkpoint = store
             .read_headless_modepack_selected_candidate_approval_checkpoint("run.m50.2.route.4")
             .expect("approval checkpoint read")
-            .is_some());
+            .expect("approval checkpoint");
         let approval_replay = parse_line(&approval_request.to_string())
             .result
             .expect("approval route resume replay");
@@ -51325,6 +51633,160 @@ mod tests {
         assert!(!approval_ledger.contains("provenance_statement_json"));
         assert!(!approval_ledger.contains("provenance_signature_base64"));
         assert!(!approval_ledger.contains("provenance_public_key_base64"));
+        let active_before_replacement = store
+            .read_active_modepack_snapshot()
+            .expect("active read before replacement")
+            .expect("active before replacement");
+        let replacement_source_checkpoint_fingerprint =
+            headless_selected_candidate_approval_checkpoint_fingerprint(&approval_checkpoint);
+        let stale_replacement_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m50.2.route",
+                "drive_id": "m50.2.route.replacement.stale",
+                "expected_start_session_sequence": 4,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_route_resume": {
+                    "journey_id": "m50.2.journey.1",
+                    "authorize_journey_route_resume": true,
+                    "expected_journey_fingerprint": journey_checkpoint.journey_fingerprint,
+                    "expected_route_kind": "replace_active_with_approved_mode_pack_candidate_explicitly",
+                    "expected_source_checkpoint_fingerprint": format!("sha256:{}", "8".repeat(64))
+                }
+            }
+        });
+        let stale_replacement = parse_line(&stale_replacement_request.to_string());
+        assert!(stale_replacement.result.is_none());
+        let stale_replacement_error = stale_replacement.error.expect("stale replacement error");
+        assert!(
+            stale_replacement_error
+                .message
+                .contains("expected_source_checkpoint_fingerprint"),
+            "{}",
+            stale_replacement_error.message
+        );
+        assert_eq!(
+            store
+                .read_active_modepack_snapshot()
+                .expect("active read after stale")
+                .expect("active after stale")
+                .summary
+                .activation_fingerprint,
+            active_before_replacement.summary.activation_fingerprint
+        );
+
+        let replacement_request = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m50.2.route",
+                "drive_id": "m50.2.route.replacement",
+                "expected_start_session_sequence": 4,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_route_resume": {
+                    "journey_id": "m50.2.journey.1",
+                    "authorize_journey_route_resume": true,
+                    "expected_journey_fingerprint": journey_checkpoint.journey_fingerprint,
+                    "expected_route_kind": "replace_active_with_approved_mode_pack_candidate_explicitly",
+                    "expected_source_checkpoint_fingerprint": replacement_source_checkpoint_fingerprint
+                }
+            }
+        });
+        assert!(replacement_request["params"]
+            .get("modepack_selected_approved_candidate_replacement_target")
+            .is_none());
+        let replacement_response = parse_line(&replacement_request.to_string());
+        let replacement = replacement_response.result.unwrap_or_else(|| {
+            panic!(
+                "replacement route resume result: {:?}",
+                replacement_response.error
+            )
+        });
+        assert_eq!(replacement["status"], "task_executed");
+        assert_eq!(
+            replacement["journey_route_resume"]["route_kind"],
+            "replace_active_with_approved_mode_pack_candidate_explicitly"
+        );
+        assert_eq!(
+            replacement["journey_route_resume"]["derived_target_class"],
+            "modepack_selected_approved_candidate_replacement_target"
+        );
+        assert_eq!(
+            replacement["journey_route_resume"]["source_checkpoint_fingerprint"],
+            replacement_request["params"]["journey_route_resume"]
+                ["expected_source_checkpoint_fingerprint"]
+        );
+        assert_eq!(
+            replacement["journey_route_resume"]["result_continuation_id"],
+            "run.m50.2.route.5"
+        );
+        assert!(replacement["journey_route_resume"]
+            .get("raw_modepack_json")
+            .is_none());
+        assert!(replacement["journey_route_resume"]
+            .get("provenance_statement_json")
+            .is_none());
+        let replacement_checkpoint = store
+            .read_headless_modepack_selected_candidate_replacement_checkpoint("run.m50.2.route.5")
+            .expect("replacement checkpoint read")
+            .expect("replacement checkpoint");
+        assert!(replacement_checkpoint.result.replaced);
+        assert!(replacement_checkpoint
+            .result
+            .candidate_consumed_event_id
+            .is_some());
+        let active_after_replacement = store
+            .read_active_modepack_snapshot()
+            .expect("active read after replacement")
+            .expect("active after replacement");
+        assert_eq!(
+            active_after_replacement.summary.activation_fingerprint,
+            replacement_checkpoint
+                .result
+                .replacement_snapshot
+                .activation_fingerprint
+        );
+        assert_ne!(
+            active_after_replacement.summary.activation_fingerprint,
+            active_before_replacement.summary.activation_fingerprint
+        );
+        let replacement_replay = parse_line(&replacement_request.to_string())
+            .result
+            .expect("replacement route resume replay");
+        assert_eq!(replacement_replay["replayed"], true);
+        assert_eq!(replacement_replay["journey_route_resume"]["replayed"], true);
+        assert_eq!(
+            replacement_replay["journey_route_resume"]["resume_fingerprint"],
+            replacement["journey_route_resume"]["resume_fingerprint"]
+        );
+        let replacement_events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("replacement events");
+        assert_eq!(
+            replacement_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
+                .count(),
+            4
+        );
+        let active_ledger =
+            std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
+                .expect("active ledger");
+        assert_eq!(
+            active_ledger
+                .lines()
+                .filter(|line| line.contains("ModePackReplaced"))
+                .count(),
+            1
+        );
         let candidate_ledger = std::fs::read_to_string(
             temp.path()
                 .join(".brownie/modepack-candidates/ledger.jsonl"),
@@ -51341,6 +51803,13 @@ mod tests {
             candidate_ledger
                 .lines()
                 .filter(|line| line.contains("ModePackCandidateApproved"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            candidate_ledger
+                .lines()
+                .filter(|line| line.contains("ModePackCandidateConsumed"))
                 .count(),
             1
         );
@@ -51390,7 +51859,7 @@ mod tests {
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
                 .count(),
-            4
+            5
         );
         let repeated_repair = parse_line(&repair_request.to_string())
             .result
@@ -51405,7 +51874,7 @@ mod tests {
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyRouteResumed)
                 .count(),
-            4
+            5
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");

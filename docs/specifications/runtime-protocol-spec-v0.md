@@ -1628,3 +1628,43 @@ advance, drive, or journey-route resume evidence. The response and ledger do
 not expose raw provenance statements, signatures, public keys, Mode Pack
 payloads, prompts, provider responses, file content, command output,
 environment values, secrets, or raw paths.
+
+## M50.5 headless approved-candidate replacement route resume
+
+`headless.run.drive` can resume one already-admitted journey across the
+`ReplaceActiveWithApprovedModePackCandidateExplicitly` route boundary through
+the same bounded `journey_route_resume` object. The resume request contains
+`authorize_journey_route_resume=true`, a bounded `journey_id`, the expected
+journey fingerprint, expected route kind, expected selected-candidate approval
+checkpoint fingerprint, the expected current session sequence, and an explicit
+drive id. The successful request must not include
+`modepack_selected_approved_candidate_replacement_target`; Rust derives that
+target from the persisted approval checkpoint and its referenced provenance and
+fetch checkpoints, plus registry-selection and active Mode Pack evidence.
+
+Before route side effects, the runtime validates the journey checkpoint,
+current session checkpoint, route kind or approved replacement next action,
+expected source checkpoint fingerprint, source approval checkpoint freshness,
+referenced provenance and fetch checkpoint consistency, registry-selection
+identity, current active Mode Pack identity, replay identity, unit route budget,
+and absence of mixed journey admission, explicit Mode Pack targets, context
+budgets, or completion finalization authorization. Stale, malformed,
+unsupported, missing-checkpoint, checkpoint-mismatch, missing-authorization, or
+active-identity-mismatch requests fail closed.
+
+On success, the runtime delegates to existing `headless.run.advance` /
+`headless.continue_once` approved-candidate replacement authority, persists the
+normal replacement and drive checkpoints, appends bounded
+`HeadlessJourneyRouteResumed` ledger evidence to the journey task, and returns
+`HeadlessRunDriveResult.journey_route_resume` with
+`derived_target_class:
+"modepack_selected_approved_candidate_replacement_target"`. The metadata
+contains only bounded handles, route kind, source continuation and decision ids,
+source checkpoint fingerprint, derived target class, result advance/
+continuation ids, post-route progress, next action, replay flag, and a
+deterministic resume fingerprint. Replaying the same drive id and resume
+identity returns the committed metadata without duplicating active replacement,
+candidate consumption, advance, drive, or journey-route resume evidence. The
+response and ledger do not expose raw provenance statements, signatures, public
+keys, Mode Pack payloads, prompts, provider responses, file content, command
+output, environment values, secrets, or raw paths.

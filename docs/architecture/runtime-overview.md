@@ -582,6 +582,28 @@ Pack payloads, provenance material, prompts, provider data, file content,
 command output, environment values, secrets, and raw paths stay out of
 route-resume responses and ledger payloads.
 
+M50.5 extends `journey_route_resume` to
+`ReplaceActiveWithApprovedModePackCandidateExplicitly`, the first active Mode
+Pack mutation boundary after runtime-derived approval. The successful request
+supplies explicit resume authorization, journey identity, expected journey
+fingerprint, expected current session sequence, expected route kind, drive id,
+and expected selected-candidate approval checkpoint fingerprint. It does not
+include a caller-built
+`modepack_selected_approved_candidate_replacement_target`. Rust loads the
+approval checkpoint, verifies it matches the latest session progress, loads the
+referenced provenance-verification and fetch checkpoints, checks approval /
+provenance / fetch evidence consistency, derives the approved-candidate
+replacement target, delegates to existing replacement continuation authority,
+persists bounded route-resume evidence, and returns the same bounded metadata
+shape with `derived_target_class` set to
+`modepack_selected_approved_candidate_replacement_target`. Replay of the same
+drive and resume identity returns committed metadata without duplicating active
+replacement, candidate consumption, drive, or route-resume evidence. RPC and
+ledger surfaces remain bounded to handles, hashes, fingerprints, route classes,
+replay state, and next actions; raw Mode Pack payloads, provenance material,
+prompts, provider data, file content, command output, environment values,
+secrets, and raw paths stay out of route-resume responses and ledger payloads.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or
