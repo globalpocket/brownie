@@ -2180,6 +2180,17 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({
       authorize: true,
       session_id: 'm50.journey',
+      drive_id: 'm50.journey.close',
+      expected_start_session_sequence: 5,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      authorize_completion_finalization: null,
+      expected_completion_closure_fingerprint: null,
+      journey_closure: headlessRunJourneyClosure,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
       expected_start_session_sequence: 1,
       max_advances: 1,
       max_steps_per_advance: 1,

@@ -5798,8 +5798,8 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
       (value.journey_route_resume === undefined || value.journey_route_resume === null) &&
       explicitModePackTargetCount === 0 &&
       (value.context_budget === undefined || value.context_budget === null) &&
-      value.authorize_completion_finalization === undefined &&
-      value.expected_completion_closure_fingerprint === undefined &&
+      (value.authorize_completion_finalization === undefined || value.authorize_completion_finalization === null) &&
+      (value.expected_completion_closure_fingerprint === undefined || value.expected_completion_closure_fingerprint === null) &&
       value.max_advances === 1 &&
       value.max_steps_per_advance === 1
     ))
