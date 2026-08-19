@@ -622,6 +622,23 @@ not a new RPC and rejects journey admission, route resume, caller-supplied Mode
 Pack targets, context budgets, completion-finalization bypass fields, non-unit
 budgets, stale evidence, and raw payload exposure.
 
+M50.7 adds bounded Golden Journey execution checkpointing to the same
+`headless.run.drive` method through `journey_execution`. The Rust runtime can
+admit the initial journey from a bounded task-start envelope, continue from an
+already-admitted journey using its expected fingerprint, derive the next
+supported Golden Journey boundary from persisted session and Mode Pack
+checkpoints, and persist `HeadlessJourneyExecutionCheckpoint` evidence after
+each committed boundary. A restarted caller can resubmit the same authorized
+execution or include the latest execution checkpoint fingerprint; the runtime
+then returns or continues from committed evidence without caller-owned
+per-boundary drive ids, source checkpoint fingerprints, route-resume envelopes,
+closure envelopes, or explicit Mode Pack targets. The execution result and
+ledger evidence expose only bounded handles, boundary classes, route kinds,
+drive and execution fingerprints, replay state, completion state, and next
+action, never raw prompts, provider responses, Mode Pack payloads, provenance
+material, file content, command output, environment values, secrets, absolute
+paths, or canonical paths.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

@@ -1139,6 +1139,8 @@ pub struct HeadlessRunDriveParams {
     pub journey_route_resume: Option<HeadlessRunJourneyRouteResume>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journey_closure: Option<HeadlessRunJourneyClosure>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_execution: Option<HeadlessRunJourneyExecution>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1167,6 +1169,19 @@ pub struct HeadlessRunJourneyClosure {
     pub expected_journey_fingerprint: String,
     pub source_replacement_drive_id: String,
     pub expected_replacement_resume_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyExecution {
+    pub journey_id: String,
+    pub authorize_journey_execution: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_journey_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_start: Option<HeadlessRunJourneyTaskStartEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_execution_checkpoint_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2057,6 +2072,8 @@ pub struct HeadlessRunDriveResult {
     pub journey_closure: Option<HeadlessRunJourneyClosureMetadata>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub journey: Option<HeadlessRunJourneyMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_execution: Option<HeadlessRunJourneyExecutionMetadata>,
     pub next_action: String,
 }
 
@@ -2127,6 +2144,36 @@ pub struct HeadlessRunJourneyClosureMetadata {
     pub next_action: String,
     pub replayed: bool,
     pub journey_closure_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunJourneyExecutionBoundaryMetadata {
+    pub boundary: String,
+    pub drive_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub route_kind: Option<HeadlessContinueRouteKind>,
+    pub session_sequence: u64,
+    pub drive_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resume_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_closure_fingerprint: Option<String>,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunJourneyExecutionMetadata {
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub journey_fingerprint: String,
+    pub completed_boundaries: Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+    pub complete: bool,
+    pub next_action: String,
+    pub replayed: bool,
+    pub execution_checkpoint_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

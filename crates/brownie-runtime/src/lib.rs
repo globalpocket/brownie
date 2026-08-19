@@ -36,6 +36,7 @@ use brownie_protocol::{
     HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunCompletionClosure,
     HeadlessRunCompletionClosureStatus, HeadlessRunCompletionFinalization, HeadlessRunDriveParams,
     HeadlessRunDriveResult, HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
+    HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
     HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
@@ -237,8 +238,8 @@ use brownie_protocol::{
 };
 use brownie_store::{
     ActiveModePackPolicySnapshot, ActiveModePackSnapshot, BrownieStore, ChildTaskStartParams,
-    HeadlessContinuationDecisionLookup, HeadlessJourneyStartCheckpoint,
-    HeadlessModePackRegistryUpdateSelectionCheckpoint,
+    HeadlessContinuationDecisionLookup, HeadlessJourneyExecutionCheckpoint,
+    HeadlessJourneyStartCheckpoint, HeadlessModePackRegistryUpdateSelectionCheckpoint,
     HeadlessModePackSelectedActiveRollbackCheckpoint,
     HeadlessModePackSelectedCandidateApprovalCheckpoint,
     HeadlessModePackSelectedCandidateFetchCheckpoint,
@@ -14640,6 +14641,995 @@ fn headless_journey_closure_metadata(
     metadata
 }
 
+fn headless_journey_execution_request_fingerprint(
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+) -> Result<String, String> {
+    let execution = params
+        .journey_execution
+        .as_ref()
+        .ok_or_else(|| "journey execution missing".to_string())?;
+    let seed = json!({
+        "execution_kind": "headless_journey_execution",
+        "authorize": params.authorize,
+        "session_id": params.session_id,
+        "drive_id": drive_id,
+        "journey_id": execution.journey_id,
+        "authorize_journey_execution": execution.authorize_journey_execution,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_headless_journey_execution(
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    max_advances: u8,
+    max_steps_per_advance: u8,
+) -> Result<(), String> {
+    let Some(execution) = params.journey_execution.as_ref() else {
+        return Ok(());
+    };
+    if !is_valid_headless_run_id(&execution.journey_id) {
+        return Err("invalid params: journey execution journey_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+    }
+    if !execution.authorize_journey_execution {
+        return Err("invalid params: authorize_journey_execution must be true".to_string());
+    }
+    if let Some(fingerprint) = execution.expected_journey_fingerprint.as_deref() {
+        if !is_sha256_fingerprint(fingerprint) {
+            return Err(
+                "invalid params: journey execution expected_journey_fingerprint must be a sha256 fingerprint"
+                    .to_string(),
+            );
+        }
+    }
+    if let Some(task_start) = execution.task_start.as_ref() {
+        if task_start.goal.trim().is_empty() {
+            return Err(
+                "invalid params: journey execution task_start.goal must not be empty".to_string(),
+            );
+        }
+    }
+    if params.expected_start_session_sequence == 0 {
+        if execution.task_start.is_none() {
+            return Err(
+                "invalid params: journey execution admission requires task_start".to_string(),
+            );
+        }
+        if execution.expected_journey_fingerprint.is_some() {
+            return Err("invalid params: journey execution admission cannot include expected_journey_fingerprint before the journey exists".to_string());
+        }
+    } else if execution.expected_journey_fingerprint.is_none() {
+        return Err(
+            "invalid params: journey execution requires expected_journey_fingerprint after admission"
+                .to_string(),
+        );
+    }
+    if let Some(fingerprint) = execution
+        .expected_execution_checkpoint_fingerprint
+        .as_deref()
+    {
+        if !is_sha256_fingerprint(fingerprint) {
+            return Err(
+                "invalid params: expected_execution_checkpoint_fingerprint must be a sha256 fingerprint"
+                    .to_string(),
+            );
+        }
+    }
+    if drive_id.starts_with("drive.") || params.drive_id.is_none() {
+        return Err("invalid params: journey execution requires an explicit drive_id".to_string());
+    }
+    if params.journey_admission.is_some()
+        || params.journey_route_resume.is_some()
+        || params.journey_closure.is_some()
+    {
+        return Err("invalid params: journey execution cannot be combined with journey admission, route resume, or closure envelopes".to_string());
+    }
+    if headless_run_drive_has_explicit_modepack_target(params) {
+        return Err("invalid params: journey execution cannot be combined with explicit modepack run-control targets".to_string());
+    }
+    if params.context_budget.is_some() {
+        return Err(
+            "invalid params: journey execution cannot be combined with context_budget".to_string(),
+        );
+    }
+    if params.authorize_completion_finalization.is_some()
+        || params.expected_completion_closure_fingerprint.is_some()
+    {
+        return Err("invalid params: journey execution cannot be combined with completion finalization fields".to_string());
+    }
+    if max_advances != 1 || max_steps_per_advance != 1 {
+        return Err(
+            "invalid params: journey execution requires max_advances 1 and max_steps_per_advance 1"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn headless_journey_execution_drive_id(
+    parent_drive_id: &str,
+    suffix: &str,
+) -> Result<String, String> {
+    let drive_id = format!("{parent_drive_id}.{suffix}");
+    if !is_valid_headless_run_id(&drive_id) {
+        return Err(
+            "invalid params: journey execution derived drive_id exceeds bounded identifier limits"
+                .to_string(),
+        );
+    }
+    Ok(drive_id)
+}
+
+fn headless_journey_execution_checkpoint_fingerprint(
+    metadata: &HeadlessRunJourneyExecutionMetadata,
+    request_fingerprint: &str,
+) -> String {
+    let seed = json!({
+        "execution_kind": "headless_journey_execution_checkpoint",
+        "journey_id": metadata.journey_id,
+        "task_id": metadata.task_id,
+        "run_id": metadata.run_id,
+        "session_id": metadata.session_id,
+        "drive_id": metadata.drive_id,
+        "journey_fingerprint": metadata.journey_fingerprint,
+        "completed_boundaries": metadata.completed_boundaries,
+        "complete": metadata.complete,
+        "next_action": metadata.next_action,
+        "request_fingerprint": request_fingerprint,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn headless_journey_execution_metadata(
+    journey: &HeadlessJourneyStartCheckpoint,
+    session_id: &str,
+    drive_id: &str,
+    completed_boundaries: Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+    complete: bool,
+    next_action: String,
+    replayed: bool,
+    request_fingerprint: &str,
+) -> HeadlessRunJourneyExecutionMetadata {
+    let mut metadata = HeadlessRunJourneyExecutionMetadata {
+        journey_id: journey.journey_id.clone(),
+        task_id: journey.task_id.clone(),
+        run_id: journey.run_id.clone(),
+        session_id: session_id.to_string(),
+        drive_id: drive_id.to_string(),
+        journey_fingerprint: journey.journey_fingerprint.clone(),
+        completed_boundaries,
+        complete,
+        next_action,
+        replayed,
+        execution_checkpoint_fingerprint: String::new(),
+    };
+    metadata.execution_checkpoint_fingerprint =
+        headless_journey_execution_checkpoint_fingerprint(&metadata, request_fingerprint);
+    metadata
+}
+
+fn headless_journey_execution_boundary_from_result(
+    boundary: &str,
+    result: &HeadlessRunDriveResult,
+) -> HeadlessRunJourneyExecutionBoundaryMetadata {
+    HeadlessRunJourneyExecutionBoundaryMetadata {
+        boundary: boundary.to_string(),
+        drive_id: result.drive_id.clone(),
+        route_kind: result
+            .journey_route_resume
+            .as_ref()
+            .map(|metadata| metadata.route_kind.clone()),
+        session_sequence: result.end_session_sequence,
+        drive_fingerprint: result.drive_fingerprint.clone(),
+        resume_fingerprint: result
+            .journey_route_resume
+            .as_ref()
+            .map(|metadata| metadata.resume_fingerprint.clone()),
+        journey_closure_fingerprint: result
+            .journey_closure
+            .as_ref()
+            .map(|metadata| metadata.journey_closure_fingerprint.clone()),
+        replayed: result.replayed,
+    }
+}
+
+fn headless_journey_execution_write_checkpoint(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    session_id: &str,
+    drive_id: &str,
+    request_fingerprint: &str,
+    completed_boundaries: Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+    complete: bool,
+    next_action: String,
+    replayed: bool,
+) -> Result<HeadlessRunJourneyExecutionMetadata, String> {
+    let metadata = headless_journey_execution_metadata(
+        journey,
+        session_id,
+        drive_id,
+        completed_boundaries,
+        complete,
+        next_action,
+        replayed,
+        request_fingerprint,
+    );
+    store
+        .tasks()
+        .write_headless_journey_execution_checkpoint(&HeadlessJourneyExecutionCheckpoint {
+            journey_id: journey.journey_id.clone(),
+            session_id: session_id.to_string(),
+            drive_id: drive_id.to_string(),
+            request_fingerprint: request_fingerprint.to_string(),
+            journey_fingerprint: journey.journey_fingerprint.clone(),
+            complete,
+            metadata: metadata.clone(),
+        })
+        .map_err(|error| format!("failed to write journey execution checkpoint: {error}"))?;
+    Ok(metadata)
+}
+
+fn headless_journey_execution_recover_admission_boundary(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    request_fingerprint: &str,
+    completed_boundaries: &mut Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+) -> Result<Option<HeadlessRunDriveResult>, String> {
+    if !completed_boundaries.is_empty() {
+        return Ok(None);
+    }
+    let child_drive_id = headless_journey_execution_drive_id(drive_id, "admit")?;
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&params.session_id, &child_drive_id)
+        .map_err(|error| error.to_string())?;
+    let Some(checkpoint) = checkpoint else {
+        return Ok(None);
+    };
+    if checkpoint.session_id != params.session_id
+        || checkpoint.drive_id != child_drive_id
+        || checkpoint.start_session_sequence != 0
+    {
+        return Err(
+            "invalid params: recovered journey admission drive checkpoint is stale".to_string(),
+        );
+    }
+    let mut result = checkpoint.result;
+    let Some(metadata) = result.journey.as_ref() else {
+        return Err(
+            "internal error: recovered journey admission drive checkpoint is missing journey metadata"
+                .to_string(),
+        );
+    };
+    if metadata.journey_id != journey.journey_id
+        || metadata.task_id != journey.task_id
+        || metadata.run_id != journey.run_id
+        || metadata.session_id != journey.session_id
+        || metadata.drive_id != child_drive_id
+        || metadata.journey_fingerprint != journey.journey_fingerprint
+    {
+        return Err(
+            "invalid params: recovered journey admission drive checkpoint conflicts with persisted journey"
+                .to_string(),
+        );
+    }
+    result.replayed = true;
+    if let Some(metadata) = result.journey.as_mut() {
+        metadata.replayed = true;
+    }
+    completed_boundaries.push(headless_journey_execution_boundary_from_result(
+        "admit_journey",
+        &result,
+    ));
+    let mut execution_metadata = headless_journey_execution_write_checkpoint(
+        store,
+        journey,
+        &params.session_id,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries.clone(),
+        false,
+        result.next_action.clone(),
+        false,
+    )?;
+    execution_metadata.replayed = true;
+    result.journey_execution = Some(execution_metadata);
+    Ok(Some(result))
+}
+
+fn headless_journey_source_checkpoint_fingerprint_for_route(
+    store: &BrownieStore,
+    start_checkpoint: &HeadlessRunSessionCheckpoint,
+    route_kind: HeadlessContinueRouteKind,
+) -> Result<String, String> {
+    let source_continuation_id = start_checkpoint
+        .result
+        .steps
+        .iter()
+        .find_map(|step| step.continuation_id.clone())
+        .ok_or_else(|| {
+            "invalid params: journey execution source continuation evidence is missing".to_string()
+        })?;
+    match route_kind {
+        HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly => {
+            let checkpoint = store
+                .read_headless_modepack_registry_update_selection_checkpoint(
+                    &source_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey execution registry selection checkpoint is missing"
+                        .to_string()
+                })?;
+            Ok(headless_registry_update_selection_checkpoint_fingerprint(
+                &checkpoint,
+            ))
+        }
+        HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly => {
+            let checkpoint = store
+                .read_headless_modepack_selected_candidate_fetch_checkpoint(
+                    &source_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey execution selected-candidate fetch checkpoint is missing"
+                        .to_string()
+                })?;
+            Ok(headless_selected_candidate_fetch_checkpoint_fingerprint(
+                &checkpoint,
+            ))
+        }
+        HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly => {
+            let checkpoint = store
+                .read_headless_modepack_selected_candidate_provenance_verification_checkpoint(
+                    &source_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey execution selected-candidate provenance checkpoint is missing"
+                        .to_string()
+                })?;
+            Ok(
+                headless_selected_candidate_provenance_verification_checkpoint_fingerprint(
+                    &checkpoint,
+                ),
+            )
+        }
+        HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly => {
+            let checkpoint = store
+                .read_headless_modepack_selected_candidate_approval_checkpoint(
+                    &source_continuation_id,
+                )
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: journey execution selected-candidate approval checkpoint is missing"
+                        .to_string()
+                })?;
+            Ok(headless_selected_candidate_approval_checkpoint_fingerprint(
+                &checkpoint,
+            ))
+        }
+        _ => Err(
+            "invalid params: journey execution only supports the Golden Journey route chain"
+                .to_string(),
+        ),
+    }
+}
+
+fn headless_journey_execution_next_route(
+    checkpoint: &HeadlessRunSessionCheckpoint,
+) -> Option<HeadlessContinueRouteKind> {
+    let route_kind = headless_run_checkpoint_next_route_kind(checkpoint).cloned();
+    match route_kind {
+        Some(HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly)
+        | Some(HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly)
+        | Some(HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly)
+        | Some(HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly) => {
+            route_kind
+        }
+        Some(HeadlessContinueRouteKind::RefreshProgressOverview)
+            if headless_run_checkpoint_has_next_route_action(
+                checkpoint,
+                HeadlessContinueRouteKind::RefreshProgressOverview,
+                "replace_active_with_approved_modepack_candidate_explicitly",
+            ) =>
+        {
+            Some(HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly)
+        }
+        _ => None,
+    }
+}
+
+fn headless_journey_execution_route_boundary(
+    route_kind: &HeadlessContinueRouteKind,
+) -> (&'static str, &'static str) {
+    match route_kind {
+        HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly => {
+            ("fetch_selected_candidate", "fetch")
+        }
+        HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly => {
+            ("verify_candidate_provenance", "provenance")
+        }
+        HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly => {
+            ("approve_verified_candidate", "approval")
+        }
+        HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly => {
+            ("replace_active_modepack", "replacement")
+        }
+        _ => ("unsupported", "unsupported"),
+    }
+}
+
+fn headless_journey_execution_complete_task_if_needed(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    replacement_resume_fingerprint: &str,
+) -> Result<(), String> {
+    let Some(record) = store
+        .tasks()
+        .get_task(&journey.task_id)
+        .map_err(|error| error.to_string())?
+    else {
+        return Err("invalid params: journey execution task record is missing".to_string());
+    };
+    if record.run_id != journey.run_id {
+        return Err("invalid params: journey execution task/run identity mismatch".to_string());
+    }
+    if record.status == TaskStatus::Completed {
+        return Ok(());
+    }
+    let completion_seed = json!({
+        "completion_kind": "headless_journey_execution_replacement_completion",
+        "journey_id": journey.journey_id,
+        "task_id": journey.task_id,
+        "run_id": journey.run_id,
+        "replacement_resume_fingerprint": replacement_resume_fingerprint,
+    });
+    let completion_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(completion_seed.to_string().as_bytes())
+    );
+    store
+        .tasks()
+        .update_task_status_with_payload(
+            &journey.task_id,
+            TaskStatus::Completed,
+            LedgerEventKind::TaskCompleted,
+            Some(json!({
+                "completion_evidence": TaskRunCompletionEvidence {
+                    final_state: "Completed".to_string(),
+                    task_status: TaskStatus::Completed,
+                    completion_result_fingerprint: completion_fingerprint,
+                    completion_summary_preview: "headless golden journey complete".to_string(),
+                    completion_summary_chars: 32,
+                    completion_summary_truncated: false,
+                    final_response_present: false,
+                    final_response_chars: 0,
+                    replayed: false,
+                }
+            })),
+        )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
+fn append_headless_journey_executed_event_if_missing(
+    store: &BrownieStore,
+    metadata: &HeadlessRunJourneyExecutionMetadata,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&metadata.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != metadata.run_id {
+        return Ok(());
+    }
+    let already_recorded = store
+        .tasks()
+        .read_ledger_events(&record.run_id)?
+        .iter()
+        .any(|event| {
+            event.kind == LedgerEventKind::HeadlessJourneyExecuted
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("execution_checkpoint_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(metadata.execution_checkpoint_fingerprint.as_str())
+        });
+    if already_recorded {
+        return Ok(());
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessJourneyExecuted,
+        Some(json!({
+            "journey_id": metadata.journey_id,
+            "session_id": metadata.session_id,
+            "drive_id": metadata.drive_id,
+            "task_id": metadata.task_id,
+            "run_id": metadata.run_id,
+            "journey_fingerprint": metadata.journey_fingerprint,
+            "completed_boundary_count": metadata.completed_boundaries.len(),
+            "complete": metadata.complete,
+            "next_action": metadata.next_action,
+            "execution_checkpoint_fingerprint": metadata.execution_checkpoint_fingerprint,
+            "reason": "Headless Golden Journey execution completed through bounded runtime-owned boundary continuation."
+        })),
+    )
+}
+
+fn handle_headless_journey_execution(
+    id: Value,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    store: &BrownieStore,
+) -> JsonRpcResponse<Value> {
+    let Some(execution) = params.journey_execution.as_ref() else {
+        return error_response(id, -32603, "internal error: journey execution missing");
+    };
+    let request_fingerprint = match headless_journey_execution_request_fingerprint(params, drive_id)
+    {
+        Ok(fingerprint) => fingerprint,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let existing_execution = match store
+        .tasks()
+        .read_headless_journey_execution_checkpoint(&execution.journey_id)
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Some(existing) = existing_execution.as_ref() {
+        if existing.session_id != params.session_id
+            || existing.drive_id != drive_id
+            || existing.request_fingerprint != request_fingerprint
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution conflicts with persisted execution checkpoint",
+            );
+        }
+        if let Some(expected_journey_fingerprint) =
+            execution.expected_journey_fingerprint.as_deref()
+        {
+            if existing.journey_fingerprint != expected_journey_fingerprint {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: journey execution expected_journey_fingerprint is stale",
+                );
+            }
+        }
+        if let Some(expected) = execution
+            .expected_execution_checkpoint_fingerprint
+            .as_deref()
+        {
+            if expected != existing.metadata.execution_checkpoint_fingerprint {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: expected_execution_checkpoint_fingerprint is stale for journey execution",
+                );
+            }
+        }
+        if existing.complete {
+            let Some(last_boundary) = existing.metadata.completed_boundaries.last() else {
+                return error_response(
+                    id,
+                    -32603,
+                    "internal error: completed journey execution checkpoint has no boundary metadata",
+                );
+            };
+            let Some(checkpoint) = (match store.tasks().read_headless_run_session_drive_checkpoint(
+                &params.session_id,
+                &last_boundary.drive_id,
+            ) {
+                Ok(checkpoint) => checkpoint,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }) else {
+                return error_response(
+                    id,
+                    -32603,
+                    "internal error: completed journey execution drive checkpoint is missing",
+                );
+            };
+            let mut result = checkpoint.result;
+            result.replayed = true;
+            if let Some(metadata) = result.journey_closure.as_mut() {
+                metadata.replayed = true;
+            }
+            let mut metadata = existing.metadata.clone();
+            metadata.replayed = true;
+            result.journey_execution = Some(metadata.clone());
+            if let Err(error) = append_headless_journey_executed_event_if_missing(store, &metadata)
+            {
+                return error_response(id, -32603, &format!("internal error: {error}"));
+            }
+            return result_response(id, json!(result));
+        }
+    } else if execution
+        .expected_execution_checkpoint_fingerprint
+        .is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: expected_execution_checkpoint_fingerprint has no persisted journey execution checkpoint",
+        );
+    }
+
+    let mut journey = match store
+        .tasks()
+        .read_headless_journey_start_checkpoint(&execution.journey_id)
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+
+    let mut completed_boundaries = existing_execution
+        .as_ref()
+        .map(|checkpoint| checkpoint.metadata.completed_boundaries.clone())
+        .unwrap_or_default();
+    let mut last_result: Option<HeadlessRunDriveResult> = None;
+    if let Some(existing) = existing_execution.as_ref() {
+        if let Some(last_boundary) = existing.metadata.completed_boundaries.last() {
+            let checkpoint = match store.tasks().read_headless_run_session_drive_checkpoint(
+                &params.session_id,
+                &last_boundary.drive_id,
+            ) {
+                Ok(checkpoint) => checkpoint,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            let Some(checkpoint) = checkpoint else {
+                return error_response(
+                    id,
+                    -32603,
+                    "internal error: persisted journey execution boundary drive is missing",
+                );
+            };
+            let mut result = checkpoint.result;
+            result.replayed = true;
+            if let Some(metadata) = result.journey_route_resume.as_mut() {
+                metadata.replayed = true;
+            }
+            if let Some(metadata) = result.journey_closure.as_mut() {
+                metadata.replayed = true;
+            }
+            let mut metadata = existing.metadata.clone();
+            metadata.replayed = true;
+            result.journey_execution = Some(metadata);
+            last_result = Some(result);
+        }
+    }
+    if journey.is_none() {
+        let Some(task_start) = execution.task_start.as_ref() else {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution requires a persisted journey checkpoint or task_start",
+            );
+        };
+        let child_drive_id = match headless_journey_execution_drive_id(drive_id, "admit") {
+            Ok(child_drive_id) => child_drive_id,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+        let child_request = json!({
+            "authorize": true,
+            "session_id": params.session_id,
+            "drive_id": child_drive_id,
+            "expected_start_session_sequence": 0,
+            "max_advances": 1,
+            "max_steps_per_advance": 1,
+            "journey_admission": {
+                "journey_id": execution.journey_id,
+                "authorize_journey_start": true,
+                "task_start": task_start
+            }
+        });
+        let response = handle_headless_run_drive(id.clone(), Some(child_request));
+        let Some(value) = response.result else {
+            return JsonRpcResponse {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id,
+                result: None,
+                error: response.error,
+            };
+        };
+        let result: HeadlessRunDriveResult = match serde_json::from_value(value) {
+            Ok(result) => result,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        journey = match store
+            .tasks()
+            .read_headless_journey_start_checkpoint(&execution.journey_id)
+        {
+            Ok(checkpoint) => checkpoint,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let Some(journey_checkpoint) = journey.as_ref() else {
+            return error_response(
+                id,
+                -32603,
+                "internal error: journey execution admission did not persist a journey checkpoint",
+            );
+        };
+        completed_boundaries.push(headless_journey_execution_boundary_from_result(
+            "admit_journey",
+            &result,
+        ));
+        let metadata = match headless_journey_execution_write_checkpoint(
+            store,
+            journey_checkpoint,
+            &params.session_id,
+            drive_id,
+            &request_fingerprint,
+            completed_boundaries.clone(),
+            false,
+            result.next_action.clone(),
+            false,
+        ) {
+            Ok(metadata) => metadata,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        last_result = Some(HeadlessRunDriveResult {
+            journey_execution: Some(metadata),
+            ..result
+        });
+    }
+    let Some(journey) = journey else {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: journey execution requires a persisted journey checkpoint",
+        );
+    };
+    if journey.session_id != params.session_id {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: journey execution identity conflicts with persisted journey",
+        );
+    }
+    if let Some(expected_journey_fingerprint) = execution.expected_journey_fingerprint.as_deref() {
+        if journey.journey_fingerprint != expected_journey_fingerprint {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution identity conflicts with persisted journey",
+            );
+        }
+    }
+    if let Some(task_start) = execution.task_start.as_ref() {
+        let admission = HeadlessRunJourneyAdmission {
+            journey_id: execution.journey_id.clone(),
+            authorize_journey_start: true,
+            task_start: task_start.clone(),
+        };
+        if journey.task_start_fingerprint != headless_journey_task_start_fingerprint(&admission) {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution task_start conflicts with persisted journey",
+            );
+        }
+    }
+    if existing_execution.is_none() {
+        match headless_journey_execution_recover_admission_boundary(
+            store,
+            &journey,
+            params,
+            drive_id,
+            &request_fingerprint,
+            &mut completed_boundaries,
+        ) {
+            Ok(recovered) => {
+                if recovered.is_some() {
+                    last_result = recovered;
+                }
+            }
+            Err(message) => return error_response(id, -32602, &message),
+        }
+    }
+    for _ in 0..6 {
+        let session_checkpoint = match store
+            .tasks()
+            .read_headless_run_session_checkpoint(&params.session_id)
+        {
+            Ok(Some(checkpoint)) => checkpoint,
+            Ok(None) => {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: journey execution requires an existing session checkpoint",
+                )
+            }
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        if session_checkpoint.session_sequence < params.expected_start_session_sequence {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution session checkpoint is older than expected_start_session_sequence",
+            );
+        }
+        if let Some(route_kind) = headless_journey_execution_next_route(&session_checkpoint) {
+            let source_checkpoint_fingerprint =
+                match headless_journey_source_checkpoint_fingerprint_for_route(
+                    store,
+                    &session_checkpoint,
+                    route_kind.clone(),
+                ) {
+                    Ok(fingerprint) => fingerprint,
+                    Err(message) => return error_response(id, -32602, &message),
+                };
+            let (boundary, suffix) = headless_journey_execution_route_boundary(&route_kind);
+            let child_drive_id = match headless_journey_execution_drive_id(drive_id, suffix) {
+                Ok(child_drive_id) => child_drive_id,
+                Err(message) => return error_response(id, -32602, &message),
+            };
+            let child_request = json!({
+                "authorize": true,
+                "session_id": params.session_id,
+                "drive_id": child_drive_id,
+                "expected_start_session_sequence": session_checkpoint.session_sequence,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_route_resume": {
+                    "journey_id": execution.journey_id,
+                    "authorize_journey_route_resume": true,
+                    "expected_journey_fingerprint": journey.journey_fingerprint,
+                    "expected_route_kind": route_kind,
+                    "expected_source_checkpoint_fingerprint": source_checkpoint_fingerprint
+                }
+            });
+            let response = handle_headless_run_drive(id.clone(), Some(child_request));
+            let Some(value) = response.result else {
+                return JsonRpcResponse {
+                    jsonrpc: JSONRPC_VERSION.to_string(),
+                    id,
+                    result: None,
+                    error: response.error,
+                };
+            };
+            let result: HeadlessRunDriveResult = match serde_json::from_value(value) {
+                Ok(result) => result,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            completed_boundaries.push(headless_journey_execution_boundary_from_result(
+                boundary, &result,
+            ));
+            let metadata = match headless_journey_execution_write_checkpoint(
+                store,
+                &journey,
+                &params.session_id,
+                drive_id,
+                &request_fingerprint,
+                completed_boundaries.clone(),
+                false,
+                result.next_action.clone(),
+                false,
+            ) {
+                Ok(metadata) => metadata,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+            last_result = Some(HeadlessRunDriveResult {
+                journey_execution: Some(metadata),
+                ..result
+            });
+            continue;
+        }
+
+        let replacement = completed_boundaries
+            .iter()
+            .rev()
+            .find(|boundary| boundary.boundary == "replace_active_modepack")
+            .cloned();
+        let Some(replacement) = replacement else {
+            if let Some(result) = last_result {
+                return result_response(id, json!(result));
+            }
+            return error_response(
+                id,
+                -32602,
+                "invalid params: journey execution requires a persisted Golden Journey route boundary",
+            );
+        };
+        let Some(replacement_resume_fingerprint) = replacement.resume_fingerprint.as_deref() else {
+            return error_response(
+                id,
+                -32603,
+                "internal error: replacement boundary missing resume fingerprint",
+            );
+        };
+        if let Err(message) = headless_journey_execution_complete_task_if_needed(
+            store,
+            &journey,
+            replacement_resume_fingerprint,
+        ) {
+            return error_response(id, -32602, &message);
+        }
+        let child_drive_id = match headless_journey_execution_drive_id(drive_id, "closure") {
+            Ok(child_drive_id) => child_drive_id,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+        let child_request = json!({
+            "authorize": true,
+            "session_id": params.session_id,
+            "drive_id": child_drive_id,
+            "expected_start_session_sequence": session_checkpoint.session_sequence,
+            "max_advances": 1,
+            "max_steps_per_advance": 1,
+            "journey_closure": {
+                "journey_id": execution.journey_id,
+                "authorize_journey_closure": true,
+                "expected_journey_fingerprint": journey.journey_fingerprint,
+                "source_replacement_drive_id": replacement.drive_id,
+                "expected_replacement_resume_fingerprint": replacement_resume_fingerprint
+            }
+        });
+        let response = handle_headless_run_drive(id.clone(), Some(child_request));
+        let Some(value) = response.result else {
+            return JsonRpcResponse {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id,
+                result: None,
+                error: response.error,
+            };
+        };
+        let mut result: HeadlessRunDriveResult = match serde_json::from_value(value) {
+            Ok(result) => result,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        completed_boundaries.push(headless_journey_execution_boundary_from_result(
+            "close_journey",
+            &result,
+        ));
+        let metadata = match headless_journey_execution_write_checkpoint(
+            store,
+            &journey,
+            &params.session_id,
+            drive_id,
+            &request_fingerprint,
+            completed_boundaries,
+            true,
+            "complete_headless_journey".to_string(),
+            false,
+        ) {
+            Ok(metadata) => metadata,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        if let Err(error) = append_headless_journey_executed_event_if_missing(store, &metadata) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+        result.journey_execution = Some(metadata);
+        return result_response(id, json!(result));
+    }
+    error_response(
+        id,
+        -32602,
+        "invalid params: journey execution exceeded bounded Golden Journey boundary budget",
+    )
+}
+
 fn headless_run_checkpoint_is_progress_overview_boundary(
     checkpoint: &HeadlessRunSessionCheckpoint,
 ) -> bool {
@@ -14665,7 +15655,10 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: session_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
         );
     }
-    if params.expected_start_session_sequence == 0 && params.journey_admission.is_none() {
+    if params.expected_start_session_sequence == 0
+        && params.journey_admission.is_none()
+        && params.journey_execution.is_none()
+    {
         return error_response(
             id,
             -32602,
@@ -14757,6 +15750,11 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     {
         return error_response(id, -32602, &message);
     }
+    if let Err(message) =
+        validate_headless_journey_execution(&params, &drive_id, max_advances, max_steps_per_advance)
+    {
+        return error_response(id, -32602, &message);
+    }
     if headless_run_drive_explicit_modepack_target_count(&params) > 1 {
         return error_response(
             id,
@@ -14797,6 +15795,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    if params.journey_execution.is_some() {
+        return handle_headless_journey_execution(id, &params, &drive_id, &store);
+    }
     let journey_checkpoint = if let Some(admission) = params.journey_admission.as_ref() {
         match headless_journey_start_checkpoint_for_admission(
             &store,
@@ -15134,6 +16135,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             journey_route_resume: None,
             journey_closure: None,
             journey: None,
+            journey_execution: None,
             next_action: next_action.clone(),
         };
         let completion_finalization =
@@ -15201,6 +16203,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             journey_route_resume: None,
             journey_closure: Some(journey_closure_metadata),
             journey: None,
+            journey_execution: None,
             next_action,
         };
         result.journey = Some(headless_journey_metadata(
@@ -15388,6 +16391,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         journey_route_resume: journey_route_resume_metadata.clone(),
         journey_closure: None,
         journey: None,
+        journey_execution: None,
         next_action: next_action.clone(),
     };
     let completion_finalization = match headless_run_completion_finalization(
@@ -15442,6 +16446,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         journey_route_resume: journey_route_resume_metadata,
         journey_closure: None,
         journey: None,
+        journey_execution: None,
         next_action,
     };
     if let Some(checkpoint) = journey_checkpoint.as_ref() {
@@ -50840,6 +51845,7 @@ mod tests {
             journey_route_resume: None,
             journey_closure: None,
             journey: None,
+            journey_execution: None,
             next_action: "inspect_progress_overview".to_string(),
         };
 
@@ -51105,6 +52111,7 @@ mod tests {
             journey_route_resume: None,
             journey_closure: None,
             journey: None,
+            journey_execution: None,
             next_action: "inspect_progress_overview".to_string(),
         };
 
@@ -51245,6 +52252,7 @@ mod tests {
             journey_route_resume: None,
             journey_closure: None,
             journey: None,
+            journey_execution: None,
             next_action: "inspect_progress_overview".to_string(),
         };
         let wrong_finalization = HeadlessRunCompletionFinalization {
@@ -51654,6 +52662,183 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
                 .count(),
             1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_execution_admits_checkpoints_and_replays_without_new_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.exec","drive_id":"m50.exec.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_execution":{"journey_id":"m50.exec.1","authorize_journey_execution":true,"task_start":{"goal":"Run a runtime-owned execution journey","mode_id":"implementer"}}}}"#;
+        let response = parse_line(request);
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("journey execution result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["session_id"], "m50.exec");
+        assert_eq!(result["journey_execution"]["journey_id"], "m50.exec.1");
+        assert_eq!(result["journey_execution"]["complete"], false);
+        assert_eq!(
+            result["journey_execution"]["completed_boundaries"][0]["boundary"],
+            "admit_journey"
+        );
+        assert_eq!(
+            result["journey_execution"]["completed_boundaries"][0]["drive_id"],
+            "m50.exec.drive.admit"
+        );
+        assert!(
+            result["journey_execution"]["execution_checkpoint_fingerprint"]
+                .as_str()
+                .expect("execution checkpoint fingerprint")
+                .starts_with("sha256:")
+        );
+        assert!(result["journey_execution"].get("raw_prompt").is_none());
+        assert!(result["journey_execution"]
+            .get("provider_response")
+            .is_none());
+        assert!(result["journey_execution"].get("absolute_path").is_none());
+
+        let task_count_after_first_drive = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_first_drive, 1);
+        let replay_response = parse_line(request);
+        let replay = replay_response.result.unwrap_or_else(|| {
+            panic!(
+                "journey execution replay result: {:?}",
+                replay_response.error
+            )
+        });
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey_execution"]["replayed"], true);
+        assert_eq!(
+            replay["journey_execution"]["execution_checkpoint_fingerprint"],
+            result["journey_execution"]["execution_checkpoint_fingerprint"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+        let restart_request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m50.exec",
+                "drive_id": "m50.exec.drive",
+                "expected_start_session_sequence": result["end_session_sequence"]
+                    .as_u64()
+                    .expect("end session sequence"),
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_execution": {
+                    "journey_id": "m50.exec.1",
+                    "authorize_journey_execution": true,
+                    "expected_journey_fingerprint": result["journey_execution"]["journey_fingerprint"]
+                        .as_str()
+                        .expect("journey fingerprint"),
+                    "expected_execution_checkpoint_fingerprint": result["journey_execution"]["execution_checkpoint_fingerprint"]
+                        .as_str()
+                        .expect("execution checkpoint fingerprint")
+                }
+            }
+        })
+        .to_string();
+        let restart_response = parse_line(&restart_request);
+        let restart = restart_response.result.unwrap_or_else(|| {
+            panic!(
+                "journey execution restart result: {:?}",
+                restart_response.error
+            )
+        });
+        assert_eq!(restart["replayed"], true);
+        assert_eq!(restart["journey_execution"]["replayed"], true);
+        assert_eq!(
+            restart["journey_execution"]["execution_checkpoint_fingerprint"],
+            result["journey_execution"]["execution_checkpoint_fingerprint"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+        let run_id = result["journey_execution"]["run_id"]
+            .as_str()
+            .expect("run id");
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyExecuted)
+                .count(),
+            0
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_execution_recovers_committed_admission_without_execution_checkpoint(
+    ) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let admission_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.recover","drive_id":"m50.recover.drive.admit","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.recover.1","authorize_journey_start":true,"task_start":{"goal":"Recover committed admission","mode_id":"implementer"}}}}"#;
+        let admission_response = parse_line(admission_request);
+        let admission = admission_response
+            .result
+            .unwrap_or_else(|| panic!("admission result: {:?}", admission_response.error));
+        assert_eq!(admission["status"], "task_executed");
+        assert!(store
+            .tasks()
+            .read_headless_journey_execution_checkpoint("m50.recover.1")
+            .expect("execution checkpoint before recovery")
+            .is_none());
+        let task_count_after_admission = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_admission, 1);
+
+        let execution_request = r#"{"jsonrpc":"2.0","id":2,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.recover","drive_id":"m50.recover.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_execution":{"journey_id":"m50.recover.1","authorize_journey_execution":true,"task_start":{"goal":"Recover committed admission","mode_id":"implementer"}}}}"#;
+        let execution_response = parse_line(execution_request);
+        let execution = execution_response
+            .result
+            .unwrap_or_else(|| panic!("execution recovery result: {:?}", execution_response.error));
+        assert_eq!(execution["replayed"], true);
+        assert_eq!(execution["journey_execution"]["replayed"], true);
+        assert_eq!(
+            execution["journey_execution"]["completed_boundaries"][0]["boundary"],
+            "admit_journey"
+        );
+        assert_eq!(
+            execution["journey_execution"]["completed_boundaries"][0]["drive_id"],
+            "m50.recover.drive.admit"
+        );
+        assert!(store
+            .tasks()
+            .read_headless_journey_execution_checkpoint("m50.recover.1")
+            .expect("execution checkpoint after recovery")
+            .is_some());
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_admission
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");

@@ -1707,3 +1707,39 @@ finalization, drive, or journey-closure evidence. Raw prompts, provider
 responses, file content, provenance material, Mode Pack payloads, stdout,
 stderr, command, environment, secret, absolute path, and canonical path values
 remain excluded.
+
+## M50.7 headless Golden Journey execution checkpointing
+
+`headless.run.drive` can continue one authorized Golden Journey through a
+bounded `journey_execution` envelope on the existing method. The request
+contains `authorize_journey_execution=true`, a bounded `journey_id`, an
+explicit drive id, unit drive budgets, and either an initial bounded
+`task_start` for first admission or an expected journey fingerprint for
+post-admission continuation. A restart can also supply
+`expected_execution_checkpoint_fingerprint` to prove the caller is resuming from
+the latest persisted execution checkpoint.
+
+The runtime owns the boundary choreography. It can admit the initial journey by
+delegating to the existing journey-admission path, then reads persisted
+session, route, and Mode Pack checkpoints to derive the next Golden Journey
+boundary instead of accepting caller-supplied `journey_route_resume`,
+`journey_closure`, or explicit Mode Pack targets on the successful execution
+path. After each committed boundary, the runtime persists bounded
+`HeadlessJourneyExecutionCheckpoint` evidence containing only boundary class,
+drive id, route kind, session sequence, drive fingerprint, optional resume or
+closure fingerprint, replay state, and a deterministic execution checkpoint
+fingerprint.
+
+Replay and restart read that execution checkpoint before side effects. A
+matching incomplete checkpoint returns or continues from the last committed
+boundary without duplicating task start, drive, route-resume, replacement,
+closure, finalization, or execution evidence. A matching complete checkpoint
+returns the committed closure drive with `journey_execution.replayed=true`.
+Malformed authorization, stale journey or execution fingerprints, mixed route
+or closure envelopes, explicit Mode Pack targets, completion-finalization
+bypass fields, non-unit budgets, missing required checkpoints, active Mode Pack
+drift, and unsupported route families fail closed before the next boundary.
+Raw prompts, provider responses, file content, provenance material, Mode Pack
+payloads, stdout, stderr, command, environment, secret, absolute path, and
+canonical path values remain excluded from RPC results and execution ledger
+evidence.
