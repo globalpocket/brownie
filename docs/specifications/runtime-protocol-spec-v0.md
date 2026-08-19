@@ -1668,3 +1668,42 @@ candidate consumption, advance, drive, or journey-route resume evidence. The
 response and ledger do not expose raw provenance statements, signatures, public
 keys, Mode Pack payloads, prompts, provider responses, file content, command
 output, environment values, secrets, or raw paths.
+
+## M50.6 headless Golden Journey closure from replacement evidence
+
+`headless.run.drive` can close one admitted Golden Journey after the
+approved-candidate replacement route has committed by accepting a bounded
+`journey_closure` object on the existing method. The request contains
+`authorize_journey_closure=true`, a bounded `journey_id`, expected journey
+fingerprint, source replacement drive id, expected replacement resume
+fingerprint, expected current session sequence, unit drive budget, and an
+explicit drive id. The successful request must not include journey admission,
+journey route resume, caller-supplied Mode Pack run-control targets,
+`context_budget`, or completion-finalization bypass fields.
+
+Before closure side effects, the runtime validates the persisted journey start
+checkpoint, current session checkpoint, source replacement drive checkpoint,
+replacement route kind, replacement resume fingerprint, referenced selected
+approved candidate replacement checkpoint, committed replacement and candidate
+consumption evidence, current active Mode Pack activation fingerprint, current
+progress closure, absence of remaining route candidates, and terminal
+completion evidence. Stale, malformed, missing-checkpoint, mismatched,
+unauthorized, mixed-target, active-drift, non-complete, or non-unit-budget
+requests fail closed without appending finalization or journey-closure
+evidence.
+
+On success, the runtime uses existing completion-finalization authority,
+persists the normal drive checkpoint, appends bounded `HeadlessJourneyClosed`
+ledger evidence to the journey task, and returns
+`HeadlessRunDriveResult.journey_closure`. The metadata contains only bounded
+journey/task/run/session/drive handles, source replacement drive id,
+replacement resume fingerprint, replacement route kind, replacement
+continuation id, replacement checkpoint fingerprint, active activation
+fingerprint, closure/finalization/terminal-completion fingerprints, progress
+fingerprint, aggregate sequence, replay flag, next action, and deterministic
+journey-closure fingerprint. Replay returns the committed finalization and
+closure metadata without duplicating replacement, candidate consumption,
+finalization, drive, or journey-closure evidence. Raw prompts, provider
+responses, file content, provenance material, Mode Pack payloads, stdout,
+stderr, command, environment, secret, absolute path, and canonical path values
+remain excluded.

@@ -608,6 +608,7 @@ export interface HeadlessRunDriveParams {
   modepack_selected_approved_candidate_replacement_target?: ModePackSelectedApprovedCandidateReplacementTarget | null;
   journey_admission?: HeadlessRunJourneyAdmission | null;
   journey_route_resume?: HeadlessRunJourneyRouteResume | null;
+  journey_closure?: HeadlessRunJourneyClosure | null;
 }
 
 export interface HeadlessRunJourneyAdmission {
@@ -622,6 +623,14 @@ export interface HeadlessRunJourneyRouteResume {
   expected_journey_fingerprint: string;
   expected_route_kind: HeadlessContinueRouteKind;
   expected_source_checkpoint_fingerprint: string;
+}
+
+export interface HeadlessRunJourneyClosure {
+  journey_id: string;
+  authorize_journey_closure: true;
+  expected_journey_fingerprint: string;
+  source_replacement_drive_id: string;
+  expected_replacement_resume_fingerprint: string;
 }
 
 export interface HeadlessRunJourneyTaskStartEnvelope {
@@ -1061,6 +1070,7 @@ export interface HeadlessRunDriveResult {
   next_route?: HeadlessContinueRoute | null;
   advances?: HeadlessRunAdvanceResult[];
   journey_route_resume?: HeadlessRunJourneyRouteResumeMetadata | null;
+  journey_closure?: HeadlessRunJourneyClosureMetadata | null;
   journey?: HeadlessRunJourneyMetadata | null;
   next_action: string;
 }
@@ -1101,6 +1111,28 @@ export interface HeadlessRunJourneyRouteResumeMetadata {
   resume_fingerprint: string;
 }
 
+export interface HeadlessRunJourneyClosureMetadata {
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  drive_id: string;
+  source_replacement_drive_id: string;
+  source_replacement_resume_fingerprint: string;
+  replacement_route_kind: HeadlessContinueRouteKind;
+  replacement_continuation_id: string;
+  replacement_checkpoint_fingerprint: string;
+  active_modepack_activation_fingerprint: string;
+  closure_fingerprint: string;
+  finalization_fingerprint?: string | null;
+  terminal_completion_fingerprint?: string | null;
+  progress_fingerprint: string;
+  aggregate_sequence: number;
+  next_action: string;
+  replayed: boolean;
+  journey_closure_fingerprint: string;
+}
+
 export type HeadlessRunCompletionClosureStatus =
   | 'complete'
   | 'routed_explicit_action'
@@ -1137,6 +1169,9 @@ export interface HeadlessRunCompletionFinalization {
   closure_fingerprint: string;
   progress_fingerprint: string;
   aggregate_sequence: number;
+  owner_task_id?: string | null;
+  owner_run_id?: string | null;
+  terminal_completion_fingerprint?: string | null;
   terminal_task_count: number;
   total_task_count: number;
   finalization_fingerprint: string;
@@ -5710,6 +5745,7 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
 
 export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDriveParams {
   const hasJourneyRouteResume = isRecord(value) && value.journey_route_resume !== undefined && value.journey_route_resume !== null;
+  const hasJourneyClosure = isRecord(value) && value.journey_closure !== undefined && value.journey_closure !== null;
   const explicitModePackTargetCount = isRecord(value)
     ? [
         value.modepack_registry_update_selection_target,
@@ -5721,7 +5757,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     : 0;
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume', 'journey_closure']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
@@ -5739,8 +5775,10 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
     (value.journey_admission === undefined || value.journey_admission === null || isHeadlessRunJourneyAdmission(value.journey_admission)) &&
     (value.journey_route_resume === undefined || value.journey_route_resume === null || isHeadlessRunJourneyRouteResume(value.journey_route_resume)) &&
+    (value.journey_closure === undefined || value.journey_closure === null || isHeadlessRunJourneyClosure(value.journey_closure)) &&
     (value.expected_start_session_sequence >= 1 || value.journey_admission !== undefined && value.journey_admission !== null) &&
     (value.journey_admission === undefined || value.journey_admission === null || value.expected_start_session_sequence === 0) &&
+    (!(hasJourneyRouteResume && hasJourneyClosure)) &&
     (!hasJourneyRouteResume || (
       value.expected_start_session_sequence >= 1 &&
       typeof value.drive_id === 'string' &&
@@ -5749,6 +5787,19 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
       explicitModePackTargetCount === 0 &&
       (value.context_budget === undefined || value.context_budget === null) &&
       value.authorize_completion_finalization !== true &&
+      value.max_advances === 1 &&
+      value.max_steps_per_advance === 1
+    )) &&
+    (!hasJourneyClosure || (
+      value.expected_start_session_sequence >= 1 &&
+      typeof value.drive_id === 'string' &&
+      isHeadlessRunId(value.drive_id) &&
+      (value.journey_admission === undefined || value.journey_admission === null) &&
+      (value.journey_route_resume === undefined || value.journey_route_resume === null) &&
+      explicitModePackTargetCount === 0 &&
+      (value.context_budget === undefined || value.context_budget === null) &&
+      value.authorize_completion_finalization === undefined &&
+      value.expected_completion_closure_fingerprint === undefined &&
       value.max_advances === 1 &&
       value.max_steps_per_advance === 1
     ))
@@ -5782,6 +5833,21 @@ export function isHeadlessRunJourneyRouteResume(value: unknown): value is Headle
     ) &&
     typeof value.expected_source_checkpoint_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_source_checkpoint_fingerprint)
+  );
+}
+
+export function isHeadlessRunJourneyClosure(value: unknown): value is HeadlessRunJourneyClosure {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['journey_id', 'authorize_journey_closure', 'expected_journey_fingerprint', 'source_replacement_drive_id', 'expected_replacement_resume_fingerprint']) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.journey_id) &&
+    value.authorize_journey_closure === true &&
+    typeof value.expected_journey_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_journey_fingerprint) &&
+    isHeadlessRunId(value.source_replacement_drive_id) &&
+    typeof value.expected_replacement_resume_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_replacement_resume_fingerprint)
   );
 }
 
@@ -6368,6 +6434,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'next_route',
       'advances',
       'journey_route_resume',
+      'journey_closure',
       'journey',
       'next_action',
     ]) &&
@@ -6402,6 +6469,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
     (value.advances === undefined || (Array.isArray(value.advances) && value.advances.length === value.advance_count && value.advances.every(isHeadlessRunAdvanceResult))) &&
     (value.journey_route_resume === undefined || value.journey_route_resume === null || isHeadlessRunJourneyRouteResumeMetadata(value.journey_route_resume)) &&
+    (value.journey_closure === undefined || value.journey_closure === null || isHeadlessRunJourneyClosureMetadata(value.journey_closure)) &&
     (value.journey === undefined || value.journey === null || isHeadlessRunJourneyMetadata(value.journey)) &&
     typeof value.next_action === 'string'
   );
@@ -6474,6 +6542,41 @@ export function isHeadlessRunJourneyRouteResumeMetadata(value: unknown): value i
   );
 }
 
+export function isHeadlessRunJourneyClosureMetadata(value: unknown): value is HeadlessRunJourneyClosureMetadata {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'source_replacement_drive_id', 'source_replacement_resume_fingerprint', 'replacement_route_kind', 'replacement_continuation_id', 'replacement_checkpoint_fingerprint', 'active_modepack_activation_fingerprint', 'closure_fingerprint', 'finalization_fingerprint', 'terminal_completion_fingerprint', 'progress_fingerprint', 'aggregate_sequence', 'next_action', 'replayed', 'journey_closure_fingerprint']) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.journey_id) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.drive_id) &&
+    isHeadlessRunId(value.source_replacement_drive_id) &&
+    typeof value.source_replacement_resume_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_replacement_resume_fingerprint) &&
+    value.replacement_route_kind === 'replace_active_with_approved_mode_pack_candidate_explicitly' &&
+    isBoundedHandle(value.replacement_continuation_id) &&
+    typeof value.replacement_checkpoint_fingerprint === 'string' &&
+    isSha256Fingerprint(value.replacement_checkpoint_fingerprint) &&
+    typeof value.active_modepack_activation_fingerprint === 'string' &&
+    isSha256Fingerprint(value.active_modepack_activation_fingerprint) &&
+    typeof value.closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.closure_fingerprint) &&
+    (value.finalization_fingerprint === undefined || value.finalization_fingerprint === null || (typeof value.finalization_fingerprint === 'string' && isSha256Fingerprint(value.finalization_fingerprint))) &&
+    (value.terminal_completion_fingerprint === undefined || value.terminal_completion_fingerprint === null || (typeof value.terminal_completion_fingerprint === 'string' && isSha256Fingerprint(value.terminal_completion_fingerprint))) &&
+    typeof value.progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.progress_fingerprint) &&
+    isNonNegativeInteger(value.aggregate_sequence) &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120 &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.journey_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.journey_closure_fingerprint)
+  );
+}
+
 export function isHeadlessRunCompletionClosure(value: unknown): value is HeadlessRunCompletionClosure {
   return (
     isRecord(value) &&
@@ -6531,6 +6634,9 @@ export function isHeadlessRunCompletionFinalization(value: unknown): value is He
       'closure_fingerprint',
       'progress_fingerprint',
       'aggregate_sequence',
+      'owner_task_id',
+      'owner_run_id',
+      'terminal_completion_fingerprint',
       'terminal_task_count',
       'total_task_count',
       'finalization_fingerprint',
@@ -6549,6 +6655,9 @@ export function isHeadlessRunCompletionFinalization(value: unknown): value is He
     typeof value.progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.progress_fingerprint) &&
     isNonNegativeInteger(value.aggregate_sequence) &&
+    (value.owner_task_id === undefined || value.owner_task_id === null || isBoundedHandle(value.owner_task_id)) &&
+    (value.owner_run_id === undefined || value.owner_run_id === null || isBoundedHandle(value.owner_run_id)) &&
+    (value.terminal_completion_fingerprint === undefined || value.terminal_completion_fingerprint === null || (typeof value.terminal_completion_fingerprint === 'string' && isSha256Fingerprint(value.terminal_completion_fingerprint))) &&
     isNonNegativeInteger(value.terminal_task_count) &&
     isNonNegativeInteger(value.total_task_count) &&
     value.terminal_task_count <= value.total_task_count &&
