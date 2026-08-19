@@ -542,6 +542,25 @@ evidence. The metadata is limited to bounded handles, route kind, source
 checkpoint fingerprint, derived target class, result advance/continuation ids,
 post-route progress, replay state, next action, and resume fingerprint.
 
+M50.3 extends the same `journey_route_resume` envelope to the next supported
+Mode Pack boundary, `VerifySelectedModePackCandidateProvenanceExplicitly`. The
+caller supplies explicit resume authorization, journey identity, expected
+journey fingerprint, expected current session sequence, expected route kind,
+drive id, and expected selected-candidate fetch checkpoint fingerprint. The
+successful request must not include a caller-built provenance verification
+target. Rust derives `modepack_selected_candidate_provenance_verification_target`
+from persisted selected-candidate fetch checkpoint evidence, revalidates the
+latest progress and checkpoint fingerprint before route side effects, delegates
+to existing continuation authority, persists bounded route-resume evidence, and
+returns the same bounded `journey_route_resume` metadata shape with
+`derived_target_class` set to
+`modepack_selected_candidate_provenance_verification_target`. Replay of the same
+drive and resume identity returns committed metadata without duplicating
+provenance verification, advance, drive, or route-resume evidence. RPC and
+ledger surfaces must not expose raw provenance statements, signatures, public
+keys, Mode Pack payloads, prompts, file content, commands, outputs,
+environment values, or raw paths.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or
