@@ -2032,6 +2032,10 @@ describe('protocol validation', () => {
       ...headlessRunJourneyRouteResume,
       expected_route_kind: 'verify_selected_mode_pack_candidate_provenance_explicitly',
     };
+    const headlessRunApprovalJourneyRouteResume = {
+      ...headlessRunJourneyRouteResume,
+      expected_route_kind: 'approve_verified_mode_pack_candidate_explicitly',
+    };
     const headlessRunJourneyMetadata = {
       journey_id: 'm50.journey.1',
       task_id: 'task_1',
@@ -2072,6 +2076,12 @@ describe('protocol validation', () => {
       derived_target_class: 'modepack_selected_candidate_provenance_verification_target',
       next_action: 'approve_verified_modepack_candidate_explicitly',
     };
+    const headlessRunApprovalJourneyRouteResumeMetadata = {
+      ...headlessRunJourneyRouteResumeMetadata,
+      route_kind: 'approve_verified_mode_pack_candidate_explicitly',
+      derived_target_class: 'modepack_selected_candidate_approval_target',
+      next_action: 'replace_active_with_approved_modepack_candidate_explicitly',
+    };
     expect(isHeadlessRunDriveParams(headlessRunDriveParams)).toBe(true);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveParams({
@@ -2101,6 +2111,15 @@ describe('protocol validation', () => {
       max_advances: 1,
       max_steps_per_advance: 1,
       journey_route_resume: headlessRunProvenanceJourneyRouteResume,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm50.journey',
+      drive_id: 'm50.route.approval',
+      expected_start_session_sequence: 3,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      journey_route_resume: headlessRunApprovalJourneyRouteResume,
     })).toBe(true);
     expect(isHeadlessRunDriveParams({
       authorize: true,
@@ -2173,11 +2192,13 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult(headlessRunDriveResult)).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunProvenanceJourneyRouteResumeMetadata })).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunApprovalJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: headlessRunJourneyMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, journey_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, raw_prompt: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunProvenanceJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_fetch_target' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunApprovalJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_provenance_verification_target' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunJourneyRouteResumeMetadata, raw_modepack_json: '{}' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);

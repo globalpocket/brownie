@@ -1591,3 +1591,40 @@ verification, advance, drive, or journey-route resume evidence. The response
 and ledger do not expose raw provenance statements, signatures, public keys,
 Mode Pack payloads, prompts, provider responses, file content, command output,
 environment values, secrets, or raw paths.
+
+## M50.4 headless candidate approval route resume
+
+`headless.run.drive` can resume one already-admitted journey across the
+`ApproveVerifiedModePackCandidateExplicitly` route boundary through the same
+bounded `journey_route_resume` object. The resume request contains
+`authorize_journey_route_resume=true`, a bounded `journey_id`, the expected
+journey fingerprint, expected route kind, expected selected-candidate
+provenance-verification checkpoint fingerprint, the expected current session
+sequence, and an explicit drive id. The successful request must not include
+`modepack_selected_candidate_approval_target`; Rust derives that target from
+the persisted provenance-verification checkpoint and its referenced fetch
+checkpoint.
+
+Before route side effects, the runtime validates the journey checkpoint,
+current session checkpoint, route kind, expected source checkpoint fingerprint,
+source provenance-verification checkpoint freshness, referenced fetch
+checkpoint consistency, replay identity, unit route budget, and absence of
+mixed journey admission, explicit Mode Pack targets, context budgets, or
+completion finalization authorization. Stale, malformed, unsupported,
+missing-checkpoint, or checkpoint-mismatch requests fail closed.
+
+On success, the runtime delegates to existing `headless.run.advance` /
+`headless.continue_once` candidate approval authority, persists the normal
+approval and drive checkpoints, appends bounded `HeadlessJourneyRouteResumed`
+ledger evidence to the journey task, and returns
+`HeadlessRunDriveResult.journey_route_resume` with
+`derived_target_class: "modepack_selected_candidate_approval_target"`. The
+metadata contains only bounded handles, route kind, source continuation and
+decision ids, source checkpoint fingerprint, derived target class, result
+advance/continuation ids, post-route progress, next action, replay flag, and a
+deterministic resume fingerprint. Replaying the same drive id and resume
+identity returns the committed metadata without duplicating candidate approval,
+advance, drive, or journey-route resume evidence. The response and ledger do
+not expose raw provenance statements, signatures, public keys, Mode Pack
+payloads, prompts, provider responses, file content, command output,
+environment values, secrets, or raw paths.

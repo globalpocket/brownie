@@ -561,6 +561,27 @@ ledger surfaces must not expose raw provenance statements, signatures, public
 keys, Mode Pack payloads, prompts, file content, commands, outputs,
 environment values, or raw paths.
 
+M50.4 extends `journey_route_resume` to
+`ApproveVerifiedModePackCandidateExplicitly`, the next Mode Pack boundary after
+runtime-derived provenance verification. The successful request supplies
+explicit resume authorization, journey identity, expected journey fingerprint,
+expected current session sequence, expected route kind, drive id, and expected
+selected-candidate provenance-verification checkpoint fingerprint. It does not
+include a caller-built `modepack_selected_candidate_approval_target`. Rust
+loads the provenance-verification checkpoint, verifies it matches the latest
+session progress, loads the referenced selected-candidate fetch checkpoint,
+checks provenance/fetch evidence consistency, derives
+`modepack_selected_candidate_approval_target`, delegates to existing
+continuation authority, persists bounded route-resume evidence, and returns the
+same bounded metadata shape with `derived_target_class` set to
+`modepack_selected_candidate_approval_target`. Replay of the same drive and
+resume identity returns committed metadata without duplicating approval, drive,
+or route-resume evidence. RPC and ledger surfaces remain bounded to handles,
+hashes, fingerprints, route classes, replay state, and next actions; raw Mode
+Pack payloads, provenance material, prompts, provider data, file content,
+command output, environment values, secrets, and raw paths stay out of
+route-resume responses and ledger payloads.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

@@ -5776,7 +5776,8 @@ export function isHeadlessRunJourneyRouteResume(value: unknown): value is Headle
     isSha256Fingerprint(value.expected_journey_fingerprint) &&
     (
       value.expected_route_kind === 'fetch_selected_mode_pack_candidate_explicitly' ||
-      value.expected_route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly'
+      value.expected_route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' ||
+      value.expected_route_kind === 'approve_verified_mode_pack_candidate_explicitly'
     ) &&
     typeof value.expected_source_checkpoint_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_source_checkpoint_fingerprint)
@@ -6441,7 +6442,8 @@ export function isHeadlessRunJourneyRouteResumeMetadata(value: unknown): value i
     isHeadlessRunId(value.drive_id) &&
     (
       value.route_kind === 'fetch_selected_mode_pack_candidate_explicitly' ||
-      value.route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly'
+      value.route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' ||
+      value.route_kind === 'approve_verified_mode_pack_candidate_explicitly'
     ) &&
     isBoundedHandle(value.source_continuation_id) &&
     isBoundedHandle(value.source_decision_id) &&
@@ -6451,7 +6453,9 @@ export function isHeadlessRunJourneyRouteResumeMetadata(value: unknown): value i
       (value.route_kind === 'fetch_selected_mode_pack_candidate_explicitly' &&
         value.derived_target_class === 'modepack_selected_candidate_fetch_target') ||
       (value.route_kind === 'verify_selected_mode_pack_candidate_provenance_explicitly' &&
-        value.derived_target_class === 'modepack_selected_candidate_provenance_verification_target')
+        value.derived_target_class === 'modepack_selected_candidate_provenance_verification_target') ||
+      (value.route_kind === 'approve_verified_mode_pack_candidate_explicitly' &&
+        value.derived_target_class === 'modepack_selected_candidate_approval_target')
     ) &&
     (value.result_advance_id === undefined || value.result_advance_id === null || isHeadlessRunId(value.result_advance_id)) &&
     (value.result_continuation_id === undefined || value.result_continuation_id === null || isBoundedHandle(value.result_continuation_id)) &&
