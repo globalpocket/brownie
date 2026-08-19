@@ -14873,6 +14873,76 @@ fn headless_journey_execution_write_checkpoint(
     Ok(metadata)
 }
 
+fn headless_journey_execution_recover_admission_boundary(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    request_fingerprint: &str,
+    completed_boundaries: &mut Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+) -> Result<Option<HeadlessRunDriveResult>, String> {
+    if !completed_boundaries.is_empty() {
+        return Ok(None);
+    }
+    let child_drive_id = headless_journey_execution_drive_id(drive_id, "admit")?;
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&params.session_id, &child_drive_id)
+        .map_err(|error| error.to_string())?;
+    let Some(checkpoint) = checkpoint else {
+        return Ok(None);
+    };
+    if checkpoint.session_id != params.session_id
+        || checkpoint.drive_id != child_drive_id
+        || checkpoint.start_session_sequence != 0
+    {
+        return Err(
+            "invalid params: recovered journey admission drive checkpoint is stale".to_string(),
+        );
+    }
+    let mut result = checkpoint.result;
+    let Some(metadata) = result.journey.as_ref() else {
+        return Err(
+            "internal error: recovered journey admission drive checkpoint is missing journey metadata"
+                .to_string(),
+        );
+    };
+    if metadata.journey_id != journey.journey_id
+        || metadata.task_id != journey.task_id
+        || metadata.run_id != journey.run_id
+        || metadata.session_id != journey.session_id
+        || metadata.drive_id != child_drive_id
+        || metadata.journey_fingerprint != journey.journey_fingerprint
+    {
+        return Err(
+            "invalid params: recovered journey admission drive checkpoint conflicts with persisted journey"
+                .to_string(),
+        );
+    }
+    result.replayed = true;
+    if let Some(metadata) = result.journey.as_mut() {
+        metadata.replayed = true;
+    }
+    completed_boundaries.push(headless_journey_execution_boundary_from_result(
+        "admit_journey",
+        &result,
+    ));
+    let mut execution_metadata = headless_journey_execution_write_checkpoint(
+        store,
+        journey,
+        &params.session_id,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries.clone(),
+        false,
+        result.next_action.clone(),
+        false,
+    )?;
+    execution_metadata.replayed = true;
+    result.journey_execution = Some(execution_metadata);
+    Ok(Some(result))
+}
+
 fn headless_journey_source_checkpoint_fingerprint_for_route(
     store: &BrownieStore,
     start_checkpoint: &HeadlessRunSessionCheckpoint,
@@ -15354,6 +15424,23 @@ fn handle_headless_journey_execution(
                 -32602,
                 "invalid params: journey execution task_start conflicts with persisted journey",
             );
+        }
+    }
+    if existing_execution.is_none() {
+        match headless_journey_execution_recover_admission_boundary(
+            store,
+            &journey,
+            params,
+            drive_id,
+            &request_fingerprint,
+            &mut completed_boundaries,
+        ) {
+            Ok(recovered) => {
+                if recovered.is_some() {
+                    last_result = recovered;
+                }
+            }
+            Err(message) => return error_response(id, -32602, &message),
         }
     }
     for _ in 0..6 {
@@ -52702,6 +52789,56 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyExecuted)
                 .count(),
             0
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_execution_recovers_committed_admission_without_execution_checkpoint(
+    ) {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let admission_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.recover","drive_id":"m50.recover.drive.admit","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.recover.1","authorize_journey_start":true,"task_start":{"goal":"Recover committed admission","mode_id":"implementer"}}}}"#;
+        let admission_response = parse_line(admission_request);
+        let admission = admission_response
+            .result
+            .unwrap_or_else(|| panic!("admission result: {:?}", admission_response.error));
+        assert_eq!(admission["status"], "task_executed");
+        assert!(store
+            .tasks()
+            .read_headless_journey_execution_checkpoint("m50.recover.1")
+            .expect("execution checkpoint before recovery")
+            .is_none());
+        let task_count_after_admission = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_admission, 1);
+
+        let execution_request = r#"{"jsonrpc":"2.0","id":2,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.recover","drive_id":"m50.recover.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_execution":{"journey_id":"m50.recover.1","authorize_journey_execution":true,"task_start":{"goal":"Recover committed admission","mode_id":"implementer"}}}}"#;
+        let execution_response = parse_line(execution_request);
+        let execution = execution_response
+            .result
+            .unwrap_or_else(|| panic!("execution recovery result: {:?}", execution_response.error));
+        assert_eq!(execution["replayed"], true);
+        assert_eq!(execution["journey_execution"]["replayed"], true);
+        assert_eq!(
+            execution["journey_execution"]["completed_boundaries"][0]["boundary"],
+            "admit_journey"
+        );
+        assert_eq!(
+            execution["journey_execution"]["completed_boundaries"][0]["drive_id"],
+            "m50.recover.drive.admit"
+        );
+        assert!(store
+            .tasks()
+            .read_headless_journey_execution_checkpoint("m50.recover.1")
+            .expect("execution checkpoint after recovery")
+            .is_some());
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_admission
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
