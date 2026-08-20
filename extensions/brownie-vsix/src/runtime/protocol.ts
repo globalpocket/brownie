@@ -5411,8 +5411,7 @@ export function isTaskRunCompletionAcceptanceRequest(value: unknown): value is T
     value.authorize_completion_acceptance === true &&
     typeof value.source_run_id === 'string' &&
     value.source_run_id.trim().length > 0 &&
-    typeof value.acceptance_id === 'string' &&
-    value.acceptance_id.trim().length > 0 &&
+    isHeadlessRunId(value.acceptance_id) &&
     typeof value.expected_completion_result_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_completion_result_fingerprint)
   );
@@ -6193,8 +6192,7 @@ export function isTaskRunCompletionAcceptance(value: unknown): value is TaskRunC
       'replayed',
       'next_action',
     ]) &&
-    typeof value.acceptance_id === 'string' &&
-    value.acceptance_id.trim().length > 0 &&
+    isHeadlessRunId(value.acceptance_id) &&
     typeof value.task_id === 'string' &&
     value.task_id.trim().length > 0 &&
     typeof value.run_id === 'string' &&

@@ -34486,7 +34486,6 @@ fn handle_task_run_completion_acceptance(
 
     let acceptance = task_run_completion_acceptance_from_events(
         &events,
-        request,
         &record,
         &completion_evidence,
         &verifier_gate_status,
@@ -34564,8 +34563,11 @@ fn validate_task_run_completion_acceptance_request(
     if request.source_run_id.trim().is_empty() {
         return Err("invalid params: completion acceptance source_run_id is required".to_string());
     }
-    if request.acceptance_id.trim().is_empty() {
-        return Err("invalid params: completion acceptance acceptance_id is required".to_string());
+    if !is_valid_completion_acceptance_id(&request.acceptance_id) {
+        return Err(
+            "invalid params: completion acceptance acceptance_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters"
+                .to_string(),
+        );
     }
     if !is_sha256_fingerprint(&request.expected_completion_result_fingerprint) {
         return Err(
@@ -34577,18 +34579,10 @@ fn validate_task_run_completion_acceptance_request(
 
 fn task_run_completion_acceptance_from_events(
     events: &[LedgerEvent],
-    request: &TaskRunCompletionAcceptanceRequest,
     record: &TaskRecord,
     completion_evidence: &TaskRunCompletionEvidence,
     verifier_gate_status: &str,
 ) -> Result<Option<TaskRunCompletionAcceptance>, String> {
-    let expected_acceptance_fingerprint = task_run_completion_acceptance_fingerprint(
-        &record.task_id,
-        &record.run_id,
-        &request.acceptance_id,
-        &completion_evidence.completion_result_fingerprint,
-        verifier_gate_status,
-    );
     for event in events
         .iter()
         .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
@@ -34598,33 +34592,20 @@ fn task_run_completion_acceptance_from_events(
                 "invalid params: malformed existing completion acceptance evidence".to_string(),
             );
         };
-        let acceptance_id = payload
-            .get("acceptance_id")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if acceptance_id != request.acceptance_id {
-            continue;
-        }
-        let terminal_fingerprint = payload
-            .get("terminal_completion_fingerprint")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        let acceptance_fingerprint = payload
-            .get("acceptance_fingerprint")
-            .and_then(Value::as_str)
-            .unwrap_or_default();
-        if terminal_fingerprint != completion_evidence.completion_result_fingerprint
-            || acceptance_fingerprint != expected_acceptance_fingerprint
-        {
-            return Err(
-                "invalid params: conflicting completion acceptance evidence already exists"
-                    .to_string(),
-            );
-        }
         let acceptance = task_run_completion_acceptance_from_payload(payload, true)?;
+        let expected_acceptance_fingerprint = task_run_completion_acceptance_fingerprint(
+            &acceptance.task_id,
+            &acceptance.run_id,
+            &acceptance.acceptance_id,
+            &acceptance.terminal_completion_fingerprint,
+            &acceptance.verifier_gate_status,
+        );
         if acceptance.task_id != record.task_id
             || acceptance.run_id != record.run_id
+            || acceptance.terminal_completion_fingerprint
+                != completion_evidence.completion_result_fingerprint
             || acceptance.verifier_gate_status != verifier_gate_status
+            || acceptance.acceptance_fingerprint != expected_acceptance_fingerprint
         {
             return Err(
                 "invalid params: conflicting completion acceptance evidence already exists"
@@ -34634,6 +34615,10 @@ fn task_run_completion_acceptance_from_events(
         return Ok(Some(acceptance));
     }
     Ok(None)
+}
+
+fn is_valid_completion_acceptance_id(value: &str) -> bool {
+    is_valid_headless_run_id(value)
 }
 
 fn task_run_completion_acceptance_from_payload(
@@ -74975,6 +74960,53 @@ mod tests {
                 .count()
         );
 
+        let second_acceptance_id_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "task.run",
+            "params": {
+                "task_id": task_id,
+                "completion_acceptance": {
+                    "authorize_completion_acceptance": true,
+                    "source_run_id": run_id,
+                    "acceptance_id": "accept-m51-1b",
+                    "expected_completion_result_fingerprint": terminal_fingerprint,
+                }
+            }
+        });
+        let replayed_from_terminal_key = parse_line(&second_acceptance_id_request.to_string());
+        assert!(replayed_from_terminal_key.error.is_none());
+        let replayed_from_terminal_key_result = replayed_from_terminal_key
+            .result
+            .expect("terminal-key replay result");
+        assert_eq!(
+            replayed_from_terminal_key_result["completion_acceptance"]["acceptance_id"],
+            "accept-m51-1"
+        );
+        assert_eq!(
+            replayed_from_terminal_key_result["completion_acceptance"]["acceptance_fingerprint"],
+            accepted_result["completion_acceptance"]["acceptance_fingerprint"]
+        );
+        assert_eq!(
+            replayed_from_terminal_key_result["completion_acceptance"]["replayed"],
+            true
+        );
+        let after_second_acceptance_id_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after terminal-key replay");
+        assert_eq!(
+            after_second_acceptance_id_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count(),
+            after_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count()
+        );
+        assert_eq!(after_second_acceptance_id_events.len(), after_events.len());
+
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -75035,6 +75067,48 @@ mod tests {
             .to_string(),
         );
         assert!(completed.error.is_none());
+        let completed_result = completed.result.expect("completed result");
+        let terminal_fingerprint = completed_result["completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("completion fingerprint")
+            .to_string();
+        let before_invalid_acceptance_id = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before invalid acceptance id");
+        let invalid_acceptance_id = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "x".repeat(49),
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            invalid_acceptance_id
+                .error
+                .expect("invalid acceptance id error")
+                .code,
+            -32602
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events after invalid acceptance id")
+                .len(),
+            before_invalid_acceptance_id.len()
+        );
         let before_mismatch = store
             .tasks()
             .read_ledger_events(&run_id)
