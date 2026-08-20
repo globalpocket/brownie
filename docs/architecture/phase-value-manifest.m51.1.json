@@ -111,6 +111,7 @@
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
       "docs/architecture/phase-value-manifest.m50.7.json",
+      "docs/architecture/phase-value-manifest.m50.8.json",
       "docs/architecture/phase-value-manifest.m51.1.json"
     ],
     "required_checks": [

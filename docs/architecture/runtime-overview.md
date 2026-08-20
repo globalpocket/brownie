@@ -639,6 +639,17 @@ action, never raw prompts, provider responses, Mode Pack payloads, provenance
 material, file content, command output, environment values, secrets, absolute
 paths, or canonical paths.
 
+M50.8 closes the interrupted-boundary reconciliation gap in that execution
+path. Before selecting new work, `journey_execution` now scans committed child
+drive checkpoints for the Golden Journey fetch, provenance, approval,
+replacement, and closure boundaries, validates their journey identity, route
+kind, child drive id, sequence, and SHA-256 source/resume evidence, and then
+advances the outer execution checkpoint from that bounded persisted metadata.
+Recovering the closure checkpoint marks the task complete if needed and appends
+`HeadlessJourneyExecuted` idempotently, so a restarted headless caller can
+resubmit the same authorized execution after a process interruption without
+caller-owned per-boundary envelopes or duplicate side effects.
+
 M11.3 extends the same method with an optional caller-authorized
 `max_steps` budget from 1 to 3. A budget greater than 1 requires a
 `continuation_id`; the runtime derives per-step continuation ids, executes or

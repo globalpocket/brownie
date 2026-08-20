@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "phase": "M50.8",
+  "current_milestone": "m50_headless_golden_journey_execution",
+  "milestone": "M50 Headless Golden Journey Execution",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "runtime_owned_golden_journey_boundary_checkpoint_reconciliation",
+  "forbidden_pattern": "new_json_rpc_method_report_digest_history_readiness_verdict_inspection_preview_dashboard_summary_wrapper_only_generic_scheduler_daemon_workflow_engine_vsix_owned_policy_auto_apply_auto_recover_auto_provider_auto_modepack_auto_parent_join_shell_git_network_service_raw_prompt_provider_response_file_content_diff_stdout_stderr_command_environment_raw_request_raw_ledger_payload_absolute_path_canonical_path_secret",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Lets a scheduled headless caller recover after an interrupted response even when route or closure child drives committed but the outer journey execution checkpoint was not advanced."
+    },
+    {
+      "capability": "agent_loop",
+      "relationship": "Keeps the Golden Journey moving through existing task and run-control boundaries while reconciling committed child-drive evidence before selecting any new boundary."
+    },
+    {
+      "capability": "mode_pack_runtime",
+      "relationship": "Reuses already committed Mode Pack fetch, provenance, approval, replacement, and closure checkpoints instead of asking the caller to reconstruct route envelopes."
+    },
+    {
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Validates recovered child checkpoints against journey identity, drive identity, route kind, start sequence, source fingerprints, and closure replacement evidence before treating a boundary as complete."
+    },
+    {
+      "capability": "context_management",
+      "relationship": "Repairs compact execution checkpoint state from bounded checkpoint metadata, avoiding raw context or payload reconstruction after restart."
+    },
+    {
+      "capability": "progress_visualization",
+      "relationship": "Returns bounded execution metadata for reconciled boundaries, replay state, completion state, and next action."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities does this phase advance?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What new user-visible, operator-visible, or runtime capability does it add?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing functionality not substitute for this work?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What concrete product gap remains if this is not implemented?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Is this semantically distinct from the previous three phases?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "What runtime or development-control behavior actually changes?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this help headless autonomous development?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move the milestone toward completion?"
+      }
+    ],
+    "answers": {
+      "strategic_capabilities": "Advances headless_autonomous_development with supporting agent_loop, mode_pack_runtime, runtime_permission_enforcement, context_management, persistent ledger evidence, and progress_visualization.",
+      "new_capability": "headless.run.drive now scans committed Golden Journey child drive checkpoints for fetch, provenance, approval, replacement, and closure before executing a new boundary, then advances or completes the outer execution checkpoint from validated persisted evidence.",
+      "why_existing_functionality_is_insufficient": "M50.7 recovered the outer execution checkpoint and admission boundary, but if a process died after a route or closure child drive committed and before the outer execution checkpoint advanced, the next caller could stall or duplicate boundary choreography.",
+      "product_gap_if_skipped": "A scheduled headless controller would still need external knowledge of half-committed route and closure drives to recover safely after an interrupted response.",
+      "non_duplicative": "Distinct from M50.5 replacement, M50.6 closure, and M50.7 execution admission/checkpointing because it reconciles already committed child-drive evidence into the outer execution checkpoint after interruption.",
+      "no_new_rpc": "Yes. The phase strengthens existing headless.run.drive journey_execution behavior without adding an RPC.",
+      "no_new_summary": "Yes. The phase adds recovery behavior and bounded checkpoint evidence, not a report, digest, history, readiness, verdict, inspection, preview, dashboard, or summary surface.",
+      "runtime_behavior_change": "Rust validates and replays committed route and closure child checkpoints, advances the execution checkpoint for each recovered boundary, completes the task when recovering closure, and appends HeadlessJourneyExecuted idempotently.",
+      "headless_autonomous_contribution": "A headless caller can resubmit the same authorized execution after a crash and let the runtime reconcile committed boundary evidence before doing any new work.",
+      "milestone_progress": "Closes the last M50 restart-safety gap by making the Golden Journey execution path recover through all committed boundaries rather than only admission."
+    }
+  },
+  "review_value_gate": {
+    "required": true,
+    "reject_when": [
+      "wrapper_only",
+      "report_only",
+      "inspection_only_without_execution",
+      "new_json_rpc_method",
+      "caller_side_boundary_choreography_as_substitute",
+      "vsix_owned_policy",
+      "generic_scheduler_or_daemon",
+      "unsupported_route_family_expansion",
+      "automatic_apply_recovery_provider_parent_join_shell_git_network_or_service_expansion",
+      "raw_prompt_provider_response_file_content_stdout_stderr_command_environment_path_modepack_payload_or_secret_exposure",
+      "behavior_tests_missing",
+      "broad_runtime_modularization_mixed_into_product_slice"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "M50.8 updates the current and archived phase-value manifests for a product runtime Golden Journey reconciliation phase. Review must confirm the manifest change does not weaken phase-value, product-completion, diagnostics, or source-of-truth enforcement.",
+    "changed_files": [
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.m50.7.json",
+      "docs/architecture/phase-value-manifest.m50.8.json"
+    ],
+    "required_checks": [
+      "pnpm guard:diagnostics",
+      "pnpm guard:phase-value",
+      "pnpm guard:product-completion",
+      "pnpm --filter brownie-vsix check",
+      "cargo test -p brownie-runtime headless_run_drive_journey_execution -- --nocapture"
+    ]
+  },
+  "exit_criteria": [
+    "headless.run.drive journey_execution recovers committed admission, route, and closure child drive checkpoints before executing any new boundary",
+    "route recovery validates session id, child drive id, expected start sequence, journey/task/run/session identity, route kind, source checkpoint fingerprint, and resume fingerprint",
+    "closure recovery validates replacement boundary evidence, child drive identity, replacement resume fingerprint, closure metadata, and records task completion plus HeadlessJourneyExecuted idempotently",
+    "outer execution checkpoints advance from recovered bounded child-drive metadata and complete when close_journey is recovered",
+    "recovery does not require caller-supplied journey_route_resume, journey_closure, or explicit Mode Pack target envelopes on the journey_execution path",
+    "no report, digest, history, readiness, verdict, inspection, preview, dashboard, generic scheduler, broad runtime modularization, new RPC, or VSIX-owned policy is added"
+  ],
+  "behavior_evidence": [
+    "Rust behavior test headless_run_drive_journey_execution_recovers_committed_route_and_closure_checkpoints covers recovery from committed route and closure child-drive checkpoints without a pre-existing outer execution checkpoint.",
+    "Existing Rust behavior tests for journey_execution admission replay and admission checkpoint recovery remain passing.",
+    "cargo check -p brownie-runtime validates the runtime/store/protocol integration for the reconciliation path."
+  ],
+  "product_completion_gate": {
+    "required": true,
+    "completion_scope": "phase",
+    "product_completion_claim": true,
+    "accepted_capability": [
+      "Runtime-owned Golden Journey boundary checkpoint reconciliation through existing headless.run.drive journey_execution"
+    ],
+    "behavior_evidence": [
+      "cargo test -p brownie-runtime headless_run_drive_journey_execution_recovers_committed_route_and_closure_checkpoints -- --nocapture validates route and closure checkpoint reconciliation.",
+      "cargo check -p brownie-runtime validates the Rust protocol, store, and runtime integration for the recovery helpers.",
+      "pnpm guard:phase-value and pnpm guard:product-completion validate the phase-value and product-completion gates."
+    ],
+    "safety_boundary": [
+      "Reconciliation runs only inside authorized journey_execution on existing headless.run.drive.",
+      "Recovered child drive checkpoints must match the persisted journey identity, child drive id, start sequence, route kind, and SHA-256 source/resume fingerprints.",
+      "Closure recovery requires a recovered replacement boundary and validates replacement drive/resume evidence before marking the task complete or appending HeadlessJourneyExecuted.",
+      "RPC and ledger evidence remains bounded to ids, enum values, hashes, fingerprints, counts, replay state, completion state, and next action; raw provenance material, Mode Pack payloads, prompts, provider responses, file content, command output, environment values, paths, and secrets are not returned or ledgered."
+    ],
+    "non_goals": [
+      "No new JSON-RPC method",
+      "No report, digest, history, readiness, verdict, inspection, preview, dashboard, or summary wrapper",
+      "No generic scheduler, daemon, background worker, all-route workflow engine, or VSIX-owned policy",
+      "No automatic apply, provider, parent-join, shell, git, network, or service expansion",
+      "No behavior-preserving runtime-wide lib.rs modularization mixed into this product PR"
+    ],
+    "rejected_alternatives": [
+      "Adding a separate recovery inspection RPC was rejected because the existing journey_execution path must own reconciliation before any new boundary side effect.",
+      "Asking the caller to replay per-boundary route envelopes was rejected because it preserves caller-side choreography and does not improve headless restart autonomy.",
+      "Returning an execution preview was rejected because the phase must mutate persisted execution checkpoint state from committed child-drive evidence."
+    ],
+    "technical_debt": [
+      "crates/brownie-runtime/src/lib.rs remains large and should be modularized later by cohesive low-dependency domains in independently buildable PRs.",
+      "The Golden Journey route chain remains explicitly bounded to the supported Mode Pack fetch, provenance, approval, replacement, and closure boundaries."
+    ],
+    "next_capability_rationale": [
+      "M50 can move to milestone closeout after review because runtime-owned execution can now recover through committed admission, route, replacement, and closure boundaries."
+    ]
+  }
+}
