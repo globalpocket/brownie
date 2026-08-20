@@ -151,7 +151,8 @@ use brownie_protocol::{
     TaskListHeadlessRouteCandidate, TaskListProgressBlockedSet, TaskListProgressNextActionSet,
     TaskListProgressOverview, TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge,
     TaskProgressGraphNode, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunCompletionEvidence, TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
+    TaskRunCompletionAcceptance, TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence,
+    TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
     TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
     TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
     TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
@@ -2157,6 +2158,15 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    if params.completion_acceptance.is_some() {
+        return match handle_task_run_completion_acceptance(&store, &params) {
+            Ok(result) => result_response(id, json!(result)),
+            Err(message) if message.starts_with("invalid params:") => {
+                error_response(id, -32602, &message)
+            }
+            Err(message) => error_response(id, -32603, &format!("internal error: {message}")),
+        };
+    }
     let context_budget =
         match validate_task_run_context_budget(&record, params.context_budget.as_ref()) {
             Ok(budget) => budget,
@@ -2192,6 +2202,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: replay_verification_recovery_context_read
@@ -2221,6 +2232,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -2249,6 +2261,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -2295,6 +2308,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -2323,6 +2337,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -2351,6 +2366,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: replay_completion_evidence.clone(),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -2379,6 +2395,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                     status: record.status,
                     agent_loop,
                     completion_evidence: None,
+                    completion_acceptance: None,
                     llm_provider_failure: Some(llm_provider_failure),
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: replay_verification_recovery_context_read,
@@ -2439,6 +2456,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         status: record.status,
                         agent_loop,
                         completion_evidence: replay_completion_evidence,
+                        completion_acceptance: None,
                         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
                         selected_index_prompt_context: None,
                         verification_recovery_context_read:
@@ -3164,6 +3182,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
                         completion_summary: agent_loop_completion_summary,
                     },
                     completion_evidence: Some(completion_evidence),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: selected_index_prompt_context_result,
                     verification_recovery_context_read: verification_recovery_context_read_result,
@@ -3365,6 +3384,7 @@ fn handle_verification_recovery_retry_task_run(
                         completion_summary: agent_loop_completion_summary,
                     },
                     completion_evidence: Some(completion_evidence),
+                    completion_acceptance: None,
                     llm_provider_failure: None,
                     selected_index_prompt_context: None,
                     verification_recovery_context_read: None,
@@ -4492,6 +4512,7 @@ fn fail_llm_request(
                         status: record.status,
                         agent_loop: llm_provider_failed_agent_loop_summary(),
                         completion_evidence: None,
+                        completion_acceptance: None,
                         llm_provider_failure: Some(outcome),
                         selected_index_prompt_context: None,
                         verification_recovery_context_read: None,
@@ -4517,6 +4538,7 @@ fn fail_llm_request(
                 status: record.status,
                 agent_loop: llm_provider_failed_agent_loop_summary(),
                 completion_evidence: None,
+                completion_acceptance: None,
                 llm_provider_failure: Some(outcome),
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19416,6 +19438,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: Some(llm_provider_failure),
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: verification_recovery_context_read.clone(),
@@ -19441,6 +19464,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: verification_recovery_context_read.clone(),
@@ -19466,6 +19490,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19491,6 +19516,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19516,6 +19542,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19541,6 +19568,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19566,6 +19594,7 @@ fn task_run_result_for_headless_replay(
                 status: record.status.clone(),
                 agent_loop,
                 completion_evidence: completion_evidence.clone(),
+                completion_acceptance: None,
                 llm_provider_failure: None,
                 selected_index_prompt_context: None,
                 verification_recovery_context_read: None,
@@ -19601,6 +19630,7 @@ fn task_run_result_for_headless_replay(
         status: record.status.clone(),
         agent_loop,
         completion_evidence,
+        completion_acceptance: None,
         llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
         selected_index_prompt_context: None,
         verification_recovery_context_read,
@@ -34110,6 +34140,338 @@ fn task_run_completion_evidence_for_record(
     Ok(task_run_completion_evidence_from_events(
         &events, record, replayed,
     ))
+}
+
+fn handle_task_run_completion_acceptance(
+    store: &BrownieStore,
+    params: &TaskRunParams,
+) -> Result<TaskRunResult, String> {
+    let request = params
+        .completion_acceptance
+        .as_ref()
+        .ok_or_else(|| "invalid params: completion_acceptance is required".to_string())?;
+    validate_task_run_completion_acceptance_request(params, request)?;
+
+    let record = store
+        .tasks()
+        .get_task(&params.task_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "invalid params: task not found".to_string())?;
+    if record.run_id != request.source_run_id {
+        return Err(
+            "invalid params: completion acceptance source_run_id does not match task run"
+                .to_string(),
+        );
+    }
+    if record.status != TaskStatus::Completed {
+        return Err("invalid params: completion acceptance requires a Completed task".to_string());
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    let completion_evidence = task_run_completion_evidence_from_events(&events, &record, true)
+        .ok_or_else(|| {
+            "invalid params: missing current terminal completion evidence for acceptance"
+                .to_string()
+        })?;
+    if completion_evidence.task_status != TaskStatus::Completed
+        || completion_evidence.final_state != "Completed"
+    {
+        return Err("invalid params: terminal completion evidence is not Completed".to_string());
+    }
+    if completion_evidence.completion_result_fingerprint
+        != request.expected_completion_result_fingerprint
+    {
+        return Err(
+            "invalid params: completion acceptance expected fingerprint mismatch".to_string(),
+        );
+    }
+
+    let runtime_requirement = runtime_verification_requirement_for_record(&record);
+    let verification_completion_gate = verification_completion_gate_for_run_with_requirement(
+        &events,
+        runtime_requirement.as_ref(),
+    );
+    let verifier_gate_status = match progress_verification_state(&events) {
+        ProgressVerificationState::NotRequired => "NotRequired".to_string(),
+        ProgressVerificationState::Passed => VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
+        ProgressVerificationState::Failed
+        | ProgressVerificationState::Pending
+        | ProgressVerificationState::Unknown => {
+            return Err(
+                "invalid params: completion acceptance requires passed verifier gate evidence"
+                    .to_string(),
+            )
+        }
+    };
+    if let Some(gate) = verification_completion_gate.as_ref() {
+        if gate.status != VERIFICATION_COMPLETION_GATE_STATUS_PASSED {
+            return Err(
+                "invalid params: completion acceptance requires passed verifier gate evidence"
+                    .to_string(),
+            );
+        }
+    }
+
+    let acceptance = task_run_completion_acceptance_from_events(
+        &events,
+        request,
+        &record,
+        &completion_evidence,
+        &verifier_gate_status,
+    )?;
+    let completion_acceptance = match acceptance {
+        Some(acceptance) => TaskRunCompletionAcceptance {
+            replayed: true,
+            ..acceptance
+        },
+        None => {
+            let acceptance = build_task_run_completion_acceptance(
+                request,
+                &record,
+                &completion_evidence,
+                &verifier_gate_status,
+                false,
+            );
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &record,
+                    LedgerEventKind::TaskCompletionAccepted,
+                    Some(task_run_completion_acceptance_payload(&acceptance)),
+                )
+                .map_err(|error| error.to_string())?;
+            acceptance
+        }
+    };
+
+    let agent_loop = task_run_agent_loop_summary_from_events(&events).ok_or_else(|| {
+        "invalid params: missing agent loop completion evidence for acceptance".to_string()
+    })?;
+    let verification_recovery_context_read =
+        verification_recovery_context_read_summary_for_replay(store, &record)
+            .map_err(|error| error.to_string())?;
+    Ok(TaskRunResult {
+        task_id: record.task_id,
+        run_id: record.run_id,
+        status: record.status,
+        agent_loop,
+        completion_evidence: Some(completion_evidence),
+        completion_acceptance: Some(completion_acceptance),
+        llm_provider_failure: llm_provider_failure_outcome_from_events(&events),
+        selected_index_prompt_context: None,
+        verification_recovery_context_read,
+        context_budget: task_run_context_budget_summary_from_events(&events),
+        verification_completion_gate,
+        verification_recovery_repair: None,
+        patch_apply_recovery_repair: None,
+        verification_recovery_retry: None,
+        recovery_cycle_budget_outcome: None,
+        child_orchestration_outcome: None,
+        parent_join_readiness_outcome: None,
+    })
+}
+
+fn validate_task_run_completion_acceptance_request(
+    params: &TaskRunParams,
+    request: &TaskRunCompletionAcceptanceRequest,
+) -> Result<(), String> {
+    if params.selected_index_context.is_some()
+        || params.verification_recovery_context_read.is_some()
+        || params.context_budget.is_some()
+    {
+        return Err(
+            "invalid params: completion_acceptance cannot be combined with task run context materialization"
+                .to_string(),
+        );
+    }
+    if !request.authorize_completion_acceptance {
+        return Err(
+            "invalid params: completion acceptance requires explicit authorization".to_string(),
+        );
+    }
+    if request.source_run_id.trim().is_empty() {
+        return Err("invalid params: completion acceptance source_run_id is required".to_string());
+    }
+    if request.acceptance_id.trim().is_empty() {
+        return Err("invalid params: completion acceptance acceptance_id is required".to_string());
+    }
+    if !is_sha256_fingerprint(&request.expected_completion_result_fingerprint) {
+        return Err(
+            "invalid params: completion acceptance expected fingerprint must be sha256".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn task_run_completion_acceptance_from_events(
+    events: &[LedgerEvent],
+    request: &TaskRunCompletionAcceptanceRequest,
+    record: &TaskRecord,
+    completion_evidence: &TaskRunCompletionEvidence,
+    verifier_gate_status: &str,
+) -> Result<Option<TaskRunCompletionAcceptance>, String> {
+    let expected_acceptance_fingerprint = task_run_completion_acceptance_fingerprint(
+        &record.task_id,
+        &record.run_id,
+        &request.acceptance_id,
+        &completion_evidence.completion_result_fingerprint,
+        verifier_gate_status,
+    );
+    for event in events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+    {
+        let Some(payload) = event.payload.as_ref() else {
+            return Err(
+                "invalid params: malformed existing completion acceptance evidence".to_string(),
+            );
+        };
+        let acceptance_id = payload
+            .get("acceptance_id")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if acceptance_id != request.acceptance_id {
+            continue;
+        }
+        let terminal_fingerprint = payload
+            .get("terminal_completion_fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let acceptance_fingerprint = payload
+            .get("acceptance_fingerprint")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if terminal_fingerprint != completion_evidence.completion_result_fingerprint
+            || acceptance_fingerprint != expected_acceptance_fingerprint
+        {
+            return Err(
+                "invalid params: conflicting completion acceptance evidence already exists"
+                    .to_string(),
+            );
+        }
+        let acceptance = task_run_completion_acceptance_from_payload(payload, true)?;
+        if acceptance.task_id != record.task_id
+            || acceptance.run_id != record.run_id
+            || acceptance.verifier_gate_status != verifier_gate_status
+        {
+            return Err(
+                "invalid params: conflicting completion acceptance evidence already exists"
+                    .to_string(),
+            );
+        }
+        return Ok(Some(acceptance));
+    }
+    Ok(None)
+}
+
+fn task_run_completion_acceptance_from_payload(
+    payload: &Value,
+    replayed: bool,
+) -> Result<TaskRunCompletionAcceptance, String> {
+    let acceptance = TaskRunCompletionAcceptance {
+        acceptance_id: non_empty_payload_string(payload, "acceptance_id").ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+        task_id: non_empty_payload_string(payload, "task_id").ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+        run_id: non_empty_payload_string(payload, "run_id").ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+        status: non_empty_payload_string(payload, "status").ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+        terminal_completion_fingerprint: non_empty_payload_string(
+            payload,
+            "terminal_completion_fingerprint",
+        )
+        .ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+        acceptance_fingerprint: non_empty_payload_string(payload, "acceptance_fingerprint")
+            .ok_or_else(|| {
+                "invalid params: malformed existing completion acceptance evidence".to_string()
+            })?,
+        verifier_gate_status: non_empty_payload_string(payload, "verifier_gate_status")
+            .ok_or_else(|| {
+                "invalid params: malformed existing completion acceptance evidence".to_string()
+            })?,
+        replayed,
+        next_action: non_empty_payload_string(payload, "next_action").ok_or_else(|| {
+            "invalid params: malformed existing completion acceptance evidence".to_string()
+        })?,
+    };
+    if acceptance.status != "AcceptedComplete"
+        || !is_sha256_fingerprint(&acceptance.terminal_completion_fingerprint)
+        || !is_sha256_fingerprint(&acceptance.acceptance_fingerprint)
+    {
+        return Err(
+            "invalid params: malformed existing completion acceptance evidence".to_string(),
+        );
+    }
+    Ok(acceptance)
+}
+
+fn build_task_run_completion_acceptance(
+    request: &TaskRunCompletionAcceptanceRequest,
+    record: &TaskRecord,
+    completion_evidence: &TaskRunCompletionEvidence,
+    verifier_gate_status: &str,
+    replayed: bool,
+) -> TaskRunCompletionAcceptance {
+    let acceptance_fingerprint = task_run_completion_acceptance_fingerprint(
+        &record.task_id,
+        &record.run_id,
+        &request.acceptance_id,
+        &completion_evidence.completion_result_fingerprint,
+        verifier_gate_status,
+    );
+    TaskRunCompletionAcceptance {
+        acceptance_id: request.acceptance_id.clone(),
+        task_id: record.task_id.clone(),
+        run_id: record.run_id.clone(),
+        status: "AcceptedComplete".to_string(),
+        terminal_completion_fingerprint: completion_evidence.completion_result_fingerprint.clone(),
+        acceptance_fingerprint,
+        verifier_gate_status: verifier_gate_status.to_string(),
+        replayed,
+        next_action: "inspect_accepted_completion".to_string(),
+    }
+}
+
+fn task_run_completion_acceptance_payload(acceptance: &TaskRunCompletionAcceptance) -> Value {
+    json!({
+        "acceptance_id": &acceptance.acceptance_id,
+        "task_id": &acceptance.task_id,
+        "run_id": &acceptance.run_id,
+        "status": &acceptance.status,
+        "terminal_completion_fingerprint": &acceptance.terminal_completion_fingerprint,
+        "acceptance_fingerprint": &acceptance.acceptance_fingerprint,
+        "verifier_gate_status": &acceptance.verifier_gate_status,
+        "replayed": false,
+        "next_action": &acceptance.next_action,
+    })
+}
+
+fn task_run_completion_acceptance_fingerprint(
+    task_id: &str,
+    run_id: &str,
+    acceptance_id: &str,
+    terminal_completion_fingerprint: &str,
+    verifier_gate_status: &str,
+) -> String {
+    let canonical = json!({
+        "version": "task_completion_acceptance_v1",
+        "task_id": task_id,
+        "run_id": run_id,
+        "acceptance_id": acceptance_id,
+        "terminal_completion_fingerprint": terminal_completion_fingerprint,
+        "verifier_gate_status": verifier_gate_status,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn llm_provider_failure_outcome_for_replay(
@@ -73976,6 +74338,372 @@ mod tests {
         )
         .expect("ledger after");
         assert_eq!(after_events, before_events);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_completed_task_accepts_completion_once_with_bounded_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Accept completion","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let first = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.run",
+                "params": { "task_id": task_id },
+            })
+            .to_string(),
+        );
+        assert!(first.error.is_none());
+        let first_result = first.result.expect("first result");
+        let run_id = first_result["run_id"].as_str().expect("run id").to_string();
+        let terminal_fingerprint = first_result["completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("completion fingerprint")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let before_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before acceptance");
+
+        let acceptance_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "task.run",
+            "params": {
+                "task_id": task_id,
+                "completion_acceptance": {
+                    "authorize_completion_acceptance": true,
+                    "source_run_id": run_id,
+                    "acceptance_id": "accept-m51-1",
+                    "expected_completion_result_fingerprint": terminal_fingerprint,
+                }
+            }
+        });
+        let accepted = parse_line(&acceptance_request.to_string());
+        assert!(accepted.error.is_none());
+        let accepted_result = accepted.result.expect("accepted result");
+        let acceptance = accepted_result["completion_acceptance"]
+            .as_object()
+            .expect("completion acceptance");
+        assert_eq!(acceptance["acceptance_id"], "accept-m51-1");
+        assert_eq!(acceptance["status"], "AcceptedComplete");
+        assert_eq!(
+            acceptance["terminal_completion_fingerprint"],
+            terminal_fingerprint
+        );
+        assert_eq!(acceptance["verifier_gate_status"], "NotRequired");
+        assert_eq!(acceptance["replayed"], false);
+        assert_eq!(acceptance["next_action"], "inspect_accepted_completion");
+        assert!(acceptance["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .starts_with("sha256:"));
+
+        let after_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after acceptance");
+        assert_eq!(
+            after_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count(),
+            before_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count()
+                + 1
+        );
+        let accepted_event_payload = after_events
+            .iter()
+            .rev()
+            .find(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+            .and_then(|event| event.payload.as_ref())
+            .expect("accepted event payload");
+        let serialized_acceptance = serde_json::to_string(accepted_event_payload).unwrap();
+        let serialized_result =
+            serde_json::to_string(&accepted_result["completion_acceptance"]).unwrap();
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_request",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "diagnostics",
+        ] {
+            assert!(!serialized_acceptance.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!serialized_result.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        let replayed = parse_line(&acceptance_request.to_string());
+        assert!(replayed.error.is_none());
+        let replayed_result = replayed.result.expect("replayed result");
+        assert_eq!(
+            replayed_result["completion_acceptance"]["acceptance_fingerprint"],
+            accepted_result["completion_acceptance"]["acceptance_fingerprint"]
+        );
+        assert_eq!(replayed_result["completion_acceptance"]["replayed"], true);
+        let after_replay_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after replay");
+        assert_eq!(after_replay_events.len(), after_events.len());
+        assert_eq!(
+            after_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            after_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count()
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_completion_acceptance_fails_before_mutation_for_invalid_state_or_fingerprint() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Not terminal","mode_id":"implementer"}}"#,
+        );
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let run_id = start_result["run_id"].as_str().expect("run id").to_string();
+        let store = BrownieStore::new(temp.path());
+        let before_created = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("created events");
+        let not_completed = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "accept-created",
+                        "expected_completion_result_fingerprint": format!("sha256:{}", "0".repeat(64)),
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(not_completed.error.expect("created error").code, -32602);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events after created denial")
+                .len(),
+            before_created.len()
+        );
+
+        let completed = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "task.run",
+                "params": { "task_id": task_id },
+            })
+            .to_string(),
+        );
+        assert!(completed.error.is_none());
+        let before_mismatch = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before mismatch");
+        let mismatch = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "accept-mismatch",
+                        "expected_completion_result_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(mismatch.error.expect("mismatch error").code, -32602);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events after mismatch")
+                .len(),
+            before_mismatch.len()
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_completion_acceptance_denies_failed_gate_and_conflicting_replay() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Gate denial","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let completed = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "task.run",
+                "params": { "task_id": task_id },
+            })
+            .to_string(),
+        );
+        assert!(completed.error.is_none());
+        let completed_result = completed.result.expect("completed result");
+        let run_id = completed_result["run_id"]
+            .as_str()
+            .expect("run id")
+            .to_string();
+        let terminal_fingerprint = completed_result["completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("completion fingerprint")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("get task")
+            .expect("task");
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::TaskCompletionAccepted,
+                Some(json!({
+                    "acceptance_id": "accept-conflict",
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "status": "AcceptedComplete",
+                    "terminal_completion_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                    "acceptance_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                    "verifier_gate_status": "NotRequired",
+                    "replayed": false,
+                    "next_action": "inspect_accepted_completion",
+                })),
+            )
+            .expect("append conflicting accepted event");
+        let before_conflict = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before conflict");
+        let conflict = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "accept-conflict",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(conflict.error.expect("conflict error").code, -32602);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events after conflict")
+                .len(),
+            before_conflict.len()
+        );
+
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": completed_result["completion_evidence"],
+                    "verification_completion_gate_status": "Failed",
+                    "required_verifier_count": 1,
+                })),
+            )
+            .expect("append failed gate terminal event");
+        let before_failed_gate = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before failed gate denial");
+        let failed_gate = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "accept-failed-gate",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert_eq!(failed_gate.error.expect("failed gate error").code, -32602);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events after failed gate denial")
+                .len(),
+            before_failed_gate.len()
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

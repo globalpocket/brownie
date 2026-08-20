@@ -721,6 +721,25 @@ and expose no raw prompt, provider response, final response content, file
 content, stdout/stderr, command, environment value, secret, absolute path, or
 canonical path.
 
+M51.1 extends the existing terminal `task.run` replay path with an optional
+`completion_acceptance` envelope. A caller can explicitly authorize acceptance
+of a current terminal `Completed` task/run by supplying the source run id, an
+acceptance id, and the expected completion result fingerprint. Before appending
+state, the Rust runtime re-reads the task and run ledger, requires the current
+task status and terminal completion evidence to be `Completed`, verifies the
+expected fingerprint, and rejects failed, missing, stale, or malformed verifier
+completion gate evidence. A successful transition appends one bounded
+`TaskCompletionAccepted` event and returns bounded `completion_acceptance`
+metadata with accepted state, ids, SHA-256 fingerprints, verifier-gate status,
+replay state, and next action. Replaying the same acceptance id and fingerprint
+returns the persisted acceptance without duplicating `TaskCompletionAccepted` or
+`TaskRunning` evidence. This does not add a new RPC, report, digest, history,
+readiness, verdict, inspection, automatic acceptance, provider/tool execution,
+workspace mutation, or VSIX-owned policy, and it stores no raw prompts,
+provider responses, final response content, file content, stdout/stderr,
+commands, environment values, request bodies, raw ledger payloads, secrets, or
+absolute or canonical paths.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust

@@ -528,6 +528,14 @@ export interface TaskRunParams {
   selected_index_context?: TaskRunSelectedIndexContext | null;
   verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   context_budget?: TaskRunContextBudget | null;
+  completion_acceptance?: TaskRunCompletionAcceptanceRequest | null;
+}
+
+export interface TaskRunCompletionAcceptanceRequest {
+  authorize_completion_acceptance: true;
+  source_run_id: string;
+  acceptance_id: string;
+  expected_completion_result_fingerprint: string;
 }
 
 export interface ParentJoinRunTarget {
@@ -819,6 +827,7 @@ export interface TaskRunResult {
   status: TaskStatus;
   agent_loop: AgentLoopRunSummary;
   completion_evidence?: TaskRunCompletionEvidence | null;
+  completion_acceptance?: TaskRunCompletionAcceptance | null;
   selected_index_prompt_context?: TaskRunSelectedIndexPromptContextSummary | null;
   verification_recovery_context_read?: TaskRunVerificationRecoveryContextReadSummary | null;
   context_budget?: TaskRunContextBudgetSummary | null;
@@ -842,6 +851,18 @@ export interface TaskRunCompletionEvidence {
   final_response_present: boolean;
   final_response_chars: number;
   replayed: boolean;
+}
+
+export interface TaskRunCompletionAcceptance {
+  acceptance_id: string;
+  task_id: string;
+  run_id: string;
+  status: 'AcceptedComplete';
+  terminal_completion_fingerprint: string;
+  acceptance_fingerprint: string;
+  verifier_gate_status: string;
+  replayed: boolean;
+  next_action: string;
 }
 
 export type HeadlessContinueOnceStatus = 'stale_progress' | 'no_eligible_task' | 'task_in_progress' | 'task_executed';
@@ -5368,12 +5389,32 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
 export function isTaskRunParams(value: unknown): value is TaskRunParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['task_id', 'selected_index_context', 'verification_recovery_context_read', 'context_budget']) &&
+    hasOnlyFields(value, ['task_id', 'selected_index_context', 'verification_recovery_context_read', 'context_budget', 'completion_acceptance']) &&
     typeof value.task_id === 'string' &&
     value.task_id.trim().length > 0 &&
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
     (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
-    (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget))
+    (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
+    (value.completion_acceptance === undefined || value.completion_acceptance === null || isTaskRunCompletionAcceptanceRequest(value.completion_acceptance))
+  );
+}
+
+export function isTaskRunCompletionAcceptanceRequest(value: unknown): value is TaskRunCompletionAcceptanceRequest {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_completion_acceptance',
+      'source_run_id',
+      'acceptance_id',
+      'expected_completion_result_fingerprint',
+    ]) &&
+    value.authorize_completion_acceptance === true &&
+    typeof value.source_run_id === 'string' &&
+    value.source_run_id.trim().length > 0 &&
+    typeof value.acceptance_id === 'string' &&
+    value.acceptance_id.trim().length > 0 &&
+    typeof value.expected_completion_result_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_completion_result_fingerprint)
   );
 }
 
@@ -6124,6 +6165,7 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     isTaskStatus(value.status) &&
     isAgentLoopRunSummary(value.agent_loop) &&
     (value.completion_evidence === undefined || value.completion_evidence === null || isTaskRunCompletionEvidence(value.completion_evidence)) &&
+    (value.completion_acceptance === undefined || value.completion_acceptance === null || isTaskRunCompletionAcceptance(value.completion_acceptance)) &&
     (value.selected_index_prompt_context === undefined || value.selected_index_prompt_context === null || isTaskRunSelectedIndexPromptContextSummary(value.selected_index_prompt_context)) &&
     (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextReadSummary(value.verification_recovery_context_read)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudgetSummary(value.context_budget)) &&
@@ -6134,6 +6176,39 @@ export function isTaskRunResult(value: unknown): value is TaskRunResult {
     (value.child_orchestration_outcome === undefined || value.child_orchestration_outcome === null || isTaskRunChildOrchestrationOutcome(value.child_orchestration_outcome)) &&
     (value.parent_join_readiness_outcome === undefined || value.parent_join_readiness_outcome === null || isTaskRunParentJoinReadinessOutcome(value.parent_join_readiness_outcome)) &&
     (value.llm_provider_failure === undefined || value.llm_provider_failure === null || isLlmProviderFailureOutcome(value.llm_provider_failure))
+  );
+}
+
+export function isTaskRunCompletionAcceptance(value: unknown): value is TaskRunCompletionAcceptance {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'acceptance_id',
+      'task_id',
+      'run_id',
+      'status',
+      'terminal_completion_fingerprint',
+      'acceptance_fingerprint',
+      'verifier_gate_status',
+      'replayed',
+      'next_action',
+    ]) &&
+    typeof value.acceptance_id === 'string' &&
+    value.acceptance_id.trim().length > 0 &&
+    typeof value.task_id === 'string' &&
+    value.task_id.trim().length > 0 &&
+    typeof value.run_id === 'string' &&
+    value.run_id.trim().length > 0 &&
+    value.status === 'AcceptedComplete' &&
+    typeof value.terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.terminal_completion_fingerprint) &&
+    typeof value.acceptance_fingerprint === 'string' &&
+    isSha256Fingerprint(value.acceptance_fingerprint) &&
+    typeof value.verifier_gate_status === 'string' &&
+    value.verifier_gate_status.trim().length > 0 &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.next_action === 'string' &&
+    value.next_action.trim().length > 0
   );
 }
 
