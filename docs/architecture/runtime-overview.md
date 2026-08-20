@@ -751,6 +751,19 @@ provider responses, final response content, file content, stdout/stderr,
 commands, environment values, request bodies, raw ledger payloads, secrets, or
 absolute or canonical paths.
 
+M51.2 connects that accepted-completion state to existing headless run-control.
+When `headless.run.drive` reaches a terminal completed scope, the Rust runtime
+re-reads the latest completed task/run ledger and derives bounded
+`accepted_completion` route metadata only if current `TaskCompletionAccepted`
+evidence matches the latest terminal completion fingerprint and verifier-gate
+context. The route gives a headless caller a deterministic `close_headless_run`
+boundary without a new RPC or caller-side ledger interpretation. Replaying the
+same drive checkpoint returns the same bounded accepted-completion metadata and
+does not append another `TaskRunning` or `TaskCompletionAccepted` event. Completed
+but unaccepted tasks, malformed acceptance evidence, stale fingerprints, failed
+or non-terminal evidence, and raw prompt/provider/file/output/path/request
+payloads remain excluded from the route.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust

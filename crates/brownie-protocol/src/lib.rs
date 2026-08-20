@@ -2028,6 +2028,19 @@ pub struct HeadlessRunCompletionFinalization {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunAcceptedCompletion {
+    pub task_id: String,
+    pub run_id: String,
+    pub acceptance_id: String,
+    pub status: String,
+    pub terminal_completion_fingerprint: String,
+    pub acceptance_fingerprint: String,
+    pub verifier_gate_status: String,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessRunAdvanceResult {
     pub status: HeadlessContinueOnceStatus,
     pub session_id: String,
@@ -2072,6 +2085,8 @@ pub struct HeadlessRunDriveResult {
     pub completion_closure: HeadlessRunCompletionClosure,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_finalization: Option<HeadlessRunCompletionFinalization>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub accepted_completion: Option<HeadlessRunAcceptedCompletion>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,

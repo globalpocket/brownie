@@ -2007,6 +2007,17 @@ describe('protocol validation', () => {
         replayed: false,
         next_action: 'close_headless_run',
       },
+      accepted_completion: {
+        task_id: 'task_1',
+        run_id: 'run_1',
+        acceptance_id: 'm51-accepted-route',
+        status: 'AcceptedComplete',
+        terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
+        acceptance_fingerprint: `sha256:${'d'.repeat(64)}`,
+        verifier_gate_status: 'NotRequired',
+        replayed: true,
+        next_action: 'close_headless_run',
+      },
       start_progress: headlessRunAdvanceResult.start_progress,
       post_progress: headlessRunAdvanceResult.post_progress,
       next_route: headlessBudgetResult.next_route,
@@ -2433,6 +2444,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, drive_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, advance_count: 2 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, terminal_completion_evidence: { ...terminalCompletionEvidence, absolute_path: '/tmp/file' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, acceptance_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, raw_ledger_payload: 'secret' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, status: 'Completed' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, raw_file_content: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_finalization: { ...headlessRunDriveResult.completion_finalization, finalization_fingerprint: 'not-a-fingerprint' } })).toBe(false);

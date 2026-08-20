@@ -1095,6 +1095,7 @@ export interface HeadlessRunDriveResult {
   terminal_completion_evidence?: TaskRunCompletionEvidence | null;
   completion_closure: HeadlessRunCompletionClosure;
   completion_finalization?: HeadlessRunCompletionFinalization | null;
+  accepted_completion?: HeadlessRunAcceptedCompletion | null;
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
@@ -1231,6 +1232,18 @@ export interface HeadlessRunCompletionFinalization {
   terminal_task_count: number;
   total_task_count: number;
   finalization_fingerprint: string;
+  replayed: boolean;
+  next_action: string;
+}
+
+export interface HeadlessRunAcceptedCompletion {
+  task_id: string;
+  run_id: string;
+  acceptance_id: string;
+  status: 'AcceptedComplete';
+  terminal_completion_fingerprint: string;
+  acceptance_fingerprint: string;
+  verifier_gate_status: string;
   replayed: boolean;
   next_action: string;
 }
@@ -6582,6 +6595,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'terminal_completion_evidence',
       'completion_closure',
       'completion_finalization',
+      'accepted_completion',
       'start_progress',
       'post_progress',
       'next_route',
@@ -6618,6 +6632,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     (value.terminal_completion_evidence === undefined || value.terminal_completion_evidence === null || isTaskRunCompletionEvidence(value.terminal_completion_evidence)) &&
     isHeadlessRunCompletionClosure(value.completion_closure) &&
     (value.completion_finalization === undefined || value.completion_finalization === null || isHeadlessRunCompletionFinalization(value.completion_finalization)) &&
+    (value.accepted_completion === undefined || value.accepted_completion === null || isHeadlessRunAcceptedCompletion(value.accepted_completion)) &&
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
@@ -6874,6 +6889,39 @@ export function isHeadlessRunCompletionFinalization(value: unknown): value is He
     value.terminal_task_count <= value.total_task_count &&
     typeof value.finalization_fingerprint === 'string' &&
     isSha256Fingerprint(value.finalization_fingerprint) &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120
+  );
+}
+
+export function isHeadlessRunAcceptedCompletion(value: unknown): value is HeadlessRunAcceptedCompletion {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'task_id',
+      'run_id',
+      'acceptance_id',
+      'status',
+      'terminal_completion_fingerprint',
+      'acceptance_fingerprint',
+      'verifier_gate_status',
+      'replayed',
+      'next_action',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.acceptance_id) &&
+    value.status === 'AcceptedComplete' &&
+    typeof value.terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.terminal_completion_fingerprint) &&
+    typeof value.acceptance_fingerprint === 'string' &&
+    isSha256Fingerprint(value.acceptance_fingerprint) &&
+    typeof value.verifier_gate_status === 'string' &&
+    value.verifier_gate_status.length > 0 &&
+    value.verifier_gate_status.length <= 64 &&
     typeof value.replayed === 'boolean' &&
     typeof value.next_action === 'string' &&
     value.next_action.length > 0 &&

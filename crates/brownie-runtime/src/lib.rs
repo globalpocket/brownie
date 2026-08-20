@@ -33,9 +33,10 @@ use brownie_protocol::{
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
     HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
-    HeadlessRunAdvanceParams, HeadlessRunAdvanceResult, HeadlessRunCompletionClosure,
-    HeadlessRunCompletionClosureStatus, HeadlessRunCompletionFinalization, HeadlessRunDriveParams,
-    HeadlessRunDriveResult, HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
+    HeadlessRunAcceptedCompletion, HeadlessRunAdvanceParams, HeadlessRunAdvanceResult,
+    HeadlessRunCompletionClosure, HeadlessRunCompletionClosureStatus,
+    HeadlessRunCompletionFinalization, HeadlessRunDriveParams, HeadlessRunDriveResult,
+    HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
     HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
@@ -16192,6 +16193,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         if let Some(metadata) = result.journey_closure.as_mut() {
             metadata.replayed = true;
         }
+        if let Some(accepted_completion) = result.accepted_completion.as_mut() {
+            accepted_completion.replayed = true;
+        }
         if let Some(checkpoint) = journey_checkpoint.as_ref() {
             result.journey = Some(headless_journey_metadata(checkpoint, &result, true));
         }
@@ -16333,6 +16337,13 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             );
         }
     }
+    let preflight_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(message) = headless_latest_accepted_completed_task(&store, &preflight_tasks) {
+        return error_response(id, -32602, &message);
+    }
     let journey_route_resume_plan = match headless_journey_route_resume_plan(
         &store,
         &params,
@@ -16419,6 +16430,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             terminal_completion_evidence: terminal_completion_evidence.clone(),
             completion_closure: completion_closure.clone(),
             completion_finalization: None,
+            accepted_completion: None,
             start_progress: start_progress.clone(),
             post_progress: post_progress.clone(),
             next_route: None,
@@ -16466,6 +16478,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "terminal_completion_evidence": terminal_completion_evidence,
             "completion_closure": completion_closure,
             "completion_finalization": completion_finalization,
+            "accepted_completion": null,
             "journey_closure": journey_closure_metadata,
             "next_action": next_action
         });
@@ -16487,6 +16500,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             terminal_completion_evidence,
             completion_closure,
             completion_finalization,
+            accepted_completion: None,
             start_progress,
             post_progress,
             next_route: None,
@@ -16639,6 +16653,22 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             }
         };
     let terminal_completion_evidence = latest_terminal_completion_evidence;
+    let accepted_completion = match headless_latest_accepted_completed_task(&store, &post_tasks) {
+        Ok(accepted_completion) => accepted_completion,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if let (Some(accepted), Some(evidence)) = (
+        accepted_completion.as_ref(),
+        terminal_completion_evidence.as_ref(),
+    ) {
+        if accepted.terminal_completion_fingerprint != evidence.completion_result_fingerprint {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: accepted completion evidence is stale for latest terminal completion",
+            );
+        }
+    }
     let completion_closure = headless_run_completion_closure(
         status.clone(),
         &stop_reason,
@@ -16675,6 +16705,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         terminal_completion_evidence: terminal_completion_evidence.clone(),
         completion_closure: completion_closure.clone(),
         completion_finalization: None,
+        accepted_completion: accepted_completion.clone(),
         start_progress: start_progress.clone(),
         post_progress: post_progress.clone(),
         next_route: next_route.clone(),
@@ -16708,6 +16739,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "terminal_completion_evidence": terminal_completion_evidence,
         "completion_closure": completion_closure,
         "completion_finalization": completion_finalization,
+        "accepted_completion": accepted_completion,
         "journey_route_resume": journey_route_resume_metadata,
         "journey_closure": null,
         "next_action": next_action
@@ -16730,6 +16762,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         terminal_completion_evidence,
         completion_closure,
         completion_finalization,
+        accepted_completion,
         start_progress,
         post_progress,
         next_route,
@@ -17097,6 +17130,59 @@ fn headless_latest_completed_task_completion_evidence(
         return Ok(None);
     };
     task_run_completion_evidence_for_record(store, record, false)
+}
+
+fn headless_latest_accepted_completed_task(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+) -> Result<Option<HeadlessRunAcceptedCompletion>, String> {
+    let Some(record) = tasks
+        .iter()
+        .filter(|record| record.status == TaskStatus::Completed)
+        .max_by_key(|record| record.updated_at.clone())
+    else {
+        return Ok(None);
+    };
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    let Some(completion_evidence) = task_run_completion_evidence_from_events(&events, record, true)
+    else {
+        return Ok(None);
+    };
+    if completion_evidence.final_state != "Completed"
+        || completion_evidence.task_status != TaskStatus::Completed
+    {
+        return Ok(None);
+    }
+    let verifier_gate_status = match progress_verification_state(&events) {
+        ProgressVerificationState::NotRequired => "NotRequired".to_string(),
+        ProgressVerificationState::Passed => VERIFICATION_COMPLETION_GATE_STATUS_PASSED.to_string(),
+        ProgressVerificationState::Failed
+        | ProgressVerificationState::Pending
+        | ProgressVerificationState::Unknown => return Ok(None),
+    };
+    let Some(acceptance) = task_run_completion_acceptance_from_events(
+        &events,
+        record,
+        &completion_evidence,
+        &verifier_gate_status,
+    )?
+    else {
+        return Ok(None);
+    };
+    Ok(Some(HeadlessRunAcceptedCompletion {
+        task_id: acceptance.task_id,
+        run_id: acceptance.run_id,
+        acceptance_id: acceptance.acceptance_id,
+        status: acceptance.status,
+        terminal_completion_fingerprint: acceptance.terminal_completion_fingerprint,
+        acceptance_fingerprint: acceptance.acceptance_fingerprint,
+        verifier_gate_status: acceptance.verifier_gate_status,
+        replayed: true,
+        next_action: "close_headless_run".to_string(),
+    }))
 }
 
 fn headless_run_completion_closure(
@@ -52448,6 +52534,7 @@ mod tests {
             terminal_completion_evidence: Some(terminal_evidence.clone()),
             completion_closure: closure.clone(),
             completion_finalization: None,
+            accepted_completion: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -52714,6 +52801,7 @@ mod tests {
             terminal_completion_evidence: Some(terminal_evidence),
             completion_closure: closure.clone(),
             completion_finalization: None,
+            accepted_completion: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -52855,6 +52943,7 @@ mod tests {
             terminal_completion_evidence: Some(terminal_evidence),
             completion_closure: closure.clone(),
             completion_finalization: None,
+            accepted_completion: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -75006,6 +75095,266 @@ mod tests {
                 .count()
         );
         assert_eq!(after_second_acceptance_id_events.len(), after_events.len());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_routes_accepted_completion_without_duplicate_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Accepted headless completion","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.accepted","advance_id":"m51.accepted.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m51-accepted-route",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let before_drive_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before drive");
+
+        let drive_request = r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.accepted","drive_id":"m51.accepted.route","expected_start_session_sequence":1,"max_advances":1,"max_steps_per_advance":1}}"#;
+        let drive = parse_line(drive_request);
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let accepted_completion = drive_result["accepted_completion"]
+            .as_object()
+            .expect("accepted completion route");
+        assert_eq!(accepted_completion["task_id"], task_id);
+        assert_eq!(accepted_completion["run_id"], run_id);
+        assert_eq!(accepted_completion["acceptance_id"], "m51-accepted-route");
+        assert_eq!(accepted_completion["status"], "AcceptedComplete");
+        assert_eq!(
+            accepted_completion["terminal_completion_fingerprint"],
+            terminal_fingerprint
+        );
+        assert_eq!(accepted_completion["replayed"], true);
+        assert_eq!(accepted_completion["next_action"], "close_headless_run");
+        assert_eq!(
+            drive_result["completion_closure"]["terminal_completion_fingerprint"],
+            terminal_fingerprint
+        );
+        let serialized = serde_json::to_string(&drive_result).expect("serialize drive");
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_request",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "diagnostics",
+        ] {
+            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        let replay = parse_line(drive_request);
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["accepted_completion"],
+            drive_result["accepted_completion"]
+        );
+        assert_eq!(
+            replay_result["drive_fingerprint"],
+            drive_result["drive_fingerprint"]
+        );
+        let after_replay_events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after replay");
+        assert_eq!(
+            after_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count(),
+            before_drive_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskCompletionAccepted)
+                .count()
+        );
+        assert_eq!(
+            after_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            before_drive_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count()
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_does_not_route_unaccepted_completion() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Unaccepted headless completion","mode_id":"implementer"}}"#,
+        )
+        .result
+        .expect("start result");
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.unaccepted","advance_id":"m51.unaccepted.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.unaccepted","drive_id":"m51.unaccepted.route","expected_start_session_sequence":1,"max_advances":1,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        assert!(drive_result.get("accepted_completion").is_none());
+        assert!(drive_result.get("raw_ledger_payload").is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_rejects_malformed_accepted_completion_before_session_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Malformed accepted headless completion","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.malformed","advance_id":"m51.malformed.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let record = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("task lookup")
+            .expect("task record");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &record,
+                LedgerEventKind::TaskCompletionAccepted,
+                Some(json!({
+                    "acceptance_id": "m51-bad-acceptance",
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "status": "AcceptedComplete",
+                    "terminal_completion_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                    "acceptance_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                    "verifier_gate_status": "NotRequired",
+                    "replayed": false,
+                    "next_action": "inspect_accepted_completion"
+                })),
+            )
+            .expect("append malformed accepted evidence");
+        let before = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events before malformed drive");
+        let denied = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.malformed","drive_id":"m51.malformed.route","expected_start_session_sequence":1,"max_advances":1,"max_steps_per_advance":1}}"#,
+        );
+        assert!(denied.result.is_none());
+        assert!(denied
+            .error
+            .expect("error")
+            .message
+            .contains("conflicting completion acceptance evidence"));
+        let after = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after malformed drive");
+        assert_eq!(
+            after
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionAdvanced)
+                .count(),
+            before
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionAdvanced)
+                .count()
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
