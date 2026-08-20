@@ -764,6 +764,23 @@ but unaccepted tasks, malformed acceptance evidence, stale fingerprints, failed
 or non-terminal evidence, and raw prompt/provider/file/output/path/request
 payloads remain excluded from the route.
 
+M51.3 lets the same `headless.run.drive` boundary record a runtime-owned product
+completion stop/continue decision after accepted completion is routable. A
+caller may replay the drive with explicit `product_completion_decision`
+authorization, expected accepted-completion, terminal-completion,
+completion-closure, and product-evidence fingerprints, plus bounded product
+gate metadata. Rust derives one of `product_complete`, `continue_development`,
+or `blocked_by_product_evidence`, appends one bounded
+`HeadlessRunProductCompletionDecisionRecorded` event, persists the decision as bounded ledger evidence, and replays it without duplicate task, drive,
+acceptance, finalization, or product-decision events. Invalid, incomplete, or
+wrapper-only product evidence yields `blocked_by_product_evidence` with
+`repair_product_completion_evidence` rather than a false product-complete
+claim. The ledger and RPC result expose only ids, statuses, counts, category
+names, next action, and SHA-256 fingerprints; raw Product Charter or manifest
+text, prompts, provider responses, final responses, file content, raw ledger
+payloads, diagnostics, commands, environment values, absolute paths, canonical
+paths, and secrets remain excluded.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust

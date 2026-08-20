@@ -39,6 +39,7 @@ use brownie_protocol::{
     HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
+    HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
     HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
     LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
@@ -308,6 +309,16 @@ const METHOD_HEADLESS_RUN_ADVANCE: &str = "headless.run.advance";
 const METHOD_HEADLESS_RUN_DRIVE: &str = "headless.run.drive";
 const HEADLESS_CONTINUE_MAX_BUDGET_STEPS: u8 = 3;
 const HEADLESS_RUN_DRIVE_MAX_ADVANCES: u8 = 3;
+const PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES: &[&str] = &[
+    "strategic_capability_mapping",
+    "concrete_capability_transition",
+    "behavior_evidence",
+    "safety_boundary",
+    "non_goals",
+    "rejected_alternatives",
+    "technical_debt",
+    "next_capability_or_milestone_exit",
+];
 const TASK_RUN_CONTEXT_BUDGET_MIN_PROMPT_CHARS: usize = 128;
 const TASK_RUN_CONTEXT_BUDGET_MAX_PROMPT_CHARS: usize = 1_000_000;
 const TASK_RUN_CONTEXT_BUDGET_MAX_LEDGER_EVENTS: usize = 64;
@@ -13862,9 +13873,9 @@ fn validate_headless_journey_route_resume(
                 .to_string(),
         );
     }
-    if max_advances != 1 || max_steps_per_advance != 1 {
+    if !(max_advances == 1 || max_advances == 2) || max_steps_per_advance != 1 {
         return Err(
-            "invalid params: journey route resume requires max_advances 1 and max_steps_per_advance 1"
+            "invalid params: journey route resume requires bounded max_advances and max_steps_per_advance 1"
                 .to_string(),
         );
     }
@@ -14309,9 +14320,9 @@ fn validate_headless_journey_closure(
                 .to_string(),
         );
     }
-    if max_advances != 1 || max_steps_per_advance != 1 {
+    if !(max_advances == 1 || max_advances == 2) || max_steps_per_advance != 1 {
         return Err(
-            "invalid params: journey closure requires max_advances 1 and max_steps_per_advance 1"
+            "invalid params: journey closure requires bounded max_advances and max_steps_per_advance 1"
                 .to_string(),
         );
     }
@@ -14764,9 +14775,14 @@ fn validate_headless_journey_execution(
     {
         return Err("invalid params: journey execution cannot be combined with completion finalization fields".to_string());
     }
-    if max_advances != 1 || max_steps_per_advance != 1 {
+    let max_advances_allowed = if params.expected_start_session_sequence == 0 {
+        max_advances == 1
+    } else {
+        max_advances == 1 || max_advances == 2
+    };
+    if !max_advances_allowed || max_steps_per_advance != 1 {
         return Err(
-            "invalid params: journey execution requires max_advances 1 and max_steps_per_advance 1"
+            "invalid params: journey execution requires bounded max_advances and max_steps_per_advance 1"
                 .to_string(),
         );
     }
@@ -15777,7 +15793,7 @@ fn handle_headless_journey_execution(
                 "session_id": params.session_id,
                 "drive_id": child_drive_id,
                 "expected_start_session_sequence": session_checkpoint.session_sequence,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": execution.journey_id,
@@ -16196,6 +16212,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         if let Some(accepted_completion) = result.accepted_completion.as_mut() {
             accepted_completion.replayed = true;
         }
+        if let Some(product_completion_decision) = result.product_completion_decision.as_mut() {
+            product_completion_decision.replayed = true;
+        }
         if let Some(checkpoint) = journey_checkpoint.as_ref() {
             result.journey = Some(headless_journey_metadata(checkpoint, &result, true));
         }
@@ -16225,6 +16244,17 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 Ok(finalization) => result.completion_finalization = finalization,
                 Err(message) => return error_response(id, -32602, &message),
             }
+        }
+        match headless_run_product_completion_decision(
+            &store,
+            &result,
+            params.product_completion_decision.as_ref(),
+        ) {
+            Ok(Some(decision)) => {
+                result.product_completion_decision = Some(decision);
+            }
+            Ok(None) => {}
+            Err(message) => return error_response(id, -32602, &message),
         }
         if let Some(metadata) = result.journey_route_resume.as_ref() {
             if let Err(error) =
@@ -16431,6 +16461,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_closure: completion_closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_completion_decision: None,
             start_progress: start_progress.clone(),
             post_progress: post_progress.clone(),
             next_route: None,
@@ -16479,6 +16510,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "completion_closure": completion_closure,
             "completion_finalization": completion_finalization,
             "accepted_completion": null,
+            "product_completion_decision": null,
             "journey_closure": journey_closure_metadata,
             "next_action": next_action
         });
@@ -16501,6 +16533,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_closure,
             completion_finalization,
             accepted_completion: None,
+            product_completion_decision: None,
             start_progress,
             post_progress,
             next_route: None,
@@ -16706,6 +16739,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_closure: completion_closure.clone(),
         completion_finalization: None,
         accepted_completion: accepted_completion.clone(),
+        product_completion_decision: None,
         start_progress: start_progress.clone(),
         post_progress: post_progress.clone(),
         next_route: next_route.clone(),
@@ -16725,6 +16759,16 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         Ok(finalization) => finalization,
         Err(message) => return error_response(id, -32602, &message),
     };
+    let mut result_for_decision = result_without_fingerprint.clone();
+    result_for_decision.completion_finalization = completion_finalization.clone();
+    let product_completion_decision = match headless_run_product_completion_decision(
+        &store,
+        &result_for_decision,
+        params.product_completion_decision.as_ref(),
+    ) {
+        Ok(decision) => decision,
+        Err(message) => return error_response(id, -32602, &message),
+    };
     let drive_seed = json!({
         "session_id": params.session_id,
         "drive_id": drive_id,
@@ -16740,6 +16784,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "completion_closure": completion_closure,
         "completion_finalization": completion_finalization,
         "accepted_completion": accepted_completion,
+        "product_completion_decision": product_completion_decision,
         "journey_route_resume": journey_route_resume_metadata,
         "journey_closure": null,
         "next_action": next_action
@@ -16763,6 +16808,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_closure,
         completion_finalization,
         accepted_completion,
+        product_completion_decision,
         start_progress,
         post_progress,
         next_route,
@@ -20552,7 +20598,353 @@ fn append_headless_run_session_drive_completed_events(
     if let Some(closure) = result.journey_closure.as_ref() {
         append_headless_journey_closed_event_if_missing(store, closure)?;
     }
+    if let Some(decision) = result.product_completion_decision.as_ref() {
+        append_headless_product_completion_decision_event_if_missing(store, decision)?;
+    }
     Ok(())
+}
+
+fn append_headless_product_completion_decision_event_if_missing(
+    store: &BrownieStore,
+    decision: &HeadlessRunProductCompletionDecision,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&decision.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != decision.run_id {
+        return Ok(());
+    }
+    if headless_product_completion_decision_event_exists(store, decision)? {
+        return Ok(());
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+        Some(headless_product_completion_decision_payload(decision)),
+    )?;
+    Ok(())
+}
+
+fn headless_product_completion_decision_event_exists(
+    store: &BrownieStore,
+    decision: &HeadlessRunProductCompletionDecision,
+) -> anyhow::Result<bool> {
+    let events = store.tasks().read_ledger_events(&decision.run_id)?;
+    Ok(events.iter().any(|event| {
+        event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("decision_fingerprint"))
+                .and_then(Value::as_str)
+                == Some(decision.decision_fingerprint.as_str())
+    }))
+}
+
+fn headless_run_product_completion_decision(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+    request: Option<&HeadlessRunProductCompletionDecisionRequest>,
+) -> Result<Option<HeadlessRunProductCompletionDecision>, String> {
+    if let Some(existing) = result.product_completion_decision.as_ref() {
+        if let Some(request) = request {
+            validate_product_completion_decision_request(request)?;
+            if existing.decision_id != request.decision_id
+                || existing.accepted_completion_fingerprint
+                    != request.expected_accepted_completion_fingerprint
+                || existing.terminal_completion_fingerprint
+                    != request.expected_terminal_completion_fingerprint
+                || existing.completion_closure_fingerprint
+                    != request.expected_completion_closure_fingerprint
+                || existing.product_evidence_fingerprint
+                    != request.expected_product_evidence_fingerprint
+            {
+                return Err(
+                    "invalid params: product completion decision replay target conflicts with persisted decision"
+                        .to_string(),
+                );
+            }
+        }
+        return Ok(Some(HeadlessRunProductCompletionDecision {
+            replayed: true,
+            ..existing.clone()
+        }));
+    }
+
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    validate_product_completion_decision_request(request)?;
+    let accepted = result.accepted_completion.as_ref().ok_or_else(|| {
+        "invalid params: product completion decision requires accepted_completion route evidence"
+            .to_string()
+    })?;
+    let terminal = result
+        .terminal_completion_evidence
+        .as_ref()
+        .ok_or_else(|| {
+            "invalid params: product completion decision requires terminal completion evidence"
+                .to_string()
+        })?;
+    if accepted.acceptance_fingerprint != request.expected_accepted_completion_fingerprint {
+        return Err(
+            "invalid params: product completion decision accepted-completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if accepted.terminal_completion_fingerprint != request.expected_terminal_completion_fingerprint
+        || terminal.completion_result_fingerprint
+            != request.expected_terminal_completion_fingerprint
+    {
+        return Err(
+            "invalid params: product completion decision terminal completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if result.completion_closure.closure_fingerprint
+        != request.expected_completion_closure_fingerprint
+    {
+        return Err(
+            "invalid params: product completion decision completion-closure fingerprint mismatch"
+                .to_string(),
+        );
+    }
+
+    let mut missing_or_invalid_evidence =
+        !product_completion_evidence_categories_are_complete(&request.validated_gate_categories)
+            || request.behavior_evidence_count == 0
+            || request.rejected_alternatives_count == 0
+            || !request.safety_boundary_reviewed
+            || !request.non_goals_reviewed
+            || !request.technical_debt_reviewed
+            || request.target_capability.trim().is_empty()
+            || request.concrete_capability_transition.trim().is_empty();
+
+    let (status, next_action) = match request.evidence_status.as_str() {
+        "product_complete"
+            if !missing_or_invalid_evidence
+                && request.remaining_capability.is_none()
+                && request
+                    .milestone_exit_rationale
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .len()
+                    > 0 =>
+        {
+            ("product_complete", "stop_autonomous_development")
+        }
+        "continue_development"
+            if !missing_or_invalid_evidence
+                && request
+                    .remaining_capability
+                    .as_deref()
+                    .unwrap_or("")
+                    .trim()
+                    .len()
+                    > 0 =>
+        {
+            ("continue_development", "plan_next_phase")
+        }
+        "blocked_by_product_evidence" => {
+            missing_or_invalid_evidence = true;
+            (
+                "blocked_by_product_evidence",
+                "repair_product_completion_evidence",
+            )
+        }
+        _ => {
+            missing_or_invalid_evidence = true;
+            (
+                "blocked_by_product_evidence",
+                "repair_product_completion_evidence",
+            )
+        }
+    };
+    let decision_fingerprint = headless_product_completion_decision_fingerprint(
+        request,
+        accepted,
+        terminal,
+        &result.completion_closure,
+        status,
+        next_action,
+        missing_or_invalid_evidence,
+    );
+    let mut decision = HeadlessRunProductCompletionDecision {
+        decision_id: request.decision_id.clone(),
+        task_id: accepted.task_id.clone(),
+        run_id: accepted.run_id.clone(),
+        acceptance_id: accepted.acceptance_id.clone(),
+        status: status.to_string(),
+        next_action: next_action.to_string(),
+        target_capability: request.target_capability.clone(),
+        concrete_capability_transition: request.concrete_capability_transition.clone(),
+        accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
+        terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
+        completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
+        product_evidence_fingerprint: request.expected_product_evidence_fingerprint.clone(),
+        decision_fingerprint,
+        validated_gate_categories: request.validated_gate_categories.clone(),
+        behavior_evidence_count: request.behavior_evidence_count,
+        rejected_alternatives_count: request.rejected_alternatives_count,
+        safety_boundary_reviewed: request.safety_boundary_reviewed,
+        non_goals_reviewed: request.non_goals_reviewed,
+        technical_debt_reviewed: request.technical_debt_reviewed,
+        remaining_capability: request.remaining_capability.clone(),
+        milestone_exit_rationale: request.milestone_exit_rationale.clone(),
+        replayed: false,
+    };
+    decision.replayed = headless_product_completion_decision_event_exists(store, &decision)
+        .map_err(|error| error.to_string())?;
+    append_headless_product_completion_decision_event_if_missing(store, &decision)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(decision))
+}
+
+fn validate_product_completion_decision_request(
+    request: &HeadlessRunProductCompletionDecisionRequest,
+) -> Result<(), String> {
+    if !request.authorize_product_completion_decision {
+        return Err(
+            "invalid params: product completion decision requires explicit authorization"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&request.decision_id) {
+        return Err(
+            "invalid params: product completion decision decision_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_accepted_completion_fingerprint",
+            &request.expected_accepted_completion_fingerprint,
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            &request.expected_terminal_completion_fingerprint,
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            &request.expected_completion_closure_fingerprint,
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            &request.expected_product_evidence_fingerprint,
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "invalid params: product completion decision {field} must be sha256"
+            ));
+        }
+    }
+    if !is_bounded_product_completion_text(&request.evidence_status, 64)
+        || !is_bounded_product_completion_text(&request.target_capability, 96)
+        || !is_bounded_product_completion_text(&request.concrete_capability_transition, 120)
+        || request.validated_gate_categories.len() > 16
+        || request
+            .validated_gate_categories
+            .iter()
+            .any(|category| !is_bounded_product_completion_text(category, 96))
+        || request
+            .remaining_capability
+            .as_ref()
+            .map(|value| !is_bounded_product_completion_text(value, 120))
+            .unwrap_or(false)
+        || request
+            .milestone_exit_rationale
+            .as_ref()
+            .map(|value| !is_bounded_product_completion_text(value, 160))
+            .unwrap_or(false)
+    {
+        return Err(
+            "invalid params: product completion decision evidence fields must be bounded ASCII metadata"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn is_bounded_product_completion_text(value: &str, max_len: usize) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_len
+        && value.bytes().all(|byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-' | b'.' | b':' | b' ')
+        })
+}
+
+fn product_completion_evidence_categories_are_complete(categories: &[String]) -> bool {
+    PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+        .iter()
+        .all(|required| categories.iter().any(|category| category == required))
+}
+
+fn headless_product_completion_decision_payload(
+    decision: &HeadlessRunProductCompletionDecision,
+) -> Value {
+    json!({
+        "decision_id": decision.decision_id,
+        "task_id": decision.task_id,
+        "run_id": decision.run_id,
+        "acceptance_id": decision.acceptance_id,
+        "status": decision.status,
+        "next_action": decision.next_action,
+        "target_capability": decision.target_capability,
+        "concrete_capability_transition": decision.concrete_capability_transition,
+        "accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+        "terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+        "completion_closure_fingerprint": decision.completion_closure_fingerprint,
+        "product_evidence_fingerprint": decision.product_evidence_fingerprint,
+        "decision_fingerprint": decision.decision_fingerprint,
+        "validated_gate_categories": decision.validated_gate_categories,
+        "behavior_evidence_count": decision.behavior_evidence_count,
+        "rejected_alternatives_count": decision.rejected_alternatives_count,
+        "safety_boundary_reviewed": decision.safety_boundary_reviewed,
+        "non_goals_reviewed": decision.non_goals_reviewed,
+        "technical_debt_reviewed": decision.technical_debt_reviewed,
+        "remaining_capability": decision.remaining_capability,
+        "milestone_exit_rationale": decision.milestone_exit_rationale,
+        "replayed": false,
+    })
+}
+
+fn headless_product_completion_decision_fingerprint(
+    request: &HeadlessRunProductCompletionDecisionRequest,
+    accepted: &HeadlessRunAcceptedCompletion,
+    terminal: &brownie_protocol::TaskRunCompletionEvidence,
+    closure: &HeadlessRunCompletionClosure,
+    status: &str,
+    next_action: &str,
+    missing_or_invalid_evidence: bool,
+) -> String {
+    let canonical = json!({
+        "version": "headless_product_completion_decision_v1",
+        "decision_id": request.decision_id,
+        "task_id": accepted.task_id,
+        "run_id": accepted.run_id,
+        "acceptance_id": accepted.acceptance_id,
+        "accepted_completion_fingerprint": accepted.acceptance_fingerprint,
+        "terminal_completion_fingerprint": terminal.completion_result_fingerprint,
+        "completion_closure_fingerprint": closure.closure_fingerprint,
+        "product_evidence_fingerprint": request.expected_product_evidence_fingerprint,
+        "evidence_status": request.evidence_status,
+        "derived_status": status,
+        "next_action": next_action,
+        "target_capability": request.target_capability,
+        "concrete_capability_transition": request.concrete_capability_transition,
+        "validated_gate_categories": request.validated_gate_categories,
+        "behavior_evidence_count": request.behavior_evidence_count,
+        "rejected_alternatives_count": request.rejected_alternatives_count,
+        "safety_boundary_reviewed": request.safety_boundary_reviewed,
+        "non_goals_reviewed": request.non_goals_reviewed,
+        "technical_debt_reviewed": request.technical_debt_reviewed,
+        "remaining_capability": request.remaining_capability,
+        "milestone_exit_rationale": request.milestone_exit_rationale,
+        "missing_or_invalid_evidence": missing_or_invalid_evidence,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn append_headless_run_completion_finalized_event(
@@ -52535,6 +52927,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -52802,6 +53195,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -52944,6 +53338,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
                 aggregate_sequence: 10,
@@ -53438,7 +53833,7 @@ mod tests {
                 "expected_start_session_sequence": result["end_session_sequence"]
                     .as_u64()
                     .expect("end session sequence"),
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_execution": {
                     "journey_id": "m50.exec.1",
@@ -53920,7 +54315,7 @@ mod tests {
                     "session_id": "m50.invalid",
                     "drive_id": "m50.invalid.drive",
                     "expected_start_session_sequence": 0,
-                    "max_advances": 1,
+                    "max_advances": 2,
                     "max_steps_per_advance": 1,
                     "journey_admission": {
                         "journey_id": "m50.invalid.mixed",
@@ -54298,7 +54693,7 @@ mod tests {
                 "authorize": true,
                 "session_id": "m50.2.route",
                 "expected_start_session_sequence": 1,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54326,7 +54721,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.resume",
                 "expected_start_session_sequence": 1,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54371,7 +54766,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.resume",
                 "expected_start_session_sequence": 1,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54459,7 +54854,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.provenance",
                 "expected_start_session_sequence": 2,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54556,7 +54951,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.approval.stale",
                 "expected_start_session_sequence": 3,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54584,7 +54979,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.approval",
                 "expected_start_session_sequence": 3,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54684,7 +55079,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.replacement.stale",
                 "expected_start_session_sequence": 4,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54724,7 +55119,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.replacement",
                 "expected_start_session_sequence": 4,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_route_resume": {
                     "journey_id": "m50.2.journey.1",
@@ -54881,7 +55276,7 @@ mod tests {
                 "session_id": "m50.2.route",
                 "drive_id": "m50.2.route.close",
                 "expected_start_session_sequence": 5,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "journey_closure": {
                     "journey_id": "m50.2.journey.1",
@@ -54928,12 +55323,12 @@ mod tests {
             .contains("explicit modepack"));
         let mut non_unit_closure_request = closure_request.clone();
         non_unit_closure_request["params"]["drive_id"] = json!("m50.2.route.close.budget");
-        non_unit_closure_request["params"]["max_advances"] = json!(2);
+        non_unit_closure_request["params"]["max_advances"] = json!(3);
         assert!(parse_line(&non_unit_closure_request.to_string())
             .error
             .expect("non-unit closure error")
             .message
-            .contains("requires max_advances 1"));
+            .contains("requires bounded max_advances"));
         let mut bypass_closure_request = closure_request.clone();
         bypass_closure_request["params"]["drive_id"] = json!("m50.2.route.close.bypass");
         bypass_closure_request["params"]["authorize_completion_finalization"] = json!(true);
@@ -75240,6 +75635,309 @@ mod tests {
     }
 
     #[test]
+    fn headless_run_drive_records_product_completion_decision_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Runtime product decision","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.product","advance_id":"m51.product.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m51-product-accepted",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+
+        let drive_request = r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.product","drive_id":"m51.product.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#;
+        let drive = parse_line(drive_request);
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+        assert!(drive_result.get("product_completion_decision").is_none());
+
+        let product_evidence_fingerprint = format!("sha256:{}", "a".repeat(64));
+        let decision_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m51.product",
+                "drive_id": "m51.product.route",
+                "expected_start_session_sequence": 1,
+                "max_advances": 2,
+                "max_steps_per_advance": 1,
+                "expected_completion_closure_fingerprint": closure_fingerprint,
+                "product_completion_decision": {
+                    "authorize_product_completion_decision": true,
+                    "decision_id": "m51-product-decision",
+                    "expected_accepted_completion_fingerprint": acceptance_fingerprint,
+                    "expected_terminal_completion_fingerprint": terminal_fingerprint,
+                    "expected_completion_closure_fingerprint": closure_fingerprint,
+                    "expected_product_evidence_fingerprint": product_evidence_fingerprint,
+                    "evidence_status": "continue_development",
+                    "target_capability": "headless_autonomous_development",
+                    "concrete_capability_transition": "runtime_owned_product_completion_stop_decision",
+                    "validated_gate_categories": [
+                        "strategic_capability_mapping",
+                        "concrete_capability_transition",
+                        "behavior_evidence",
+                        "safety_boundary",
+                        "non_goals",
+                        "rejected_alternatives",
+                        "technical_debt",
+                        "next_capability_or_milestone_exit"
+                    ],
+                    "behavior_evidence_count": 3,
+                    "rejected_alternatives_count": 2,
+                    "safety_boundary_reviewed": true,
+                    "non_goals_reviewed": true,
+                    "technical_debt_reviewed": true,
+                    "remaining_capability": "milestone_closeout",
+                    "milestone_exit_rationale": null
+                }
+            }
+        });
+        let decided = parse_line(&decision_request.to_string());
+        assert!(decided.error.is_none(), "{:?}", decided.error);
+        let decided_result = decided.result.expect("decided result");
+        let decision = decided_result["product_completion_decision"]
+            .as_object()
+            .expect("product decision");
+        assert_eq!(decision["status"], "continue_development");
+        assert_eq!(decision["next_action"], "plan_next_phase");
+        assert_eq!(
+            decision["accepted_completion_fingerprint"],
+            acceptance_fingerprint
+        );
+        assert_eq!(
+            decision["terminal_completion_fingerprint"],
+            terminal_fingerprint
+        );
+        assert_eq!(
+            decision["completion_closure_fingerprint"],
+            closure_fingerprint
+        );
+        assert_eq!(
+            decision["product_evidence_fingerprint"],
+            product_evidence_fingerprint
+        );
+        assert_eq!(decision["replayed"], false);
+        let serialized = serde_json::to_string(&decided_result).expect("serialize decision");
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_request",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "diagnostics",
+        ] {
+            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        let replay = parse_line(&decision_request.to_string());
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["product_completion_decision"]["replayed"],
+            true
+        );
+        assert_eq!(
+            replay_result["product_completion_decision"]["decision_fingerprint"],
+            decided_result["product_completion_decision"]["decision_fingerprint"]
+        );
+        let events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after decision replay");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+                })
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_blocks_invalid_product_completion_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Blocked product evidence","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.product.blocked","advance_id":"m51.product.blocked.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m51-product-blocked",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.product.blocked","drive_id":"m51.product.blocked.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+        let blocked = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m51.product.blocked",
+                    "drive_id": "m51.product.blocked.route",
+                    "expected_start_session_sequence": 1,
+                    "max_advances": 2,
+                    "max_steps_per_advance": 1,
+                    "expected_completion_closure_fingerprint": closure_fingerprint,
+                    "product_completion_decision": {
+                        "authorize_product_completion_decision": true,
+                        "decision_id": "m51-product-blocked-decision",
+                        "expected_accepted_completion_fingerprint": acceptance_fingerprint,
+                        "expected_terminal_completion_fingerprint": terminal_fingerprint,
+                        "expected_completion_closure_fingerprint": closure_fingerprint,
+                        "expected_product_evidence_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                        "evidence_status": "product_complete",
+                        "target_capability": "headless_autonomous_development",
+                        "concrete_capability_transition": "runtime_owned_product_completion_stop_decision",
+                        "validated_gate_categories": ["strategic_capability_mapping"],
+                        "behavior_evidence_count": 0,
+                        "rejected_alternatives_count": 0,
+                        "safety_boundary_reviewed": false,
+                        "non_goals_reviewed": false,
+                        "technical_debt_reviewed": false,
+                        "remaining_capability": null,
+                        "milestone_exit_rationale": null
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(blocked.error.is_none(), "{:?}", blocked.error);
+        let blocked_result = blocked.result.expect("blocked result");
+        assert_eq!(
+            blocked_result["product_completion_decision"]["status"],
+            "blocked_by_product_evidence"
+        );
+        assert_eq!(
+            blocked_result["product_completion_decision"]["next_action"],
+            "repair_product_completion_evidence"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_run_drive_does_not_route_unaccepted_completion() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -77958,7 +78656,7 @@ mod tests {
                 "session_id": "m49.route",
                 "drive_id": "m49.route.replacement.drive",
                 "expected_start_session_sequence": 4,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "modepack_selected_approved_candidate_replacement_target": replacement_target.clone(),
             }
@@ -78034,7 +78732,7 @@ mod tests {
                     "session_id": "m49.route",
                     "drive_id": "m49.route.replacement.drive",
                     "expected_start_session_sequence": 4,
-                    "max_advances": 1,
+                    "max_advances": 2,
                     "max_steps_per_advance": 1,
                     "modepack_selected_approved_candidate_replacement_target": mismatched_replacement_target
                 }
