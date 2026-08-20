@@ -2774,6 +2774,16 @@ describe('protocol validation', () => {
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', verification_recovery_context_read: recoveryContextRead })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 4096, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(true);
+    const completionAcceptanceRequest = {
+      authorize_completion_acceptance: true,
+      source_run_id: 'run_1',
+      acceptance_id: 'accept_1',
+      expected_completion_result_fingerprint: `sha256:${'a'.repeat(64)}`,
+    };
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: completionAcceptanceRequest })).toBe(true);
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, authorize_completion_acceptance: false } })).toBe(false);
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, expected_completion_result_fingerprint: 'sha256:notvalid' } })).toBe(false);
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, raw_request: 'nope' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 127, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: { ...selectedContext, content: 'changed' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', selected_index_context: selectedContext, raw_input: 'nope' })).toBe(false);
@@ -2799,6 +2809,17 @@ describe('protocol validation', () => {
         replayed: false,
       },
       selected_index_prompt_context: summary,
+      completion_acceptance: {
+        acceptance_id: 'accept_1',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        status: 'AcceptedComplete',
+        terminal_completion_fingerprint: `sha256:${'a'.repeat(64)}`,
+        acceptance_fingerprint: `sha256:${'b'.repeat(64)}`,
+        verifier_gate_status: 'NotRequired',
+        replayed: false,
+        next_action: 'inspect_accepted_completion',
+      },
       verification_recovery_context_read: recoveryContextReadSummary,
       context_budget: {
         requested: true,
@@ -2817,6 +2838,24 @@ describe('protocol validation', () => {
         prompt_within_budget: true,
       },
     })).toBe(true);
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+      completion_acceptance: {
+        acceptance_id: 'accept_1',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        status: 'AcceptedComplete',
+        terminal_completion_fingerprint: `sha256:${'a'.repeat(64)}`,
+        acceptance_fingerprint: `sha256:${'b'.repeat(64)}`,
+        verifier_gate_status: 'NotRequired',
+        replayed: false,
+        next_action: 'inspect_accepted_completion',
+        final_response: 'raw response',
+      },
+    })).toBe(false);
     expect(isTaskRunResult({
       task_id: 'task_1',
       run_id: 'run_1',

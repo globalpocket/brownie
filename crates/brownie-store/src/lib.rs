@@ -3987,6 +3987,7 @@ pub enum LedgerEventKind {
     TaskRunning,
     AgentLoopStarted,
     AgentLoopCompleted,
+    TaskCompletionAccepted,
     PromptBuilt,
     PromptSensitiveScanCompleted,
     PromptSensitiveScanFailed,

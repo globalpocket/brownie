@@ -969,6 +969,17 @@ pub struct TaskRunParams {
     pub verification_recovery_context_read: Option<TaskRunVerificationRecoveryContextRead>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completion_acceptance: Option<TaskRunCompletionAcceptanceRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TaskRunCompletionAcceptanceRequest {
+    pub authorize_completion_acceptance: bool,
+    pub source_run_id: String,
+    pub acceptance_id: String,
+    pub expected_completion_result_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1774,6 +1785,8 @@ pub struct TaskRunResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub completion_evidence: Option<TaskRunCompletionEvidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub completion_acceptance: Option<TaskRunCompletionAcceptance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure: Option<LlmProviderFailureOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_index_prompt_context: Option<TaskRunSelectedIndexPromptContextSummary>,
@@ -2234,6 +2247,19 @@ pub struct TaskRunCompletionEvidence {
     pub final_response_present: bool,
     pub final_response_chars: usize,
     pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskRunCompletionAcceptance {
+    pub acceptance_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub status: String,
+    pub terminal_completion_fingerprint: String,
+    pub acceptance_fingerprint: String,
+    pub verifier_gate_status: String,
+    pub replayed: bool,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
