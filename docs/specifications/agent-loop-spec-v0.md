@@ -288,6 +288,16 @@ or execution ledger evidence, and execution metadata remains limited to
 bounded handles, boundary classes, route kinds, hashes, fingerprints, replay
 state, and next action.
 
+M50.8 requires `journey_execution` to reconcile already committed child-drive
+boundaries before choosing any new Golden Journey work. If the outer execution
+checkpoint is missing or behind, the runtime may recover the admission, fetch,
+provenance, approval, replacement, and closure boundaries from persisted drive
+checkpoints after validating session, drive, journey, route-kind, sequence, and
+SHA-256 source/resume evidence. Closure recovery also replays the task
+completion boundary and `HeadlessJourneyExecuted` ledger event idempotently.
+This preserves the same authorization and bounded metadata contract while
+removing caller-side recovery choreography after an interrupted response.
+
 R3.1 adds bounded timeout-containment evidence to those same controlled verifier results. On supported Unix platforms, the runtime launches verifier commands in a process group and attempts process-tree termination on timeout. The result records only support, attempt, success, and bounded reason fields. Unsupported platforms report lack of process-tree timeout support honestly.
 
 ## Subtasks
