@@ -20709,6 +20709,14 @@ fn headless_run_product_completion_decision(
                 .to_string(),
         );
     }
+    let current_product_evidence_fingerprint =
+        headless_product_completion_evidence_fingerprint(request);
+    if current_product_evidence_fingerprint != request.expected_product_evidence_fingerprint {
+        return Err(
+            "invalid params: product completion decision product-evidence fingerprint mismatch"
+                .to_string(),
+        );
+    }
 
     let mut missing_or_invalid_evidence =
         !product_completion_evidence_categories_are_complete(&request.validated_gate_categories)
@@ -20943,6 +20951,26 @@ fn headless_product_completion_decision_fingerprint(
         "remaining_capability": request.remaining_capability,
         "milestone_exit_rationale": request.milestone_exit_rationale,
         "missing_or_invalid_evidence": missing_or_invalid_evidence,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn headless_product_completion_evidence_fingerprint(
+    request: &HeadlessRunProductCompletionDecisionRequest,
+) -> String {
+    let canonical = json!({
+        "version": "headless_product_completion_evidence_v1",
+        "evidence_status": request.evidence_status,
+        "target_capability": request.target_capability,
+        "concrete_capability_transition": request.concrete_capability_transition,
+        "validated_gate_categories": request.validated_gate_categories,
+        "behavior_evidence_count": request.behavior_evidence_count,
+        "rejected_alternatives_count": request.rejected_alternatives_count,
+        "safety_boundary_reviewed": request.safety_boundary_reviewed,
+        "non_goals_reviewed": request.non_goals_reviewed,
+        "technical_debt_reviewed": request.technical_debt_reviewed,
+        "remaining_capability": request.remaining_capability,
+        "milestone_exit_rationale": request.milestone_exit_rationale,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
@@ -75705,7 +75733,39 @@ mod tests {
             .to_string();
         assert!(drive_result.get("product_completion_decision").is_none());
 
-        let product_evidence_fingerprint = format!("sha256:{}", "a".repeat(64));
+        let mut product_decision = HeadlessRunProductCompletionDecisionRequest {
+            authorize_product_completion_decision: true,
+            decision_id: "m51-product-decision".to_string(),
+            expected_accepted_completion_fingerprint: acceptance_fingerprint.clone(),
+            expected_terminal_completion_fingerprint: terminal_fingerprint.clone(),
+            expected_completion_closure_fingerprint: closure_fingerprint.clone(),
+            expected_product_evidence_fingerprint: format!("sha256:{}", "0".repeat(64)),
+            evidence_status: "continue_development".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "runtime_owned_product_completion_stop_decision"
+                .to_string(),
+            validated_gate_categories: vec![
+                "strategic_capability_mapping".to_string(),
+                "concrete_capability_transition".to_string(),
+                "behavior_evidence".to_string(),
+                "safety_boundary".to_string(),
+                "non_goals".to_string(),
+                "rejected_alternatives".to_string(),
+                "technical_debt".to_string(),
+                "next_capability_or_milestone_exit".to_string(),
+            ],
+            behavior_evidence_count: 3,
+            rejected_alternatives_count: 2,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: Some("milestone_closeout".to_string()),
+            milestone_exit_rationale: None,
+        };
+        let product_evidence_fingerprint =
+            headless_product_completion_evidence_fingerprint(&product_decision);
+        product_decision.expected_product_evidence_fingerprint =
+            product_evidence_fingerprint.clone();
         let decision_request = json!({
             "jsonrpc": "2.0",
             "id": 6,
@@ -75718,36 +75778,20 @@ mod tests {
                 "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "expected_completion_closure_fingerprint": closure_fingerprint,
-                "product_completion_decision": {
-                    "authorize_product_completion_decision": true,
-                    "decision_id": "m51-product-decision",
-                    "expected_accepted_completion_fingerprint": acceptance_fingerprint,
-                    "expected_terminal_completion_fingerprint": terminal_fingerprint,
-                    "expected_completion_closure_fingerprint": closure_fingerprint,
-                    "expected_product_evidence_fingerprint": product_evidence_fingerprint,
-                    "evidence_status": "continue_development",
-                    "target_capability": "headless_autonomous_development",
-                    "concrete_capability_transition": "runtime_owned_product_completion_stop_decision",
-                    "validated_gate_categories": [
-                        "strategic_capability_mapping",
-                        "concrete_capability_transition",
-                        "behavior_evidence",
-                        "safety_boundary",
-                        "non_goals",
-                        "rejected_alternatives",
-                        "technical_debt",
-                        "next_capability_or_milestone_exit"
-                    ],
-                    "behavior_evidence_count": 3,
-                    "rejected_alternatives_count": 2,
-                    "safety_boundary_reviewed": true,
-                    "non_goals_reviewed": true,
-                    "technical_debt_reviewed": true,
-                    "remaining_capability": "milestone_closeout",
-                    "milestone_exit_rationale": null
-                }
+                "product_completion_decision": product_decision
             }
         });
+        let mut stale_product_evidence_request = decision_request.clone();
+        stale_product_evidence_request["params"]["product_completion_decision"]
+            ["expected_product_evidence_fingerprint"] = json!(format!("sha256:{}", "f".repeat(64)));
+        let stale_product_evidence = parse_line(&stale_product_evidence_request.to_string());
+        assert!(stale_product_evidence.result.is_none());
+        assert!(stale_product_evidence
+            .error
+            .expect("stale product evidence error")
+            .message
+            .contains("product-evidence fingerprint mismatch"));
+
         let decided = parse_line(&decision_request.to_string());
         assert!(decided.error.is_none(), "{:?}", decided.error);
         let decided_result = decided.result.expect("decided result");
@@ -75821,6 +75865,139 @@ mod tests {
     }
 
     #[test]
+    fn headless_run_drive_records_product_complete_decision() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Runtime product complete decision","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m51.product.complete","advance_id":"m51.product.complete.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m51-product-complete",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m51.product.complete","drive_id":"m51.product.complete.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+
+        let mut product_decision = HeadlessRunProductCompletionDecisionRequest {
+            authorize_product_completion_decision: true,
+            decision_id: "m51-product-complete-decision".to_string(),
+            expected_accepted_completion_fingerprint: acceptance_fingerprint,
+            expected_terminal_completion_fingerprint: terminal_fingerprint,
+            expected_completion_closure_fingerprint: closure_fingerprint.clone(),
+            expected_product_evidence_fingerprint: format!("sha256:{}", "0".repeat(64)),
+            evidence_status: "product_complete".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "runtime_owned_product_completion_stop_decision"
+                .to_string(),
+            validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                .iter()
+                .map(|category| category.to_string())
+                .collect(),
+            behavior_evidence_count: 4,
+            rejected_alternatives_count: 3,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: None,
+            milestone_exit_rationale: Some("m51_complete".to_string()),
+        };
+        product_decision.expected_product_evidence_fingerprint =
+            headless_product_completion_evidence_fingerprint(&product_decision);
+        let decided = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m51.product.complete",
+                    "drive_id": "m51.product.complete.route",
+                    "expected_start_session_sequence": 1,
+                    "max_advances": 2,
+                    "max_steps_per_advance": 1,
+                    "expected_completion_closure_fingerprint": closure_fingerprint,
+                    "product_completion_decision": product_decision
+                }
+            })
+            .to_string(),
+        );
+        assert!(decided.error.is_none(), "{:?}", decided.error);
+        let decided_result = decided.result.expect("decided result");
+        assert_eq!(
+            decided_result["product_completion_decision"]["status"],
+            "product_complete"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["next_action"],
+            "stop_autonomous_development"
+        );
+        assert!(
+            decided_result["product_completion_decision"]["product_evidence_fingerprint"]
+                .as_str()
+                .expect("product evidence fingerprint")
+                .starts_with("sha256:")
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_run_drive_blocks_invalid_product_completion_evidence() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -75887,6 +76064,28 @@ mod tests {
             .as_str()
             .expect("closure fingerprint")
             .to_string();
+        let mut blocked_decision = HeadlessRunProductCompletionDecisionRequest {
+            authorize_product_completion_decision: true,
+            decision_id: "m51-product-blocked-decision".to_string(),
+            expected_accepted_completion_fingerprint: acceptance_fingerprint,
+            expected_terminal_completion_fingerprint: terminal_fingerprint,
+            expected_completion_closure_fingerprint: closure_fingerprint.clone(),
+            expected_product_evidence_fingerprint: format!("sha256:{}", "0".repeat(64)),
+            evidence_status: "product_complete".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "runtime_owned_product_completion_stop_decision"
+                .to_string(),
+            validated_gate_categories: vec!["strategic_capability_mapping".to_string()],
+            behavior_evidence_count: 0,
+            rejected_alternatives_count: 0,
+            safety_boundary_reviewed: false,
+            non_goals_reviewed: false,
+            technical_debt_reviewed: false,
+            remaining_capability: None,
+            milestone_exit_rationale: None,
+        };
+        blocked_decision.expected_product_evidence_fingerprint =
+            headless_product_completion_evidence_fingerprint(&blocked_decision);
         let blocked = parse_line(
             &json!({
                 "jsonrpc": "2.0",
@@ -75900,25 +76099,7 @@ mod tests {
                     "max_advances": 2,
                     "max_steps_per_advance": 1,
                     "expected_completion_closure_fingerprint": closure_fingerprint,
-                    "product_completion_decision": {
-                        "authorize_product_completion_decision": true,
-                        "decision_id": "m51-product-blocked-decision",
-                        "expected_accepted_completion_fingerprint": acceptance_fingerprint,
-                        "expected_terminal_completion_fingerprint": terminal_fingerprint,
-                        "expected_completion_closure_fingerprint": closure_fingerprint,
-                        "expected_product_evidence_fingerprint": format!("sha256:{}", "b".repeat(64)),
-                        "evidence_status": "product_complete",
-                        "target_capability": "headless_autonomous_development",
-                        "concrete_capability_transition": "runtime_owned_product_completion_stop_decision",
-                        "validated_gate_categories": ["strategic_capability_mapping"],
-                        "behavior_evidence_count": 0,
-                        "rejected_alternatives_count": 0,
-                        "safety_boundary_reviewed": false,
-                        "non_goals_reviewed": false,
-                        "technical_debt_reviewed": false,
-                        "remaining_capability": null,
-                        "milestone_exit_rationale": null
-                    }
+                    "product_completion_decision": blocked_decision
                 }
             })
             .to_string(),
