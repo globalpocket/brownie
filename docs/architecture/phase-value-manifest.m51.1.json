@@ -81,7 +81,7 @@
       "non_duplicative": "Distinct from M50.5 replacement, M50.6 closure, and M50.7 uninterrupted journey execution because this is a reusable agent-loop completion state transition, not another Mode Pack route or journey wrapper.",
       "no_new_rpc": "Yes. The phase extends existing task.run with a bounded optional completion_acceptance envelope.",
       "no_new_summary": "Yes. The phase writes and replays bounded acceptance evidence instead of adding a report, digest, history, readiness, verdict, inspection, preview, dashboard, or summary surface.",
-      "runtime_behavior_change": "Rust re-reads current task/run state, validates Completed status, source run ownership, terminal completion fingerprint, verifier-gate status, and conflicting accepted evidence before appending TaskCompletionAccepted or replaying it duplicate-free.",
+      "runtime_behavior_change": "Rust re-reads current task/run state, validates Completed status, source run ownership, bounded acceptance id, terminal completion fingerprint, verifier-gate status, and conflicting accepted evidence before appending TaskCompletionAccepted or replaying an existing AcceptedComplete terminal state duplicate-free.",
       "headless_autonomous_contribution": "A scheduled headless caller can now decide follow-on closure or stop behavior from bounded accepted-completion metadata without raw ledger scraping or caller-side acceptance inference.",
       "milestone_progress": "This establishes the first M51 finite completion-state transition beyond TaskStatus::Completed and unlocks later headless accepted-completion routing."
     }
@@ -129,12 +129,13 @@
     "runtime re-reads current task/run state and validates Completed status, run ownership, terminal completion evidence, expected fingerprint, and verifier-gate status before ledger mutation",
     "successful acceptance appends one bounded TaskCompletionAccepted event and returns bounded completion_acceptance result metadata",
     "replay of the same acceptance id and fingerprint returns replayed=true without adding another TaskCompletionAccepted or TaskRunning event",
+    "a second acceptance request for the same task/run/terminal completion with a different acceptance_id replays the existing AcceptedComplete evidence instead of appending a second TaskCompletionAccepted event",
     "unauthorized, non-completed, mismatched-fingerprint, failed-gate, stale, malformed, or conflicting acceptance attempts fail closed before ledger mutation",
-    "VSIX validators accept the bounded request and result shape and reject false authorization, malformed fingerprints, unknown raw fields, and raw acceptance payload fields",
+    "VSIX validators accept the bounded request and result shape and reject false authorization, malformed fingerprints, unbounded acceptance ids, unknown raw fields, and raw acceptance payload fields",
     "no report, digest, history, readiness, verdict, inspection, preview, dashboard, new RPC, VSIX-owned policy, workspace mutation expansion, or broad runtime modularization is added"
   ],
   "behavior_evidence": [
-    "Rust behavior test task_run_completed_task_accepts_completion_once_with_bounded_evidence validates authorized acceptance, bounded result fields, one TaskCompletionAccepted ledger event, raw-data exclusion, and duplicate-free replay.",
+    "Rust behavior test task_run_completed_task_accepts_completion_once_with_bounded_evidence validates authorized acceptance, bounded result fields, one TaskCompletionAccepted ledger event, raw-data exclusion, same-id replay, and different-id replay of the existing AcceptedComplete terminal state without duplicate acceptance events.",
     "Rust behavior test task_run_completion_acceptance_fails_before_mutation_for_invalid_state_or_fingerprint validates non-completed and mismatched-fingerprint denial before ledger mutation.",
     "Rust behavior test task_run_completion_acceptance_denies_failed_gate_and_conflicting_replay validates failed verifier-gate denial and conflicting accepted evidence denial without mutation.",
     "VSIX runtimeClient protocol tests validate completion_acceptance request/result shape, false authorization rejection, malformed fingerprint rejection, unknown request field rejection, and raw result field rejection."
@@ -147,16 +148,17 @@
       "Runtime-owned AcceptedComplete transition for terminal Completed task/run evidence through existing task.run"
     ],
     "behavior_evidence": [
-      "cargo test -p brownie-runtime task_run_completed_task_accepts_completion_once_with_bounded_evidence -- --nocapture validates the positive end-to-end acceptance and replay path.",
-      "cargo test -p brownie-runtime task_run_completion_acceptance -- --nocapture validates denial paths for non-completed, mismatched fingerprint, failed gate, and conflicting accepted evidence.",
-      "pnpm --filter brownie-vsix test -- runtimeClient.test.ts validates the VSIX protocol guards for the new task.run envelope and result metadata."
+      "cargo test -p brownie-runtime task_run_completed_task_accepts_completion_once_with_bounded_evidence -- --nocapture validates the positive end-to-end acceptance plus same-id and different-id replay paths.",
+      "cargo test -p brownie-runtime task_run_completion_acceptance -- --nocapture validates denial paths for non-completed, unbounded acceptance id, mismatched fingerprint, failed gate, and conflicting accepted evidence.",
+      "pnpm --filter brownie-vsix test -- runtimeClient.test.ts validates the VSIX protocol guards for the new task.run envelope, bounded acceptance id, and result metadata."
     ],
     "safety_boundary": [
       "completion_acceptance requires explicit authorize_completion_acceptance=true and cannot be combined with task-run context materialization fields",
+      "acceptance_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters",
       "acceptance is limited to an existing terminal Completed task whose current run id matches source_run_id",
       "expected_completion_result_fingerprint must match current bounded terminal completion evidence",
       "present or required verifier completion gates must be Passed before acceptance",
-      "conflicting accepted evidence for the same acceptance id fails closed before mutation",
+      "existing AcceptedComplete evidence is unique per task/run/terminal completion; a different requested acceptance_id replays the existing accepted terminal state and conflicting existing evidence fails closed before mutation",
       "ledger and RPC acceptance metadata contain only ids, status strings, SHA-256 fingerprints, verifier-gate status, replay state, and next action"
     ],
     "non_goals": [

@@ -2782,6 +2782,8 @@ describe('protocol validation', () => {
     };
     expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: completionAcceptanceRequest })).toBe(true);
     expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, authorize_completion_acceptance: false } })).toBe(false);
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, acceptance_id: 'a'.repeat(49) } })).toBe(false);
+    expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, acceptance_id: 'accept raw' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, expected_completion_result_fingerprint: 'sha256:notvalid' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', completion_acceptance: { ...completionAcceptanceRequest, raw_request: 'nope' } })).toBe(false);
     expect(isTaskRunParams({ task_id: 'task_1', context_budget: { max_prompt_chars: 127, max_ledger_events: 4, max_selected_index_chars: 1024 } })).toBe(false);
@@ -2854,6 +2856,23 @@ describe('protocol validation', () => {
         replayed: false,
         next_action: 'inspect_accepted_completion',
         final_response: 'raw response',
+      },
+    })).toBe(false);
+    expect(isTaskRunResult({
+      task_id: 'task_1',
+      run_id: 'run_1',
+      status: 'Completed',
+      agent_loop: { final_state: 'Completed', completion_summary: 'done' },
+      completion_acceptance: {
+        acceptance_id: 'a'.repeat(49),
+        task_id: 'task_1',
+        run_id: 'run_1',
+        status: 'AcceptedComplete',
+        terminal_completion_fingerprint: `sha256:${'a'.repeat(64)}`,
+        acceptance_fingerprint: `sha256:${'b'.repeat(64)}`,
+        verifier_gate_status: 'NotRequired',
+        replayed: false,
+        next_action: 'inspect_accepted_completion',
       },
     })).toBe(false);
     expect(isTaskRunResult({
