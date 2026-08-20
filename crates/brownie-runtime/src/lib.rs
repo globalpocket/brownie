@@ -14943,6 +14943,252 @@ fn headless_journey_execution_recover_admission_boundary(
     Ok(Some(result))
 }
 
+fn headless_journey_execution_has_boundary(
+    completed_boundaries: &[HeadlessRunJourneyExecutionBoundaryMetadata],
+    boundary: &str,
+) -> bool {
+    completed_boundaries
+        .iter()
+        .any(|metadata| metadata.boundary == boundary)
+}
+
+fn headless_journey_execution_recover_route_boundary(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    request_fingerprint: &str,
+    route_kind: HeadlessContinueRouteKind,
+    completed_boundaries: &mut Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+) -> Result<Option<HeadlessRunDriveResult>, String> {
+    let (boundary, suffix) = headless_journey_execution_route_boundary(&route_kind);
+    if headless_journey_execution_has_boundary(completed_boundaries, boundary) {
+        return Ok(None);
+    }
+    let Some(previous_boundary) = completed_boundaries.last() else {
+        return Ok(None);
+    };
+    let child_drive_id = headless_journey_execution_drive_id(drive_id, suffix)?;
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&params.session_id, &child_drive_id)
+        .map_err(|error| error.to_string())?;
+    let Some(checkpoint) = checkpoint else {
+        return Ok(None);
+    };
+    if checkpoint.session_id != params.session_id
+        || checkpoint.drive_id != child_drive_id
+        || checkpoint.start_session_sequence != previous_boundary.session_sequence
+    {
+        return Err(
+            "invalid params: recovered journey route drive checkpoint is stale".to_string(),
+        );
+    }
+    let mut result = checkpoint.result;
+    if result.session_id != params.session_id
+        || result.drive_id != child_drive_id
+        || result.start_session_sequence != checkpoint.start_session_sequence
+    {
+        return Err(
+            "invalid params: recovered journey route drive result conflicts with checkpoint"
+                .to_string(),
+        );
+    }
+    let Some(metadata) = result.journey_route_resume.as_ref() else {
+        return Err(
+            "internal error: recovered journey route drive checkpoint is missing route metadata"
+                .to_string(),
+        );
+    };
+    if metadata.journey_id != journey.journey_id
+        || metadata.task_id != journey.task_id
+        || metadata.run_id != journey.run_id
+        || metadata.session_id != journey.session_id
+        || metadata.drive_id != child_drive_id
+        || metadata.route_kind != route_kind
+        || !is_sha256_fingerprint(&metadata.source_checkpoint_fingerprint)
+        || !is_sha256_fingerprint(&metadata.resume_fingerprint)
+    {
+        return Err(
+            "invalid params: recovered journey route drive checkpoint conflicts with persisted journey"
+                .to_string(),
+        );
+    }
+    result.replayed = true;
+    if let Some(metadata) = result.journey_route_resume.as_mut() {
+        metadata.replayed = true;
+    }
+    completed_boundaries.push(headless_journey_execution_boundary_from_result(
+        boundary, &result,
+    ));
+    let mut execution_metadata = headless_journey_execution_write_checkpoint(
+        store,
+        journey,
+        &params.session_id,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries.clone(),
+        false,
+        result.next_action.clone(),
+        false,
+    )?;
+    execution_metadata.replayed = true;
+    result.journey_execution = Some(execution_metadata);
+    Ok(Some(result))
+}
+
+fn headless_journey_execution_recover_closure_boundary(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    request_fingerprint: &str,
+    completed_boundaries: &mut Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+) -> Result<Option<HeadlessRunDriveResult>, String> {
+    if headless_journey_execution_has_boundary(completed_boundaries, "close_journey") {
+        return Ok(None);
+    }
+    let Some(replacement) = completed_boundaries
+        .iter()
+        .rev()
+        .find(|boundary| boundary.boundary == "replace_active_modepack")
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let Some(replacement_resume_fingerprint) = replacement.resume_fingerprint.as_deref() else {
+        return Err("internal error: replacement boundary missing resume fingerprint".to_string());
+    };
+    headless_journey_execution_complete_task_if_needed(
+        store,
+        journey,
+        replacement_resume_fingerprint,
+    )?;
+    let child_drive_id = headless_journey_execution_drive_id(drive_id, "closure")?;
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&params.session_id, &child_drive_id)
+        .map_err(|error| error.to_string())?;
+    let Some(checkpoint) = checkpoint else {
+        return Ok(None);
+    };
+    if checkpoint.session_id != params.session_id
+        || checkpoint.drive_id != child_drive_id
+        || checkpoint.start_session_sequence != replacement.session_sequence
+    {
+        return Err(
+            "invalid params: recovered journey closure drive checkpoint is stale".to_string(),
+        );
+    }
+    let mut result = checkpoint.result;
+    if result.session_id != params.session_id
+        || result.drive_id != child_drive_id
+        || result.start_session_sequence != checkpoint.start_session_sequence
+    {
+        return Err(
+            "invalid params: recovered journey closure drive result conflicts with checkpoint"
+                .to_string(),
+        );
+    }
+    let Some(metadata) = result.journey_closure.as_ref() else {
+        return Err(
+            "internal error: recovered journey closure drive checkpoint is missing closure metadata"
+                .to_string(),
+        );
+    };
+    if metadata.journey_id != journey.journey_id
+        || metadata.task_id != journey.task_id
+        || metadata.run_id != journey.run_id
+        || metadata.session_id != journey.session_id
+        || metadata.drive_id != child_drive_id
+        || metadata.source_replacement_drive_id != replacement.drive_id
+        || metadata.source_replacement_resume_fingerprint != replacement_resume_fingerprint
+        || !is_sha256_fingerprint(&metadata.journey_closure_fingerprint)
+    {
+        return Err(
+            "invalid params: recovered journey closure drive checkpoint conflicts with persisted journey"
+                .to_string(),
+        );
+    }
+    result.replayed = true;
+    if let Some(metadata) = result.journey_closure.as_mut() {
+        metadata.replayed = true;
+    }
+    completed_boundaries.push(headless_journey_execution_boundary_from_result(
+        "close_journey",
+        &result,
+    ));
+    let mut execution_metadata = headless_journey_execution_write_checkpoint(
+        store,
+        journey,
+        &params.session_id,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries.clone(),
+        true,
+        "complete_headless_journey".to_string(),
+        false,
+    )?;
+    execution_metadata.replayed = true;
+    if let Err(error) =
+        append_headless_journey_executed_event_if_missing(store, &execution_metadata)
+    {
+        return Err(format!("internal error: {error}"));
+    }
+    result.journey_execution = Some(execution_metadata);
+    Ok(Some(result))
+}
+
+fn headless_journey_execution_recover_committed_boundaries(
+    store: &BrownieStore,
+    journey: &HeadlessJourneyStartCheckpoint,
+    params: &HeadlessRunDriveParams,
+    drive_id: &str,
+    request_fingerprint: &str,
+    completed_boundaries: &mut Vec<HeadlessRunJourneyExecutionBoundaryMetadata>,
+) -> Result<Option<HeadlessRunDriveResult>, String> {
+    let mut last_result = None;
+    if let Some(result) = headless_journey_execution_recover_admission_boundary(
+        store,
+        journey,
+        params,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries,
+    )? {
+        last_result = Some(result);
+    }
+    for route_kind in [
+        HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly,
+        HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
+        HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
+        HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
+    ] {
+        if let Some(result) = headless_journey_execution_recover_route_boundary(
+            store,
+            journey,
+            params,
+            drive_id,
+            request_fingerprint,
+            route_kind,
+            completed_boundaries,
+        )? {
+            last_result = Some(result);
+        }
+    }
+    if let Some(result) = headless_journey_execution_recover_closure_boundary(
+        store,
+        journey,
+        params,
+        drive_id,
+        request_fingerprint,
+        completed_boundaries,
+    )? {
+        last_result = Some(result);
+    }
+    Ok(last_result)
+}
+
 fn headless_journey_source_checkpoint_fingerprint_for_route(
     store: &BrownieStore,
     start_checkpoint: &HeadlessRunSessionCheckpoint,
@@ -15426,7 +15672,30 @@ fn handle_headless_journey_execution(
             );
         }
     }
-    if existing_execution.is_none() {
+    match headless_journey_execution_recover_committed_boundaries(
+        store,
+        &journey,
+        params,
+        drive_id,
+        &request_fingerprint,
+        &mut completed_boundaries,
+    ) {
+        Ok(recovered) => {
+            if let Some(result) = recovered {
+                let complete = result
+                    .journey_execution
+                    .as_ref()
+                    .map(|metadata| metadata.complete)
+                    .unwrap_or(false);
+                last_result = Some(result.clone());
+                if complete {
+                    return result_response(id, json!(result));
+                }
+            }
+        }
+        Err(message) => return error_response(id, -32602, &message),
+    }
+    if existing_execution.is_none() && completed_boundaries.is_empty() {
         match headless_journey_execution_recover_admission_boundary(
             store,
             &journey,
@@ -52839,6 +53108,233 @@ mod tests {
         assert_eq!(
             store.tasks().list_tasks().expect("tasks").len(),
             task_count_after_admission
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_execution_recovers_committed_route_and_closure_checkpoints() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        fn test_sha(seed: char) -> String {
+            format!("sha256:{}", seed.to_string().repeat(64))
+        }
+
+        fn write_route_drive(
+            store: &BrownieStore,
+            base: &HeadlessRunDriveResult,
+            journey: &HeadlessJourneyStartCheckpoint,
+            drive_id: &str,
+            route_kind: HeadlessContinueRouteKind,
+            start_sequence: u64,
+            end_sequence: u64,
+            source_fingerprint: &str,
+            resume_fingerprint: &str,
+        ) {
+            let mut result = base.clone();
+            result.drive_id = drive_id.to_string();
+            result.start_session_sequence = start_sequence;
+            result.end_session_sequence = end_sequence;
+            result.replayed = false;
+            result.drive_fingerprint = test_sha(char::from_digit(end_sequence as u32, 16).unwrap());
+            result.journey = None;
+            result.journey_execution = None;
+            result.journey_closure = None;
+            result.journey_route_resume = Some(HeadlessRunJourneyRouteResumeMetadata {
+                journey_id: journey.journey_id.clone(),
+                task_id: journey.task_id.clone(),
+                run_id: journey.run_id.clone(),
+                session_id: journey.session_id.clone(),
+                drive_id: drive_id.to_string(),
+                route_kind,
+                source_continuation_id: format!("source.{end_sequence}"),
+                source_decision_id: format!("decision.{end_sequence}"),
+                source_checkpoint_fingerprint: source_fingerprint.to_string(),
+                derived_target_class: "synthetic_test_target".to_string(),
+                result_advance_id: Some(format!("advance.{end_sequence}")),
+                result_continuation_id: Some(format!("continuation.{end_sequence}")),
+                post_route_progress_fingerprint: Some(test_sha('b')),
+                post_route_aggregate_sequence: Some(end_sequence),
+                next_action: "continue_headless_journey".to_string(),
+                replayed: false,
+                resume_fingerprint: resume_fingerprint.to_string(),
+            });
+            store
+                .tasks()
+                .write_headless_run_session_drive_checkpoint(&HeadlessRunSessionDriveCheckpoint {
+                    session_id: journey.session_id.clone(),
+                    drive_id: drive_id.to_string(),
+                    start_session_sequence: start_sequence,
+                    result,
+                })
+                .expect("write route checkpoint");
+        }
+
+        let admission_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.route.recover","drive_id":"m50.route.recover.drive.admit","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m50.route.recover.1","authorize_journey_start":true,"task_start":{"goal":"Recover committed route checkpoints","mode_id":"implementer"}}}}"#;
+        let admission_response = parse_line(admission_request);
+        let admission_value = admission_response
+            .result
+            .unwrap_or_else(|| panic!("admission result: {:?}", admission_response.error));
+        let admission: HeadlessRunDriveResult =
+            serde_json::from_value(admission_value).expect("admission drive result");
+        let journey = store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m50.route.recover.1")
+            .expect("journey read")
+            .expect("journey checkpoint");
+
+        let fetch_resume = test_sha('f');
+        let provenance_resume = test_sha('e');
+        let approval_resume = test_sha('a');
+        let replacement_resume = test_sha('c');
+        write_route_drive(
+            &store,
+            &admission,
+            &journey,
+            "m50.route.recover.drive.fetch",
+            HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly,
+            1,
+            2,
+            &test_sha('1'),
+            &fetch_resume,
+        );
+        write_route_drive(
+            &store,
+            &admission,
+            &journey,
+            "m50.route.recover.drive.provenance",
+            HeadlessContinueRouteKind::VerifySelectedModePackCandidateProvenanceExplicitly,
+            2,
+            3,
+            &fetch_resume,
+            &provenance_resume,
+        );
+        write_route_drive(
+            &store,
+            &admission,
+            &journey,
+            "m50.route.recover.drive.approval",
+            HeadlessContinueRouteKind::ApproveVerifiedModePackCandidateExplicitly,
+            3,
+            4,
+            &provenance_resume,
+            &approval_resume,
+        );
+        write_route_drive(
+            &store,
+            &admission,
+            &journey,
+            "m50.route.recover.drive.replacement",
+            HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
+            4,
+            5,
+            &approval_resume,
+            &replacement_resume,
+        );
+
+        let mut closure_result = admission.clone();
+        closure_result.status = HeadlessContinueOnceStatus::NoEligibleTask;
+        closure_result.drive_id = "m50.route.recover.drive.closure".to_string();
+        closure_result.start_session_sequence = 5;
+        closure_result.end_session_sequence = 5;
+        closure_result.replayed = false;
+        closure_result.drive_fingerprint = test_sha('d');
+        closure_result.advance_count = 0;
+        closure_result.executed_count = 0;
+        closure_result.replayed_count = 0;
+        closure_result.stop_reason = "journey_closure".to_string();
+        closure_result.journey = None;
+        closure_result.journey_execution = None;
+        closure_result.journey_route_resume = None;
+        closure_result.next_route = None;
+        closure_result.advances.clear();
+        closure_result.next_action = "complete_headless_journey".to_string();
+        closure_result.journey_closure = Some(HeadlessRunJourneyClosureMetadata {
+            journey_id: journey.journey_id.clone(),
+            task_id: journey.task_id.clone(),
+            run_id: journey.run_id.clone(),
+            session_id: journey.session_id.clone(),
+            drive_id: "m50.route.recover.drive.closure".to_string(),
+            source_replacement_drive_id: "m50.route.recover.drive.replacement".to_string(),
+            source_replacement_resume_fingerprint: replacement_resume.clone(),
+            replacement_route_kind:
+                HeadlessContinueRouteKind::ReplaceActiveWithApprovedModePackCandidateExplicitly,
+            replacement_continuation_id: "replacement.continuation".to_string(),
+            replacement_checkpoint_fingerprint: test_sha('9'),
+            active_modepack_activation_fingerprint: test_sha('8'),
+            closure_fingerprint: closure_result
+                .completion_closure
+                .closure_fingerprint
+                .clone(),
+            finalization_fingerprint: None,
+            terminal_completion_fingerprint: None,
+            progress_fingerprint: closure_result.start_progress.progress_fingerprint.clone(),
+            aggregate_sequence: 5,
+            next_action: "complete_headless_journey".to_string(),
+            replayed: false,
+            journey_closure_fingerprint: test_sha('7'),
+        });
+        store
+            .tasks()
+            .write_headless_run_session_drive_checkpoint(&HeadlessRunSessionDriveCheckpoint {
+                session_id: journey.session_id.clone(),
+                drive_id: "m50.route.recover.drive.closure".to_string(),
+                start_session_sequence: 5,
+                result: closure_result,
+            })
+            .expect("write closure checkpoint");
+
+        assert!(store
+            .tasks()
+            .read_headless_journey_execution_checkpoint("m50.route.recover.1")
+            .expect("execution checkpoint before recovery")
+            .is_none());
+        let execution_request = r#"{"jsonrpc":"2.0","id":2,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.route.recover","drive_id":"m50.route.recover.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_execution":{"journey_id":"m50.route.recover.1","authorize_journey_execution":true,"task_start":{"goal":"Recover committed route checkpoints","mode_id":"implementer"}}}}"#;
+        let execution_response = parse_line(execution_request);
+        let execution = execution_response.result.unwrap_or_else(|| {
+            panic!(
+                "route and closure recovery result: {:?}",
+                execution_response.error
+            )
+        });
+        assert_eq!(execution["replayed"], true);
+        assert_eq!(execution["journey_closure"]["replayed"], true);
+        assert_eq!(execution["journey_execution"]["replayed"], true);
+        assert_eq!(execution["journey_execution"]["complete"], true);
+        let boundaries = execution["journey_execution"]["completed_boundaries"]
+            .as_array()
+            .expect("completed boundaries");
+        assert_eq!(boundaries.len(), 6);
+        assert_eq!(boundaries[0]["boundary"], "admit_journey");
+        assert_eq!(boundaries[1]["boundary"], "fetch_selected_candidate");
+        assert_eq!(boundaries[2]["boundary"], "verify_candidate_provenance");
+        assert_eq!(boundaries[3]["boundary"], "approve_verified_candidate");
+        assert_eq!(boundaries[4]["boundary"], "replace_active_modepack");
+        assert_eq!(boundaries[5]["boundary"], "close_journey");
+        assert_eq!(boundaries[4]["resume_fingerprint"], replacement_resume);
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&journey.task_id)
+                .expect("task lookup")
+                .expect("task")
+                .status,
+            TaskStatus::Completed
+        );
+        let events = store
+            .tasks()
+            .read_ledger_events(&journey.run_id)
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyExecuted)
+                .count(),
+            1
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
