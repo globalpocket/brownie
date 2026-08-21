@@ -367,6 +367,9 @@ export class RuntimeClient {
       mode_id?: string;
       verification_recovery_source?: unknown;
       patch_apply_recovery_source?: unknown;
+      verification_recovery_retry_source?: unknown;
+      llm_provider_failure_retry_source?: unknown;
+      product_continuation_source?: unknown;
     } = {
       goal: params.goal,
     };
@@ -378,6 +381,15 @@ export class RuntimeClient {
     }
     if (params.patchApplyRecoverySource !== undefined) {
       requestParams.patch_apply_recovery_source = params.patchApplyRecoverySource;
+    }
+    if (params.verificationRecoveryRetrySource !== undefined) {
+      requestParams.verification_recovery_retry_source = params.verificationRecoveryRetrySource;
+    }
+    if (params.llmProviderFailureRetrySource !== undefined) {
+      requestParams.llm_provider_failure_retry_source = params.llmProviderFailureRetrySource;
+    }
+    if (params.productContinuationSource !== undefined) {
+      requestParams.product_continuation_source = params.productContinuationSource;
     }
     const result = await this.call<TaskStartResult>('task.start', requestParams);
 

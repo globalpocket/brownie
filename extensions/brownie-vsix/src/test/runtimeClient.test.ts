@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
-import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary } from '../runtime/protocol';
+import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary, isTaskStartParams, isTaskStartResult } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -4208,6 +4208,89 @@ describe('RuntimeClient', () => {
           expected_failure_fingerprint: failureFingerprint,
           authorize_patch_apply_recovery: true,
         },
+      },
+    }]);
+  });
+
+  it('creates a task.start product continuation request', async () => {
+    const decisionFingerprint = `sha256:${'1'.repeat(64)}`;
+    const acceptedFingerprint = `sha256:${'2'.repeat(64)}`;
+    const terminalFingerprint = `sha256:${'3'.repeat(64)}`;
+    const closureFingerprint = `sha256:${'4'.repeat(64)}`;
+    const productEvidenceFingerprint = `sha256:${'5'.repeat(64)}`;
+    const productContinuationSource = {
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      source_decision_id: 'product_decision_1',
+      expected_decision_fingerprint: decisionFingerprint,
+      expected_accepted_completion_fingerprint: acceptedFingerprint,
+      expected_terminal_completion_fingerprint: terminalFingerprint,
+      expected_completion_closure_fingerprint: closureFingerprint,
+      expected_product_evidence_fingerprint: productEvidenceFingerprint,
+      authorize_product_continuation: true,
+    };
+    const result = {
+      task_id: 'task_continuation',
+      run_id: 'run_continuation',
+      status: 'Created',
+      product_continuation_admission: {
+        source_task_id: 'task_source',
+        source_run_id: 'run_source',
+        source_decision_id: 'product_decision_1',
+        continuation_task_id: 'task_continuation',
+        continuation_run_id: 'run_continuation',
+        decision_fingerprint: decisionFingerprint,
+        product_evidence_fingerprint: productEvidenceFingerprint,
+        continuation_running_enabled: false,
+        next_action: 'run_product_continuation_task_explicitly',
+        replayed: false,
+      },
+    };
+    const transport = new FakeTransport({ jsonrpc: '2.0', id: 1, result });
+    const client = new RuntimeClient(transport);
+
+    expect(isTaskStartParams({
+      goal: 'continue from product decision',
+      modeId: 'implementer',
+      productContinuationSource,
+    })).toBe(true);
+    expect(isTaskStartParams({
+      goal: 'continue from product decision',
+      modeId: 'implementer',
+      productContinuationSource: {
+        ...productContinuationSource,
+        authorize_product_continuation: false,
+      },
+    })).toBe(false);
+    expect(isTaskStartParams({
+      goal: 'continue from product decision',
+      productContinuationSource: {
+        ...productContinuationSource,
+        raw_prompt: 'secret',
+      },
+    })).toBe(false);
+    expect(isTaskStartResult(result)).toBe(true);
+    expect(isTaskStartResult({
+      ...result,
+      product_continuation_admission: {
+        ...result.product_continuation_admission,
+        next_action: 'plan_next_phase',
+      },
+    })).toBe(false);
+
+    await expect(client.startTask({
+      goal: 'continue from product decision',
+      modeId: 'implementer',
+      productContinuationSource,
+    })).resolves.toEqual(result);
+    expect(transport.requests).toEqual([{
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'task.start',
+      params: {
+        goal: 'continue from product decision',
+        mode_id: 'implementer',
+        product_continuation_source: productContinuationSource,
       },
     }]);
   });

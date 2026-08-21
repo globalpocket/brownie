@@ -482,6 +482,21 @@ export interface LlmProviderFailureRetryProvenance {
   retryable: boolean;
 }
 
+export interface ProductContinuationProvenance {
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  decision_fingerprint: string;
+  accepted_completion_fingerprint: string;
+  terminal_completion_fingerprint: string;
+  completion_closure_fingerprint: string;
+  product_evidence_fingerprint: string;
+  target_capability: string;
+  concrete_capability_transition: string;
+  decision_status: 'continue_development';
+  decision_next_action: 'plan_next_phase';
+}
+
 export interface ToolIntentParseResult {
   mode_id: string;
   parser: ToolIntentParserSummary;
@@ -504,6 +519,7 @@ export interface TaskStartParams {
   patchApplyRecoverySource?: PatchApplyRecoverySource | null;
   verificationRecoveryRetrySource?: VerificationRecoveryRetrySource | null;
   llmProviderFailureRetrySource?: LlmProviderFailureRetrySource | null;
+  productContinuationSource?: ProductContinuationSource | null;
 }
 
 export type TaskRunSelectedIndexContext = CodebaseIndexSelectionReadResult;
@@ -789,6 +805,18 @@ export interface LlmProviderFailureRetrySource {
   authorize_provider_failure_retry: boolean;
 }
 
+export interface ProductContinuationSource {
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  expected_decision_fingerprint: string;
+  expected_accepted_completion_fingerprint: string;
+  expected_terminal_completion_fingerprint: string;
+  expected_completion_closure_fingerprint: string;
+  expected_product_evidence_fingerprint: string;
+  authorize_product_continuation: boolean;
+}
+
 export interface LlmProviderFailureRetryRunTarget {
   retry_task_id: string;
   retry_run_id: string;
@@ -806,6 +834,7 @@ export interface TaskStartResult {
   patch_apply_recovery_admission?: PatchApplyRecoveryAdmission | null;
   verification_recovery_retry_admission?: VerificationRecoveryRetryAdmission | null;
   llm_provider_failure_retry_admission?: LlmProviderFailureRetryAdmission | null;
+  product_continuation_admission?: ProductContinuationAdmission | null;
 }
 
 export interface VerificationRecoveryAdmission {
@@ -858,6 +887,19 @@ export interface LlmProviderFailureRetryAdmission {
   retryable: true;
   retry_running_enabled: false;
   next_action: 'run_llm_provider_retry_task_explicitly';
+  replayed: boolean;
+}
+
+export interface ProductContinuationAdmission {
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  continuation_task_id: string;
+  continuation_run_id: string;
+  decision_fingerprint: string;
+  product_evidence_fingerprint: string;
+  continuation_running_enabled: false;
+  next_action: 'run_product_continuation_task_explicitly';
   replayed: boolean;
 }
 
@@ -1604,6 +1646,7 @@ export interface TaskRecord {
   patch_apply_recovery_provenance?: PatchApplyRecoveryProvenance | null;
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
+  product_continuation_provenance?: ProductContinuationProvenance | null;
   created_at: string;
   updated_at: string;
 }
@@ -1807,6 +1850,7 @@ export interface ChildTaskInspectSummary {
   verification_recovery_provenance?: VerificationRecoveryProvenance | null;
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
+  product_continuation_provenance?: ProductContinuationProvenance | null;
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
@@ -4689,6 +4733,21 @@ const LLM_PROVIDER_FAILURE_RETRY_PROVENANCE_KEYS = new Set([
   'retryable',
 ]);
 
+const PRODUCT_CONTINUATION_PROVENANCE_KEYS = new Set([
+  'source_task_id',
+  'source_run_id',
+  'source_decision_id',
+  'decision_fingerprint',
+  'accepted_completion_fingerprint',
+  'terminal_completion_fingerprint',
+  'completion_closure_fingerprint',
+  'product_evidence_fingerprint',
+  'target_capability',
+  'concrete_capability_transition',
+  'decision_status',
+  'decision_next_action',
+]);
+
 const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
   'source_task_id',
   'source_run_id',
@@ -4725,6 +4784,19 @@ const LLM_PROVIDER_FAILURE_RETRY_ADMISSION_KEYS = new Set([
   'failure_class',
   'retryable',
   'retry_running_enabled',
+  'next_action',
+  'replayed',
+]);
+
+const PRODUCT_CONTINUATION_ADMISSION_KEYS = new Set([
+  'source_task_id',
+  'source_run_id',
+  'source_decision_id',
+  'continuation_task_id',
+  'continuation_run_id',
+  'decision_fingerprint',
+  'product_evidence_fingerprint',
+  'continuation_running_enabled',
   'next_action',
   'replayed',
 ]);
@@ -5086,6 +5158,49 @@ export function isLlmProviderFailureRetryProvenance(value: unknown): value is Ll
     typeof value.request_phase === 'string' &&
     value.request_phase.trim().length > 0 &&
     value.retryable === true
+  );
+}
+
+export function isProductContinuationAdmission(value: unknown): value is ProductContinuationAdmission {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, PRODUCT_CONTINUATION_ADMISSION_KEYS) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    isBoundedHandle(value.continuation_task_id) &&
+    isBoundedHandle(value.continuation_run_id) &&
+    typeof value.decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.decision_fingerprint) &&
+    typeof value.product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.product_evidence_fingerprint) &&
+    value.continuation_running_enabled === false &&
+    value.next_action === 'run_product_continuation_task_explicitly' &&
+    typeof value.replayed === 'boolean'
+  );
+}
+
+export function isProductContinuationProvenance(value: unknown): value is ProductContinuationProvenance {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, PRODUCT_CONTINUATION_PROVENANCE_KEYS) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    typeof value.decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.decision_fingerprint) &&
+    typeof value.accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.accepted_completion_fingerprint) &&
+    typeof value.terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.terminal_completion_fingerprint) &&
+    typeof value.completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.completion_closure_fingerprint) &&
+    typeof value.product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.product_evidence_fingerprint) &&
+    isBoundedAsciiMetadata(value.target_capability, 96) &&
+    isBoundedAsciiMetadata(value.concrete_capability_transition, 120) &&
+    value.decision_status === 'continue_development' &&
+    value.decision_next_action === 'plan_next_phase'
   );
 }
 
@@ -5495,7 +5610,33 @@ export function isTaskStartResult(value: unknown): value is TaskStartResult {
     (value.verification_recovery_admission === undefined || value.verification_recovery_admission === null || isVerificationRecoveryAdmission(value.verification_recovery_admission))
     && (value.verification_recovery_retry_admission === undefined || value.verification_recovery_retry_admission === null || isVerificationRecoveryRetryAdmission(value.verification_recovery_retry_admission))
     && (value.llm_provider_failure_retry_admission === undefined || value.llm_provider_failure_retry_admission === null || isLlmProviderFailureRetryAdmission(value.llm_provider_failure_retry_admission))
+    && (value.product_continuation_admission === undefined || value.product_continuation_admission === null || isProductContinuationAdmission(value.product_continuation_admission))
   );
+}
+
+export function isTaskStartParams(value: unknown): value is TaskStartParams {
+  if (
+    !isRecord(value) ||
+    !hasOnlyFields(value, ['goal', 'modeId', 'verificationRecoverySource', 'patchApplyRecoverySource', 'verificationRecoveryRetrySource', 'llmProviderFailureRetrySource', 'productContinuationSource']) ||
+    typeof value.goal !== 'string' ||
+    value.goal.trim().length === 0 ||
+    (value.modeId !== undefined && value.modeId !== null && !isBoundedHandle(value.modeId)) ||
+    (value.verificationRecoverySource !== undefined && value.verificationRecoverySource !== null && !isVerificationRecoverySource(value.verificationRecoverySource)) ||
+    (value.patchApplyRecoverySource !== undefined && value.patchApplyRecoverySource !== null && !isPatchApplyRecoverySource(value.patchApplyRecoverySource)) ||
+    (value.verificationRecoveryRetrySource !== undefined && value.verificationRecoveryRetrySource !== null && !isVerificationRecoveryRetrySource(value.verificationRecoveryRetrySource)) ||
+    (value.llmProviderFailureRetrySource !== undefined && value.llmProviderFailureRetrySource !== null && !isLlmProviderFailureRetrySource(value.llmProviderFailureRetrySource)) ||
+    (value.productContinuationSource !== undefined && value.productContinuationSource !== null && !isProductContinuationSource(value.productContinuationSource))
+  ) {
+    return false;
+  }
+  const sourceCount = [
+    value.verificationRecoverySource,
+    value.patchApplyRecoverySource,
+    value.verificationRecoveryRetrySource,
+    value.llmProviderFailureRetrySource,
+    value.productContinuationSource,
+  ].filter((source) => source !== undefined && source !== null).length;
+  return sourceCount <= 1;
 }
 
 export function isTaskRunParams(value: unknown): value is TaskRunParams {
@@ -6205,6 +6346,37 @@ function isLlmProviderFailureRetrySource(value: unknown): value is LlmProviderFa
     typeof value.expected_failure_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_failure_fingerprint) &&
     value.authorize_provider_failure_retry === true
+  );
+}
+
+function isProductContinuationSource(value: unknown): value is ProductContinuationSource {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'source_task_id',
+      'source_run_id',
+      'source_decision_id',
+      'expected_decision_fingerprint',
+      'expected_accepted_completion_fingerprint',
+      'expected_terminal_completion_fingerprint',
+      'expected_completion_closure_fingerprint',
+      'expected_product_evidence_fingerprint',
+      'authorize_product_continuation',
+    ]) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    typeof value.expected_decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_decision_fingerprint) &&
+    typeof value.expected_accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_accepted_completion_fingerprint) &&
+    typeof value.expected_terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_terminal_completion_fingerprint) &&
+    typeof value.expected_completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_completion_closure_fingerprint) &&
+    typeof value.expected_product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_product_evidence_fingerprint) &&
+    value.authorize_product_continuation === true
   );
 }
 
@@ -7597,6 +7769,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.verification_recovery_provenance === undefined || value.verification_recovery_provenance === null || isVerificationRecoveryProvenance(value.verification_recovery_provenance)) &&
     (value.verification_recovery_retry_provenance === undefined || value.verification_recovery_retry_provenance === null || isVerificationRecoveryRetryProvenance(value.verification_recovery_retry_provenance)) &&
     (value.llm_provider_failure_retry_provenance === undefined || value.llm_provider_failure_retry_provenance === null || isLlmProviderFailureRetryProvenance(value.llm_provider_failure_retry_provenance)) &&
+    (value.product_continuation_provenance === undefined || value.product_continuation_provenance === null || isProductContinuationProvenance(value.product_continuation_provenance)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -8166,6 +8339,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     (value.verification_recovery_provenance === undefined || value.verification_recovery_provenance === null || isVerificationRecoveryProvenance(value.verification_recovery_provenance)) &&
     (value.verification_recovery_retry_provenance === undefined || value.verification_recovery_retry_provenance === null || isVerificationRecoveryRetryProvenance(value.verification_recovery_retry_provenance)) &&
     (value.llm_provider_failure_retry_provenance === undefined || value.llm_provider_failure_retry_provenance === null || isLlmProviderFailureRetryProvenance(value.llm_provider_failure_retry_provenance)) &&
+    (value.product_continuation_provenance === undefined || value.product_continuation_provenance === null || isProductContinuationProvenance(value.product_continuation_provenance)) &&
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&

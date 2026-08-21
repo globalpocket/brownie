@@ -61,14 +61,15 @@ use brownie_protocol::{
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ParentJoinRunTarget, PatchApplyRecoveryAdmission,
     PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget,
-    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    PatchApplyRecoverySource, PermissionCheckParams, PermissionCheckResult,
+    ProductContinuationAdmission, ProductContinuationProvenance, ProductContinuationSource,
+    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
+    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
+    ProposalPatchHunk, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
     ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
     ProposalReviewBundleParams, ProposalReviewBundleResult,
     ProposalReviewQueueDiagnosticsDigestHistoryParams,
@@ -255,8 +256,8 @@ use brownie_store::{
     ModePackCandidateProvenanceSnapshot, ModePackCandidateSnapshot,
     ModePackRegistryUpdateSelectionSnapshot, ModePackRevokedSignerSnapshot,
     ModePackTrustedSignerSnapshot, ParentJoinContinuationRunAdmission,
-    PatchApplyRecoveryTaskStartParams, VerificationRecoveryRetryTaskStartParams,
-    VerificationRecoveryTaskStartParams,
+    PatchApplyRecoveryTaskStartParams, ProductContinuationTaskStartParams,
+    VerificationRecoveryRetryTaskStartParams, VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
     BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
@@ -1853,6 +1854,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         patch_apply_recovery_source,
         verification_recovery_retry_source,
         llm_provider_failure_retry_source,
+        product_continuation_source,
     } = params;
 
     if goal.trim().is_empty() {
@@ -1874,6 +1876,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
         patch_apply_recovery_source.is_some(),
         verification_recovery_retry_source.is_some(),
         llm_provider_failure_retry_source.is_some(),
+        product_continuation_source.is_some(),
     ]
     .into_iter()
     .filter(|present| *present)
@@ -1931,6 +1934,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         patch_apply_recovery_admission: None,
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: None,
+                        product_continuation_admission: None,
                     }),
                 )
             }
@@ -1985,6 +1989,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         }),
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: None,
+                        product_continuation_admission: None,
                     }),
                 )
             }
@@ -2043,6 +2048,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                             }
                         ),
                         llm_provider_failure_retry_admission: None,
+                        product_continuation_admission: None,
                     }),
                 )
             }
@@ -2099,6 +2105,61 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                                 replayed: admission.replayed,
                             }
                         ),
+                        product_continuation_admission: None,
+                    }),
+                )
+            }
+            Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else if let Some(source) = product_continuation_source {
+        let provenance = match product_continuation_provenance_for_source(&store, &source) {
+            Ok(provenance) => provenance,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+        let decision_fingerprint = provenance.decision_fingerprint.clone();
+        let product_evidence_fingerprint = provenance.product_evidence_fingerprint.clone();
+        match store
+            .tasks()
+            .start_product_continuation_task(ProductContinuationTaskStartParams {
+                goal,
+                mode_id: Some(policy.mode_id.clone()),
+                provenance,
+            }) {
+            Ok(admission) => {
+                if !admission.replayed {
+                    if let Err(error) =
+                        append_mode_resolved_event(&store, &admission.record, &policy)
+                    {
+                        return error_response(id, -32603, &format!("internal error: {error}"));
+                    }
+                }
+                result_response(
+                    id,
+                    json!(TaskStartResult {
+                        task_id: admission.record.task_id.clone(),
+                        run_id: admission.record.run_id.clone(),
+                        status: admission.record.status.clone(),
+                        verification_recovery_admission: None,
+                        patch_apply_recovery_admission: None,
+                        verification_recovery_retry_admission: None,
+                        llm_provider_failure_retry_admission: None,
+                        product_continuation_admission: Some(ProductContinuationAdmission {
+                            source_task_id: source.source_task_id,
+                            source_run_id: source.source_run_id,
+                            source_decision_id: source.source_decision_id,
+                            continuation_task_id: admission.record.task_id,
+                            continuation_run_id: admission.record.run_id,
+                            decision_fingerprint,
+                            product_evidence_fingerprint,
+                            continuation_running_enabled: false,
+                            next_action: "run_product_continuation_task_explicitly".into(),
+                            replayed: admission.replayed,
+                        }),
                     }),
                 )
             }
@@ -2112,6 +2173,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
             patch_apply_recovery_source: None,
             verification_recovery_retry_source: None,
             llm_provider_failure_retry_source: None,
+            product_continuation_source: None,
         };
 
         match store.tasks().start_task(params) {
@@ -2129,6 +2191,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                         patch_apply_recovery_admission: None,
                         verification_recovery_retry_admission: None,
                         llm_provider_failure_retry_admission: None,
+                        product_continuation_admission: None,
                     }),
                 )
             }
@@ -37295,6 +37358,7 @@ fn child_task_inspect_summary(
         verification_recovery_provenance: task.verification_recovery_provenance.clone(),
         verification_recovery_retry_provenance: task.verification_recovery_retry_provenance.clone(),
         llm_provider_failure_retry_provenance: task.llm_provider_failure_retry_provenance.clone(),
+        product_continuation_provenance: task.product_continuation_provenance.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
         completion_final_state,
@@ -41614,6 +41678,257 @@ fn llm_provider_failure_retry_provenance_for_source(
         request_phase: outcome.request_phase,
         retryable: outcome.retryable,
     })
+}
+
+fn product_continuation_provenance_for_source(
+    store: &BrownieStore,
+    source: &ProductContinuationSource,
+) -> Result<ProductContinuationProvenance, VerificationRecoveryAdmissionError> {
+    validate_product_continuation_source_shape(source)?;
+
+    let source_task = store
+        .tasks()
+        .get_task(&source.source_task_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_continuation_source.source_task_id was not found".into(),
+            )
+        })?;
+
+    if source_task.run_id != source.source_run_id {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_source.source_run_id does not match source task"
+                .into(),
+        ));
+    }
+    if source_task.status != TaskStatus::Completed {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation source task must be terminal Completed".into(),
+        ));
+    }
+
+    let events = store
+        .tasks()
+        .read_ledger_events(&source.source_run_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let latest_payload = latest_product_completion_decision_payload(
+        &events,
+        &source.source_task_id,
+        &source.source_run_id,
+    )
+    .ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_source has no product completion decision".into(),
+        )
+    })?;
+
+    let source_decision_id = product_continuation_payload_string(latest_payload, "decision_id")?;
+    if source_decision_id != source.source_decision_id {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_source.source_decision_id is not current".into(),
+        ));
+    }
+    let status = product_continuation_payload_string(latest_payload, "status")?;
+    match status.as_str() {
+        "continue_development" => {}
+        "product_complete" => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation source decision is product_complete".into(),
+            ))
+        }
+        "blocked_by_product_evidence" => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation source decision is blocked_by_product_evidence"
+                    .into(),
+            ))
+        }
+        _ => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation source decision status is not continue_development"
+                    .into(),
+            ))
+        }
+    }
+
+    let next_action = product_continuation_payload_string(latest_payload, "next_action")?;
+    if next_action != "plan_next_phase" {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation source decision next_action is not plan_next_phase"
+                .into(),
+        ));
+    }
+
+    let decision_fingerprint =
+        product_continuation_payload_sha256(latest_payload, "decision_fingerprint")?;
+    let accepted_completion_fingerprint =
+        product_continuation_payload_sha256(latest_payload, "accepted_completion_fingerprint")?;
+    let terminal_completion_fingerprint =
+        product_continuation_payload_sha256(latest_payload, "terminal_completion_fingerprint")?;
+    let completion_closure_fingerprint =
+        product_continuation_payload_sha256(latest_payload, "completion_closure_fingerprint")?;
+    let product_evidence_fingerprint =
+        product_continuation_payload_sha256(latest_payload, "product_evidence_fingerprint")?;
+
+    for (field, actual, expected) in [
+        (
+            "expected_decision_fingerprint",
+            decision_fingerprint.as_str(),
+            source.expected_decision_fingerprint.as_str(),
+        ),
+        (
+            "expected_accepted_completion_fingerprint",
+            accepted_completion_fingerprint.as_str(),
+            source.expected_accepted_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            terminal_completion_fingerprint.as_str(),
+            source.expected_terminal_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            completion_closure_fingerprint.as_str(),
+            source.expected_completion_closure_fingerprint.as_str(),
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            product_evidence_fingerprint.as_str(),
+            source.expected_product_evidence_fingerprint.as_str(),
+        ),
+    ] {
+        if actual != expected {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product_continuation_source.{field} is stale"
+            )));
+        }
+    }
+
+    let target_capability =
+        product_continuation_payload_string(latest_payload, "target_capability")?;
+    let concrete_capability_transition =
+        product_continuation_payload_string(latest_payload, "concrete_capability_transition")?;
+    if !is_bounded_product_completion_text(&target_capability, 96)
+        || !is_bounded_product_completion_text(&concrete_capability_transition, 120)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation decision metadata is not bounded".into(),
+        ));
+    }
+
+    Ok(ProductContinuationProvenance {
+        source_task_id: source_task.task_id,
+        source_run_id: source_task.run_id,
+        source_decision_id,
+        decision_fingerprint,
+        accepted_completion_fingerprint,
+        terminal_completion_fingerprint,
+        completion_closure_fingerprint,
+        product_evidence_fingerprint,
+        target_capability,
+        concrete_capability_transition,
+        decision_status: status,
+        decision_next_action: next_action,
+    })
+}
+
+fn validate_product_continuation_source_shape(
+    source: &ProductContinuationSource,
+) -> Result<(), VerificationRecoveryAdmissionError> {
+    for (field, value) in [
+        ("source_task_id", source.source_task_id.as_str()),
+        ("source_run_id", source.source_run_id.as_str()),
+        ("source_decision_id", source.source_decision_id.as_str()),
+    ] {
+        if !is_valid_headless_run_id(value) {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product_continuation_source.{field} must be a bounded id"
+            )));
+        }
+    }
+    if !source.authorize_product_continuation {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_source.authorize_product_continuation must be true"
+                .into(),
+        ));
+    }
+    for (field, value) in [
+        (
+            "expected_decision_fingerprint",
+            source.expected_decision_fingerprint.as_str(),
+        ),
+        (
+            "expected_accepted_completion_fingerprint",
+            source.expected_accepted_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            source.expected_terminal_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            source.expected_completion_closure_fingerprint.as_str(),
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            source.expected_product_evidence_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product_continuation_source.{field} must be a sha256 fingerprint"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn latest_product_completion_decision_payload<'a>(
+    events: &'a [LedgerEvent],
+    source_task_id: &str,
+    source_run_id: &str,
+) -> Option<&'a Value> {
+    events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded)
+        .filter_map(|event| event.payload.as_ref())
+        .filter(|payload| {
+            payload.get("task_id").and_then(Value::as_str) == Some(source_task_id)
+                && payload.get("run_id").and_then(Value::as_str) == Some(source_run_id)
+        })
+        .last()
+}
+
+fn product_continuation_payload_string(
+    payload: &Value,
+    field: &str,
+) -> Result<String, VerificationRecoveryAdmissionError> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| is_bounded_product_completion_text(value, 120))
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product continuation decision {field} is missing or malformed"
+            ))
+        })
+}
+
+fn product_continuation_payload_sha256(
+    payload: &Value,
+    field: &str,
+) -> Result<String, VerificationRecoveryAdmissionError> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .filter(|value| is_sha256_fingerprint(value))
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product continuation decision {field} is missing or malformed"
+            ))
+        })
 }
 
 fn is_retryable_llm_provider_failure_class(failure_class: &str) -> bool {
@@ -50333,6 +50648,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("created source");
         let running = store
@@ -50344,6 +50660,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("running source");
         store
@@ -50363,6 +50680,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("completed source");
         store
@@ -50382,6 +50700,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("cancelled source");
         store
@@ -50401,6 +50720,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("failed source");
         store
@@ -52041,6 +52361,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52075,6 +52396,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "queued_child");
@@ -52108,6 +52430,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "queued_child");
@@ -52143,6 +52466,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52181,6 +52505,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52232,6 +52557,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         let completed = store
@@ -52277,6 +52603,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52317,6 +52644,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52358,6 +52686,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52398,6 +52727,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52453,6 +52783,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -52503,6 +52834,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         start_progress_test_child(&store, &parent, "queued_child");
@@ -52543,6 +52875,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "running_child");
@@ -52591,6 +52924,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         start_progress_test_child(&store, &parent, "queued_child");
@@ -52635,6 +52969,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "running_child");
@@ -52688,6 +53023,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "completed_child");
@@ -52755,6 +53091,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start join parent");
         let join_child = start_progress_test_child(&store, &parent_join, "join_child");
@@ -52796,6 +53133,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start pending parent");
         let pending_child = start_progress_test_child(&store, &parent_pending, "pending_child");
@@ -52816,6 +53154,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start running task");
         store
@@ -52908,6 +53247,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start first");
         let second = store
@@ -52919,6 +53259,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start second");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53026,6 +53367,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start first");
         let second = store
@@ -53037,6 +53379,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start second");
         let third = store
@@ -53048,6 +53391,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start third");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53142,6 +53486,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start first");
         let second = store
@@ -53153,6 +53498,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start second");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53252,6 +53598,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53312,6 +53659,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53357,6 +53705,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start first");
         let second = store
@@ -53368,6 +53717,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start second");
         let third = store
@@ -53379,6 +53729,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start third");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53571,6 +53922,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -53613,6 +53965,7 @@ mod tests {
                     patch_apply_recovery_source: None,
                     verification_recovery_retry_source: None,
                     llm_provider_failure_retry_source: None,
+                    product_continuation_source: None,
                 })
                 .expect("start task");
         }
@@ -53778,6 +54131,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -54048,6 +54402,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start owner");
         store
@@ -54132,6 +54487,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start other");
         store
@@ -54193,6 +54549,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -54422,6 +54779,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start old task");
         let stale_evidence = TaskRunCompletionEvidence {
@@ -54455,6 +54813,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start latest task");
         latest_task.status = TaskStatus::Completed;
@@ -54577,6 +54936,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -55320,6 +55680,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start journey task");
         let current_activation_fingerprint = format!("sha256:{}", "1".repeat(64));
@@ -56713,6 +57074,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -56830,6 +57192,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "budget_join_ready_child");
@@ -56916,6 +57279,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         store
@@ -56966,6 +57330,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -57002,6 +57367,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -57041,6 +57407,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -57093,6 +57460,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "completed_child");
@@ -57168,6 +57536,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -57246,6 +57615,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         let continuation_id = "m11.2.running";
@@ -57324,6 +57694,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start first");
         let second = store
@@ -57335,6 +57706,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start second");
         for (task, decision_id) in [
@@ -57390,6 +57762,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -57494,6 +57867,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start source");
         let failure_fingerprint = format!("sha256:{}", "f".repeat(64));
@@ -57594,6 +57968,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start source");
         let recovery = store
@@ -57605,6 +57980,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start recovery");
         let retry = store
@@ -58466,6 +58842,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "join_ready_child");
@@ -58555,6 +58932,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let child = start_progress_test_child(&store, &parent, "z_bounded_join_child");
@@ -58749,6 +59127,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -58985,6 +59364,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         store
@@ -61576,6 +61956,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -61688,6 +62069,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let parser_decision = ToolIntentDecision {
@@ -61966,6 +62348,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = BuiltinModeRegistry::get("orchestrator").expect("orchestrator policy");
@@ -62028,6 +62411,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -62081,6 +62465,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -62177,6 +62562,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -62302,6 +62688,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -62391,6 +62778,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
@@ -62453,6 +62841,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let decision = ToolIntentDecision {
@@ -63167,6 +63556,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let provenance = RecoveryCycleChildProvenance {
@@ -65806,6 +66196,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         store
@@ -65858,6 +66249,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let continuation = ParentJoinContinuationMaterialization {
@@ -65969,6 +66361,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start parent");
         let running_parent = store
@@ -71964,6 +72357,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72111,6 +72505,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72186,6 +72581,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72256,6 +72652,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72329,6 +72726,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72757,6 +73155,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -72906,6 +73305,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -73021,6 +73421,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -73298,6 +73699,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -73367,6 +73769,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -73463,6 +73866,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("task");
         let run_id = record.run_id.clone();
@@ -73533,6 +73937,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -73573,6 +73978,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -73622,6 +74028,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -73665,6 +74072,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(&store, &record, "proposal_blocked", "Blocked", None, true);
@@ -73699,6 +74107,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
         append_test_patch_proposal(
@@ -73745,6 +74154,7 @@ mod tests {
                 patch_apply_recovery_source: None,
                 verification_recovery_retry_source: None,
                 llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
             })
             .expect("start task");
 
@@ -77476,6 +77886,399 @@ mod tests {
         assert_eq!(
             blocked_result["product_completion_decision"]["next_action"],
             "repair_product_completion_evidence"
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_start_admits_product_continuation_and_replays_without_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        fn create_source_decision(
+            store: &BrownieStore,
+            goal: &str,
+            decision_id: &str,
+            status: &str,
+            next_action: &str,
+            decision_fingerprint: String,
+            product_evidence_fingerprint: String,
+        ) -> (TaskRecord, HeadlessRunProductCompletionDecision) {
+            let start = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "task.start",
+                    "params": {
+                        "goal": goal,
+                        "mode_id": "implementer",
+                    }
+                })
+                .to_string(),
+            );
+            assert!(start.error.is_none(), "{:?}", start.error);
+            let source_task_id = start.result.expect("start result")["task_id"]
+                .as_str()
+                .expect("source task id")
+                .to_string();
+            let completed = store
+                .tasks()
+                .update_task_status(
+                    &source_task_id,
+                    TaskStatus::Completed,
+                    LedgerEventKind::TaskCompleted,
+                )
+                .expect("complete source");
+            let decision = HeadlessRunProductCompletionDecision {
+                decision_id: decision_id.to_string(),
+                task_id: completed.task_id.clone(),
+                run_id: completed.run_id.clone(),
+                acceptance_id: "acceptance_1".to_string(),
+                status: status.to_string(),
+                next_action: next_action.to_string(),
+                target_capability: "headless_autonomous_development".to_string(),
+                concrete_capability_transition: "runtime_owned_product_continuation_task_admission"
+                    .to_string(),
+                accepted_completion_fingerprint: fp('a'),
+                terminal_completion_fingerprint: fp('b'),
+                completion_closure_fingerprint: fp('c'),
+                product_evidence_fingerprint,
+                decision_fingerprint,
+                validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                    .iter()
+                    .map(|category| category.to_string())
+                    .collect(),
+                derived_product_evidence_matrix_fingerprint: None,
+                behavior_evidence_count: 3,
+                rejected_alternatives_count: 2,
+                safety_boundary_reviewed: true,
+                non_goals_reviewed: true,
+                technical_debt_reviewed: true,
+                remaining_capability: Some("plan_next_phase".to_string()),
+                milestone_exit_rationale: None,
+                replayed: false,
+            };
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &completed,
+                    LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                    Some(headless_product_completion_decision_payload(&decision)),
+                )
+                .expect("append product decision");
+            (completed, decision)
+        }
+
+        fn product_continuation_source(
+            decision: &HeadlessRunProductCompletionDecision,
+            authorize: bool,
+        ) -> serde_json::Value {
+            json!({
+                "source_task_id": decision.task_id,
+                "source_run_id": decision.run_id,
+                "source_decision_id": decision.decision_id,
+                "expected_decision_fingerprint": decision.decision_fingerprint,
+                "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+                "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+                "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
+                "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+                "authorize_product_continuation": authorize,
+            })
+        }
+
+        let (source, decision) = create_source_decision(
+            &store,
+            "M53 source continue decision",
+            "product_decision_continue",
+            "continue_development",
+            "plan_next_phase",
+            fp('d'),
+            fp('e'),
+        );
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "task.start",
+            "params": {
+                "goal": "Plan the next Brownie phase from product evidence",
+                "mode_id": "implementer",
+                "product_continuation_source": product_continuation_source(&decision, true),
+            }
+        });
+        let admitted = parse_line(&request.to_string());
+        assert!(admitted.error.is_none(), "{:?}", admitted.error);
+        let admitted_result = admitted.result.expect("admitted result");
+        let admission = &admitted_result["product_continuation_admission"];
+        assert_eq!(admission["source_task_id"], decision.task_id);
+        assert_eq!(admission["source_run_id"], decision.run_id);
+        assert_eq!(admission["source_decision_id"], decision.decision_id);
+        assert_eq!(
+            admission["decision_fingerprint"],
+            decision.decision_fingerprint
+        );
+        assert_eq!(
+            admission["product_evidence_fingerprint"],
+            decision.product_evidence_fingerprint
+        );
+        assert_eq!(admission["continuation_running_enabled"], false);
+        assert_eq!(
+            admission["next_action"],
+            "run_product_continuation_task_explicitly"
+        );
+        assert_eq!(admission["replayed"], false);
+
+        let continuation_task_id = admission["continuation_task_id"]
+            .as_str()
+            .expect("continuation task id")
+            .to_string();
+        let continuation_run_id = admission["continuation_run_id"]
+            .as_str()
+            .expect("continuation run id")
+            .to_string();
+        let continuation_task = store
+            .tasks()
+            .get_task(&continuation_task_id)
+            .expect("read continuation task")
+            .expect("continuation task exists");
+        assert_eq!(continuation_task.status, TaskStatus::Created);
+        assert!(continuation_task.product_continuation_provenance.is_some());
+        assert!(continuation_task.verification_recovery_provenance.is_none());
+        assert!(continuation_task
+            .llm_provider_failure_retry_provenance
+            .is_none());
+        let continuation_events = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("continuation events");
+        assert_eq!(
+            continuation_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskStarted)
+                .count(),
+            1
+        );
+        assert!(!continuation_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::TaskRunning));
+        assert!(continuation_events.iter().all(|event| {
+            event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("execution_enabled"))
+                .and_then(Value::as_bool)
+                != Some(true)
+        }));
+
+        let serialized = serde_json::to_string(&admitted_result).expect("serialize admission");
+        let task_started_payload = serde_json::to_string(
+            &continuation_events
+                .iter()
+                .find(|event| event.kind == LedgerEventKind::TaskStarted)
+                .expect("task started")
+                .payload,
+        )
+        .expect("serialize task started");
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "diff",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "secret",
+        ] {
+            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+            assert!(!task_started_payload.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        let replay = parse_line(&request.to_string());
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["product_continuation_admission"]["continuation_task_id"],
+            continuation_task_id
+        );
+        assert_eq!(
+            replay_result["product_continuation_admission"]["continuation_run_id"],
+            continuation_run_id
+        );
+        assert_eq!(
+            replay_result["product_continuation_admission"]["replayed"],
+            true
+        );
+        let replay_events = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("replay continuation events");
+        assert_eq!(
+            replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskStarted)
+                .count(),
+            1
+        );
+
+        let task_count_before_conflict = store.tasks().list_tasks().expect("list tasks").len();
+        let mut conflicting_decision = decision.clone();
+        conflicting_decision.decision_id = "product_decision_continue_conflict".to_string();
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source,
+                LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                Some(headless_product_completion_decision_payload(
+                    &conflicting_decision,
+                )),
+            )
+            .expect("append conflicting product decision");
+        let conflict = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 11,
+                "method": "task.start",
+                "params": {
+                    "goal": "conflicting product continuation",
+                    "mode_id": "implementer",
+                    "product_continuation_source": product_continuation_source(&conflicting_decision, true),
+                }
+            })
+            .to_string(),
+        );
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict error")
+            .message
+            .contains("conflicting product continuation admission"));
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list after conflict")
+                .len(),
+            task_count_before_conflict
+        );
+
+        let task_count_before_denials = store.tasks().list_tasks().expect("list tasks").len();
+        let mut stale_source = product_continuation_source(&conflicting_decision, true);
+        stale_source["expected_product_evidence_fingerprint"] = json!(fp('f'));
+        let stale = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "task.start",
+                "params": {
+                    "goal": "stale product evidence",
+                    "mode_id": "implementer",
+                    "product_continuation_source": stale_source,
+                }
+            })
+            .to_string(),
+        );
+        assert!(stale.result.is_none());
+        assert!(stale
+            .error
+            .expect("stale error")
+            .message
+            .contains("expected_product_evidence_fingerprint is stale"));
+        let unauthorized = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 13,
+                "method": "task.start",
+                "params": {
+                    "goal": "missing authorization",
+                    "mode_id": "implementer",
+                    "product_continuation_source": product_continuation_source(&decision, false),
+                }
+            })
+            .to_string(),
+        );
+        assert!(unauthorized.result.is_none());
+        assert!(unauthorized
+            .error
+            .expect("unauthorized error")
+            .message
+            .contains("authorize_product_continuation must be true"));
+
+        let (_complete_source, complete_decision) = create_source_decision(
+            &store,
+            "M53 product complete source",
+            "product_decision_complete",
+            "product_complete",
+            "stop_autonomous_development",
+            fp('1'),
+            fp('2'),
+        );
+        let complete = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 14,
+                "method": "task.start",
+                "params": {
+                    "goal": "should not continue complete product",
+                    "mode_id": "implementer",
+                    "product_continuation_source": product_continuation_source(&complete_decision, true),
+                }
+            })
+            .to_string(),
+        );
+        assert!(complete.result.is_none());
+        assert!(complete
+            .error
+            .expect("complete error")
+            .message
+            .contains("product_complete"));
+
+        let (_blocked_source, blocked_decision) = create_source_decision(
+            &store,
+            "M53 blocked evidence source",
+            "product_decision_blocked",
+            "blocked_by_product_evidence",
+            "repair_product_completion_evidence",
+            fp('3'),
+            fp('4'),
+        );
+        let blocked = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "task.start",
+                "params": {
+                    "goal": "should not continue blocked product evidence",
+                    "mode_id": "implementer",
+                    "product_continuation_source": product_continuation_source(&blocked_decision, true),
+                }
+            })
+            .to_string(),
+        );
+        assert!(blocked.result.is_none());
+        assert!(blocked
+            .error
+            .expect("blocked error")
+            .message
+            .contains("blocked_by_product_evidence"));
+
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list after denials")
+                .len(),
+            task_count_before_denials + 2
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
