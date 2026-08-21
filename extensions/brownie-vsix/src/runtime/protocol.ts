@@ -609,6 +609,7 @@ export interface HeadlessRunDriveParams {
   context_budget?: TaskRunContextBudget | null;
   authorize_completion_finalization?: boolean | null;
   expected_completion_closure_fingerprint?: string | null;
+  product_evidence_derivation?: HeadlessRunProductEvidenceDerivationRequest | null;
   product_completion_decision?: HeadlessRunProductCompletionDecisionRequest | null;
   modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
@@ -632,6 +633,7 @@ export interface HeadlessRunProductCompletionDecisionRequest {
   target_capability: string;
   concrete_capability_transition: string;
   validated_gate_categories: string[];
+  derived_product_evidence_matrix_fingerprint?: string | null;
   behavior_evidence_count: number;
   rejected_alternatives_count: number;
   safety_boundary_reviewed: boolean;
@@ -639,6 +641,22 @@ export interface HeadlessRunProductCompletionDecisionRequest {
   technical_debt_reviewed: boolean;
   remaining_capability?: string | null;
   milestone_exit_rationale?: string | null;
+}
+
+export interface HeadlessRunProductEvidenceDerivationRequest {
+  authorize_product_evidence_derivation: true;
+  derivation_id: string;
+  phase_id: string;
+  milestone: string;
+  expected_accepted_completion_fingerprint: string;
+  expected_terminal_completion_fingerprint: string;
+  expected_completion_closure_fingerprint: string;
+  artifacts: HeadlessRunProductEvidenceArtifactSource[];
+}
+
+export interface HeadlessRunProductEvidenceArtifactSource {
+  path: string;
+  expected_sha256: string;
 }
 
 export interface HeadlessRunJourneyAdmission {
@@ -1117,6 +1135,7 @@ export interface HeadlessRunDriveResult {
   completion_closure: HeadlessRunCompletionClosure;
   completion_finalization?: HeadlessRunCompletionFinalization | null;
   accepted_completion?: HeadlessRunAcceptedCompletion | null;
+  product_evidence_matrix?: HeadlessRunProductEvidenceMatrix | null;
   product_completion_decision?: HeadlessRunProductCompletionDecision | null;
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
@@ -1144,6 +1163,7 @@ export interface HeadlessRunProductCompletionDecision {
   product_evidence_fingerprint: string;
   decision_fingerprint: string;
   validated_gate_categories: string[];
+  derived_product_evidence_matrix_fingerprint?: string | null;
   behavior_evidence_count: number;
   rejected_alternatives_count: number;
   safety_boundary_reviewed: boolean;
@@ -1152,6 +1172,36 @@ export interface HeadlessRunProductCompletionDecision {
   remaining_capability?: string | null;
   milestone_exit_rationale?: string | null;
   replayed: boolean;
+}
+
+export interface HeadlessRunProductEvidenceMatrix {
+  derivation_id: string;
+  task_id: string;
+  run_id: string;
+  acceptance_id: string;
+  phase_id: string;
+  milestone: string;
+  target_capability: string;
+  concrete_capability_transition: string;
+  accepted_completion_fingerprint: string;
+  terminal_completion_fingerprint: string;
+  completion_closure_fingerprint: string;
+  product_evidence_matrix_fingerprint: string;
+  artifact_count: number;
+  artifact_hashes: HeadlessRunProductEvidenceArtifact[];
+  validated_gate_categories: string[];
+  behavior_evidence_count: number;
+  rejected_alternatives_count: number;
+  safety_boundary_reviewed: boolean;
+  non_goals_reviewed: boolean;
+  technical_debt_reviewed: boolean;
+  next_action: 'record_product_completion_decision_with_runtime_evidence';
+  replayed: boolean;
+}
+
+export interface HeadlessRunProductEvidenceArtifact {
+  path: string;
+  sha256: string;
 }
 
 export interface HeadlessRunJourneyMetadata {
@@ -5894,7 +5944,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     : 0;
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'product_completion_decision', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume', 'journey_closure', 'journey_execution']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'product_evidence_derivation', 'product_completion_decision', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume', 'journey_closure', 'journey_execution']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
@@ -5904,6 +5954,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.max_steps_per_advance === undefined || value.max_steps_per_advance === null || (isNonNegativeInteger(value.max_steps_per_advance) && value.max_steps_per_advance >= 1 && value.max_steps_per_advance <= 3)) &&
     (value.authorize_completion_finalization === undefined || value.authorize_completion_finalization === null || typeof value.authorize_completion_finalization === 'boolean') &&
     (value.expected_completion_closure_fingerprint === undefined || value.expected_completion_closure_fingerprint === null || (typeof value.expected_completion_closure_fingerprint === 'string' && isSha256Fingerprint(value.expected_completion_closure_fingerprint))) &&
+    (value.product_evidence_derivation === undefined || value.product_evidence_derivation === null || isHeadlessRunProductEvidenceDerivationRequest(value.product_evidence_derivation)) &&
     (value.product_completion_decision === undefined || value.product_completion_decision === null || isHeadlessRunProductCompletionDecisionRequest(value.product_completion_decision)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
@@ -6644,6 +6695,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'completion_closure',
       'completion_finalization',
       'accepted_completion',
+      'product_evidence_matrix',
       'product_completion_decision',
       'start_progress',
       'post_progress',
@@ -6682,6 +6734,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     isHeadlessRunCompletionClosure(value.completion_closure) &&
     (value.completion_finalization === undefined || value.completion_finalization === null || isHeadlessRunCompletionFinalization(value.completion_finalization)) &&
     (value.accepted_completion === undefined || value.accepted_completion === null || isHeadlessRunAcceptedCompletion(value.accepted_completion)) &&
+    (value.product_evidence_matrix === undefined || value.product_evidence_matrix === null || isHeadlessRunProductEvidenceMatrix(value.product_evidence_matrix)) &&
     (value.product_completion_decision === undefined || value.product_completion_decision === null || isHeadlessRunProductCompletionDecision(value.product_completion_decision)) &&
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
@@ -6993,6 +7046,7 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
       'target_capability',
       'concrete_capability_transition',
       'validated_gate_categories',
+      'derived_product_evidence_matrix_fingerprint',
       'behavior_evidence_count',
       'rejected_alternatives_count',
       'safety_boundary_reviewed',
@@ -7018,6 +7072,7 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
     Array.isArray(value.validated_gate_categories) &&
     value.validated_gate_categories.length <= 16 &&
     value.validated_gate_categories.every((category) => isBoundedAsciiMetadata(category, 96)) &&
+    (value.derived_product_evidence_matrix_fingerprint === undefined || value.derived_product_evidence_matrix_fingerprint === null || (typeof value.derived_product_evidence_matrix_fingerprint === 'string' && isSha256Fingerprint(value.derived_product_evidence_matrix_fingerprint))) &&
     isNonNegativeInteger(value.behavior_evidence_count) &&
     isNonNegativeInteger(value.rejected_alternatives_count) &&
     typeof value.safety_boundary_reviewed === 'boolean' &&
@@ -7025,6 +7080,119 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.remaining_capability === undefined || value.remaining_capability === null || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
     (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160))
+  );
+}
+
+export function isHeadlessRunProductEvidenceDerivationRequest(value: unknown): value is HeadlessRunProductEvidenceDerivationRequest {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_product_evidence_derivation',
+      'derivation_id',
+      'phase_id',
+      'milestone',
+      'expected_accepted_completion_fingerprint',
+      'expected_terminal_completion_fingerprint',
+      'expected_completion_closure_fingerprint',
+      'artifacts',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    value.authorize_product_evidence_derivation === true &&
+    isHeadlessRunId(value.derivation_id) &&
+    isBoundedAsciiMetadata(value.phase_id, 32) &&
+    isBoundedAsciiMetadata(value.milestone, 120) &&
+    typeof value.expected_accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_accepted_completion_fingerprint) &&
+    typeof value.expected_terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_terminal_completion_fingerprint) &&
+    typeof value.expected_completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_completion_closure_fingerprint) &&
+    Array.isArray(value.artifacts) &&
+    value.artifacts.length === 6 &&
+    value.artifacts.every(isHeadlessRunProductEvidenceArtifactSource)
+  );
+}
+
+export function isHeadlessRunProductEvidenceArtifactSource(value: unknown): value is HeadlessRunProductEvidenceArtifactSource {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['path', 'expected_sha256']) &&
+    hasNoForbiddenRawFields(value) &&
+    isBoundedRelativePath(value.path) &&
+    typeof value.expected_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_sha256)
+  );
+}
+
+export function isHeadlessRunProductEvidenceArtifact(value: unknown): value is HeadlessRunProductEvidenceArtifact {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['path', 'sha256']) &&
+    hasNoForbiddenRawFields(value) &&
+    isBoundedRelativePath(value.path) &&
+    typeof value.sha256 === 'string' &&
+    isSha256Fingerprint(value.sha256)
+  );
+}
+
+export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is HeadlessRunProductEvidenceMatrix {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'derivation_id',
+      'task_id',
+      'run_id',
+      'acceptance_id',
+      'phase_id',
+      'milestone',
+      'target_capability',
+      'concrete_capability_transition',
+      'accepted_completion_fingerprint',
+      'terminal_completion_fingerprint',
+      'completion_closure_fingerprint',
+      'product_evidence_matrix_fingerprint',
+      'artifact_count',
+      'artifact_hashes',
+      'validated_gate_categories',
+      'behavior_evidence_count',
+      'rejected_alternatives_count',
+      'safety_boundary_reviewed',
+      'non_goals_reviewed',
+      'technical_debt_reviewed',
+      'next_action',
+      'replayed',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.derivation_id) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.acceptance_id) &&
+    isBoundedAsciiMetadata(value.phase_id, 32) &&
+    isBoundedAsciiMetadata(value.milestone, 120) &&
+    isBoundedAsciiMetadata(value.target_capability, 96) &&
+    isBoundedAsciiMetadata(value.concrete_capability_transition, 120) &&
+    typeof value.accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.accepted_completion_fingerprint) &&
+    typeof value.terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.terminal_completion_fingerprint) &&
+    typeof value.completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.completion_closure_fingerprint) &&
+    typeof value.product_evidence_matrix_fingerprint === 'string' &&
+    isSha256Fingerprint(value.product_evidence_matrix_fingerprint) &&
+    isNonNegativeInteger(value.artifact_count) &&
+    Array.isArray(value.artifact_hashes) &&
+    value.artifact_hashes.length === value.artifact_count &&
+    value.artifact_hashes.every(isHeadlessRunProductEvidenceArtifact) &&
+    Array.isArray(value.validated_gate_categories) &&
+    value.validated_gate_categories.length <= 16 &&
+    value.validated_gate_categories.every((category) => isBoundedAsciiMetadata(category, 96)) &&
+    isNonNegativeInteger(value.behavior_evidence_count) &&
+    isNonNegativeInteger(value.rejected_alternatives_count) &&
+    typeof value.safety_boundary_reviewed === 'boolean' &&
+    typeof value.non_goals_reviewed === 'boolean' &&
+    typeof value.technical_debt_reviewed === 'boolean' &&
+    value.next_action === 'record_product_completion_decision_with_runtime_evidence' &&
+    typeof value.replayed === 'boolean'
   );
 }
 
@@ -7046,6 +7214,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
       'product_evidence_fingerprint',
       'decision_fingerprint',
       'validated_gate_categories',
+      'derived_product_evidence_matrix_fingerprint',
       'behavior_evidence_count',
       'rejected_alternatives_count',
       'safety_boundary_reviewed',
@@ -7077,6 +7246,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
     Array.isArray(value.validated_gate_categories) &&
     value.validated_gate_categories.length <= 16 &&
     value.validated_gate_categories.every((category) => isBoundedAsciiMetadata(category, 96)) &&
+    (value.derived_product_evidence_matrix_fingerprint === undefined || value.derived_product_evidence_matrix_fingerprint === null || (typeof value.derived_product_evidence_matrix_fingerprint === 'string' && isSha256Fingerprint(value.derived_product_evidence_matrix_fingerprint))) &&
     isNonNegativeInteger(value.behavior_evidence_count) &&
     isNonNegativeInteger(value.rejected_alternatives_count) &&
     typeof value.safety_boundary_reviewed === 'boolean' &&
@@ -7123,6 +7293,18 @@ function isBoundedAsciiMetadata(value: unknown, maxLength: number): value is str
 
 function isBoundedHandle(value: unknown): value is string {
   return typeof value === 'string' && /^[A-Za-z0-9_.:-]{1,128}$/.test(value);
+}
+
+function isBoundedRelativePath(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 240 &&
+    !value.startsWith('/') &&
+    !value.startsWith('~') &&
+    !value.includes('\\') &&
+    value.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..')
+  );
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
