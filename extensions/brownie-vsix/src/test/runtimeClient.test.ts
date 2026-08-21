@@ -1954,6 +1954,34 @@ describe('protocol validation', () => {
       context_budget: contextBudget,
       authorize_completion_finalization: true,
       expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      product_completion_decision: {
+        authorize_product_completion_decision: true,
+        decision_id: 'm51-product-decision',
+        expected_accepted_completion_fingerprint: `sha256:${'d'.repeat(64)}`,
+        expected_terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
+        expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+        expected_product_evidence_fingerprint: `sha256:${'a'.repeat(64)}`,
+        evidence_status: 'continue_development',
+        target_capability: 'headless_autonomous_development',
+        concrete_capability_transition: 'runtime_owned_product_completion_stop_decision',
+        validated_gate_categories: [
+          'strategic_capability_mapping',
+          'concrete_capability_transition',
+          'behavior_evidence',
+          'safety_boundary',
+          'non_goals',
+          'rejected_alternatives',
+          'technical_debt',
+          'next_capability_or_milestone_exit',
+        ],
+        behavior_evidence_count: 3,
+        rejected_alternatives_count: 2,
+        safety_boundary_reviewed: true,
+        non_goals_reviewed: true,
+        technical_debt_reviewed: true,
+        remaining_capability: 'milestone_closeout',
+        milestone_exit_rationale: null,
+      },
       modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
       modepack_selected_candidate_provenance_verification_target: modePackSelectedCandidateProvenanceVerificationTarget,
@@ -2017,6 +2045,39 @@ describe('protocol validation', () => {
         verifier_gate_status: 'NotRequired',
         replayed: true,
         next_action: 'close_headless_run',
+      },
+      product_completion_decision: {
+        decision_id: 'm51-product-decision',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        acceptance_id: 'm51-accepted-route',
+        status: 'continue_development',
+        next_action: 'plan_next_phase',
+        target_capability: 'headless_autonomous_development',
+        concrete_capability_transition: 'runtime_owned_product_completion_stop_decision',
+        accepted_completion_fingerprint: `sha256:${'d'.repeat(64)}`,
+        terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
+        completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+        product_evidence_fingerprint: `sha256:${'a'.repeat(64)}`,
+        decision_fingerprint: `sha256:${'9'.repeat(64)}`,
+        validated_gate_categories: [
+          'strategic_capability_mapping',
+          'concrete_capability_transition',
+          'behavior_evidence',
+          'safety_boundary',
+          'non_goals',
+          'rejected_alternatives',
+          'technical_debt',
+          'next_capability_or_milestone_exit',
+        ],
+        behavior_evidence_count: 3,
+        rejected_alternatives_count: 2,
+        safety_boundary_reviewed: true,
+        non_goals_reviewed: true,
+        technical_debt_reviewed: true,
+        remaining_capability: 'milestone_closeout',
+        milestone_exit_rationale: null,
+        replayed: false,
       },
       start_progress: headlessRunAdvanceResult.start_progress,
       post_progress: headlessRunAdvanceResult.post_progress,
@@ -2412,6 +2473,9 @@ describe('protocol validation', () => {
       journey_admission: { ...headlessRunJourneyAdmission, task_start: { ...headlessRunJourneyAdmission.task_start, raw_prompt: 'secret' } },
     })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_completion_closure_fingerprint: 'not-a-fingerprint' })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, authorize_product_completion_decision: false } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, expected_product_evidence_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, max_advances: 4 })).toBe(false);
@@ -2447,6 +2511,10 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, acceptance_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, raw_ledger_payload: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, status: 'Completed' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, status: 'accepted_complete' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, decision_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, raw_product_evidence: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, raw_file_content: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_finalization: { ...headlessRunDriveResult.completion_finalization, finalization_fingerprint: 'not-a-fingerprint' } })).toBe(false);

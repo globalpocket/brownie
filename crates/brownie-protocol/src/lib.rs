@@ -1132,6 +1132,8 @@ pub struct HeadlessRunDriveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_completion_closure_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_completion_decision: Option<HeadlessRunProductCompletionDecisionRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_candidate_fetch_target: Option<ModePackSelectedCandidateFetchTarget>,
@@ -1152,6 +1154,31 @@ pub struct HeadlessRunDriveParams {
     pub journey_closure: Option<HeadlessRunJourneyClosure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub journey_execution: Option<HeadlessRunJourneyExecution>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunProductCompletionDecisionRequest {
+    pub authorize_product_completion_decision: bool,
+    pub decision_id: String,
+    pub expected_accepted_completion_fingerprint: String,
+    pub expected_terminal_completion_fingerprint: String,
+    pub expected_completion_closure_fingerprint: String,
+    pub expected_product_evidence_fingerprint: String,
+    pub evidence_status: String,
+    pub target_capability: String,
+    pub concrete_capability_transition: String,
+    #[serde(default)]
+    pub validated_gate_categories: Vec<String>,
+    pub behavior_evidence_count: usize,
+    pub rejected_alternatives_count: usize,
+    pub safety_boundary_reviewed: bool,
+    pub non_goals_reviewed: bool,
+    pub technical_debt_reviewed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub milestone_exit_rationale: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2087,6 +2114,8 @@ pub struct HeadlessRunDriveResult {
     pub completion_finalization: Option<HeadlessRunCompletionFinalization>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_completion: Option<HeadlessRunAcceptedCompletion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_completion_decision: Option<HeadlessRunProductCompletionDecision>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,
@@ -2103,6 +2132,34 @@ pub struct HeadlessRunDriveResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub journey_execution: Option<HeadlessRunJourneyExecutionMetadata>,
     pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunProductCompletionDecision {
+    pub decision_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub acceptance_id: String,
+    pub status: String,
+    pub next_action: String,
+    pub target_capability: String,
+    pub concrete_capability_transition: String,
+    pub accepted_completion_fingerprint: String,
+    pub terminal_completion_fingerprint: String,
+    pub completion_closure_fingerprint: String,
+    pub product_evidence_fingerprint: String,
+    pub decision_fingerprint: String,
+    pub validated_gate_categories: Vec<String>,
+    pub behavior_evidence_count: usize,
+    pub rejected_alternatives_count: usize,
+    pub safety_boundary_reviewed: bool,
+    pub non_goals_reviewed: bool,
+    pub technical_debt_reviewed: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remaining_capability: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub milestone_exit_rationale: Option<String>,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
