@@ -651,6 +651,7 @@ export interface HeadlessRunProductEvidenceDerivationRequest {
   expected_accepted_completion_fingerprint: string;
   expected_terminal_completion_fingerprint: string;
   expected_completion_closure_fingerprint: string;
+  project_completion_policy: HeadlessRunProductEvidenceArtifactSource;
   artifacts: HeadlessRunProductEvidenceArtifactSource[];
 }
 
@@ -1187,6 +1188,7 @@ export interface HeadlessRunProductEvidenceMatrix {
   terminal_completion_fingerprint: string;
   completion_closure_fingerprint: string;
   product_evidence_matrix_fingerprint: string;
+  product_completion_claim: boolean;
   artifact_count: number;
   artifact_hashes: HeadlessRunProductEvidenceArtifact[];
   validated_gate_categories: string[];
@@ -7094,6 +7096,7 @@ export function isHeadlessRunProductEvidenceDerivationRequest(value: unknown): v
       'expected_accepted_completion_fingerprint',
       'expected_terminal_completion_fingerprint',
       'expected_completion_closure_fingerprint',
+      'project_completion_policy',
       'artifacts',
     ]) &&
     hasNoForbiddenRawFields(value) &&
@@ -7107,10 +7110,21 @@ export function isHeadlessRunProductEvidenceDerivationRequest(value: unknown): v
     isSha256Fingerprint(value.expected_terminal_completion_fingerprint) &&
     typeof value.expected_completion_closure_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_completion_closure_fingerprint) &&
+    isHeadlessRunProductEvidenceArtifactSource(value.project_completion_policy) &&
+    value.project_completion_policy.path.endsWith('.json') &&
     Array.isArray(value.artifacts) &&
-    value.artifacts.length === 6 &&
-    value.artifacts.every(isHeadlessRunProductEvidenceArtifactSource)
+    value.artifacts.length >= 1 &&
+    value.artifacts.length <= 32 &&
+    value.artifacts.every(isHeadlessRunProductEvidenceArtifactSource) &&
+    hasUniqueProductEvidenceArtifactPaths(value.project_completion_policy, value.artifacts)
   );
+}
+
+function hasUniqueProductEvidenceArtifactPaths(
+  projectCompletionPolicy: HeadlessRunProductEvidenceArtifactSource,
+  artifacts: HeadlessRunProductEvidenceArtifactSource[],
+): boolean {
+  return new Set([projectCompletionPolicy.path, ...artifacts.map((artifact) => artifact.path)]).size === artifacts.length + 1;
 }
 
 export function isHeadlessRunProductEvidenceArtifactSource(value: unknown): value is HeadlessRunProductEvidenceArtifactSource {
@@ -7151,6 +7165,7 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
       'terminal_completion_fingerprint',
       'completion_closure_fingerprint',
       'product_evidence_matrix_fingerprint',
+      'product_completion_claim',
       'artifact_count',
       'artifact_hashes',
       'validated_gate_categories',
@@ -7179,6 +7194,7 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
     isSha256Fingerprint(value.completion_closure_fingerprint) &&
     typeof value.product_evidence_matrix_fingerprint === 'string' &&
     isSha256Fingerprint(value.product_evidence_matrix_fingerprint) &&
+    typeof value.product_completion_claim === 'boolean' &&
     isNonNegativeInteger(value.artifact_count) &&
     Array.isArray(value.artifact_hashes) &&
     value.artifact_hashes.length === value.artifact_count &&

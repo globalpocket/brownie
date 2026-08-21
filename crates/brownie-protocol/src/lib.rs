@@ -1195,6 +1195,7 @@ pub struct HeadlessRunProductEvidenceDerivationRequest {
     pub expected_accepted_completion_fingerprint: String,
     pub expected_terminal_completion_fingerprint: String,
     pub expected_completion_closure_fingerprint: String,
+    pub project_completion_policy: HeadlessRunProductEvidenceArtifactSource,
     #[serde(default)]
     pub artifacts: Vec<HeadlessRunProductEvidenceArtifactSource>,
 }
@@ -2205,6 +2206,8 @@ pub struct HeadlessRunProductEvidenceMatrix {
     pub terminal_completion_fingerprint: String,
     pub completion_closure_fingerprint: String,
     pub product_evidence_matrix_fingerprint: String,
+    #[serde(default)]
+    pub product_completion_claim: bool,
     pub artifact_count: usize,
     pub artifact_hashes: Vec<HeadlessRunProductEvidenceArtifact>,
     pub validated_gate_categories: Vec<String>,

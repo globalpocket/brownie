@@ -786,22 +786,27 @@ payloads, diagnostics, commands, environment values, absolute paths, canonical
 paths, and secrets remain excluded.
 
 M52.1 moves the product evidence source for that decision path into the Rust
-runtime. `headless.run.drive` can accept an explicitly authorized
-`product_evidence_derivation` envelope for one current phase/milestone. The
-runtime reads only a fixed allowlist of current repository artifacts, requires a
-caller-provided expected SHA-256 for every artifact, rejects missing,
-non-regular, non-UTF-8, symlinked, unsafe, stale-hash, or mismatched phase
-manifest evidence, derives a bounded product evidence matrix from the current
-manifest gate and completion ledger facts, records one bounded
-`HeadlessRunProductEvidenceMatrixDerived` event, and replays it without
-duplicate mutation. A later `product_completion_decision` may reference the
-derived matrix fingerprint so category/count/boolean product evidence is filled
-from runtime-derived matrix metadata rather than caller-owned category truth.
-The matrix exposes only bounded ids, phase/milestone strings, category names,
-counts, booleans, next action, artifact path identifiers, artifact SHA-256
-values, and matrix fingerprints; raw Product Charter, manifest, spec, ledger,
-prompt, provider, file, command, output, environment, absolute path, canonical
-path, and secret data remain excluded.
+runtime. M52.2 removes the remaining Brownie-specific ownership boundary from
+that derivation path: `headless.run.drive` now accepts an explicitly authorized
+`product_evidence_derivation` envelope with one safe JSON
+`project_completion_policy` artifact and one to thirty-two policy-declared
+evidence artifacts. The runtime requires expected SHA-256 values for the policy
+and every evidence artifact, rejects missing, non-regular, non-UTF-8,
+symlinked, unsafe, stale-hash, or policy-mismatched evidence, derives a bounded
+product evidence matrix from the policy gate and completion ledger facts,
+records one bounded `HeadlessRunProductEvidenceMatrixDerived` event, and
+replays it without duplicate mutation. The matrix includes a
+`product_completion_claim` boolean committed into the matrix fingerprint. A
+later `product_completion_decision` may reference the derived matrix
+fingerprint so category/count/boolean product evidence is filled from
+runtime-derived matrix metadata rather than caller-owned category truth, and a
+`product_complete` request is denied before ledger mutation when the derived
+policy claim is false. The matrix exposes only bounded ids, phase/milestone
+strings, category names, counts, booleans, next action, artifact path
+identifiers, artifact SHA-256 values, claim state, and matrix fingerprints; raw
+Product Charter, manifest, spec, ledger, prompt, provider, file, command,
+output, environment, absolute path, canonical path, and secret data remain
+excluded.
 
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
