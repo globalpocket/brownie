@@ -40,9 +40,10 @@ use brownie_protocol::{
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
     HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
-    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
-    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
+    HeadlessRunProductEvidenceMatrix, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -16212,6 +16213,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         if let Some(accepted_completion) = result.accepted_completion.as_mut() {
             accepted_completion.replayed = true;
         }
+        if let Some(product_evidence_matrix) = result.product_evidence_matrix.as_mut() {
+            product_evidence_matrix.replayed = true;
+        }
         if let Some(product_completion_decision) = result.product_completion_decision.as_mut() {
             product_completion_decision.replayed = true;
         }
@@ -16244,6 +16248,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 Ok(finalization) => result.completion_finalization = finalization,
                 Err(message) => return error_response(id, -32602, &message),
             }
+        }
+        match headless_run_product_evidence_matrix(
+            &store,
+            &result,
+            params.product_evidence_derivation.as_ref(),
+        ) {
+            Ok(Some(matrix)) => result.product_evidence_matrix = Some(matrix),
+            Ok(None) => {}
+            Err(message) => return error_response(id, -32602, &message),
         }
         match headless_run_product_completion_decision(
             &store,
@@ -16461,6 +16474,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_closure: completion_closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_evidence_matrix: None,
             product_completion_decision: None,
             start_progress: start_progress.clone(),
             post_progress: post_progress.clone(),
@@ -16510,6 +16524,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "completion_closure": completion_closure,
             "completion_finalization": completion_finalization,
             "accepted_completion": null,
+            "product_evidence_matrix": null,
             "product_completion_decision": null,
             "journey_closure": journey_closure_metadata,
             "next_action": next_action
@@ -16533,6 +16548,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_closure,
             completion_finalization,
             accepted_completion: None,
+            product_evidence_matrix: None,
             product_completion_decision: None,
             start_progress,
             post_progress,
@@ -16739,6 +16755,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_closure: completion_closure.clone(),
         completion_finalization: None,
         accepted_completion: accepted_completion.clone(),
+        product_evidence_matrix: None,
         product_completion_decision: None,
         start_progress: start_progress.clone(),
         post_progress: post_progress.clone(),
@@ -16761,6 +16778,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     };
     let mut result_for_decision = result_without_fingerprint.clone();
     result_for_decision.completion_finalization = completion_finalization.clone();
+    let product_evidence_matrix = match headless_run_product_evidence_matrix(
+        &store,
+        &result_for_decision,
+        params.product_evidence_derivation.as_ref(),
+    ) {
+        Ok(matrix) => matrix,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    result_for_decision.product_evidence_matrix = product_evidence_matrix.clone();
     let product_completion_decision = match headless_run_product_completion_decision(
         &store,
         &result_for_decision,
@@ -16784,6 +16810,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "completion_closure": completion_closure,
         "completion_finalization": completion_finalization,
         "accepted_completion": accepted_completion,
+        "product_evidence_matrix": product_evidence_matrix,
         "product_completion_decision": product_completion_decision,
         "journey_route_resume": journey_route_resume_metadata,
         "journey_closure": null,
@@ -16808,6 +16835,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_closure,
         completion_finalization,
         accepted_completion,
+        product_evidence_matrix,
         product_completion_decision,
         start_progress,
         post_progress,
@@ -20598,10 +20626,485 @@ fn append_headless_run_session_drive_completed_events(
     if let Some(closure) = result.journey_closure.as_ref() {
         append_headless_journey_closed_event_if_missing(store, closure)?;
     }
+    if let Some(matrix) = result.product_evidence_matrix.as_ref() {
+        append_headless_product_evidence_matrix_event_if_missing(store, matrix)?;
+    }
     if let Some(decision) = result.product_completion_decision.as_ref() {
         append_headless_product_completion_decision_event_if_missing(store, decision)?;
     }
     Ok(())
+}
+
+fn append_headless_product_evidence_matrix_event_if_missing(
+    store: &BrownieStore,
+    matrix: &HeadlessRunProductEvidenceMatrix,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&matrix.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != matrix.run_id {
+        return Ok(());
+    }
+    let events = store.tasks().read_ledger_events(&matrix.run_id)?;
+    for event in events {
+        if event.kind != LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        let same_boundary = payload.get("task_id").and_then(Value::as_str)
+            == Some(matrix.task_id.as_str())
+            && payload.get("run_id").and_then(Value::as_str) == Some(matrix.run_id.as_str())
+            && payload
+                .get("accepted_completion_fingerprint")
+                .and_then(Value::as_str)
+                == Some(matrix.accepted_completion_fingerprint.as_str())
+            && payload
+                .get("terminal_completion_fingerprint")
+                .and_then(Value::as_str)
+                == Some(matrix.terminal_completion_fingerprint.as_str())
+            && payload
+                .get("completion_closure_fingerprint")
+                .and_then(Value::as_str)
+                == Some(matrix.completion_closure_fingerprint.as_str())
+            && payload.get("phase_id").and_then(Value::as_str) == Some(matrix.phase_id.as_str());
+        if !same_boundary {
+            continue;
+        }
+        if payload
+            .get("product_evidence_matrix_fingerprint")
+            .and_then(Value::as_str)
+            == Some(matrix.product_evidence_matrix_fingerprint.as_str())
+        {
+            return Ok(());
+        }
+        anyhow::bail!(
+            "product evidence matrix conflicts with persisted completion boundary matrix"
+        );
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived,
+        Some(headless_product_evidence_matrix_payload(matrix)),
+    )?;
+    Ok(())
+}
+
+fn headless_run_product_evidence_matrix(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+    request: Option<&HeadlessRunProductEvidenceDerivationRequest>,
+) -> Result<Option<HeadlessRunProductEvidenceMatrix>, String> {
+    if let Some(existing) = result.product_evidence_matrix.as_ref() {
+        if let Some(request) = request {
+            validate_product_evidence_derivation_request(request)?;
+            if existing.derivation_id != request.derivation_id
+                || existing.accepted_completion_fingerprint
+                    != request.expected_accepted_completion_fingerprint
+                || existing.terminal_completion_fingerprint
+                    != request.expected_terminal_completion_fingerprint
+                || existing.completion_closure_fingerprint
+                    != request.expected_completion_closure_fingerprint
+            {
+                return Err(
+                    "invalid params: product evidence matrix replay target conflicts with persisted matrix"
+                        .to_string(),
+                );
+            }
+        }
+        return Ok(Some(HeadlessRunProductEvidenceMatrix {
+            replayed: true,
+            ..existing.clone()
+        }));
+    }
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    validate_product_evidence_derivation_request(request)?;
+    let accepted = result.accepted_completion.as_ref().ok_or_else(|| {
+        "invalid params: product evidence derivation requires accepted_completion route evidence"
+            .to_string()
+    })?;
+    let terminal = result
+        .terminal_completion_evidence
+        .as_ref()
+        .ok_or_else(|| {
+            "invalid params: product evidence derivation requires terminal completion evidence"
+                .to_string()
+        })?;
+    if accepted.acceptance_fingerprint != request.expected_accepted_completion_fingerprint {
+        return Err(
+            "invalid params: product evidence derivation accepted-completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if accepted.terminal_completion_fingerprint != request.expected_terminal_completion_fingerprint
+        || terminal.completion_result_fingerprint
+            != request.expected_terminal_completion_fingerprint
+    {
+        return Err(
+            "invalid params: product evidence derivation terminal completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if result.completion_closure.closure_fingerprint
+        != request.expected_completion_closure_fingerprint
+    {
+        return Err(
+            "invalid params: product evidence derivation completion-closure fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    let artifacts = read_product_evidence_artifacts(store, request)?;
+    let current_manifest = artifacts
+        .iter()
+        .find(|artifact| artifact.path == "docs/architecture/phase-value-manifest.json")
+        .ok_or_else(|| "invalid params: current phase manifest artifact is required".to_string())?;
+    let manifest_path = store.workspace_root().join(&current_manifest.path);
+    let manifest_text = fs::read_to_string(&manifest_path)
+        .map_err(|_| "invalid params: current phase manifest cannot be read".to_string())?;
+    let manifest: Value = serde_json::from_str(&manifest_text)
+        .map_err(|_| "invalid params: current phase manifest must be JSON".to_string())?;
+    let manifest_phase = manifest.get("phase").and_then(Value::as_str).unwrap_or("");
+    if manifest_phase != request.phase_id {
+        return Err(
+            "invalid params: product evidence phase_id does not match current manifest".to_string(),
+        );
+    }
+    let manifest_milestone = manifest
+        .get("milestone")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if manifest_milestone != request.milestone {
+        return Err(
+            "invalid params: product evidence milestone does not match current manifest"
+                .to_string(),
+        );
+    }
+    let target_capability = manifest
+        .get("target_capability")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "invalid params: current phase manifest target_capability is required".to_string()
+        })?
+        .to_string();
+    let concrete_capability_transition = manifest
+        .get("concrete_capability_transition")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            "invalid params: current phase manifest concrete_capability_transition is required"
+                .to_string()
+        })?
+        .to_string();
+    let product_gate = manifest
+        .get("product_completion_gate")
+        .ok_or_else(|| "invalid params: product_completion_gate is required".to_string())?;
+    if product_gate.get("required").and_then(Value::as_bool) != Some(true) {
+        return Err("invalid params: product_completion_gate.required must be true".to_string());
+    }
+    let behavior_evidence_count = product_gate
+        .get("behavior_evidence")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let rejected_alternatives_count = product_gate
+        .get("rejected_alternatives")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0);
+    let safety_boundary_reviewed = product_gate
+        .get("safety_boundary")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    let non_goals_reviewed = product_gate
+        .get("non_goals")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    let technical_debt_reviewed = product_gate
+        .get("technical_debt")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        .unwrap_or(false);
+    let validated_gate_categories: Vec<String> = PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+        .iter()
+        .map(|category| (*category).to_string())
+        .collect();
+    let matrix_fingerprint = headless_product_evidence_matrix_fingerprint(
+        request,
+        accepted,
+        terminal,
+        &result.completion_closure,
+        &target_capability,
+        &concrete_capability_transition,
+        &validated_gate_categories,
+        behavior_evidence_count,
+        rejected_alternatives_count,
+        safety_boundary_reviewed,
+        non_goals_reviewed,
+        technical_debt_reviewed,
+        &artifacts,
+    );
+    let replayed = headless_product_evidence_matrix_was_persisted(
+        store,
+        &HeadlessRunProductEvidenceMatrix {
+            derivation_id: request.derivation_id.clone(),
+            task_id: accepted.task_id.clone(),
+            run_id: accepted.run_id.clone(),
+            acceptance_id: accepted.acceptance_id.clone(),
+            phase_id: request.phase_id.clone(),
+            milestone: request.milestone.clone(),
+            target_capability: target_capability.clone(),
+            concrete_capability_transition: concrete_capability_transition.clone(),
+            accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
+            terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
+            completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
+            product_evidence_matrix_fingerprint: matrix_fingerprint.clone(),
+            artifact_count: artifacts.len(),
+            artifact_hashes: artifacts.clone(),
+            validated_gate_categories: validated_gate_categories.clone(),
+            behavior_evidence_count,
+            rejected_alternatives_count,
+            safety_boundary_reviewed,
+            non_goals_reviewed,
+            technical_debt_reviewed,
+            next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
+            replayed: false,
+        },
+    )
+    .map_err(|error| error.to_string())?;
+    let matrix = HeadlessRunProductEvidenceMatrix {
+        derivation_id: request.derivation_id.clone(),
+        task_id: accepted.task_id.clone(),
+        run_id: accepted.run_id.clone(),
+        acceptance_id: accepted.acceptance_id.clone(),
+        phase_id: request.phase_id.clone(),
+        milestone: request.milestone.clone(),
+        target_capability,
+        concrete_capability_transition,
+        accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
+        terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
+        completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
+        product_evidence_matrix_fingerprint: matrix_fingerprint,
+        artifact_count: artifacts.len(),
+        artifact_hashes: artifacts,
+        validated_gate_categories,
+        behavior_evidence_count,
+        rejected_alternatives_count,
+        safety_boundary_reviewed,
+        non_goals_reviewed,
+        technical_debt_reviewed,
+        next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
+        replayed,
+    };
+    append_headless_product_evidence_matrix_event_if_missing(store, &matrix)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(matrix))
+}
+
+fn validate_product_evidence_derivation_request(
+    request: &HeadlessRunProductEvidenceDerivationRequest,
+) -> Result<(), String> {
+    if !request.authorize_product_evidence_derivation {
+        return Err(
+            "invalid params: product evidence derivation requires explicit authorization"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&request.derivation_id) {
+        return Err("invalid params: product evidence derivation derivation_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+    }
+    if !is_bounded_product_completion_text(&request.phase_id, 32)
+        || !is_bounded_product_completion_text(&request.milestone, 120)
+    {
+        return Err("invalid params: product evidence derivation phase_id and milestone must be bounded ASCII metadata".to_string());
+    }
+    for (field, value) in [
+        (
+            "expected_accepted_completion_fingerprint",
+            &request.expected_accepted_completion_fingerprint,
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            &request.expected_terminal_completion_fingerprint,
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            &request.expected_completion_closure_fingerprint,
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "invalid params: product evidence derivation {field} must be sha256"
+            ));
+        }
+    }
+    if request.artifacts.len() != PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.len() {
+        return Err(
+            "invalid params: product evidence derivation requires the fixed artifact allowlist"
+                .to_string(),
+        );
+    }
+    let mut paths: Vec<&str> = request
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.as_str())
+        .collect();
+    paths.sort_unstable();
+    let mut required = PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.to_vec();
+    required.sort_unstable();
+    if paths != required {
+        return Err(
+            "invalid params: product evidence derivation artifacts must match the fixed allowlist"
+                .to_string(),
+        );
+    }
+    for artifact in &request.artifacts {
+        if !is_safe_product_evidence_artifact_path(&artifact.path) {
+            return Err(
+                "invalid params: product evidence artifact path is outside the allowlist or unsafe"
+                    .to_string(),
+            );
+        }
+        if !is_sha256_fingerprint(&artifact.expected_sha256) {
+            return Err(
+                "invalid params: product evidence artifact expected_sha256 must be sha256"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+const PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS: &[&str] = &[
+    "docs/architecture/product-charter.md",
+    "docs/architecture/runtime-overview.md",
+    "docs/architecture/phase-value-manifest.json",
+    "docs/architecture/phase-value-manifest.m52.1.json",
+    "docs/specifications/agent-loop-spec-v0.md",
+    "docs/specifications/brownie-scope-v0.md",
+];
+
+fn is_safe_product_evidence_artifact_path(path: &str) -> bool {
+    PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.contains(&path) && is_safe_codebase_index_path(path, false)
+}
+
+fn read_product_evidence_artifacts(
+    store: &BrownieStore,
+    request: &HeadlessRunProductEvidenceDerivationRequest,
+) -> Result<Vec<HeadlessRunProductEvidenceArtifact>, String> {
+    let mut artifacts = request.artifacts.clone();
+    artifacts.sort_by(|left, right| left.path.cmp(&right.path));
+    let mut result = Vec::with_capacity(artifacts.len());
+    for artifact in artifacts {
+        let full_path = store.workspace_root().join(&artifact.path);
+        let metadata = fs::symlink_metadata(&full_path)
+            .map_err(|_| "invalid params: product evidence artifact is missing".to_string())?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err("invalid params: product evidence artifact must be an existing regular file and not a symlink".to_string());
+        }
+        let bytes = fs::read(&full_path)
+            .map_err(|_| "invalid params: product evidence artifact cannot be read".to_string())?;
+        if std::str::from_utf8(&bytes).is_err() {
+            return Err("invalid params: product evidence artifact must be UTF-8".to_string());
+        }
+        let sha256 = format!("sha256:{}", hex_sha256(&bytes));
+        if sha256 != artifact.expected_sha256 {
+            return Err("invalid params: product evidence artifact hash mismatch".to_string());
+        }
+        result.push(HeadlessRunProductEvidenceArtifact {
+            path: artifact.path,
+            sha256,
+        });
+    }
+    Ok(result)
+}
+
+fn headless_product_evidence_matrix_was_persisted(
+    store: &BrownieStore,
+    matrix: &HeadlessRunProductEvidenceMatrix,
+) -> anyhow::Result<bool> {
+    Ok(store
+        .tasks()
+        .read_ledger_events(&matrix.run_id)?
+        .iter()
+        .any(|event| {
+            event.kind == LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("product_evidence_matrix_fingerprint"))
+                    .and_then(Value::as_str)
+                    == Some(matrix.product_evidence_matrix_fingerprint.as_str())
+        }))
+}
+
+fn headless_product_evidence_matrix_payload(matrix: &HeadlessRunProductEvidenceMatrix) -> Value {
+    json!({
+        "derivation_id": matrix.derivation_id,
+        "task_id": matrix.task_id,
+        "run_id": matrix.run_id,
+        "acceptance_id": matrix.acceptance_id,
+        "phase_id": matrix.phase_id,
+        "milestone": matrix.milestone,
+        "target_capability": matrix.target_capability,
+        "concrete_capability_transition": matrix.concrete_capability_transition,
+        "accepted_completion_fingerprint": matrix.accepted_completion_fingerprint,
+        "terminal_completion_fingerprint": matrix.terminal_completion_fingerprint,
+        "completion_closure_fingerprint": matrix.completion_closure_fingerprint,
+        "product_evidence_matrix_fingerprint": matrix.product_evidence_matrix_fingerprint,
+        "artifact_count": matrix.artifact_count,
+        "artifact_hashes": matrix.artifact_hashes,
+        "validated_gate_categories": matrix.validated_gate_categories,
+        "behavior_evidence_count": matrix.behavior_evidence_count,
+        "rejected_alternatives_count": matrix.rejected_alternatives_count,
+        "safety_boundary_reviewed": matrix.safety_boundary_reviewed,
+        "non_goals_reviewed": matrix.non_goals_reviewed,
+        "technical_debt_reviewed": matrix.technical_debt_reviewed,
+        "next_action": matrix.next_action,
+        "replayed": false,
+    })
+}
+
+fn headless_product_evidence_matrix_fingerprint(
+    request: &HeadlessRunProductEvidenceDerivationRequest,
+    accepted: &HeadlessRunAcceptedCompletion,
+    terminal: &brownie_protocol::TaskRunCompletionEvidence,
+    closure: &HeadlessRunCompletionClosure,
+    target_capability: &str,
+    concrete_capability_transition: &str,
+    validated_gate_categories: &[String],
+    behavior_evidence_count: usize,
+    rejected_alternatives_count: usize,
+    safety_boundary_reviewed: bool,
+    non_goals_reviewed: bool,
+    technical_debt_reviewed: bool,
+    artifacts: &[HeadlessRunProductEvidenceArtifact],
+) -> String {
+    let canonical = json!({
+        "version": "headless_product_evidence_matrix_v1",
+        "derivation_id": request.derivation_id,
+        "phase_id": request.phase_id,
+        "milestone": request.milestone,
+        "task_id": accepted.task_id,
+        "run_id": accepted.run_id,
+        "acceptance_id": accepted.acceptance_id,
+        "accepted_completion_fingerprint": accepted.acceptance_fingerprint,
+        "terminal_completion_fingerprint": terminal.completion_result_fingerprint,
+        "completion_closure_fingerprint": closure.closure_fingerprint,
+        "target_capability": target_capability,
+        "concrete_capability_transition": concrete_capability_transition,
+        "validated_gate_categories": validated_gate_categories,
+        "behavior_evidence_count": behavior_evidence_count,
+        "rejected_alternatives_count": rejected_alternatives_count,
+        "safety_boundary_reviewed": safety_boundary_reviewed,
+        "non_goals_reviewed": non_goals_reviewed,
+        "technical_debt_reviewed": technical_debt_reviewed,
+        "artifact_hashes": artifacts,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn append_headless_product_completion_decision_event_if_missing(
@@ -20751,24 +21254,74 @@ fn headless_run_product_completion_decision(
                 .to_string(),
         );
     }
+    let mut evidence_request = request.clone();
+    if let Some(matrix_fingerprint) = request
+        .derived_product_evidence_matrix_fingerprint
+        .as_deref()
+    {
+        if matrix_fingerprint != request.expected_product_evidence_fingerprint {
+            return Err(
+                "invalid params: derived product evidence matrix fingerprint must match expected product evidence fingerprint"
+                    .to_string(),
+            );
+        }
+        let matrix = result.product_evidence_matrix.as_ref().ok_or_else(|| {
+            "invalid params: derived product evidence matrix is required for product decision"
+                .to_string()
+        })?;
+        if matrix.product_evidence_matrix_fingerprint != matrix_fingerprint {
+            return Err(
+                "invalid params: product decision derived product evidence matrix fingerprint mismatch"
+                    .to_string(),
+            );
+        }
+        if matrix.accepted_completion_fingerprint != accepted.acceptance_fingerprint
+            || matrix.terminal_completion_fingerprint != terminal.completion_result_fingerprint
+            || matrix.completion_closure_fingerprint
+                != result.completion_closure.closure_fingerprint
+        {
+            return Err(
+                "invalid params: product decision derived product evidence matrix boundary mismatch"
+                    .to_string(),
+            );
+        }
+        evidence_request.target_capability = matrix.target_capability.clone();
+        evidence_request.concrete_capability_transition =
+            matrix.concrete_capability_transition.clone();
+        evidence_request.validated_gate_categories = matrix.validated_gate_categories.clone();
+        evidence_request.behavior_evidence_count = matrix.behavior_evidence_count;
+        evidence_request.rejected_alternatives_count = matrix.rejected_alternatives_count;
+        evidence_request.safety_boundary_reviewed = matrix.safety_boundary_reviewed;
+        evidence_request.non_goals_reviewed = matrix.non_goals_reviewed;
+        evidence_request.technical_debt_reviewed = matrix.technical_debt_reviewed;
+        evidence_request.expected_product_evidence_fingerprint =
+            matrix.product_evidence_matrix_fingerprint.clone();
+    }
     let current_product_evidence_fingerprint =
-        headless_product_completion_evidence_fingerprint(request);
-    if current_product_evidence_fingerprint != request.expected_product_evidence_fingerprint {
+        headless_product_completion_evidence_fingerprint(&evidence_request);
+    if request
+        .derived_product_evidence_matrix_fingerprint
+        .is_none()
+        && current_product_evidence_fingerprint != request.expected_product_evidence_fingerprint
+    {
         return Err(
             "invalid params: product completion decision product-evidence fingerprint mismatch"
                 .to_string(),
         );
     }
 
-    let mut missing_or_invalid_evidence =
-        !product_completion_evidence_categories_are_complete(&request.validated_gate_categories)
-            || request.behavior_evidence_count == 0
-            || request.rejected_alternatives_count == 0
-            || !request.safety_boundary_reviewed
-            || !request.non_goals_reviewed
-            || !request.technical_debt_reviewed
-            || request.target_capability.trim().is_empty()
-            || request.concrete_capability_transition.trim().is_empty();
+    let mut missing_or_invalid_evidence = !product_completion_evidence_categories_are_complete(
+        &evidence_request.validated_gate_categories,
+    ) || evidence_request.behavior_evidence_count == 0
+        || evidence_request.rejected_alternatives_count == 0
+        || !evidence_request.safety_boundary_reviewed
+        || !evidence_request.non_goals_reviewed
+        || !evidence_request.technical_debt_reviewed
+        || evidence_request.target_capability.trim().is_empty()
+        || evidence_request
+            .concrete_capability_transition
+            .trim()
+            .is_empty();
 
     let (status, next_action) = match request.evidence_status.as_str() {
         "product_complete"
@@ -20812,7 +21365,7 @@ fn headless_run_product_completion_decision(
         }
     };
     let decision_fingerprint = headless_product_completion_decision_fingerprint(
-        request,
+        &evidence_request,
         accepted,
         terminal,
         &result.completion_closure,
@@ -20827,19 +21380,24 @@ fn headless_run_product_completion_decision(
         acceptance_id: accepted.acceptance_id.clone(),
         status: status.to_string(),
         next_action: next_action.to_string(),
-        target_capability: request.target_capability.clone(),
-        concrete_capability_transition: request.concrete_capability_transition.clone(),
+        target_capability: evidence_request.target_capability.clone(),
+        concrete_capability_transition: evidence_request.concrete_capability_transition.clone(),
         accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
         terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
         completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
-        product_evidence_fingerprint: request.expected_product_evidence_fingerprint.clone(),
+        product_evidence_fingerprint: evidence_request
+            .expected_product_evidence_fingerprint
+            .clone(),
         decision_fingerprint,
-        validated_gate_categories: request.validated_gate_categories.clone(),
-        behavior_evidence_count: request.behavior_evidence_count,
-        rejected_alternatives_count: request.rejected_alternatives_count,
-        safety_boundary_reviewed: request.safety_boundary_reviewed,
-        non_goals_reviewed: request.non_goals_reviewed,
-        technical_debt_reviewed: request.technical_debt_reviewed,
+        validated_gate_categories: evidence_request.validated_gate_categories.clone(),
+        derived_product_evidence_matrix_fingerprint: request
+            .derived_product_evidence_matrix_fingerprint
+            .clone(),
+        behavior_evidence_count: evidence_request.behavior_evidence_count,
+        rejected_alternatives_count: evidence_request.rejected_alternatives_count,
+        safety_boundary_reviewed: evidence_request.safety_boundary_reviewed,
+        non_goals_reviewed: evidence_request.non_goals_reviewed,
+        technical_debt_reviewed: evidence_request.technical_debt_reviewed,
         remaining_capability: request.remaining_capability.clone(),
         milestone_exit_rationale: request.milestone_exit_rationale.clone(),
         replayed: false,
@@ -20909,6 +21467,11 @@ fn validate_product_completion_decision_request(
             .iter()
             .any(|category| !is_bounded_product_completion_text(category, 96))
         || request
+            .derived_product_evidence_matrix_fingerprint
+            .as_ref()
+            .map(|value| !is_sha256_fingerprint(value))
+            .unwrap_or(false)
+        || request
             .remaining_capability
             .as_ref()
             .map(|value| !is_bounded_product_completion_text(value, 120))
@@ -20959,6 +21522,7 @@ fn headless_product_completion_decision_payload(
         "product_evidence_fingerprint": decision.product_evidence_fingerprint,
         "decision_fingerprint": decision.decision_fingerprint,
         "validated_gate_categories": decision.validated_gate_categories,
+        "derived_product_evidence_matrix_fingerprint": decision.derived_product_evidence_matrix_fingerprint,
         "behavior_evidence_count": decision.behavior_evidence_count,
         "rejected_alternatives_count": decision.rejected_alternatives_count,
         "safety_boundary_reviewed": decision.safety_boundary_reviewed,
@@ -20995,6 +21559,7 @@ fn headless_product_completion_decision_fingerprint(
         "target_capability": request.target_capability,
         "concrete_capability_transition": request.concrete_capability_transition,
         "validated_gate_categories": request.validated_gate_categories,
+        "derived_product_evidence_matrix_fingerprint": request.derived_product_evidence_matrix_fingerprint,
         "behavior_evidence_count": request.behavior_evidence_count,
         "rejected_alternatives_count": request.rejected_alternatives_count,
         "safety_boundary_reviewed": request.safety_boundary_reviewed,
@@ -21010,6 +21575,9 @@ fn headless_product_completion_decision_fingerprint(
 fn headless_product_completion_evidence_fingerprint(
     request: &HeadlessRunProductCompletionDecisionRequest,
 ) -> String {
+    if let Some(fingerprint) = request.derived_product_evidence_matrix_fingerprint.as_ref() {
+        return fingerprint.clone();
+    }
     let canonical = json!({
         "version": "headless_product_completion_evidence_v1",
         "evidence_status": request.evidence_status,
@@ -45931,6 +46499,85 @@ mod tests {
             .expect("ledger events")
     }
 
+    fn write_m52_product_evidence_artifacts(workspace_root: &std::path::Path) -> Vec<Value> {
+        let manifest = json!({
+            "phase": "M52.1",
+            "milestone": "M52 Runtime Product Evidence Authority",
+            "target_capability": "headless_autonomous_development",
+            "concrete_capability_transition": "runtime_derived_product_evidence_matrix_for_product_completion_decision",
+            "product_completion_gate": {
+                "required": true,
+                "behavior_evidence": [
+                    "runtime derives bounded matrix",
+                    "product decision consumes derived matrix",
+                    "stale artifact hashes fail closed"
+                ],
+                "rejected_alternatives": [
+                    "new report RPC",
+                    "caller-owned product gate categories"
+                ],
+                "safety_boundary": [
+                    "fixed artifact allowlist",
+                    "sha256 freshness checks"
+                ],
+                "non_goals": [
+                    "no raw artifact content exposure"
+                ],
+                "technical_debt": [
+                    "richer product charter semantics after M52.1"
+                ]
+            }
+        });
+        let artifacts = [
+            (
+                "docs/architecture/product-charter.md",
+                "# Product Charter\nruntime-owned product evidence authority\n",
+            ),
+            (
+                "docs/architecture/runtime-overview.md",
+                "# Runtime Overview\nM52.1 runtime matrix derivation\n",
+            ),
+            (
+                "docs/specifications/agent-loop-spec-v0.md",
+                "# Agent Loop\nheadless run drive derives product evidence\n",
+            ),
+            (
+                "docs/specifications/brownie-scope-v0.md",
+                "# Scope\nbounded headless autonomous development\n",
+            ),
+        ];
+        for (path, content) in artifacts {
+            let target = workspace_root.join(path);
+            std::fs::create_dir_all(target.parent().expect("artifact parent"))
+                .expect("artifact parent dir");
+            std::fs::write(target, content).expect("artifact content");
+        }
+        for path in [
+            "docs/architecture/phase-value-manifest.json",
+            "docs/architecture/phase-value-manifest.m52.1.json",
+        ] {
+            let target = workspace_root.join(path);
+            std::fs::create_dir_all(target.parent().expect("manifest parent"))
+                .expect("manifest parent dir");
+            std::fs::write(
+                target,
+                serde_json::to_string_pretty(&manifest).expect("manifest json"),
+            )
+            .expect("manifest content");
+        }
+
+        PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS
+            .iter()
+            .map(|path| {
+                let content = std::fs::read(workspace_root.join(path)).expect("artifact read");
+                json!({
+                    "path": path,
+                    "expected_sha256": format!("sha256:{}", hex_sha256(&content)),
+                })
+            })
+            .collect()
+    }
+
     #[test]
     fn verification_recovery_context_excerpt_is_bounded_and_hashed() {
         let temp = tempfile::tempdir().expect("tempdir");
@@ -53007,6 +53654,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_evidence_matrix: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -53275,6 +53923,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_evidence_matrix: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -53418,6 +54067,7 @@ mod tests {
             completion_closure: closure.clone(),
             completion_finalization: None,
             accepted_completion: None,
+            product_evidence_matrix: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -75806,6 +76456,7 @@ mod tests {
                 "technical_debt".to_string(),
                 "next_capability_or_milestone_exit".to_string(),
             ],
+            derived_product_evidence_matrix_fingerprint: None,
             behavior_evidence_count: 3,
             rejected_alternatives_count: 2,
             safety_boundary_reviewed: true,
@@ -75934,6 +76585,7 @@ mod tests {
                 "technical_debt".to_string(),
                 "next_capability_or_milestone_exit".to_string(),
             ],
+            derived_product_evidence_matrix_fingerprint: None,
             behavior_evidence_count: 4,
             rejected_alternatives_count: 3,
             safety_boundary_reviewed: true,
@@ -75978,6 +76630,368 @@ mod tests {
                 })
                 .count(),
             1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_derives_product_evidence_matrix_and_decides() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let artifacts = write_m52_product_evidence_artifacts(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Runtime product evidence matrix","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m52.product.evidence","advance_id":"m52.product.evidence.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m52-product-evidence-accepted",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m52.product.evidence","drive_id":"m52.product.evidence.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+
+        let derivation = json!({
+            "authorize_product_evidence_derivation": true,
+            "derivation_id": "m52-product-evidence-matrix",
+            "phase_id": "M52.1",
+            "milestone": "M52 Runtime Product Evidence Authority",
+            "expected_accepted_completion_fingerprint": acceptance_fingerprint,
+            "expected_terminal_completion_fingerprint": terminal_fingerprint,
+            "expected_completion_closure_fingerprint": closure_fingerprint,
+            "artifacts": artifacts,
+        });
+        let matrix_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m52.product.evidence",
+                "drive_id": "m52.product.evidence.route",
+                "expected_start_session_sequence": 1,
+                "max_advances": 2,
+                "max_steps_per_advance": 1,
+                "expected_completion_closure_fingerprint": closure_fingerprint,
+                "product_evidence_derivation": derivation
+            }
+        });
+        let matrix_response = parse_line(&matrix_request.to_string());
+        assert!(
+            matrix_response.error.is_none(),
+            "{:?}",
+            matrix_response.error
+        );
+        let matrix_result = matrix_response.result.expect("matrix result");
+        let matrix = matrix_result["product_evidence_matrix"]
+            .as_object()
+            .expect("product evidence matrix");
+        assert_eq!(matrix["phase_id"], "M52.1");
+        assert_eq!(matrix["artifact_count"], 6);
+        assert_eq!(matrix["behavior_evidence_count"], 3);
+        assert_eq!(matrix["rejected_alternatives_count"], 2);
+        assert_eq!(matrix["safety_boundary_reviewed"], true);
+        assert_eq!(matrix["non_goals_reviewed"], true);
+        assert_eq!(matrix["technical_debt_reviewed"], true);
+        assert_eq!(
+            matrix["next_action"],
+            "record_product_completion_decision_with_runtime_evidence"
+        );
+        assert_eq!(matrix["replayed"], false);
+        let matrix_fingerprint = matrix["product_evidence_matrix_fingerprint"]
+            .as_str()
+            .expect("matrix fingerprint")
+            .to_string();
+
+        let decision_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m52.product.evidence",
+                "drive_id": "m52.product.evidence.route",
+                "expected_start_session_sequence": 1,
+                "max_advances": 2,
+                "max_steps_per_advance": 1,
+                "expected_completion_closure_fingerprint": closure_fingerprint,
+                "product_evidence_derivation": matrix_request["params"]["product_evidence_derivation"].clone(),
+                "product_completion_decision": {
+                    "authorize_product_completion_decision": true,
+                    "decision_id": "m52-product-evidence-decision",
+                    "expected_accepted_completion_fingerprint": matrix["accepted_completion_fingerprint"],
+                    "expected_terminal_completion_fingerprint": matrix["terminal_completion_fingerprint"],
+                    "expected_completion_closure_fingerprint": matrix["completion_closure_fingerprint"],
+                    "expected_product_evidence_fingerprint": matrix_fingerprint,
+                    "derived_product_evidence_matrix_fingerprint": matrix_fingerprint,
+                    "evidence_status": "continue_development",
+                    "target_capability": "placeholder",
+                    "concrete_capability_transition": "placeholder",
+                    "validated_gate_categories": [],
+                    "behavior_evidence_count": 0,
+                    "rejected_alternatives_count": 0,
+                    "safety_boundary_reviewed": false,
+                    "non_goals_reviewed": false,
+                    "technical_debt_reviewed": false,
+                    "remaining_capability": "m52_next_runtime_evidence_authority"
+                }
+            }
+        });
+        let decided = parse_line(&decision_request.to_string());
+        assert!(decided.error.is_none(), "{:?}", decided.error);
+        let decided_result = decided.result.expect("decided result");
+        assert_eq!(
+            decided_result["product_completion_decision"]["product_evidence_fingerprint"],
+            matrix_fingerprint
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]
+                ["derived_product_evidence_matrix_fingerprint"],
+            matrix_fingerprint
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["target_capability"],
+            "headless_autonomous_development"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["concrete_capability_transition"],
+            "runtime_derived_product_evidence_matrix_for_product_completion_decision"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["behavior_evidence_count"],
+            3
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["status"],
+            "continue_development"
+        );
+        let serialized = serde_json::to_string(&decided_result).expect("serialize decision");
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_request",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "diagnostics",
+        ] {
+            assert!(
+                !serialized.contains(&format!(r#"\"{forbidden}\""#)),
+                "leaked {forbidden}"
+            );
+        }
+        assert!(!serialized.contains("runtime-owned product evidence authority"));
+
+        let replay = parse_line(&decision_request.to_string());
+        assert!(replay.error.is_none());
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["product_evidence_matrix"]["replayed"], true);
+        assert_eq!(
+            replay_result["product_completion_decision"]["replayed"],
+            true
+        );
+        let events = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after matrix replay");
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+                })
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_rejects_stale_product_evidence_artifact_hash() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut artifacts = write_m52_product_evidence_artifacts(temp.path());
+        artifacts[0]["expected_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Runtime product evidence stale hash","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m52.product.evidence.stale","advance_id":"m52.product.evidence.stale.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m52-product-evidence-stale-accepted",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m52.product.evidence.stale","drive_id":"m52.product.evidence.stale.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+
+        let stale = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m52.product.evidence.stale",
+                    "drive_id": "m52.product.evidence.stale.route",
+                    "expected_start_session_sequence": 1,
+                    "max_advances": 2,
+                    "max_steps_per_advance": 1,
+                    "expected_completion_closure_fingerprint": closure_fingerprint,
+                    "product_evidence_derivation": {
+                        "authorize_product_evidence_derivation": true,
+                        "derivation_id": "m52-product-evidence-stale",
+                        "phase_id": "M52.1",
+                        "milestone": "M52 Runtime Product Evidence Authority",
+                        "expected_accepted_completion_fingerprint": acceptance_fingerprint,
+                        "expected_terminal_completion_fingerprint": terminal_fingerprint,
+                        "expected_completion_closure_fingerprint": closure_fingerprint,
+                        "artifacts": artifacts,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(stale.result.is_none());
+        assert!(stale
+            .error
+            .expect("stale artifact hash error")
+            .message
+            .contains("artifact hash mismatch"));
+        let events = store_events(temp.path(), &run_id);
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+                )
+                .count(),
+            0
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -76068,6 +77082,7 @@ mod tests {
                 .iter()
                 .map(|category| category.to_string())
                 .collect(),
+            derived_product_evidence_matrix_fingerprint: None,
             behavior_evidence_count: 4,
             rejected_alternatives_count: 3,
             safety_boundary_reviewed: true,
@@ -76195,6 +77210,7 @@ mod tests {
             concrete_capability_transition: "runtime_owned_product_completion_stop_decision"
                 .to_string(),
             validated_gate_categories: vec!["strategic_capability_mapping".to_string()],
+            derived_product_evidence_matrix_fingerprint: None,
             behavior_evidence_count: 0,
             rejected_alternatives_count: 0,
             safety_boundary_reviewed: false,

@@ -1132,6 +1132,8 @@ pub struct HeadlessRunDriveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_completion_closure_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_evidence_derivation: Option<HeadlessRunProductEvidenceDerivationRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_completion_decision: Option<HeadlessRunProductCompletionDecisionRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
@@ -1170,6 +1172,8 @@ pub struct HeadlessRunProductCompletionDecisionRequest {
     pub concrete_capability_transition: String,
     #[serde(default)]
     pub validated_gate_categories: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub derived_product_evidence_matrix_fingerprint: Option<String>,
     pub behavior_evidence_count: usize,
     pub rejected_alternatives_count: usize,
     pub safety_boundary_reviewed: bool,
@@ -1179,6 +1183,27 @@ pub struct HeadlessRunProductCompletionDecisionRequest {
     pub remaining_capability: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone_exit_rationale: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunProductEvidenceDerivationRequest {
+    pub authorize_product_evidence_derivation: bool,
+    pub derivation_id: String,
+    pub phase_id: String,
+    pub milestone: String,
+    pub expected_accepted_completion_fingerprint: String,
+    pub expected_terminal_completion_fingerprint: String,
+    pub expected_completion_closure_fingerprint: String,
+    #[serde(default)]
+    pub artifacts: Vec<HeadlessRunProductEvidenceArtifactSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunProductEvidenceArtifactSource {
+    pub path: String,
+    pub expected_sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2115,6 +2140,8 @@ pub struct HeadlessRunDriveResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub accepted_completion: Option<HeadlessRunAcceptedCompletion>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_evidence_matrix: Option<HeadlessRunProductEvidenceMatrix>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub product_completion_decision: Option<HeadlessRunProductCompletionDecision>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2150,6 +2177,8 @@ pub struct HeadlessRunProductCompletionDecision {
     pub product_evidence_fingerprint: String,
     pub decision_fingerprint: String,
     pub validated_gate_categories: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derived_product_evidence_matrix_fingerprint: Option<String>,
     pub behavior_evidence_count: usize,
     pub rejected_alternatives_count: usize,
     pub safety_boundary_reviewed: bool,
@@ -2160,6 +2189,38 @@ pub struct HeadlessRunProductCompletionDecision {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub milestone_exit_rationale: Option<String>,
     pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunProductEvidenceMatrix {
+    pub derivation_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub acceptance_id: String,
+    pub phase_id: String,
+    pub milestone: String,
+    pub target_capability: String,
+    pub concrete_capability_transition: String,
+    pub accepted_completion_fingerprint: String,
+    pub terminal_completion_fingerprint: String,
+    pub completion_closure_fingerprint: String,
+    pub product_evidence_matrix_fingerprint: String,
+    pub artifact_count: usize,
+    pub artifact_hashes: Vec<HeadlessRunProductEvidenceArtifact>,
+    pub validated_gate_categories: Vec<String>,
+    pub behavior_evidence_count: usize,
+    pub rejected_alternatives_count: usize,
+    pub safety_boundary_reviewed: bool,
+    pub non_goals_reviewed: bool,
+    pub technical_debt_reviewed: bool,
+    pub next_action: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunProductEvidenceArtifact {
+    pub path: String,
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

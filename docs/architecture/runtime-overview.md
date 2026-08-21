@@ -785,6 +785,24 @@ text, prompts, provider responses, final responses, file content, raw ledger
 payloads, diagnostics, commands, environment values, absolute paths, canonical
 paths, and secrets remain excluded.
 
+M52.1 moves the product evidence source for that decision path into the Rust
+runtime. `headless.run.drive` can accept an explicitly authorized
+`product_evidence_derivation` envelope for one current phase/milestone. The
+runtime reads only a fixed allowlist of current repository artifacts, requires a
+caller-provided expected SHA-256 for every artifact, rejects missing,
+non-regular, non-UTF-8, symlinked, unsafe, stale-hash, or mismatched phase
+manifest evidence, derives a bounded product evidence matrix from the current
+manifest gate and completion ledger facts, records one bounded
+`HeadlessRunProductEvidenceMatrixDerived` event, and replays it without
+duplicate mutation. A later `product_completion_decision` may reference the
+derived matrix fingerprint so category/count/boolean product evidence is filled
+from runtime-derived matrix metadata rather than caller-owned category truth.
+The matrix exposes only bounded ids, phase/milestone strings, category names,
+counts, booleans, next action, artifact path identifiers, artifact SHA-256
+values, and matrix fingerprints; raw Product Charter, manifest, spec, ledger,
+prompt, provider, file, command, output, environment, absolute path, canonical
+path, and secret data remain excluded.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust
