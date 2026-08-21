@@ -20756,95 +20756,25 @@ fn headless_run_product_evidence_matrix(
                 .to_string(),
         );
     }
-    let artifacts = read_product_evidence_artifacts(store, request)?;
-    let current_manifest = artifacts
-        .iter()
-        .find(|artifact| artifact.path == "docs/architecture/phase-value-manifest.json")
-        .ok_or_else(|| "invalid params: current phase manifest artifact is required".to_string())?;
-    let manifest_path = store.workspace_root().join(&current_manifest.path);
-    let manifest_text = fs::read_to_string(&manifest_path)
-        .map_err(|_| "invalid params: current phase manifest cannot be read".to_string())?;
-    let manifest: Value = serde_json::from_str(&manifest_text)
-        .map_err(|_| "invalid params: current phase manifest must be JSON".to_string())?;
-    let manifest_phase = manifest.get("phase").and_then(Value::as_str).unwrap_or("");
-    if manifest_phase != request.phase_id {
-        return Err(
-            "invalid params: product evidence phase_id does not match current manifest".to_string(),
-        );
-    }
-    let manifest_milestone = manifest
-        .get("milestone")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if manifest_milestone != request.milestone {
-        return Err(
-            "invalid params: product evidence milestone does not match current manifest"
-                .to_string(),
-        );
-    }
-    let target_capability = manifest
-        .get("target_capability")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            "invalid params: current phase manifest target_capability is required".to_string()
-        })?
-        .to_string();
-    let concrete_capability_transition = manifest
-        .get("concrete_capability_transition")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            "invalid params: current phase manifest concrete_capability_transition is required"
-                .to_string()
-        })?
-        .to_string();
-    let product_gate = manifest
-        .get("product_completion_gate")
-        .ok_or_else(|| "invalid params: product_completion_gate is required".to_string())?;
-    if product_gate.get("required").and_then(Value::as_bool) != Some(true) {
-        return Err("invalid params: product_completion_gate.required must be true".to_string());
-    }
-    let behavior_evidence_count = product_gate
-        .get("behavior_evidence")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
-    let rejected_alternatives_count = product_gate
-        .get("rejected_alternatives")
-        .and_then(Value::as_array)
-        .map(Vec::len)
-        .unwrap_or(0);
-    let safety_boundary_reviewed = product_gate
-        .get("safety_boundary")
-        .and_then(Value::as_array)
-        .map(|items| !items.is_empty())
-        .unwrap_or(false);
-    let non_goals_reviewed = product_gate
-        .get("non_goals")
-        .and_then(Value::as_array)
-        .map(|items| !items.is_empty())
-        .unwrap_or(false);
-    let technical_debt_reviewed = product_gate
-        .get("technical_debt")
-        .and_then(Value::as_array)
-        .map(|items| !items.is_empty())
-        .unwrap_or(false);
-    let validated_gate_categories: Vec<String> = PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
-        .iter()
-        .map(|category| (*category).to_string())
-        .collect();
+    let (policy_text, artifacts) = read_product_evidence_artifacts(store, request)?;
+    let policy_json: Value = serde_json::from_str(&policy_text)
+        .map_err(|_| "invalid params: project completion policy must be JSON".to_string())?;
+    let policy = parse_project_completion_policy(&policy_json, request)?;
+    validate_project_completion_policy_artifacts(&policy.evidence_artifact_paths, request)?;
     let matrix_fingerprint = headless_product_evidence_matrix_fingerprint(
         request,
         accepted,
         terminal,
         &result.completion_closure,
-        &target_capability,
-        &concrete_capability_transition,
-        &validated_gate_categories,
-        behavior_evidence_count,
-        rejected_alternatives_count,
-        safety_boundary_reviewed,
-        non_goals_reviewed,
-        technical_debt_reviewed,
+        &policy.target_capability,
+        &policy.concrete_capability_transition,
+        policy.product_completion_claim,
+        &policy.validated_gate_categories,
+        policy.behavior_evidence_count,
+        policy.rejected_alternatives_count,
+        policy.safety_boundary_reviewed,
+        policy.non_goals_reviewed,
+        policy.technical_debt_reviewed,
         &artifacts,
     );
     let replayed = headless_product_evidence_matrix_was_persisted(
@@ -20856,20 +20786,21 @@ fn headless_run_product_evidence_matrix(
             acceptance_id: accepted.acceptance_id.clone(),
             phase_id: request.phase_id.clone(),
             milestone: request.milestone.clone(),
-            target_capability: target_capability.clone(),
-            concrete_capability_transition: concrete_capability_transition.clone(),
+            target_capability: policy.target_capability.clone(),
+            concrete_capability_transition: policy.concrete_capability_transition.clone(),
             accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
             terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
             completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
             product_evidence_matrix_fingerprint: matrix_fingerprint.clone(),
+            product_completion_claim: policy.product_completion_claim,
             artifact_count: artifacts.len(),
             artifact_hashes: artifacts.clone(),
-            validated_gate_categories: validated_gate_categories.clone(),
-            behavior_evidence_count,
-            rejected_alternatives_count,
-            safety_boundary_reviewed,
-            non_goals_reviewed,
-            technical_debt_reviewed,
+            validated_gate_categories: policy.validated_gate_categories.clone(),
+            behavior_evidence_count: policy.behavior_evidence_count,
+            rejected_alternatives_count: policy.rejected_alternatives_count,
+            safety_boundary_reviewed: policy.safety_boundary_reviewed,
+            non_goals_reviewed: policy.non_goals_reviewed,
+            technical_debt_reviewed: policy.technical_debt_reviewed,
             next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
             replayed: false,
         },
@@ -20882,26 +20813,41 @@ fn headless_run_product_evidence_matrix(
         acceptance_id: accepted.acceptance_id.clone(),
         phase_id: request.phase_id.clone(),
         milestone: request.milestone.clone(),
-        target_capability,
-        concrete_capability_transition,
+        target_capability: policy.target_capability,
+        concrete_capability_transition: policy.concrete_capability_transition,
         accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
         terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
         completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
         product_evidence_matrix_fingerprint: matrix_fingerprint,
+        product_completion_claim: policy.product_completion_claim,
         artifact_count: artifacts.len(),
         artifact_hashes: artifacts,
-        validated_gate_categories,
-        behavior_evidence_count,
-        rejected_alternatives_count,
-        safety_boundary_reviewed,
-        non_goals_reviewed,
-        technical_debt_reviewed,
+        validated_gate_categories: policy.validated_gate_categories,
+        behavior_evidence_count: policy.behavior_evidence_count,
+        rejected_alternatives_count: policy.rejected_alternatives_count,
+        safety_boundary_reviewed: policy.safety_boundary_reviewed,
+        non_goals_reviewed: policy.non_goals_reviewed,
+        technical_debt_reviewed: policy.technical_debt_reviewed,
         next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
         replayed,
     };
     append_headless_product_evidence_matrix_event_if_missing(store, &matrix)
         .map_err(|error| error.to_string())?;
     Ok(Some(matrix))
+}
+
+#[derive(Debug, Clone)]
+struct ProjectCompletionPolicy {
+    target_capability: String,
+    concrete_capability_transition: String,
+    product_completion_claim: bool,
+    validated_gate_categories: Vec<String>,
+    behavior_evidence_count: usize,
+    rejected_alternatives_count: usize,
+    safety_boundary_reviewed: bool,
+    non_goals_reviewed: bool,
+    technical_debt_reviewed: bool,
+    evidence_artifact_paths: Vec<String>,
 }
 
 fn validate_product_evidence_derivation_request(
@@ -20941,32 +20887,26 @@ fn validate_product_evidence_derivation_request(
             ));
         }
     }
-    if request.artifacts.len() != PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.len() {
+    if !is_safe_product_evidence_policy_path(&request.project_completion_policy.path) {
         return Err(
-            "invalid params: product evidence derivation requires the fixed artifact allowlist"
+            "invalid params: project completion policy path is unsafe or not JSON".to_string(),
+        );
+    }
+    if !is_sha256_fingerprint(&request.project_completion_policy.expected_sha256) {
+        return Err(
+            "invalid params: project completion policy expected_sha256 must be sha256".to_string(),
+        );
+    }
+    if request.artifacts.is_empty() || request.artifacts.len() > 32 {
+        return Err(
+            "invalid params: product evidence derivation requires 1-32 policy-declared artifacts"
                 .to_string(),
         );
     }
-    let mut paths: Vec<&str> = request
-        .artifacts
-        .iter()
-        .map(|artifact| artifact.path.as_str())
-        .collect();
-    paths.sort_unstable();
-    let mut required = PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.to_vec();
-    required.sort_unstable();
-    if paths != required {
-        return Err(
-            "invalid params: product evidence derivation artifacts must match the fixed allowlist"
-                .to_string(),
-        );
-    }
+    let mut paths = vec![request.project_completion_policy.path.as_str()];
     for artifact in &request.artifacts {
         if !is_safe_product_evidence_artifact_path(&artifact.path) {
-            return Err(
-                "invalid params: product evidence artifact path is outside the allowlist or unsafe"
-                    .to_string(),
-            );
+            return Err("invalid params: product evidence artifact path is unsafe".to_string());
         }
         if !is_sha256_fingerprint(&artifact.expected_sha256) {
             return Err(
@@ -20974,52 +20914,288 @@ fn validate_product_evidence_derivation_request(
                     .to_string(),
             );
         }
+        if paths.iter().any(|path| *path == artifact.path) {
+            return Err(
+                "invalid params: product evidence derivation artifact paths must be unique"
+                    .to_string(),
+            );
+        }
+        paths.push(artifact.path.as_str());
     }
     Ok(())
 }
 
-const PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS: &[&str] = &[
-    "docs/architecture/product-charter.md",
-    "docs/architecture/runtime-overview.md",
-    "docs/architecture/phase-value-manifest.json",
-    "docs/architecture/phase-value-manifest.m52.1.json",
-    "docs/specifications/agent-loop-spec-v0.md",
-    "docs/specifications/brownie-scope-v0.md",
-];
+fn is_safe_product_evidence_policy_path(path: &str) -> bool {
+    path.ends_with(".json") && is_safe_codebase_index_path(path, false)
+}
 
 fn is_safe_product_evidence_artifact_path(path: &str) -> bool {
-    PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS.contains(&path) && is_safe_codebase_index_path(path, false)
+    is_safe_codebase_index_path(path, false)
 }
 
 fn read_product_evidence_artifacts(
     store: &BrownieStore,
     request: &HeadlessRunProductEvidenceDerivationRequest,
-) -> Result<Vec<HeadlessRunProductEvidenceArtifact>, String> {
+) -> Result<(String, Vec<HeadlessRunProductEvidenceArtifact>), String> {
+    let (policy_artifact, policy_text) = read_product_evidence_artifact_source(
+        store,
+        &request.project_completion_policy,
+        "project completion policy",
+    )?;
     let mut artifacts = request.artifacts.clone();
     artifacts.sort_by(|left, right| left.path.cmp(&right.path));
-    let mut result = Vec::with_capacity(artifacts.len());
+    let mut result = Vec::with_capacity(artifacts.len() + 1);
+    result.push(policy_artifact);
     for artifact in artifacts {
-        let full_path = store.workspace_root().join(&artifact.path);
-        let metadata = fs::symlink_metadata(&full_path)
-            .map_err(|_| "invalid params: product evidence artifact is missing".to_string())?;
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err("invalid params: product evidence artifact must be an existing regular file and not a symlink".to_string());
-        }
-        let bytes = fs::read(&full_path)
-            .map_err(|_| "invalid params: product evidence artifact cannot be read".to_string())?;
-        if std::str::from_utf8(&bytes).is_err() {
-            return Err("invalid params: product evidence artifact must be UTF-8".to_string());
-        }
-        let sha256 = format!("sha256:{}", hex_sha256(&bytes));
-        if sha256 != artifact.expected_sha256 {
-            return Err("invalid params: product evidence artifact hash mismatch".to_string());
-        }
-        result.push(HeadlessRunProductEvidenceArtifact {
-            path: artifact.path,
-            sha256,
-        });
+        let (artifact, _) =
+            read_product_evidence_artifact_source(store, &artifact, "product evidence artifact")?;
+        result.push(artifact);
     }
-    Ok(result)
+    Ok((policy_text, result))
+}
+
+fn read_product_evidence_artifact_source(
+    store: &BrownieStore,
+    artifact: &brownie_protocol::HeadlessRunProductEvidenceArtifactSource,
+    label: &str,
+) -> Result<(HeadlessRunProductEvidenceArtifact, String), String> {
+    let full_path = store.workspace_root().join(&artifact.path);
+    let metadata = fs::symlink_metadata(&full_path)
+        .map_err(|_| format!("invalid params: {label} is missing"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err(format!(
+            "invalid params: {label} must be an existing regular file and not a symlink"
+        ));
+    }
+    let bytes =
+        fs::read(&full_path).map_err(|_| format!("invalid params: {label} cannot be read"))?;
+    let text = std::str::from_utf8(&bytes)
+        .map_err(|_| format!("invalid params: {label} must be UTF-8"))?
+        .to_string();
+    let sha256 = format!("sha256:{}", hex_sha256(&bytes));
+    if sha256 != artifact.expected_sha256 {
+        return Err(format!("invalid params: {label} hash mismatch"));
+    }
+    Ok((
+        HeadlessRunProductEvidenceArtifact {
+            path: artifact.path.clone(),
+            sha256,
+        },
+        text,
+    ))
+}
+
+fn parse_project_completion_policy(
+    policy: &Value,
+    request: &HeadlessRunProductEvidenceDerivationRequest,
+) -> Result<ProjectCompletionPolicy, String> {
+    if !policy.is_object() {
+        return Err("invalid params: project completion policy must be a JSON object".to_string());
+    }
+    let phase_id =
+        project_completion_policy_string(policy, &["phase_id", "phase"], 32, "phase_id")?;
+    if phase_id != request.phase_id {
+        return Err(
+            "invalid params: product evidence phase_id does not match project completion policy"
+                .to_string(),
+        );
+    }
+    let milestone = project_completion_policy_string(policy, &["milestone"], 120, "milestone")?;
+    if milestone != request.milestone {
+        return Err(
+            "invalid params: product evidence milestone does not match project completion policy"
+                .to_string(),
+        );
+    }
+    let target_capability =
+        project_completion_policy_string(policy, &["target_capability"], 96, "target_capability")?;
+    let concrete_capability_transition = project_completion_policy_string(
+        policy,
+        &["concrete_capability_transition"],
+        120,
+        "concrete_capability_transition",
+    )?;
+    let gate = policy.get("product_completion_gate").unwrap_or(policy);
+    if gate.get("required").and_then(Value::as_bool) == Some(false) {
+        return Err(
+            "invalid params: project completion policy gate must not be disabled".to_string(),
+        );
+    }
+    let product_completion_claim = policy
+        .get("product_completion_claim")
+        .or_else(|| gate.get("product_completion_claim"))
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            "invalid params: project completion policy product_completion_claim is required"
+                .to_string()
+        })?;
+    let validated_gate_categories = project_completion_policy_string_array(
+        policy
+            .get("validated_gate_categories")
+            .or_else(|| gate.get("validated_gate_categories")),
+        "validated_gate_categories",
+        16,
+        96,
+    )?;
+    if !product_completion_evidence_categories_are_complete(&validated_gate_categories) {
+        return Err(
+            "invalid params: project completion policy gate categories are incomplete".to_string(),
+        );
+    }
+    let behavior_evidence_count = project_completion_policy_string_array(
+        gate.get("behavior_evidence"),
+        "behavior_evidence",
+        64,
+        160,
+    )?
+    .len();
+    let rejected_alternatives_count = project_completion_policy_string_array(
+        gate.get("rejected_alternatives"),
+        "rejected_alternatives",
+        32,
+        160,
+    )?
+    .len();
+    let safety_boundary_reviewed = !project_completion_policy_string_array(
+        gate.get("safety_boundary"),
+        "safety_boundary",
+        32,
+        160,
+    )?
+    .is_empty();
+    let non_goals_reviewed =
+        !project_completion_policy_string_array(gate.get("non_goals"), "non_goals", 32, 160)?
+            .is_empty();
+    let technical_debt_reviewed = !project_completion_policy_string_array(
+        gate.get("technical_debt"),
+        "technical_debt",
+        32,
+        160,
+    )?
+    .is_empty();
+    let evidence_artifact_paths = project_completion_policy_path_array(
+        policy
+            .get("evidence_artifacts")
+            .or_else(|| gate.get("evidence_artifacts")),
+    )?;
+
+    Ok(ProjectCompletionPolicy {
+        target_capability,
+        concrete_capability_transition,
+        product_completion_claim,
+        validated_gate_categories,
+        behavior_evidence_count,
+        rejected_alternatives_count,
+        safety_boundary_reviewed,
+        non_goals_reviewed,
+        technical_debt_reviewed,
+        evidence_artifact_paths,
+    })
+}
+
+fn project_completion_policy_string(
+    policy: &Value,
+    keys: &[&str],
+    max_len: usize,
+    field: &str,
+) -> Result<String, String> {
+    for key in keys {
+        if let Some(value) = policy.get(*key).and_then(Value::as_str) {
+            if is_bounded_product_completion_text(value, max_len) {
+                return Ok(value.to_string());
+            }
+            return Err(format!(
+                "invalid params: project completion policy {field} must be bounded ASCII metadata"
+            ));
+        }
+    }
+    Err(format!(
+        "invalid params: project completion policy {field} is required"
+    ))
+}
+
+fn project_completion_policy_string_array(
+    value: Option<&Value>,
+    field: &str,
+    max_items: usize,
+    max_item_len: usize,
+) -> Result<Vec<String>, String> {
+    let items = value
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("invalid params: project completion policy {field} is required"))?;
+    if items.is_empty() || items.len() > max_items {
+        return Err(format!(
+            "invalid params: project completion policy {field} must contain 1-{max_items} items"
+        ));
+    }
+    items
+        .iter()
+        .map(|item| {
+            let text = item.as_str().ok_or_else(|| {
+                format!("invalid params: project completion policy {field} items must be strings")
+            })?;
+            if !is_bounded_product_completion_text(text, max_item_len) {
+                return Err(format!(
+                    "invalid params: project completion policy {field} items must be bounded ASCII metadata"
+                ));
+            }
+            Ok(text.to_string())
+        })
+        .collect()
+}
+
+fn project_completion_policy_path_array(value: Option<&Value>) -> Result<Vec<String>, String> {
+    let items = value.and_then(Value::as_array).ok_or_else(|| {
+        "invalid params: project completion policy evidence_artifacts is required".to_string()
+    })?;
+    if items.is_empty() || items.len() > 32 {
+        return Err(
+            "invalid params: project completion policy evidence_artifacts must contain 1-32 paths"
+                .to_string(),
+        );
+    }
+    let mut paths = Vec::with_capacity(items.len());
+    for item in items {
+        let path = item.as_str().ok_or_else(|| {
+            "invalid params: project completion policy evidence_artifacts items must be strings"
+                .to_string()
+        })?;
+        if !is_safe_product_evidence_artifact_path(path) {
+            return Err(
+                "invalid params: project completion policy evidence artifact path is unsafe"
+                    .to_string(),
+            );
+        }
+        if paths.iter().any(|existing| existing == path) {
+            return Err(
+                "invalid params: project completion policy evidence_artifacts must be unique"
+                    .to_string(),
+            );
+        }
+        paths.push(path.to_string());
+    }
+    Ok(paths)
+}
+
+fn validate_project_completion_policy_artifacts(
+    policy_artifact_paths: &[String],
+    request: &HeadlessRunProductEvidenceDerivationRequest,
+) -> Result<(), String> {
+    let mut expected = policy_artifact_paths.to_vec();
+    expected.sort();
+    let mut actual: Vec<String> = request
+        .artifacts
+        .iter()
+        .map(|artifact| artifact.path.clone())
+        .collect();
+    actual.sort();
+    if actual != expected {
+        return Err(
+            "invalid params: product evidence artifacts must match project completion policy"
+                .to_string(),
+        );
+    }
+    Ok(())
 }
 
 fn headless_product_evidence_matrix_was_persisted(
@@ -21055,6 +21231,7 @@ fn headless_product_evidence_matrix_payload(matrix: &HeadlessRunProductEvidenceM
         "terminal_completion_fingerprint": matrix.terminal_completion_fingerprint,
         "completion_closure_fingerprint": matrix.completion_closure_fingerprint,
         "product_evidence_matrix_fingerprint": matrix.product_evidence_matrix_fingerprint,
+        "product_completion_claim": matrix.product_completion_claim,
         "artifact_count": matrix.artifact_count,
         "artifact_hashes": matrix.artifact_hashes,
         "validated_gate_categories": matrix.validated_gate_categories,
@@ -21075,6 +21252,7 @@ fn headless_product_evidence_matrix_fingerprint(
     closure: &HeadlessRunCompletionClosure,
     target_capability: &str,
     concrete_capability_transition: &str,
+    product_completion_claim: bool,
     validated_gate_categories: &[String],
     behavior_evidence_count: usize,
     rejected_alternatives_count: usize,
@@ -21096,6 +21274,7 @@ fn headless_product_evidence_matrix_fingerprint(
         "completion_closure_fingerprint": closure.closure_fingerprint,
         "target_capability": target_capability,
         "concrete_capability_transition": concrete_capability_transition,
+        "product_completion_claim": product_completion_claim,
         "validated_gate_categories": validated_gate_categories,
         "behavior_evidence_count": behavior_evidence_count,
         "rejected_alternatives_count": rejected_alternatives_count,
@@ -21282,6 +21461,12 @@ fn headless_run_product_completion_decision(
         {
             return Err(
                 "invalid params: product decision derived product evidence matrix boundary mismatch"
+                .to_string(),
+            );
+        }
+        if request.evidence_status == "product_complete" && !matrix.product_completion_claim {
+            return Err(
+                "invalid params: product completion claim is false for derived product evidence matrix"
                     .to_string(),
             );
         }
@@ -46499,83 +46684,79 @@ mod tests {
             .expect("ledger events")
     }
 
-    fn write_m52_product_evidence_artifacts(workspace_root: &std::path::Path) -> Vec<Value> {
-        let manifest = json!({
-            "phase": "M52.1",
+    fn write_m52_product_evidence_artifacts(
+        workspace_root: &std::path::Path,
+        product_completion_claim: bool,
+    ) -> (Value, Vec<Value>) {
+        let policy_path = "docs/product-completion/policy.json";
+        let evidence_path = "docs/product-completion/evidence.md";
+        let policy = json!({
+            "schema_version": 1,
+            "policy_id": "m52-2-product-completion-policy",
+            "phase_id": "M52.2",
             "milestone": "M52 Runtime Product Evidence Authority",
             "target_capability": "headless_autonomous_development",
-            "concrete_capability_transition": "runtime_derived_product_evidence_matrix_for_product_completion_decision",
+            "concrete_capability_transition": "generic_project_completion_policy_boundary_for_product_decisions",
+            "product_completion_claim": product_completion_claim,
+            "validated_gate_categories": PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES,
             "product_completion_gate": {
                 "required": true,
                 "behavior_evidence": [
                     "runtime derives bounded matrix",
-                    "product decision consumes derived matrix",
+                    "policy artifact owns product completion claim",
                     "stale artifact hashes fail closed"
                 ],
                 "rejected_alternatives": [
                     "new report RPC",
-                    "caller-owned product gate categories"
+                    "runtime hard coded product artifact paths"
                 ],
                 "safety_boundary": [
-                    "fixed artifact allowlist",
-                    "sha256 freshness checks"
+                    "request policy hash freshness checks",
+                    "policy evidence artifact membership checks"
                 ],
                 "non_goals": [
                     "no raw artifact content exposure"
                 ],
                 "technical_debt": [
-                    "richer product charter semantics after M52.1"
+                    "richer product charter semantics after M52.2"
+                ],
+                "evidence_artifacts": [
+                    evidence_path
                 ]
             }
         });
-        let artifacts = [
-            (
-                "docs/architecture/product-charter.md",
-                "# Product Charter\nruntime-owned product evidence authority\n",
-            ),
-            (
-                "docs/architecture/runtime-overview.md",
-                "# Runtime Overview\nM52.1 runtime matrix derivation\n",
-            ),
-            (
-                "docs/specifications/agent-loop-spec-v0.md",
-                "# Agent Loop\nheadless run drive derives product evidence\n",
-            ),
-            (
-                "docs/specifications/brownie-scope-v0.md",
-                "# Scope\nbounded headless autonomous development\n",
-            ),
-        ];
-        for (path, content) in artifacts {
-            let target = workspace_root.join(path);
-            std::fs::create_dir_all(target.parent().expect("artifact parent"))
-                .expect("artifact parent dir");
-            std::fs::write(target, content).expect("artifact content");
-        }
-        for path in [
-            "docs/architecture/phase-value-manifest.json",
-            "docs/architecture/phase-value-manifest.m52.1.json",
-        ] {
-            let target = workspace_root.join(path);
-            std::fs::create_dir_all(target.parent().expect("manifest parent"))
-                .expect("manifest parent dir");
-            std::fs::write(
-                target,
-                serde_json::to_string_pretty(&manifest).expect("manifest json"),
-            )
-            .expect("manifest content");
-        }
+        let evidence_target = workspace_root.join(evidence_path);
+        std::fs::create_dir_all(evidence_target.parent().expect("evidence parent"))
+            .expect("evidence parent dir");
+        std::fs::write(
+            &evidence_target,
+            "# Product Completion Evidence\nruntime-owned product evidence authority\n",
+        )
+        .expect("evidence content");
+        let policy_target = workspace_root.join(policy_path);
+        std::fs::create_dir_all(policy_target.parent().expect("policy parent"))
+            .expect("policy parent dir");
+        std::fs::write(
+            &policy_target,
+            serde_json::to_string_pretty(&policy).expect("policy json"),
+        )
+        .expect("policy content");
 
-        PRODUCT_EVIDENCE_REQUIRED_ARTIFACTS
-            .iter()
-            .map(|path| {
-                let content = std::fs::read(workspace_root.join(path)).expect("artifact read");
-                json!({
-                    "path": path,
-                    "expected_sha256": format!("sha256:{}", hex_sha256(&content)),
-                })
-            })
-            .collect()
+        (
+            product_evidence_artifact_source(workspace_root, policy_path),
+            vec![product_evidence_artifact_source(
+                workspace_root,
+                evidence_path,
+            )],
+        )
+    }
+
+    fn product_evidence_artifact_source(workspace_root: &std::path::Path, path: &str) -> Value {
+        let content = std::fs::read(workspace_root.join(path)).expect("artifact read");
+        json!({
+            "path": path,
+            "expected_sha256": format!("sha256:{}", hex_sha256(&content)),
+        })
     }
 
     #[test]
@@ -76639,7 +76820,8 @@ mod tests {
     fn headless_run_drive_derives_product_evidence_matrix_and_decides() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
-        let artifacts = write_m52_product_evidence_artifacts(temp.path());
+        let (project_completion_policy, artifacts) =
+            write_m52_product_evidence_artifacts(temp.path(), false);
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
         let start = parse_line(
@@ -76710,11 +76892,12 @@ mod tests {
         let derivation = json!({
             "authorize_product_evidence_derivation": true,
             "derivation_id": "m52-product-evidence-matrix",
-            "phase_id": "M52.1",
+            "phase_id": "M52.2",
             "milestone": "M52 Runtime Product Evidence Authority",
             "expected_accepted_completion_fingerprint": acceptance_fingerprint,
             "expected_terminal_completion_fingerprint": terminal_fingerprint,
             "expected_completion_closure_fingerprint": closure_fingerprint,
+            "project_completion_policy": project_completion_policy,
             "artifacts": artifacts,
         });
         let matrix_request = json!({
@@ -76742,8 +76925,9 @@ mod tests {
         let matrix = matrix_result["product_evidence_matrix"]
             .as_object()
             .expect("product evidence matrix");
-        assert_eq!(matrix["phase_id"], "M52.1");
-        assert_eq!(matrix["artifact_count"], 6);
+        assert_eq!(matrix["phase_id"], "M52.2");
+        assert_eq!(matrix["artifact_count"], 2);
+        assert_eq!(matrix["product_completion_claim"], false);
         assert_eq!(matrix["behavior_evidence_count"], 3);
         assert_eq!(matrix["rejected_alternatives_count"], 2);
         assert_eq!(matrix["safety_boundary_reviewed"], true);
@@ -76759,9 +76943,51 @@ mod tests {
             .expect("matrix fingerprint")
             .to_string();
 
-        let decision_request = json!({
+        let false_claim_complete_request = json!({
             "jsonrpc": "2.0",
             "id": 7,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m52.product.evidence",
+                "drive_id": "m52.product.evidence.route",
+                "expected_start_session_sequence": 1,
+                "max_advances": 2,
+                "max_steps_per_advance": 1,
+                "expected_completion_closure_fingerprint": closure_fingerprint,
+                "product_evidence_derivation": matrix_request["params"]["product_evidence_derivation"].clone(),
+                "product_completion_decision": {
+                    "authorize_product_completion_decision": true,
+                    "decision_id": "m52-product-evidence-false-complete",
+                    "expected_accepted_completion_fingerprint": matrix["accepted_completion_fingerprint"],
+                    "expected_terminal_completion_fingerprint": matrix["terminal_completion_fingerprint"],
+                    "expected_completion_closure_fingerprint": matrix["completion_closure_fingerprint"],
+                    "expected_product_evidence_fingerprint": matrix_fingerprint,
+                    "derived_product_evidence_matrix_fingerprint": matrix_fingerprint,
+                    "evidence_status": "product_complete",
+                    "target_capability": "placeholder",
+                    "concrete_capability_transition": "placeholder",
+                    "validated_gate_categories": [],
+                    "behavior_evidence_count": 0,
+                    "rejected_alternatives_count": 0,
+                    "safety_boundary_reviewed": false,
+                    "non_goals_reviewed": false,
+                    "technical_debt_reviewed": false,
+                    "milestone_exit_rationale": "m52_complete"
+                }
+            }
+        });
+        let false_claim_complete = parse_line(&false_claim_complete_request.to_string());
+        assert!(false_claim_complete.result.is_none());
+        assert!(false_claim_complete
+            .error
+            .expect("false product completion claim error")
+            .message
+            .contains("product completion claim is false"));
+
+        let decision_request = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
             "method": "headless.run.drive",
             "params": {
                 "authorize": true,
@@ -76811,7 +77037,7 @@ mod tests {
         );
         assert_eq!(
             decided_result["product_completion_decision"]["concrete_capability_transition"],
-            "runtime_derived_product_evidence_matrix_for_product_completion_decision"
+            "generic_project_completion_policy_boundary_for_product_decisions"
         );
         assert_eq!(
             decided_result["product_completion_decision"]["behavior_evidence_count"],
@@ -76882,7 +77108,8 @@ mod tests {
     fn headless_run_drive_rejects_stale_product_evidence_artifact_hash() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut artifacts = write_m52_product_evidence_artifacts(temp.path());
+        let (project_completion_policy, mut artifacts) =
+            write_m52_product_evidence_artifacts(temp.path(), false);
         artifacts[0]["expected_sha256"] = json!(format!("sha256:{}", "f".repeat(64)));
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
 
@@ -76966,11 +77193,12 @@ mod tests {
                     "product_evidence_derivation": {
                         "authorize_product_evidence_derivation": true,
                         "derivation_id": "m52-product-evidence-stale",
-                        "phase_id": "M52.1",
+                        "phase_id": "M52.2",
                         "milestone": "M52 Runtime Product Evidence Authority",
                         "expected_accepted_completion_fingerprint": acceptance_fingerprint,
                         "expected_terminal_completion_fingerprint": terminal_fingerprint,
                         "expected_completion_closure_fingerprint": closure_fingerprint,
+                        "project_completion_policy": project_completion_policy,
                         "artifacts": artifacts,
                     }
                 }

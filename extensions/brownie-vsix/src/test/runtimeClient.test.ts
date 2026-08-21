@@ -1988,13 +1988,12 @@ describe('protocol validation', () => {
       modepack_selected_candidate_approval_target: modePackSelectedCandidateApprovalTarget,
       modepack_selected_approved_candidate_replacement_target: modePackSelectedApprovedCandidateReplacementTarget,
     };
+    const productEvidencePolicy = {
+      path: 'docs/product-completion/policy.json',
+      expected_sha256: `sha256:${'9'.repeat(64)}`,
+    };
     const productEvidenceArtifacts = [
-      'docs/architecture/product-charter.md',
-      'docs/architecture/runtime-overview.md',
-      'docs/architecture/phase-value-manifest.json',
-      'docs/architecture/phase-value-manifest.m52.1.json',
-      'docs/specifications/agent-loop-spec-v0.md',
-      'docs/specifications/brownie-scope-v0.md',
+      'docs/product-completion/evidence.md',
     ].map((path, index) => ({
       path,
       expected_sha256: `sha256:${String(index).repeat(64)}`,
@@ -2002,11 +2001,12 @@ describe('protocol validation', () => {
     const headlessRunProductEvidenceDerivation = {
       authorize_product_evidence_derivation: true,
       derivation_id: 'm52-product-evidence-matrix',
-      phase_id: 'M52.1',
+      phase_id: 'M52.2',
       milestone: 'M52 Runtime Product Evidence Authority',
       expected_accepted_completion_fingerprint: `sha256:${'d'.repeat(64)}`,
       expected_terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
       expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+      project_completion_policy: productEvidencePolicy,
       artifacts: productEvidenceArtifacts,
     };
     const headlessRunProductEvidenceMatrix = {
@@ -2014,16 +2014,17 @@ describe('protocol validation', () => {
       task_id: 'task_1',
       run_id: 'run_1',
       acceptance_id: 'm51-accepted-route',
-      phase_id: 'M52.1',
+      phase_id: 'M52.2',
       milestone: 'M52 Runtime Product Evidence Authority',
       target_capability: 'headless_autonomous_development',
-      concrete_capability_transition: 'runtime_derived_product_evidence_matrix_for_product_completion_decision',
+      concrete_capability_transition: 'generic_project_completion_policy_boundary_for_product_decisions',
       accepted_completion_fingerprint: `sha256:${'d'.repeat(64)}`,
       terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
       completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
       product_evidence_matrix_fingerprint: `sha256:${'8'.repeat(64)}`,
-      artifact_count: productEvidenceArtifacts.length,
-      artifact_hashes: productEvidenceArtifacts.map((artifact) => ({
+      product_completion_claim: false,
+      artifact_count: productEvidenceArtifacts.length + 1,
+      artifact_hashes: [productEvidencePolicy, ...productEvidenceArtifacts].map((artifact) => ({
         path: artifact.path,
         sha256: artifact.expected_sha256,
       })),
@@ -2550,8 +2551,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, authorize_product_completion_decision: false } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, expected_product_evidence_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, authorize_product_evidence_derivation: false } })).toBe(false);
-    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: productEvidenceArtifacts.slice(0, 5) } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: [] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: [{ ...productEvidenceArtifacts[0], path: '../outside.md' }, ...productEvidenceArtifacts.slice(1)] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, project_completion_policy: { ...productEvidencePolicy, path: 'docs/product-completion/policy.md' } } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
@@ -2591,7 +2593,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, accepted_completion: { ...headlessRunDriveResult.accepted_completion, status: 'Completed' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: headlessRunProductEvidenceMatrix })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
-    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, artifact_hashes: headlessRunProductEvidenceMatrix.artifact_hashes.slice(0, 5) } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, product_completion_claim: 'false' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, artifact_hashes: headlessRunProductEvidenceMatrix.artifact_hashes.slice(0, 1) } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, status: 'accepted_complete' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);
