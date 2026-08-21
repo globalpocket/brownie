@@ -775,8 +775,12 @@ or `blocked_by_product_evidence`, appends one bounded
 acceptance, finalization, or product-decision events. Invalid, incomplete, or
 wrapper-only product evidence yields `blocked_by_product_evidence` with
 `repair_product_completion_evidence` rather than a false product-complete
-claim. The ledger and RPC result expose only ids, statuses, counts, category
-names, next action, and SHA-256 fingerprints; raw Product Charter or manifest
+claim. M51.3.1 binds replay to the accepted-completion, terminal-completion,
+and completion-closure fingerprint boundary so a later request with a different
+decision id or product status for the same boundary fails closed before a second
+product-decision event can be appended. The ledger and RPC result expose only
+ids, statuses, counts, category names, next action, and SHA-256 fingerprints;
+raw Product Charter or manifest
 text, prompts, provider responses, final responses, file content, raw ledger
 payloads, diagnostics, commands, environment values, absolute paths, canonical
 paths, and secrets remain excluded.

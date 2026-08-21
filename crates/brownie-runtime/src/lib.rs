@@ -20614,8 +20614,14 @@ fn append_headless_product_completion_decision_event_if_missing(
     if record.run_id != decision.run_id {
         return Ok(());
     }
-    if headless_product_completion_decision_event_exists(store, decision)? {
-        return Ok(());
+    match headless_product_completion_decision_event_status(store, decision)? {
+        HeadlessProductCompletionDecisionEventStatus::ExactReplay => return Ok(()),
+        HeadlessProductCompletionDecisionEventStatus::ConflictingBoundaryDecision => {
+            anyhow::bail!(
+                "product completion decision conflicts with persisted accepted-completion boundary decision"
+            );
+        }
+        HeadlessProductCompletionDecisionEventStatus::Missing => {}
     }
     store.tasks().append_task_event_with_payload(
         &record,
@@ -20625,20 +20631,56 @@ fn append_headless_product_completion_decision_event_if_missing(
     Ok(())
 }
 
-fn headless_product_completion_decision_event_exists(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HeadlessProductCompletionDecisionEventStatus {
+    Missing,
+    ExactReplay,
+    ConflictingBoundaryDecision,
+}
+
+fn headless_product_completion_decision_event_status(
     store: &BrownieStore,
     decision: &HeadlessRunProductCompletionDecision,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<HeadlessProductCompletionDecisionEventStatus> {
     let events = store.tasks().read_ledger_events(&decision.run_id)?;
-    Ok(events.iter().any(|event| {
-        event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
-            && event
-                .payload
-                .as_ref()
-                .and_then(|payload| payload.get("decision_fingerprint"))
+    let mut has_conflicting_boundary_decision = false;
+    for event in events {
+        if event.kind != LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        let same_boundary = payload.get("task_id").and_then(Value::as_str)
+            == Some(decision.task_id.as_str())
+            && payload.get("run_id").and_then(Value::as_str) == Some(decision.run_id.as_str())
+            && payload
+                .get("accepted_completion_fingerprint")
                 .and_then(Value::as_str)
-                == Some(decision.decision_fingerprint.as_str())
-    }))
+                == Some(decision.accepted_completion_fingerprint.as_str())
+            && payload
+                .get("terminal_completion_fingerprint")
+                .and_then(Value::as_str)
+                == Some(decision.terminal_completion_fingerprint.as_str())
+            && payload
+                .get("completion_closure_fingerprint")
+                .and_then(Value::as_str)
+                == Some(decision.completion_closure_fingerprint.as_str());
+        if !same_boundary {
+            continue;
+        }
+        if payload.get("decision_fingerprint").and_then(Value::as_str)
+            == Some(decision.decision_fingerprint.as_str())
+        {
+            return Ok(HeadlessProductCompletionDecisionEventStatus::ExactReplay);
+        }
+        has_conflicting_boundary_decision = true;
+    }
+    if has_conflicting_boundary_decision {
+        Ok(HeadlessProductCompletionDecisionEventStatus::ConflictingBoundaryDecision)
+    } else {
+        Ok(HeadlessProductCompletionDecisionEventStatus::Missing)
+    }
 }
 
 fn headless_run_product_completion_decision(
@@ -20802,8 +20844,18 @@ fn headless_run_product_completion_decision(
         milestone_exit_rationale: request.milestone_exit_rationale.clone(),
         replayed: false,
     };
-    decision.replayed = headless_product_completion_decision_event_exists(store, &decision)
-        .map_err(|error| error.to_string())?;
+    decision.replayed = match headless_product_completion_decision_event_status(store, &decision)
+        .map_err(|error| error.to_string())?
+    {
+        HeadlessProductCompletionDecisionEventStatus::ExactReplay => true,
+        HeadlessProductCompletionDecisionEventStatus::ConflictingBoundaryDecision => {
+            return Err(
+                "invalid params: product completion decision conflicts with persisted accepted-completion boundary decision"
+                    .to_string(),
+            );
+        }
+        HeadlessProductCompletionDecisionEventStatus::Missing => false,
+    };
     append_headless_product_completion_decision_event_if_missing(store, &decision)
         .map_err(|error| error.to_string())?;
     Ok(Some(decision))
@@ -75853,6 +75905,73 @@ mod tests {
             .expect("events after decision replay");
         assert_eq!(
             events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+                })
+                .count(),
+            1
+        );
+
+        let mut conflicting_product_decision = HeadlessRunProductCompletionDecisionRequest {
+            authorize_product_completion_decision: true,
+            decision_id: "m51-product-decision-conflict".to_string(),
+            expected_accepted_completion_fingerprint: acceptance_fingerprint.clone(),
+            expected_terminal_completion_fingerprint: terminal_fingerprint.clone(),
+            expected_completion_closure_fingerprint: closure_fingerprint.clone(),
+            expected_product_evidence_fingerprint: format!("sha256:{}", "0".repeat(64)),
+            evidence_status: "product_complete".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "runtime_owned_product_completion_stop_decision"
+                .to_string(),
+            validated_gate_categories: vec![
+                "strategic_capability_mapping".to_string(),
+                "concrete_capability_transition".to_string(),
+                "behavior_evidence".to_string(),
+                "safety_boundary".to_string(),
+                "non_goals".to_string(),
+                "rejected_alternatives".to_string(),
+                "technical_debt".to_string(),
+                "next_capability_or_milestone_exit".to_string(),
+            ],
+            behavior_evidence_count: 4,
+            rejected_alternatives_count: 3,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: None,
+            milestone_exit_rationale: Some("m51_complete".to_string()),
+        };
+        conflicting_product_decision.expected_product_evidence_fingerprint =
+            headless_product_completion_evidence_fingerprint(&conflicting_product_decision);
+        let conflicting_decision_request = json!({
+            "jsonrpc": "2.0",
+            "id": 7,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m51.product",
+                "drive_id": "m51.product.route",
+                "expected_start_session_sequence": 1,
+                "max_advances": 2,
+                "max_steps_per_advance": 1,
+                "expected_completion_closure_fingerprint": closure_fingerprint,
+                "product_completion_decision": conflicting_product_decision
+            }
+        });
+        let conflicting_decision = parse_line(&conflicting_decision_request.to_string());
+        assert!(conflicting_decision.result.is_none());
+        assert!(conflicting_decision
+            .error
+            .expect("conflicting product decision error")
+            .message
+            .contains("conflicts with persisted accepted-completion boundary decision"));
+        let events_after_conflict = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after conflicting decision");
+        assert_eq!(
+            events_after_conflict
                 .iter()
                 .filter(|event| {
                     event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
