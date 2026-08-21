@@ -764,6 +764,8 @@ pub struct TaskStartParams {
     pub verification_recovery_retry_source: Option<VerificationRecoveryRetrySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_source: Option<LlmProviderFailureRetrySource>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_source: Option<ProductContinuationSource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -883,6 +885,19 @@ pub struct LlmProviderFailureRetrySource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductContinuationSource {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub expected_decision_fingerprint: String,
+    pub expected_accepted_completion_fingerprint: String,
+    pub expected_terminal_completion_fingerprint: String,
+    pub expected_completion_closure_fingerprint: String,
+    pub expected_product_evidence_fingerprint: String,
+    pub authorize_product_continuation: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -895,6 +910,8 @@ pub struct TaskStartResult {
     pub verification_recovery_retry_admission: Option<VerificationRecoveryRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_continuation_admission: Option<ProductContinuationAdmission>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -950,6 +967,20 @@ pub struct LlmProviderFailureRetryAdmission {
     pub failure_class: String,
     pub retryable: bool,
     pub retry_running_enabled: bool,
+    pub next_action: String,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductContinuationAdmission {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub continuation_task_id: String,
+    pub continuation_run_id: String,
+    pub decision_fingerprint: String,
+    pub product_evidence_fingerprint: String,
+    pub continuation_running_enabled: bool,
     pub next_action: String,
     pub replayed: bool,
 }
@@ -4573,6 +4604,7 @@ pub struct ChildTaskInspectSummary {
     pub verification_recovery_provenance: Option<VerificationRecoveryProvenance>,
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
+    pub product_continuation_provenance: Option<ProductContinuationProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
@@ -4656,6 +4688,22 @@ pub struct LlmProviderFailureRetryProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductContinuationProvenance {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub decision_fingerprint: String,
+    pub accepted_completion_fingerprint: String,
+    pub terminal_completion_fingerprint: String,
+    pub completion_closure_fingerprint: String,
+    pub product_evidence_fingerprint: String,
+    pub target_capability: String,
+    pub concrete_capability_transition: String,
+    pub decision_status: String,
+    pub decision_next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -4688,6 +4736,8 @@ pub struct TaskRecord {
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
     #[serde(default)]
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
+    #[serde(default)]
+    pub product_continuation_provenance: Option<ProductContinuationProvenance>,
     pub created_at: String,
     pub updated_at: String,
 }

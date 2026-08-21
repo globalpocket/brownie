@@ -808,6 +808,21 @@ Product Charter, manifest, spec, ledger, prompt, provider, file, command,
 output, environment, absolute path, canonical path, and secret data remain
 excluded.
 
+M53.1 turns the `continue_development` product decision into a runtime-owned
+next-task admission boundary. Existing `task.start` accepts a bounded
+`product_continuation_source` envelope with explicit authorization and expected
+decision, accepted-completion, terminal-completion, completion-closure, and
+product-evidence fingerprints. Rust re-reads the source task/run ledger,
+requires the current `HeadlessRunProductCompletionDecisionRecorded` event to be
+`continue_development` with `next_action = plan_next_phase`, and creates or
+replays exactly one `Created` continuation task with bounded
+`product_continuation_provenance`. The admitted task is not automatically run;
+the caller must invoke existing `task.run` authority. Product-complete,
+blocked-by-product-evidence, stale, malformed, unauthorized, or conflicting
+continuation evidence fails closed before continuation task creation, and
+ledger/RPC metadata remains limited to bounded ids, statuses, next actions,
+replay state, and SHA-256 fingerprints.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust
