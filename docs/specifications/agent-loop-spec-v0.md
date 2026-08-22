@@ -456,3 +456,17 @@ before `TaskRunning` is appended. Superseded, terminal-product, malformed, or
 fingerprint-mismatched source evidence fails closed before provider, verifier,
 tool, apply, shell, git, network, service, or workspace side effects. Already
 terminal continuation tasks keep existing `task.run` replay behavior.
+
+M54.1 allows the existing product completion decision to carry optional bounded
+`technical_debt_carry_forward` evidence when the decision is
+`continue_development`. Each item is runtime-validated bounded ASCII metadata
+only: debt id, summary, source milestone, source phase, optional PR reference,
+target capability, status, and next action. Rust sorts the items, derives a
+deterministic SHA-256 carry-forward fingerprint, records the bounded evidence in
+the product-decision ledger payload, and copies the fingerprint plus item
+summaries into `product_continuation_provenance` during
+`task.start(product_continuation_source)`. Matching evidence replays
+duplicate-free; conflicting carry-forward evidence for the same persisted
+decision fails closed. The feature adds no new RPC, standalone debt report,
+automatic execution, workspace mutation, raw prompt/provider/file/diff/output
+payload, command, environment, path, or secret exposure.

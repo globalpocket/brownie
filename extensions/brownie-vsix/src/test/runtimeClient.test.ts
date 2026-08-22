@@ -1944,6 +1944,20 @@ describe('protocol validation', () => {
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, terminal_completion_evidence: { ...terminalCompletionEvidence, final_response: 'raw final response' } })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, steps: [{ ...headlessStepWithCompletionEvidence, terminal_completion_evidence: { ...terminalCompletionEvidence, provider_response: 'raw provider response' } }] })).toBe(false);
     expect(isHeadlessRunAdvanceResult({ ...headlessRunAdvanceResult, stdout: 'raw output' })).toBe(false);
+    const technicalDebtCarryForwardItems = [{
+      debt_id: 'm54-debt-1',
+      summary: 'carry forward bounded runtime debt',
+      source_milestone: 'M53 Product Continuation',
+      source_phase: 'M53.2',
+      source_pr: 'PR248',
+      target_capability: 'headless_autonomous_development',
+      status: 'open',
+      next_action: 'admit_next_phase_with_debt_context',
+    }];
+    const technicalDebtCarryForward = {
+      fingerprint: `sha256:${'7'.repeat(64)}`,
+      items: technicalDebtCarryForwardItems,
+    };
     const headlessRunDriveParams = {
       authorize: true,
       session_id: 'm17.session',
@@ -1981,6 +1995,7 @@ describe('protocol validation', () => {
         technical_debt_reviewed: true,
         remaining_capability: 'milestone_closeout',
         milestone_exit_rationale: null,
+        technical_debt_carry_forward: technicalDebtCarryForwardItems,
       },
       modepack_registry_update_selection_target: modePackRegistryUpdateSelectionTarget,
       modepack_selected_candidate_fetch_target: modePackSelectedCandidateFetchTarget,
@@ -2137,6 +2152,7 @@ describe('protocol validation', () => {
         technical_debt_reviewed: true,
         remaining_capability: 'milestone_closeout',
         milestone_exit_rationale: null,
+        technical_debt_carry_forward: technicalDebtCarryForward,
         replayed: false,
       },
       start_progress: headlessRunAdvanceResult.start_progress,
@@ -2555,6 +2571,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: [{ ...productEvidenceArtifacts[0], path: '../outside.md' }, ...productEvidenceArtifacts.slice(1)] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, project_completion_policy: { ...productEvidencePolicy, path: 'docs/product-completion/policy.md' } } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], raw_file_content: 'secret' }] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [technicalDebtCarryForwardItems[0], technicalDebtCarryForwardItems[0]] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);
@@ -2600,6 +2618,7 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, decision_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, technical_debt_carry_forward: { ...technicalDebtCarryForward, fingerprint: 'not-a-fingerprint' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, raw_product_evidence: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, raw_file_content: 'secret' } })).toBe(false);
@@ -4291,6 +4310,19 @@ describe('RuntimeClient', () => {
       decision_status: 'continue_development',
       decision_next_action: 'plan_next_phase',
       remaining_capability: 'plan_next_phase',
+      technical_debt_carry_forward: {
+        fingerprint: `sha256:${'7'.repeat(64)}`,
+        items: [{
+          debt_id: 'm54-debt-1',
+          summary: 'carry forward bounded runtime debt',
+          source_milestone: 'M53 Product Continuation',
+          source_phase: 'M53.2',
+          source_pr: 'PR248',
+          target_capability: 'headless_autonomous_development',
+          status: 'open',
+          next_action: 'admit_next_phase_with_debt_context',
+        }],
+      },
     })).toBe(true);
     expect(isProductContinuationProvenance({
       source_task_id: 'task_source',
@@ -4306,6 +4338,33 @@ describe('RuntimeClient', () => {
       decision_status: 'continue_development',
       decision_next_action: 'plan_next_phase',
       remaining_capability: 'x'.repeat(121),
+    })).toBe(false);
+    expect(isProductContinuationProvenance({
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      source_decision_id: 'product_decision_1',
+      decision_fingerprint: decisionFingerprint,
+      accepted_completion_fingerprint: acceptedFingerprint,
+      terminal_completion_fingerprint: terminalFingerprint,
+      completion_closure_fingerprint: closureFingerprint,
+      product_evidence_fingerprint: productEvidenceFingerprint,
+      target_capability: 'headless_autonomous_development',
+      concrete_capability_transition: 'product_continuation_admission_request_identity_binding',
+      decision_status: 'continue_development',
+      decision_next_action: 'plan_next_phase',
+      technical_debt_carry_forward: {
+        fingerprint: `sha256:${'7'.repeat(64)}`,
+        items: [{
+          debt_id: 'm54-debt-1',
+          summary: 'carry forward bounded runtime debt',
+          source_milestone: 'M53 Product Continuation',
+          source_phase: 'M53.2',
+          target_capability: 'headless_autonomous_development',
+          status: 'open',
+          next_action: 'admit_next_phase_with_debt_context',
+          raw_file_content: 'secret',
+        }],
+      },
     })).toBe(false);
 
     await expect(client.startTask({

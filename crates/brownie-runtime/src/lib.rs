@@ -162,14 +162,15 @@ use brownie_protocol::{
     TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
     TaskRunVerificationRecoveryContextReadSummary, TaskRunVerificationRecoveryRepairOutcome,
     TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
-    TaskStatusCounts, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
-    ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
-    ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
-    ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryAdmission,
-    VerificationRecoveryRetryProvenance, VerificationRecoveryRetryRunTarget,
-    VerificationRecoveryRetrySource, VerificationRecoveryRunTarget, VerificationRecoverySource,
+    TaskStatusCounts, TechnicalDebtCarryForward, TechnicalDebtCarryForwardItem, ToolExecuteParams,
+    ToolExecuteResult, ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary,
+    ToolIntentParseParams, ToolIntentParseResult, ToolIntentParserConfigSummary,
+    ToolIntentParserSummary, ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary,
+    ToolPlanParams, ToolPlanResult, ToolSummary, VerificationRecoveryAdmission,
+    VerificationRecoveryApplyTarget, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryAdmission, VerificationRecoveryRetryProvenance,
+    VerificationRecoveryRetryRunTarget, VerificationRecoveryRetrySource,
+    VerificationRecoveryRunTarget, VerificationRecoverySource,
     WorkspacePatchApplyCapabilityCheckSummary, WorkspacePatchApplyCapabilitySummary,
     WorkspacePatchApplyCheckSummary, WorkspacePatchApplyDryRunCheckSummary,
     WorkspacePatchApplyDryRunHistoryEntry, WorkspacePatchApplyDryRunHistorySummary,
@@ -21447,6 +21448,8 @@ fn headless_run_product_completion_decision(
     if let Some(existing) = result.product_completion_decision.as_ref() {
         if let Some(request) = request {
             validate_product_completion_decision_request(request)?;
+            let requested_carry_forward = technical_debt_carry_forward_for_request(request)
+                .map_err(|error| format!("invalid params: product completion decision {error}"))?;
             if existing.decision_id != request.decision_id
                 || existing.accepted_completion_fingerprint
                     != request.expected_accepted_completion_fingerprint
@@ -21456,6 +21459,7 @@ fn headless_run_product_completion_decision(
                     != request.expected_completion_closure_fingerprint
                 || existing.product_evidence_fingerprint
                     != request.expected_product_evidence_fingerprint
+                || existing.technical_debt_carry_forward != requested_carry_forward
             {
                 return Err(
                     "invalid params: product completion decision replay target conflicts with persisted decision"
@@ -21473,6 +21477,8 @@ fn headless_run_product_completion_decision(
         return Ok(None);
     };
     validate_product_completion_decision_request(request)?;
+    let request_carry_forward = technical_debt_carry_forward_for_request(request)
+        .map_err(|error| format!("invalid params: product completion decision {error}"))?;
     let accepted = result.accepted_completion.as_ref().ok_or_else(|| {
         "invalid params: product completion decision requires accepted_completion route evidence"
             .to_string()
@@ -21623,6 +21629,11 @@ fn headless_run_product_completion_decision(
             )
         }
     };
+    let technical_debt_carry_forward = if status == "continue_development" {
+        request_carry_forward
+    } else {
+        None
+    };
     let decision_fingerprint = headless_product_completion_decision_fingerprint(
         &evidence_request,
         accepted,
@@ -21631,6 +21642,7 @@ fn headless_run_product_completion_decision(
         status,
         next_action,
         missing_or_invalid_evidence,
+        technical_debt_carry_forward.as_ref(),
     );
     let mut decision = HeadlessRunProductCompletionDecision {
         decision_id: request.decision_id.clone(),
@@ -21659,6 +21671,7 @@ fn headless_run_product_completion_decision(
         technical_debt_reviewed: evidence_request.technical_debt_reviewed,
         remaining_capability: request.remaining_capability.clone(),
         milestone_exit_rationale: request.milestone_exit_rationale.clone(),
+        technical_debt_carry_forward,
         replayed: false,
     };
     decision.replayed = match headless_product_completion_decision_event_status(store, &decision)
@@ -21749,6 +21762,58 @@ fn validate_product_completion_decision_request(
     Ok(())
 }
 
+fn technical_debt_carry_forward_for_request(
+    request: &HeadlessRunProductCompletionDecisionRequest,
+) -> Result<Option<TechnicalDebtCarryForward>, String> {
+    let Some(items) = request.technical_debt_carry_forward.as_ref() else {
+        return Ok(None);
+    };
+    technical_debt_carry_forward_from_items(items).map(Some)
+}
+
+fn technical_debt_carry_forward_from_items(
+    items: &[TechnicalDebtCarryForwardItem],
+) -> Result<TechnicalDebtCarryForward, String> {
+    if items.is_empty() || items.len() > 8 {
+        return Err("technical_debt_carry_forward must contain 1-8 items".to_string());
+    }
+    let mut sorted_items = items.to_vec();
+    sorted_items.sort_by(|left, right| left.debt_id.cmp(&right.debt_id));
+
+    let mut debt_ids = BTreeSet::new();
+    for item in &sorted_items {
+        if !debt_ids.insert(item.debt_id.clone()) {
+            return Err("technical_debt_carry_forward.debt_id values must be unique".to_string());
+        }
+        if !is_valid_headless_run_id(&item.debt_id)
+            || !is_bounded_product_completion_text(&item.summary, 160)
+            || !is_bounded_product_completion_text(&item.source_milestone, 96)
+            || !is_bounded_product_completion_text(&item.source_phase, 96)
+            || !is_bounded_product_completion_text(&item.target_capability, 96)
+            || !is_bounded_product_completion_text(&item.status, 48)
+            || !is_bounded_product_completion_text(&item.next_action, 120)
+            || item
+                .source_pr
+                .as_ref()
+                .map(|value| !is_bounded_product_completion_text(value, 32))
+                .unwrap_or(false)
+        {
+            return Err(
+                "technical_debt_carry_forward items must be bounded ASCII metadata".to_string(),
+            );
+        }
+    }
+
+    let canonical = json!({
+        "version": "technical_debt_carry_forward_v1",
+        "items": sorted_items,
+    });
+    Ok(TechnicalDebtCarryForward {
+        fingerprint: format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes())),
+        items: sorted_items,
+    })
+}
+
 fn is_bounded_product_completion_text(value: &str, max_len: usize) -> bool {
     !value.trim().is_empty()
         && value.len() <= max_len
@@ -21789,6 +21854,7 @@ fn headless_product_completion_decision_payload(
         "technical_debt_reviewed": decision.technical_debt_reviewed,
         "remaining_capability": decision.remaining_capability,
         "milestone_exit_rationale": decision.milestone_exit_rationale,
+        "technical_debt_carry_forward": decision.technical_debt_carry_forward,
         "replayed": false,
     })
 }
@@ -21801,6 +21867,7 @@ fn headless_product_completion_decision_fingerprint(
     status: &str,
     next_action: &str,
     missing_or_invalid_evidence: bool,
+    technical_debt_carry_forward: Option<&TechnicalDebtCarryForward>,
 ) -> String {
     let canonical = json!({
         "version": "headless_product_completion_decision_v1",
@@ -21827,6 +21894,7 @@ fn headless_product_completion_decision_fingerprint(
         "remaining_capability": request.remaining_capability,
         "milestone_exit_rationale": request.milestone_exit_rationale,
         "missing_or_invalid_evidence": missing_or_invalid_evidence,
+        "technical_debt_carry_forward_fingerprint": technical_debt_carry_forward.map(|carry_forward| carry_forward.fingerprint.as_str()),
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
@@ -41821,6 +41889,8 @@ fn product_continuation_provenance_for_source(
         product_continuation_payload_string(latest_payload, "concrete_capability_transition")?;
     let remaining_capability =
         product_continuation_payload_optional_string(latest_payload, "remaining_capability")?;
+    let technical_debt_carry_forward =
+        product_continuation_payload_technical_debt_carry_forward(latest_payload)?;
     if !is_bounded_product_completion_text(&target_capability, 96)
         || !is_bounded_product_completion_text(&concrete_capability_transition, 120)
     {
@@ -41843,6 +41913,7 @@ fn product_continuation_provenance_for_source(
         decision_status: status,
         decision_next_action: next_action,
         remaining_capability,
+        technical_debt_carry_forward,
     })
 }
 
@@ -41942,6 +42013,37 @@ fn product_continuation_payload_optional_string(
             "invalid params: product continuation decision {field} is malformed"
         ))),
     }
+}
+
+fn product_continuation_payload_technical_debt_carry_forward(
+    payload: &Value,
+) -> Result<Option<TechnicalDebtCarryForward>, VerificationRecoveryAdmissionError> {
+    let Some(value) = payload.get("technical_debt_carry_forward") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let carry_forward: TechnicalDebtCarryForward =
+        serde_json::from_value(value.clone()).map_err(|_| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation decision technical_debt_carry_forward is malformed"
+                    .into(),
+            )
+        })?;
+    let expected = technical_debt_carry_forward_from_items(&carry_forward.items).map_err(|_| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation decision technical_debt_carry_forward is malformed"
+                .into(),
+        )
+    })?;
+    if carry_forward.fingerprint != expected.fingerprint || carry_forward.items != expected.items {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation decision technical_debt_carry_forward fingerprint is stale"
+                .into(),
+        ));
+    }
+    Ok(Some(carry_forward))
 }
 
 fn product_continuation_payload_sha256(
@@ -77130,6 +77232,16 @@ mod tests {
             technical_debt_reviewed: true,
             remaining_capability: Some("milestone_closeout".to_string()),
             milestone_exit_rationale: None,
+            technical_debt_carry_forward: Some(vec![TechnicalDebtCarryForwardItem {
+                debt_id: "m54-debt-1".to_string(),
+                summary: "carry forward bounded runtime debt".to_string(),
+                source_milestone: "M53 Product Continuation".to_string(),
+                source_phase: "M53.2".to_string(),
+                source_pr: Some("PR248".to_string()),
+                target_capability: "headless_autonomous_development".to_string(),
+                status: "open".to_string(),
+                next_action: "admit_next_phase_with_debt_context".to_string(),
+            }]),
         };
         let product_evidence_fingerprint =
             headless_product_completion_evidence_fingerprint(&product_decision);
@@ -77185,6 +77297,14 @@ mod tests {
             decision["product_evidence_fingerprint"],
             product_evidence_fingerprint
         );
+        assert_eq!(
+            decision["technical_debt_carry_forward"]["items"][0]["debt_id"],
+            "m54-debt-1"
+        );
+        assert!(decision["technical_debt_carry_forward"]["fingerprint"]
+            .as_str()
+            .expect("carry-forward fingerprint")
+            .starts_with("sha256:"));
         assert_eq!(decision["replayed"], false);
         let serialized = serde_json::to_string(&decided_result).expect("serialize decision");
         for forbidden in [
@@ -77216,6 +77336,13 @@ mod tests {
             replay_result["product_completion_decision"]["decision_fingerprint"],
             decided_result["product_completion_decision"]["decision_fingerprint"]
         );
+        let mut conflicting_debt_request = decision_request.clone();
+        conflicting_debt_request["params"]["product_completion_decision"]
+            ["technical_debt_carry_forward"][0]["next_action"] =
+            json!("admit_next_phase_with_different_debt_context");
+        let conflicting_debt = parse_line(&conflicting_debt_request.to_string());
+        assert!(conflicting_debt.result.is_none());
+        assert!(conflicting_debt.error.is_some());
         let events = store
             .tasks()
             .read_ledger_events(&run_id)
@@ -77259,6 +77386,7 @@ mod tests {
             technical_debt_reviewed: true,
             remaining_capability: None,
             milestone_exit_rationale: Some("m51_complete".to_string()),
+            technical_debt_carry_forward: None,
         };
         conflicting_product_decision.expected_product_evidence_fingerprint =
             headless_product_completion_evidence_fingerprint(&conflicting_product_decision);
@@ -77803,6 +77931,7 @@ mod tests {
             technical_debt_reviewed: true,
             remaining_capability: None,
             milestone_exit_rationale: Some("m51_complete".to_string()),
+            technical_debt_carry_forward: None,
         };
         product_decision.expected_product_evidence_fingerprint =
             headless_product_completion_evidence_fingerprint(&product_decision);
@@ -77931,6 +78060,7 @@ mod tests {
             technical_debt_reviewed: false,
             remaining_capability: None,
             milestone_exit_rationale: None,
+            technical_debt_carry_forward: None,
         };
         blocked_decision.expected_product_evidence_fingerprint =
             headless_product_completion_evidence_fingerprint(&blocked_decision);
@@ -78011,6 +78141,18 @@ mod tests {
                     LedgerEventKind::TaskCompleted,
                 )
                 .expect("complete source");
+            let carry_forward =
+                technical_debt_carry_forward_from_items(&[TechnicalDebtCarryForwardItem {
+                    debt_id: "source-debt-1".to_string(),
+                    summary: "preserve product continuation debt".to_string(),
+                    source_milestone: "M53 Product Continuation".to_string(),
+                    source_phase: "M53.2".to_string(),
+                    source_pr: Some("PR248".to_string()),
+                    target_capability: "headless_autonomous_development".to_string(),
+                    status: "open".to_string(),
+                    next_action: "bind_debt_to_continuation_task".to_string(),
+                }])
+                .expect("carry-forward");
             let decision = HeadlessRunProductCompletionDecision {
                 decision_id: decision_id.to_string(),
                 task_id: completed.task_id.clone(),
@@ -78038,6 +78180,7 @@ mod tests {
                 technical_debt_reviewed: true,
                 remaining_capability: Some("plan_next_phase".to_string()),
                 milestone_exit_rationale: None,
+                technical_debt_carry_forward: Some(carry_forward),
                 replayed: false,
             };
             store
@@ -78132,6 +78275,19 @@ mod tests {
                 .remaining_capability
                 .as_deref(),
             Some("plan_next_phase")
+        );
+        assert_eq!(
+            product_continuation_provenance
+                .technical_debt_carry_forward
+                .as_ref()
+                .expect("carry-forward")
+                .items[0]
+                .debt_id,
+            "source-debt-1"
+        );
+        assert_eq!(
+            product_continuation_provenance.technical_debt_carry_forward,
+            decision.technical_debt_carry_forward
         );
         assert!(continuation_task.verification_recovery_provenance.is_none());
         assert!(continuation_task
@@ -78489,6 +78645,7 @@ mod tests {
                 technical_debt_reviewed: true,
                 remaining_capability: Some("plan_next_phase".to_string()),
                 milestone_exit_rationale: None,
+                technical_debt_carry_forward: None,
                 replayed: false,
             };
             store
