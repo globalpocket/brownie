@@ -1951,8 +1951,10 @@ describe('protocol validation', () => {
       source_phase: 'M53.2',
       source_pr: 'PR248',
       target_capability: 'headless_autonomous_development',
+      classification: 'post_v0',
       status: 'open',
       next_action: 'admit_next_phase_with_debt_context',
+      closure_evidence_fingerprint: null,
     }];
     const technicalDebtCarryForward = {
       fingerprint: `sha256:${'7'.repeat(64)}`,
@@ -2573,6 +2575,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], raw_file_content: 'secret' }] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [technicalDebtCarryForwardItems[0], technicalDebtCarryForwardItems[0]] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], classification: 'unknown' }] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_transitions: [{ debt_id: 'm54-debt-1', status: 'resolved', next_action: 'close_debt' }] } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_transitions: [{ debt_id: 'm54-debt-1', status: 'resolved', next_action: 'close_debt', closure_evidence_fingerprint: `sha256:${'1'.repeat(64)}` }] } })).toBe(true);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, authorize: false })).toBe(false);

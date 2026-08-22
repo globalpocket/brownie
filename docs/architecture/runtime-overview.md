@@ -858,6 +858,24 @@ call, shell/git/network/service action, workspace mutation, or raw prompt,
 provider response, file content, diff, command output, path, environment, or
 secret exposure is introduced.
 
+M54.2 turns that carry-forward evidence into a runtime-derived debt state
+transition. At the existing product-completion decision boundary, Rust reads the
+current task's `product_continuation_provenance` when present, treats its
+open/deferred carry-forward items as the previous active debt set, then applies
+bounded caller-supplied new debt items and explicit debt transitions. Prior
+open/deferred debt is automatically kept unless a valid `resolved`,
+`superseded`, or `deferred` transition names it. Resolved and superseded
+transitions require a SHA-256 `closure_evidence_fingerprint`; unknown,
+duplicate, malformed, oversized, raw-looking, non-ASCII, or conflicting debt
+state changes fail before ledger mutation. Runtime-understood debt
+classifications are `blocking`, `required_before_release`, and `post_v0`, and
+active statuses are `open` and `deferred`. A `product_complete` decision is
+rejected while any blocking or required-before-release debt remains active.
+`post_v0` debt may remain visible at product completion. For
+`continue_development`, the derived active debt state and fingerprint are copied
+into product-continuation provenance, so later phases cannot drop prior debt by
+omission.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust

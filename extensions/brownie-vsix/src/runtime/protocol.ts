@@ -506,13 +506,22 @@ export interface TechnicalDebtCarryForwardItem {
   source_phase: string;
   source_pr?: string | null;
   target_capability: string;
+  classification?: 'blocking' | 'required_before_release' | 'post_v0';
   status: string;
   next_action: string;
+  closure_evidence_fingerprint?: string | null;
 }
 
 export interface TechnicalDebtCarryForward {
   fingerprint: string;
   items: TechnicalDebtCarryForwardItem[];
+}
+
+export interface TechnicalDebtTransition {
+  debt_id: string;
+  status: 'resolved' | 'superseded' | 'deferred';
+  next_action: string;
+  closure_evidence_fingerprint?: string | null;
 }
 
 export interface ToolIntentParseResult {
@@ -676,6 +685,7 @@ export interface HeadlessRunProductCompletionDecisionRequest {
   remaining_capability?: string | null;
   milestone_exit_rationale?: string | null;
   technical_debt_carry_forward?: TechnicalDebtCarryForwardItem[] | null;
+  technical_debt_transitions?: TechnicalDebtTransition[] | null;
 }
 
 export interface HeadlessRunProductEvidenceDerivationRequest {
@@ -5242,8 +5252,10 @@ export function isTechnicalDebtCarryForwardItem(value: unknown): value is Techni
       'source_phase',
       'source_pr',
       'target_capability',
+      'classification',
       'status',
       'next_action',
+      'closure_evidence_fingerprint',
     ]) &&
     hasNoForbiddenRawFields(value) &&
     isHeadlessRunId(value.debt_id) &&
@@ -5252,8 +5264,31 @@ export function isTechnicalDebtCarryForwardItem(value: unknown): value is Techni
     isBoundedAsciiMetadata(value.source_phase, 96) &&
     (value.source_pr === undefined || value.source_pr === null || isBoundedAsciiMetadata(value.source_pr, 32)) &&
     isBoundedAsciiMetadata(value.target_capability, 96) &&
-    isBoundedAsciiMetadata(value.status, 48) &&
-    isBoundedAsciiMetadata(value.next_action, 120)
+    (value.classification === undefined || value.classification === 'blocking' || value.classification === 'required_before_release' || value.classification === 'post_v0') &&
+    (value.status === 'open' || value.status === 'deferred') &&
+    isBoundedAsciiMetadata(value.next_action, 120) &&
+    (value.closure_evidence_fingerprint === undefined || value.closure_evidence_fingerprint === null || (typeof value.closure_evidence_fingerprint === 'string' && isSha256Fingerprint(value.closure_evidence_fingerprint)))
+  );
+}
+
+export function isTechnicalDebtTransition(value: unknown): value is TechnicalDebtTransition {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'debt_id',
+      'status',
+      'next_action',
+      'closure_evidence_fingerprint',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.debt_id) &&
+    (value.status === 'resolved' || value.status === 'superseded' || value.status === 'deferred') &&
+    isBoundedAsciiMetadata(value.next_action, 120) &&
+    (
+      value.status === 'deferred'
+        ? (value.closure_evidence_fingerprint === undefined || value.closure_evidence_fingerprint === null || (typeof value.closure_evidence_fingerprint === 'string' && isSha256Fingerprint(value.closure_evidence_fingerprint)))
+        : (typeof value.closure_evidence_fingerprint === 'string' && isSha256Fingerprint(value.closure_evidence_fingerprint))
+    )
   );
 }
 
@@ -5281,6 +5316,21 @@ function isOptionalTechnicalDebtCarryForwardItems(value: unknown): value is Tech
     value === undefined ||
     value === null ||
     (Array.isArray(value) && isValidTechnicalDebtCarryForwardItems(value))
+  );
+}
+
+function isValidTechnicalDebtTransitions(items: unknown[]): items is TechnicalDebtTransition[] {
+  if (items.length < 1 || items.length > 8 || !items.every(isTechnicalDebtTransition)) {
+    return false;
+  }
+  return new Set(items.map((item) => item.debt_id)).size === items.length;
+}
+
+function isOptionalTechnicalDebtTransitions(value: unknown): value is TechnicalDebtTransition[] | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && isValidTechnicalDebtTransitions(value))
   );
 }
 
@@ -7309,6 +7359,7 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
       'remaining_capability',
       'milestone_exit_rationale',
       'technical_debt_carry_forward',
+      'technical_debt_transitions',
     ]) &&
     hasNoForbiddenRawFields(value) &&
     value.authorize_product_completion_decision === true &&
@@ -7335,7 +7386,8 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.remaining_capability === undefined || value.remaining_capability === null || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
     (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160)) &&
-    isOptionalTechnicalDebtCarryForwardItems(value.technical_debt_carry_forward)
+    isOptionalTechnicalDebtCarryForwardItems(value.technical_debt_carry_forward) &&
+    isOptionalTechnicalDebtTransitions(value.technical_debt_transitions)
   );
 }
 

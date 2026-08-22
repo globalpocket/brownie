@@ -470,3 +470,17 @@ duplicate-free; conflicting carry-forward evidence for the same persisted
 decision fails closed. The feature adds no new RPC, standalone debt report,
 automatic execution, workspace mutation, raw prompt/provider/file/diff/output
 payload, command, environment, path, or secret exposure.
+
+M54.2 changes the same product-completion decision surface from caller-owned
+carry-forward replacement to runtime-derived technical-debt state. When a task
+was admitted from product-continuation provenance, its prior open/deferred debt
+is the previous state. The request may add bounded new open debt and may provide
+explicit transitions for prior debt to `resolved`, `superseded`, or `deferred`.
+The runtime derives the next active debt set; omission is not a deletion. Debt
+items have bounded `classification` values of `blocking`,
+`required_before_release`, or `post_v0`, and active statuses of `open` or
+`deferred`. Closing transitions require a SHA-256
+`closure_evidence_fingerprint`. Product completion is denied while blocking or
+required-before-release debt remains active, while post-v0 debt can remain
+visible without blocking completion. Continued development carries the derived
+active debt state into `product_continuation_provenance`.
