@@ -436,3 +436,13 @@ M5.18 adds replay protection for that join point. The runtime records a determin
 M53.1 extends existing `task.start` with a `product_continuation_source` envelope. The envelope must provide explicit authorization, source task/run/decision ids, and expected decision, accepted-completion, terminal-completion, completion-closure, and product-evidence SHA-256 fingerprints. The Rust runtime re-reads the source task and run ledger before creating any task, requires the current product decision to be `continue_development` with `next_action = plan_next_phase`, and records bounded `product_continuation_provenance` on the admitted task and `TaskStarted` evidence.
 
 This is task admission only. Exact replay returns the same continuation task/run without another `TaskStarted` event, while product-complete, blocked-by-product-evidence, stale, malformed, unauthorized, or conflicting evidence is denied before continuation task creation. The admitted task is not run automatically, no provider/verifier/apply/shell/git/network/service/workspace mutation path is invoked, and metadata excludes raw prompts, provider responses, final responses, file content, diffs, command output, environment values, raw ledger payloads, absolute paths, canonical paths, and secrets.
+
+M53.1.1 requires replay to bind the admitted continuation task to the original
+request intent as well as the source decision. If a continuation task already
+exists for the source task/run/decision fingerprint, `task.start` may replay it
+only when `product_continuation_provenance`, `goal`, and `mode_id` all match the
+new request. A different goal or mode for the same source decision is an
+admission conflict and must fail before task creation or replay. The source
+decision's bounded `remaining_capability` is copied into
+`product_continuation_provenance`; malformed or over-budget capability metadata
+is rejected as invalid product-continuation evidence.

@@ -823,6 +823,17 @@ continuation evidence fails closed before continuation task creation, and
 ledger/RPC metadata remains limited to bounded ids, statuses, next actions,
 replay state, and SHA-256 fingerprints.
 
+M53.1.1 tightens that admission replay identity. A repeated product-continuation
+`task.start` request replays an existing continuation task only when the source
+decision provenance, requested `goal`, and requested `mode_id` all match. A
+same-source request with a different goal or mode fails closed before replaying
+or creating a task, preventing restart-time request drift from silently reusing
+the wrong continuation task. The provenance also preserves the source
+decision's bounded `remaining_capability`, while keeping admission task-only:
+there is still no continuation routing, automatic run, provider/verifier/apply
+execution, workspace mutation, raw prompt/response/file/output exposure, or new
+inspection/report surface.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust

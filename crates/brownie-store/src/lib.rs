@@ -3113,7 +3113,10 @@ impl TaskStore {
             &params.provenance.source_run_id,
             &params.provenance.decision_fingerprint,
         )? {
-            if record.product_continuation_provenance.as_ref() == Some(&params.provenance) {
+            if record.product_continuation_provenance.as_ref() == Some(&params.provenance)
+                && record.goal == params.goal
+                && record.mode_id == params.mode_id
+            {
                 return Ok(ProductContinuationTaskStartResult {
                     record,
                     replayed: true,

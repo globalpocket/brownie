@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { isHeadlessContinueOnceParams, isHeadlessContinueOnceResult, isHeadlessRunAdvanceParams, isHeadlessRunAdvanceResult, isHeadlessRunDriveParams, isHeadlessRunDriveResult, isProgressSnapshot, isProposalApplyResult, isTaskListResult, isTaskRunVerificationRecoveryRepairOutcome, isTaskRunVerificationRecoveryRetryOutcome } from '../runtime/protocol';
 import { isCodebaseIndexBuildResult, isCodebaseIndexQueryResult, isCodebaseIndexSelectionReadResult, isCodebaseIndexSnapshotManifest } from '../runtime/protocol';
-import { isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary, isTaskStartParams, isTaskStartResult } from '../runtime/protocol';
+import { isProductContinuationProvenance, isTaskRunContextBudgetSummary, isTaskRunParams, isTaskRunSelectedIndexPromptContextSummary, isTaskRunVerificationRecoveryContextRead, isTaskRunVerificationRecoveryContextReadSummary, isTaskStartParams, isTaskStartResult } from '../runtime/protocol';
 import { RuntimeJsonRpcError } from '../runtime/errors';
 import { isChildInspectConsumedParentJoinRecoverySummary, isChildInspectParentJoinReadinessSummary, isRecoveryCycleBudgetOutcome, isRecoveryCycleChildProvenance, isRunInspectConsumedParentJoinRecoverySummary, isRunInspectParentJoinReadinessSummary, isTaskInspectResult, isTaskRecord, isTaskRunChildOrchestrationOutcome, isTaskRunParentJoinReadinessOutcome, isTaskRunResult } from '../runtime/protocol';
 import { isJsonRpcResponse, isLedgerEventSummary, isLlmHealthResult, isLlmStatusResult, isModeSummary, isPermissionCheckResult, isRunInspectSummary, isProposalApplyCapabilityResult, isProposalApplyDryRunHistoryResult, isProposalApplyDryRunResult, isProposalApproveResult, isProposalAuditTrailResult, isProposalPreflightResult, isProposalReadinessResult, isProposalInspectResult, isProposalListResult, isProposalRejectResult, isProposalReviewBundleResult, isProposalReviewQueueDiagnosticsDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryDigestResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportHistoryResult, isProposalReviewQueueDiagnosticsDigestReportVerdictReportResult, isProposalReviewQueueDiagnosticsDigestReportVerdictResult, isProposalReviewQueueDiagnosticsDigestResult, isProposalReviewQueueDiagnosticsHistoryResult, isProposalReviewQueueDiagnosticsReportResult, isProposalReviewQueueDiagnosticsResult, isProposalReviewQueueResult, isProposalReviewReportResult, isProposalReviewVerdictResult, isRuntimeConfigGetResult, isRuntimeDiagnosticsResult, isRuntimeStatusResult, isToolExecuteResult, isToolIntentParseResult, isToolPlanResult, type JsonRpcRequest, type JsonRpcResponse } from '../runtime/protocol';
@@ -4276,6 +4276,36 @@ describe('RuntimeClient', () => {
         ...result.product_continuation_admission,
         next_action: 'plan_next_phase',
       },
+    })).toBe(false);
+    expect(isProductContinuationProvenance({
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      source_decision_id: 'product_decision_1',
+      decision_fingerprint: decisionFingerprint,
+      accepted_completion_fingerprint: acceptedFingerprint,
+      terminal_completion_fingerprint: terminalFingerprint,
+      completion_closure_fingerprint: closureFingerprint,
+      product_evidence_fingerprint: productEvidenceFingerprint,
+      target_capability: 'headless_autonomous_development',
+      concrete_capability_transition: 'product_continuation_admission_request_identity_binding',
+      decision_status: 'continue_development',
+      decision_next_action: 'plan_next_phase',
+      remaining_capability: 'plan_next_phase',
+    })).toBe(true);
+    expect(isProductContinuationProvenance({
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      source_decision_id: 'product_decision_1',
+      decision_fingerprint: decisionFingerprint,
+      accepted_completion_fingerprint: acceptedFingerprint,
+      terminal_completion_fingerprint: terminalFingerprint,
+      completion_closure_fingerprint: closureFingerprint,
+      product_evidence_fingerprint: productEvidenceFingerprint,
+      target_capability: 'headless_autonomous_development',
+      concrete_capability_transition: 'product_continuation_admission_request_identity_binding',
+      decision_status: 'continue_development',
+      decision_next_action: 'plan_next_phase',
+      remaining_capability: 'x'.repeat(121),
     })).toBe(false);
 
     await expect(client.startTask({

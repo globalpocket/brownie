@@ -41808,6 +41808,8 @@ fn product_continuation_provenance_for_source(
         product_continuation_payload_string(latest_payload, "target_capability")?;
     let concrete_capability_transition =
         product_continuation_payload_string(latest_payload, "concrete_capability_transition")?;
+    let remaining_capability =
+        product_continuation_payload_optional_string(latest_payload, "remaining_capability")?;
     if !is_bounded_product_completion_text(&target_capability, 96)
         || !is_bounded_product_completion_text(&concrete_capability_transition, 120)
     {
@@ -41829,6 +41831,7 @@ fn product_continuation_provenance_for_source(
         concrete_capability_transition,
         decision_status: status,
         decision_next_action: next_action,
+        remaining_capability,
     })
 }
 
@@ -41913,6 +41916,21 @@ fn product_continuation_payload_string(
                 "invalid params: product continuation decision {field} is missing or malformed"
             ))
         })
+}
+
+fn product_continuation_payload_optional_string(
+    payload: &Value,
+    field: &str,
+) -> Result<Option<String>, VerificationRecoveryAdmissionError> {
+    match payload.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if is_bounded_product_completion_text(value, 120) => {
+            Ok(Some(value.clone()))
+        }
+        _ => Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+            "invalid params: product continuation decision {field} is malformed"
+        ))),
+    }
 }
 
 fn product_continuation_payload_sha256(
@@ -78048,7 +78066,16 @@ mod tests {
             .expect("read continuation task")
             .expect("continuation task exists");
         assert_eq!(continuation_task.status, TaskStatus::Created);
-        assert!(continuation_task.product_continuation_provenance.is_some());
+        let product_continuation_provenance = continuation_task
+            .product_continuation_provenance
+            .as_ref()
+            .expect("product continuation provenance");
+        assert_eq!(
+            product_continuation_provenance
+                .remaining_capability
+                .as_deref(),
+            Some("plan_next_phase")
+        );
         assert!(continuation_task.verification_recovery_provenance.is_none());
         assert!(continuation_task
             .llm_provider_failure_retry_provenance
@@ -78129,6 +78156,55 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::TaskStarted)
                 .count(),
             1
+        );
+
+        let task_count_before_request_conflicts =
+            store.tasks().list_tasks().expect("list tasks").len();
+        let different_goal_conflict = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 101,
+                "method": "task.start",
+                "params": {
+                    "goal": "Plan a different product continuation goal",
+                    "mode_id": "implementer",
+                    "product_continuation_source": product_continuation_source(&decision, true),
+                }
+            })
+            .to_string(),
+        );
+        assert!(different_goal_conflict.result.is_none());
+        assert!(different_goal_conflict
+            .error
+            .expect("different goal conflict error")
+            .message
+            .contains("conflicting product continuation admission"));
+        let different_mode_conflict = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 102,
+                "method": "task.start",
+                "params": {
+                    "goal": "Plan the next Brownie phase from product evidence",
+                    "mode_id": "orchestrator",
+                    "product_continuation_source": product_continuation_source(&decision, true),
+                }
+            })
+            .to_string(),
+        );
+        assert!(different_mode_conflict.result.is_none());
+        assert!(different_mode_conflict
+            .error
+            .expect("different mode conflict error")
+            .message
+            .contains("conflicting product continuation admission"));
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list after request conflicts")
+                .len(),
+            task_count_before_request_conflicts
         );
 
         let task_count_before_conflict = store.tasks().list_tasks().expect("list tasks").len();
