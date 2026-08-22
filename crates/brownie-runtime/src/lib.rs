@@ -2609,6 +2609,17 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
     }
 
+    if let Err(rejection) = revalidate_product_continuation_task_for_run(&store, &record) {
+        return match rejection {
+            TaskRunAdmissionRejection::InvalidParams(message) => {
+                error_response(id, -32602, message)
+            }
+            TaskRunAdmissionRejection::Internal(message) => {
+                error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    }
+
     if let Err(rejection) = revalidate_external_modepack_task_provenance_for_run(&store, &record) {
         return match rejection {
             TaskRunAdmissionRejection::InvalidParams(message) => {
@@ -43138,6 +43149,52 @@ fn revalidate_llm_provider_failure_retry_task_for_run(
     Ok(true)
 }
 
+fn revalidate_product_continuation_task_for_run(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<bool, TaskRunAdmissionRejection> {
+    let Some(provenance) = record.product_continuation_provenance.as_ref() else {
+        return Ok(false);
+    };
+    if record.status != TaskStatus::Created {
+        return Ok(true);
+    }
+    let source = ProductContinuationSource {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        source_decision_id: provenance.source_decision_id.clone(),
+        expected_decision_fingerprint: provenance.decision_fingerprint.clone(),
+        expected_accepted_completion_fingerprint: provenance
+            .accepted_completion_fingerprint
+            .clone(),
+        expected_terminal_completion_fingerprint: provenance
+            .terminal_completion_fingerprint
+            .clone(),
+        expected_completion_closure_fingerprint: provenance.completion_closure_fingerprint.clone(),
+        expected_product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
+        authorize_product_continuation: true,
+    };
+    let latest =
+        product_continuation_provenance_for_source(store, &source).map_err(
+            |error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(_) => {
+                    TaskRunAdmissionRejection::InvalidParams(
+                        "invalid params: product continuation provenance is stale",
+                    )
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    TaskRunAdmissionRejection::Internal(message)
+                }
+            },
+        )?;
+    if latest != *provenance {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product continuation provenance is stale",
+        ));
+    }
+    Ok(true)
+}
+
 fn verification_recovery_retry_outcome_for_replay(
     store: &BrownieStore,
     record: &TaskRecord,
@@ -78355,6 +78412,246 @@ mod tests {
                 .expect("list after denials")
                 .len(),
             task_count_before_denials + 2
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn task_run_revalidates_product_continuation_provenance_before_running() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        fn create_source_decision(
+            store: &BrownieStore,
+            goal: &str,
+            decision_id: &str,
+            status: &str,
+            next_action: &str,
+            decision_fingerprint: String,
+            product_evidence_fingerprint: String,
+        ) -> (TaskRecord, HeadlessRunProductCompletionDecision) {
+            let start = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "task.start",
+                    "params": {
+                        "goal": goal,
+                        "mode_id": "implementer",
+                    }
+                })
+                .to_string(),
+            );
+            assert!(start.error.is_none(), "{:?}", start.error);
+            let source_task_id = start.result.expect("start result")["task_id"]
+                .as_str()
+                .expect("source task id")
+                .to_string();
+            let completed = store
+                .tasks()
+                .update_task_status(
+                    &source_task_id,
+                    TaskStatus::Completed,
+                    LedgerEventKind::TaskCompleted,
+                )
+                .expect("complete source");
+            let decision = HeadlessRunProductCompletionDecision {
+                decision_id: decision_id.to_string(),
+                task_id: completed.task_id.clone(),
+                run_id: completed.run_id.clone(),
+                acceptance_id: format!("{decision_id}_acceptance"),
+                status: status.to_string(),
+                next_action: next_action.to_string(),
+                target_capability: "headless_autonomous_development".to_string(),
+                concrete_capability_transition:
+                    "runtime_owned_product_continuation_task_run_freshness_guard".to_string(),
+                accepted_completion_fingerprint: fp('a'),
+                terminal_completion_fingerprint: fp('b'),
+                completion_closure_fingerprint: fp('c'),
+                product_evidence_fingerprint,
+                decision_fingerprint,
+                validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                    .iter()
+                    .map(|category| category.to_string())
+                    .collect(),
+                derived_product_evidence_matrix_fingerprint: None,
+                behavior_evidence_count: 3,
+                rejected_alternatives_count: 2,
+                safety_boundary_reviewed: true,
+                non_goals_reviewed: true,
+                technical_debt_reviewed: true,
+                remaining_capability: Some("plan_next_phase".to_string()),
+                milestone_exit_rationale: None,
+                replayed: false,
+            };
+            store
+                .tasks()
+                .append_task_event_with_payload(
+                    &completed,
+                    LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                    Some(headless_product_completion_decision_payload(&decision)),
+                )
+                .expect("append product decision");
+            (completed, decision)
+        }
+
+        fn product_continuation_source(
+            decision: &HeadlessRunProductCompletionDecision,
+        ) -> serde_json::Value {
+            json!({
+                "source_task_id": decision.task_id,
+                "source_run_id": decision.run_id,
+                "source_decision_id": decision.decision_id,
+                "expected_decision_fingerprint": decision.decision_fingerprint,
+                "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+                "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+                "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
+                "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+                "authorize_product_continuation": true,
+            })
+        }
+
+        fn admit_continuation(decision: &HeadlessRunProductCompletionDecision) -> (String, String) {
+            let admitted = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": 20,
+                    "method": "task.start",
+                    "params": {
+                        "goal": format!("Run continuation from {}", decision.decision_id),
+                        "mode_id": "implementer",
+                        "product_continuation_source": product_continuation_source(decision),
+                    }
+                })
+                .to_string(),
+            );
+            assert!(admitted.error.is_none(), "{:?}", admitted.error);
+            let result = admitted.result.expect("admitted result");
+            let admission = &result["product_continuation_admission"];
+            (
+                admission["continuation_task_id"]
+                    .as_str()
+                    .expect("continuation task id")
+                    .to_string(),
+                admission["continuation_run_id"]
+                    .as_str()
+                    .expect("continuation run id")
+                    .to_string(),
+            )
+        }
+
+        let (_fresh_source, fresh_decision) = create_source_decision(
+            &store,
+            "M53.2 fresh source",
+            "product_decision_m53_2_fresh",
+            "continue_development",
+            "plan_next_phase",
+            fp('d'),
+            fp('e'),
+        );
+        let (fresh_task_id, fresh_run_id) = admit_continuation(&fresh_decision);
+        let fresh_run = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 21,
+                "method": "task.run",
+                "params": {
+                    "task_id": fresh_task_id,
+                }
+            })
+            .to_string(),
+        );
+        assert!(fresh_run.error.is_none(), "{:?}", fresh_run.error);
+        let fresh_events = store
+            .tasks()
+            .read_ledger_events(&fresh_run_id)
+            .expect("fresh continuation events");
+        assert_eq!(
+            fresh_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+
+        let (stale_source, stale_decision) = create_source_decision(
+            &store,
+            "M53.2 stale source",
+            "product_decision_m53_2_stale",
+            "continue_development",
+            "plan_next_phase",
+            fp('f'),
+            fp('1'),
+        );
+        let (stale_task_id, stale_run_id) = admit_continuation(&stale_decision);
+        let mut superseding_decision = stale_decision.clone();
+        superseding_decision.status = "product_complete".to_string();
+        superseding_decision.next_action = "stop_autonomous_development".to_string();
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &stale_source,
+                LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                Some(headless_product_completion_decision_payload(
+                    &superseding_decision,
+                )),
+            )
+            .expect("append superseding product decision");
+
+        let stale_run = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 22,
+                "method": "task.run",
+                "params": {
+                    "task_id": stale_task_id,
+                }
+            })
+            .to_string(),
+        );
+        assert!(stale_run.result.is_none());
+        assert!(stale_run
+            .error
+            .expect("stale run error")
+            .message
+            .contains("product continuation provenance is stale"));
+        let stale_events = store
+            .tasks()
+            .read_ledger_events(&stale_run_id)
+            .expect("stale continuation events");
+        assert!(stale_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        let fresh_replay = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 23,
+                "method": "task.run",
+                "params": {
+                    "task_id": fresh_task_id,
+                }
+            })
+            .to_string(),
+        );
+        assert!(fresh_replay.error.is_none(), "{:?}", fresh_replay.error);
+        let fresh_events_after_replay = store
+            .tasks()
+            .read_ledger_events(&fresh_run_id)
+            .expect("fresh events after replay");
+        assert_eq!(
+            fresh_events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");

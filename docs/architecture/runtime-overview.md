@@ -834,6 +834,16 @@ there is still no continuation routing, automatic run, provider/verifier/apply
 execution, workspace mutation, raw prompt/response/file/output exposure, or new
 inspection/report surface.
 
+M53.2 keeps existing `task.run` as the explicit execution boundary for admitted
+product-continuation tasks. Before a Created product-continuation task can append
+`TaskRunning`, Rust re-reads the source task/run ledger and requires the latest
+source product decision to still match the stored `product_continuation_provenance`
+and remain `continue_development` with `next_action = plan_next_phase`. Stale,
+superseded, `product_complete`, or `blocked_by_product_evidence` source state is
+rejected before execution side effects. Terminal task-run replay remains the
+existing duplicate-free replay path rather than re-failing because source product
+evidence changed after the continuation task already ran.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust
