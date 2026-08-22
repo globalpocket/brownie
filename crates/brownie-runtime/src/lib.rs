@@ -78402,7 +78402,7 @@ mod tests {
                     source_phase: "M53.2".to_string(),
                     source_pr: Some("PR248".to_string()),
                     target_capability: "headless_autonomous_development".to_string(),
-                    classification: "post_v0".to_string(),
+                    classification: "required_before_release".to_string(),
                     status: "open".to_string(),
                     next_action: "bind_debt_to_continuation_task".to_string(),
                     closure_evidence_fingerprint: None,
@@ -78544,6 +78544,133 @@ mod tests {
             product_continuation_provenance.technical_debt_carry_forward,
             decision.technical_debt_carry_forward
         );
+        let synthetic_drive_result = HeadlessRunDriveResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            session_id: "m54.debt.transition".to_string(),
+            drive_id: "m54.debt.transition.route".to_string(),
+            start_session_sequence: 1,
+            end_session_sequence: 2,
+            replayed: false,
+            max_advances: 1,
+            max_steps_per_advance: 1,
+            advance_count: 1,
+            executed_count: 1,
+            replayed_count: 0,
+            stop_reason: "synthetic product decision boundary".to_string(),
+            drive_fingerprint: fp('6'),
+            terminal_completion_evidence: None,
+            completion_closure: HeadlessRunCompletionClosure {
+                status: HeadlessRunCompletionClosureStatus::Complete,
+                stop_reason: "complete".to_string(),
+                terminal_task_count: 1,
+                total_task_count: 1,
+                runnable_task_count: 0,
+                blocked_task_count: 0,
+                route_candidate_count: 0,
+                progress_fingerprint: fp('7'),
+                aggregate_sequence: 2,
+                route_kind: None,
+                route_task_id: None,
+                route_run_id: None,
+                terminal_completion_fingerprint: Some(fp('8')),
+                next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
+                closure_fingerprint: fp('9'),
+            },
+            completion_finalization: None,
+            accepted_completion: Some(HeadlessRunAcceptedCompletion {
+                task_id: continuation_task_id.clone(),
+                run_id: continuation_run_id.clone(),
+                acceptance_id: "m54-transition-acceptance".to_string(),
+                status: "accepted".to_string(),
+                terminal_completion_fingerprint: fp('8'),
+                acceptance_fingerprint: fp('a'),
+                verifier_gate_status: "not_required".to_string(),
+                replayed: false,
+                next_action: "drive_product_completion".to_string(),
+            }),
+            product_evidence_matrix: None,
+            product_completion_decision: None,
+            start_progress: HeadlessRunProgressCheckpoint {
+                progress_fingerprint: fp('b'),
+                aggregate_sequence: 1,
+            },
+            post_progress: Some(HeadlessRunProgressCheckpoint {
+                progress_fingerprint: fp('c'),
+                aggregate_sequence: 2,
+            }),
+            next_route: None,
+            advances: vec![],
+            journey_route_resume: None,
+            journey_closure: None,
+            journey: None,
+            journey_execution: None,
+            next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
+        };
+        let base_transition_decision = HeadlessRunProductCompletionDecisionRequest {
+            authorize_product_completion_decision: true,
+            decision_id: "m54-transition-decision".to_string(),
+            expected_accepted_completion_fingerprint: fp('a'),
+            expected_terminal_completion_fingerprint: fp('8'),
+            expected_completion_closure_fingerprint: fp('9'),
+            expected_product_evidence_fingerprint: fp('d'),
+            evidence_status: "product_complete".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "runtime_derived_technical_debt_state_transitions"
+                .to_string(),
+            validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                .iter()
+                .map(|category| category.to_string())
+                .collect(),
+            derived_product_evidence_matrix_fingerprint: None,
+            behavior_evidence_count: 4,
+            rejected_alternatives_count: 3,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: None,
+            milestone_exit_rationale: Some("m54_transition_complete".to_string()),
+            technical_debt_carry_forward: None,
+            technical_debt_transitions: None,
+        };
+        let omitted_transition = technical_debt_carry_forward_for_decision(
+            &store,
+            &synthetic_drive_result,
+            &base_transition_decision,
+        )
+        .expect("omitted prior debt derives state")
+        .expect("prior debt remains active");
+        assert_eq!(omitted_transition.items[0].debt_id, "source-debt-1");
+        assert_eq!(
+            omitted_transition.items[0].classification,
+            "required_before_release"
+        );
+        let mut resolved_transition = base_transition_decision.clone();
+        resolved_transition.technical_debt_transitions = Some(vec![TechnicalDebtTransition {
+            debt_id: "source-debt-1".to_string(),
+            status: "resolved".to_string(),
+            next_action: "close_with_evidence".to_string(),
+            closure_evidence_fingerprint: Some(fp('e')),
+        }]);
+        assert!(technical_debt_carry_forward_for_decision(
+            &store,
+            &synthetic_drive_result,
+            &resolved_transition,
+        )
+        .expect("resolved transition derives empty state")
+        .is_none());
+        let mut missing_evidence = resolved_transition.clone();
+        missing_evidence
+            .technical_debt_transitions
+            .as_mut()
+            .expect("transition")[0]
+            .closure_evidence_fingerprint = None;
+        assert!(technical_debt_carry_forward_for_decision(
+            &store,
+            &synthetic_drive_result,
+            &missing_evidence,
+        )
+        .expect_err("closing transition without evidence")
+        .contains("closing transitions require closure_evidence_fingerprint"));
         assert!(continuation_task.verification_recovery_provenance.is_none());
         assert!(continuation_task
             .llm_provider_failure_retry_provenance
