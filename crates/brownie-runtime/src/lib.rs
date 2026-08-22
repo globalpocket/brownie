@@ -38,12 +38,13 @@ use brownie_protocol::{
     HeadlessRunCompletionFinalization, HeadlessRunDriveParams, HeadlessRunDriveResult,
     HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
-    HeadlessRunJourneyMetadata, HeadlessRunJourneyRouteResumeMetadata,
-    HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
-    HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
-    HeadlessRunProductEvidenceMatrix, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
-    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunJourneyMetadata, HeadlessRunJourneyObjectiveContextMetadata,
+    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunProductCompletionDecision,
+    HeadlessRunProductCompletionDecisionRequest, HeadlessRunProductEvidenceArtifact,
+    HeadlessRunProductEvidenceDerivationRequest, HeadlessRunProductEvidenceMatrix,
+    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
+    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -5893,6 +5894,12 @@ struct ValidatedTaskRunSelectedIndexContext {
 }
 
 #[derive(Debug, Clone)]
+struct ValidatedSelectedIndexContextEvidence {
+    read_path_fingerprint: String,
+    content_char_count: usize,
+}
+
+#[derive(Debug, Clone)]
 struct ValidatedVerificationRecoveryContextRead {
     prompt_context: VerificationRecoveryContextPromptContext,
     summary: TaskRunVerificationRecoveryContextReadSummary,
@@ -6302,6 +6309,59 @@ fn validate_task_run_selected_index_context(
     policy: &CompiledModePolicy,
     context: &TaskRunSelectedIndexContext,
 ) -> Result<ValidatedTaskRunSelectedIndexContext, TaskRunAdmissionRejection> {
+    let evidence = validate_selected_index_context_evidence(store, policy, context)?;
+    let prompt_context_id = selected_index_prompt_context_id(record, context);
+    let summary = TaskRunSelectedIndexPromptContextSummary {
+        prompt_context_id: prompt_context_id.clone(),
+        source_event_id: context.ledger_event_id.clone(),
+        source_event_kind: context.ledger_event_kind.clone(),
+        query_id: context.query_id.clone(),
+        selection_id: context.selection_id.clone(),
+        query_fingerprint: context.query_fingerprint.clone(),
+        selection_fingerprint: context.selection_fingerprint.clone(),
+        index_id: context.snapshot.index_id.clone(),
+        workspace_fingerprint: context.snapshot.workspace_fingerprint.clone(),
+        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
+        read_path_fingerprint: evidence.read_path_fingerprint.clone(),
+        file_kind: context.file_kind.clone(),
+        bytes_read: context.bytes_read,
+        content_char_count: evidence.content_char_count,
+        materialized_content_char_count: evidence.content_char_count,
+        content_truncated_for_prompt: false,
+        content_sha256: context.content_sha256.clone(),
+        prompt_preview_redacted: true,
+        next_action: CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION.to_string(),
+    };
+    let prompt_context = SelectedIndexPromptContext {
+        prompt_context_id: prompt_context_id.clone(),
+        source_event_id: context.ledger_event_id.clone(),
+        query_id: context.query_id.clone(),
+        selection_id: context.selection_id.clone(),
+        selection_fingerprint: context.selection_fingerprint.clone(),
+        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
+        path: context.path.clone(),
+        file_kind: context.file_kind.clone(),
+        bytes_read: context.bytes_read,
+        content_sha256: context.content_sha256.clone(),
+        content_char_count: evidence.content_char_count,
+        materialized_content_char_count: evidence.content_char_count,
+        content_truncated_for_prompt: false,
+        content: context.content.clone(),
+    };
+    let event_payload =
+        codebase_index_prompt_context_materialized_payload(record, policy, &summary);
+    Ok(ValidatedTaskRunSelectedIndexContext {
+        prompt_context,
+        summary,
+        event_payload,
+    })
+}
+
+fn validate_selected_index_context_evidence(
+    store: &BrownieStore,
+    policy: &CompiledModePolicy,
+    context: &TaskRunSelectedIndexContext,
+) -> Result<ValidatedSelectedIndexContextEvidence, TaskRunAdmissionRejection> {
     validate_selected_index_context_permission(policy, RuntimeAction::ReadWorkspace)?;
     validate_selected_index_context_permission(policy, RuntimeAction::IndexCodebase)?;
     if !is_codebase_index_query_id(&context.query_id) {
@@ -6376,50 +6436,9 @@ fn validate_task_run_selected_index_context(
         return invalid_selected_index_context("source selected-read ledger event does not match");
     }
 
-    let prompt_context_id = selected_index_prompt_context_id(record, context);
-    let summary = TaskRunSelectedIndexPromptContextSummary {
-        prompt_context_id: prompt_context_id.clone(),
-        source_event_id: context.ledger_event_id.clone(),
-        source_event_kind: context.ledger_event_kind.clone(),
-        query_id: context.query_id.clone(),
-        selection_id: context.selection_id.clone(),
-        query_fingerprint: context.query_fingerprint.clone(),
-        selection_fingerprint: context.selection_fingerprint.clone(),
-        index_id: context.snapshot.index_id.clone(),
-        workspace_fingerprint: context.snapshot.workspace_fingerprint.clone(),
-        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
-        read_path_fingerprint: read_path_fingerprint.clone(),
-        file_kind: context.file_kind.clone(),
-        bytes_read: context.bytes_read,
+    Ok(ValidatedSelectedIndexContextEvidence {
+        read_path_fingerprint,
         content_char_count: context.content.chars().count(),
-        materialized_content_char_count: context.content.chars().count(),
-        content_truncated_for_prompt: false,
-        content_sha256: context.content_sha256.clone(),
-        prompt_preview_redacted: true,
-        next_action: CODEBASE_INDEX_PROMPT_CONTEXT_NEXT_ACTION.to_string(),
-    };
-    let prompt_context = SelectedIndexPromptContext {
-        prompt_context_id: prompt_context_id.clone(),
-        source_event_id: context.ledger_event_id.clone(),
-        query_id: context.query_id.clone(),
-        selection_id: context.selection_id.clone(),
-        selection_fingerprint: context.selection_fingerprint.clone(),
-        snapshot_fingerprint: context.snapshot.snapshot_fingerprint.clone(),
-        path: context.path.clone(),
-        file_kind: context.file_kind.clone(),
-        bytes_read: context.bytes_read,
-        content_sha256: context.content_sha256.clone(),
-        content_char_count: context.content.chars().count(),
-        materialized_content_char_count: context.content.chars().count(),
-        content_truncated_for_prompt: false,
-        content: context.content.clone(),
-    };
-    let event_payload =
-        codebase_index_prompt_context_materialized_payload(record, policy, &summary);
-    Ok(ValidatedTaskRunSelectedIndexContext {
-        prompt_context,
-        summary,
-        event_payload,
     })
 }
 
@@ -8706,6 +8725,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: modepack_selected_active_rollback_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.selected_index_context.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: selected_index_context cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.verification_recovery_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -9263,6 +9289,36 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
+    if params.selected_index_context.is_some()
+        && (params.verification_recovery_source.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: selected_index_context is supported only for normal headless task continuation",
+        );
+    }
 
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
@@ -9743,6 +9799,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         Some(json!({
             "task_id": selected_record.task_id,
             "context_budget": params.context_budget.clone(),
+            "selected_index_context": params.selected_index_context.clone(),
         })),
     );
     let Some(task_run_value) = task_run_response.result else {
@@ -12321,6 +12378,22 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
+    if headless_run_advance_has_explicit_modepack_target(&params)
+        && params.selected_index_context.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: selected_index_context is supported only for normal headless task continuation",
+        );
+    }
+    if params.selected_index_context.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: selected_index_context cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.expected_session_sequence == 0 {
         return error_response(
             id,
@@ -12550,7 +12623,8 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
         "expected_aggregate_sequence": start_sequence,
         "continuation_id": continuation_id,
         "max_steps": max_steps,
-        "context_budget": params.context_budget.clone()
+        "context_budget": params.context_budget.clone(),
+        "selected_index_context": params.selected_index_context.clone()
     });
     if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
         continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
@@ -12756,6 +12830,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         continuation_id: Some(continuation_id.to_string()),
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
+        selected_index_context: None,
         verification_recovery_source: None,
         verification_recovery_goal: None,
         verification_recovery_mode_id: None,
@@ -12959,6 +13034,7 @@ fn validate_headless_run_registry_selection_replay_target(
         continuation_id: Some(continuation_id.to_string()),
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
+        selected_index_context: None,
         verification_recovery_source: None,
         verification_recovery_goal: None,
         verification_recovery_mode_id: None,
@@ -13007,6 +13083,7 @@ fn headless_run_replay_continue_once_params(
         continuation_id: Some(continuation_id.to_string()),
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
+        selected_index_context: None,
         verification_recovery_source: None,
         verification_recovery_goal: None,
         verification_recovery_mode_id: None,
@@ -13119,8 +13196,96 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
     let seed = json!({
         "journey_id": admission.journey_id,
         "task_start": admission.task_start,
+        "objective_context_fingerprint": admission
+            .objective_context
+            .as_ref()
+            .map(headless_journey_objective_context_fingerprint),
     });
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn headless_journey_selected_index_context_fingerprint(
+    context: &TaskRunSelectedIndexContext,
+) -> String {
+    let seed = json!({
+        "query_id": context.query_id,
+        "selection_id": context.selection_id,
+        "query_fingerprint": context.query_fingerprint,
+        "selection_fingerprint": context.selection_fingerprint,
+        "index_id": context.snapshot.index_id,
+        "workspace_fingerprint": context.snapshot.workspace_fingerprint,
+        "snapshot_fingerprint": context.snapshot.snapshot_fingerprint,
+        "read_path_fingerprint": format!("sha256:{}", hex_sha256(context.path.as_bytes())),
+        "file_kind": context.file_kind,
+        "bytes_read": context.bytes_read,
+        "content_sha256": context.content_sha256,
+        "source_event_id": context.ledger_event_id,
+        "source_event_kind": context.ledger_event_kind,
+        "next_action": context.next_action,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn headless_journey_objective_context_fingerprint(
+    context: &brownie_protocol::HeadlessRunJourneyObjectiveContext,
+) -> String {
+    let seed = json!({
+        "objective_id": context.objective_id,
+        "objective_fingerprint": context.objective_fingerprint,
+        "selected_context_fingerprint": headless_journey_selected_index_context_fingerprint(
+            &context.selected_index_context,
+        ),
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn validate_headless_journey_objective_context(
+    store: &BrownieStore,
+    policy: &CompiledModePolicy,
+    context: &brownie_protocol::HeadlessRunJourneyObjectiveContext,
+) -> Result<(), TaskRunAdmissionRejection> {
+    if !context.authorize_objective_context_admission {
+        return invalid_selected_index_context("objective_context authorization is required");
+    }
+    if !is_valid_headless_run_id(&context.objective_id) {
+        return invalid_selected_index_context("objective_id is malformed");
+    }
+    if !is_sha256_fingerprint(&context.objective_fingerprint) {
+        return invalid_selected_index_context("objective_fingerprint is malformed");
+    }
+    validate_selected_index_context_evidence(store, policy, &context.selected_index_context)?;
+    Ok(())
+}
+
+fn headless_journey_objective_context_metadata(
+    context: &brownie_protocol::HeadlessRunJourneyObjectiveContext,
+    validated: &ValidatedTaskRunSelectedIndexContext,
+) -> HeadlessRunJourneyObjectiveContextMetadata {
+    let summary = &validated.summary;
+    HeadlessRunJourneyObjectiveContextMetadata {
+        objective_id: context.objective_id.clone(),
+        objective_fingerprint: context.objective_fingerprint.clone(),
+        objective_context_fingerprint: headless_journey_objective_context_fingerprint(context),
+        selected_context_fingerprint: headless_journey_selected_index_context_fingerprint(
+            &context.selected_index_context,
+        ),
+        prompt_context_id: summary.prompt_context_id.clone(),
+        source_event_id: summary.source_event_id.clone(),
+        source_event_kind: summary.source_event_kind.clone(),
+        query_id: summary.query_id.clone(),
+        selection_id: summary.selection_id.clone(),
+        query_fingerprint: summary.query_fingerprint.clone(),
+        selection_fingerprint: summary.selection_fingerprint.clone(),
+        index_id: summary.index_id.clone(),
+        workspace_fingerprint: summary.workspace_fingerprint.clone(),
+        snapshot_fingerprint: summary.snapshot_fingerprint.clone(),
+        read_path_fingerprint: summary.read_path_fingerprint.clone(),
+        file_kind: summary.file_kind.clone(),
+        bytes_read: summary.bytes_read,
+        content_char_count: summary.content_char_count,
+        content_sha256: summary.content_sha256.clone(),
+        next_action: "run_admitted_coding_task".to_string(),
+    }
 }
 
 fn validate_headless_journey_admission(
@@ -13156,6 +13321,14 @@ fn validate_headless_journey_admission(
             "invalid params: journey admission cannot authorize completion finalization"
                 .to_string(),
         );
+    }
+    if admission.objective_context.is_some() {
+        if params.max_advances.unwrap_or(1) != 1 || params.max_steps_per_advance.unwrap_or(1) != 1 {
+            return Err(
+                "invalid params: objective_context admission requires one advance with one step"
+                    .to_string(),
+            );
+        }
     }
     Ok(())
 }
@@ -13197,6 +13370,20 @@ fn headless_journey_start_checkpoint_for_admission(
             "invalid params: journey admission requires no existing session checkpoint",
         ));
     }
+    let policy = resolve_task_start_policy(admission.task_start.mode_id.as_deref(), store)
+        .map_err(|message| error_response(id.clone(), -32602, &message))?;
+    if let Some(context) = admission.objective_context.as_ref() {
+        validate_headless_journey_objective_context(store, &policy, context).map_err(
+            |rejection| match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id.clone(), -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id.clone(), -32603, &format!("internal error: {message}"))
+                }
+            },
+        )?;
+    }
     let start_response = handle_task_start(
         id.clone(),
         Some(json!({
@@ -13224,6 +13411,68 @@ fn headless_journey_start_checkpoint_for_admission(
         progress_fingerprint: progress.source_fingerprint,
         aggregate_sequence: progress.aggregate_sequence,
     };
+    let objective_context_metadata = if let Some(context) = admission.objective_context.as_ref() {
+        let Some(record) = store.tasks().get_task(&start_result.task_id).map_err(|error| {
+            let cleanup = store
+                .tasks()
+                .remove_task_run(&start_result.task_id, &start_result.run_id);
+            let message = match cleanup {
+                Ok(()) => format!("internal error: journey admission task lookup failed: {error}"),
+                Err(cleanup_error) => format!(
+                    "internal error: journey admission task lookup failed: {error}; cleanup failed: {cleanup_error}"
+                ),
+            };
+            error_response(id.clone(), -32603, &message)
+        })?
+        else {
+            let cleanup = store
+                .tasks()
+                .remove_task_run(&start_result.task_id, &start_result.run_id);
+            let message = match cleanup {
+                Ok(()) => "internal error: journey admission task lookup failed".to_string(),
+                Err(cleanup_error) => format!(
+                    "internal error: journey admission task lookup failed; cleanup failed: {cleanup_error}"
+                ),
+            };
+            return Err(error_response(id.clone(), -32603, &message));
+        };
+        let validated = validate_task_run_selected_index_context(
+            store,
+            &record,
+            &policy,
+            &context.selected_index_context,
+        )
+        .map_err(|rejection| {
+            let cleanup = store
+                .tasks()
+                .remove_task_run(&start_result.task_id, &start_result.run_id);
+            match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    let message = match cleanup {
+                        Ok(()) => message.to_string(),
+                        Err(cleanup_error) => {
+                            format!("{message}; cleanup failed: {cleanup_error}")
+                        }
+                    };
+                    error_response(id.clone(), -32602, &message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    let message = match cleanup {
+                        Ok(()) => format!("internal error: {message}"),
+                        Err(cleanup_error) => {
+                            format!("internal error: {message}; cleanup failed: {cleanup_error}")
+                        }
+                    };
+                    error_response(id.clone(), -32603, &message)
+                }
+            }
+        })?;
+        Some(headless_journey_objective_context_metadata(
+            context, &validated,
+        ))
+    } else {
+        None
+    };
     let journey_seed = json!({
         "journey_id": admission.journey_id,
         "session_id": session_id,
@@ -13232,6 +13481,7 @@ fn headless_journey_start_checkpoint_for_admission(
         "run_id": start_result.run_id,
         "task_start_fingerprint": task_start_fingerprint,
         "start_progress": start_progress,
+        "objective_context": objective_context_metadata.clone(),
     });
     let checkpoint = HeadlessJourneyStartCheckpoint {
         journey_id: admission.journey_id.clone(),
@@ -13242,6 +13492,7 @@ fn headless_journey_start_checkpoint_for_admission(
         task_start_fingerprint,
         start_progress,
         journey_fingerprint: format!("sha256:{}", hex_sha256(journey_seed.to_string().as_bytes())),
+        objective_context: objective_context_metadata,
     };
     #[cfg(test)]
     if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE").is_some() {
@@ -13304,24 +13555,29 @@ fn headless_journey_start_checkpoint_for_admission(
             };
             return Err(error_response(id.clone(), -32603, &message));
         }
+        let mut event_payload = json!({
+            "journey_id": checkpoint.journey_id,
+            "session_id": checkpoint.session_id,
+            "drive_id": checkpoint.drive_id,
+            "task_id": checkpoint.task_id,
+            "run_id": checkpoint.run_id,
+            "task_start_fingerprint": checkpoint.task_start_fingerprint,
+            "start_progress_fingerprint": checkpoint.start_progress.progress_fingerprint,
+            "start_aggregate_sequence": checkpoint.start_progress.aggregate_sequence,
+            "journey_fingerprint": checkpoint.journey_fingerprint,
+            "next_action": "drive_headless_journey",
+            "reason": "Headless journey admitted one initial task under bounded runtime-owned drive authority."
+        });
+        if let Some(objective_context) = checkpoint.objective_context.as_ref() {
+            event_payload["objective_context"] = json!(objective_context);
+            event_payload["next_action"] = json!("run_admitted_coding_task");
+        }
         store
             .tasks()
             .append_task_event_with_payload(
                 &record,
                 LedgerEventKind::HeadlessJourneyStarted,
-                Some(json!({
-                    "journey_id": checkpoint.journey_id,
-                    "session_id": checkpoint.session_id,
-                    "drive_id": checkpoint.drive_id,
-                    "task_id": checkpoint.task_id,
-                    "run_id": checkpoint.run_id,
-                    "task_start_fingerprint": checkpoint.task_start_fingerprint,
-                    "start_progress_fingerprint": checkpoint.start_progress.progress_fingerprint,
-                    "start_aggregate_sequence": checkpoint.start_progress.aggregate_sequence,
-                    "journey_fingerprint": checkpoint.journey_fingerprint,
-                    "next_action": "drive_headless_journey",
-                    "reason": "Headless journey admitted one initial task under bounded runtime-owned drive authority."
-                })),
+                Some(event_payload),
             )
             .map_err(|error| {
                 let checkpoint_cleanup = store
@@ -13377,6 +13633,7 @@ fn headless_journey_metadata(
         next_action: result.next_action.clone(),
         replayed,
         journey_fingerprint: checkpoint.journey_fingerprint.clone(),
+        objective_context: checkpoint.objective_context.clone(),
     }
 }
 
@@ -15854,6 +16111,7 @@ fn handle_headless_journey_execution(
             journey_id: execution.journey_id.clone(),
             authorize_journey_start: true,
             task_start: task_start.clone(),
+            objective_context: None,
         };
         if journey.task_start_fingerprint != headless_journey_task_start_fingerprint(&admission) {
             return error_response(
@@ -16756,6 +17014,14 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                     json!(start_progress.progress_fingerprint.clone());
                 advance_params["expected_aggregate_sequence"] =
                     json!(start_progress.aggregate_sequence);
+                if let Some(context) = params
+                    .journey_admission
+                    .as_ref()
+                    .and_then(|admission| admission.objective_context.as_ref())
+                {
+                    advance_params["selected_index_context"] =
+                        json!(context.selected_index_context.clone());
+                }
             }
             if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
                 advance_params["modepack_selected_candidate_fetch_target"] = json!(target);
@@ -55471,6 +55737,190 @@ mod tests {
     }
 
     #[test]
+    fn headless_run_drive_journey_admission_binds_objective_selected_context_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (store, selected_context) = prepared_selected_index_context(
+            temp.path(),
+            "pub fn selected_context_for_objective() {}\n",
+        );
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m56.journey",
+                "drive_id": "m56.journey.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "context_budget": {
+                    "max_prompt_chars": 4096,
+                    "max_ledger_events": 16,
+                    "max_selected_index_chars": 1024
+                },
+                "journey_admission": {
+                    "journey_id": "m56.journey.1",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": "Implement the selected runtime objective",
+                        "mode_id": "implementer"
+                    },
+                    "objective_context": {
+                        "authorize_objective_context_admission": true,
+                        "objective_id": "m56.objective.1",
+                        "objective_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                        "selected_index_context": selected_context.clone()
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let response = parse_line(&request);
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("objective admission result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["journey"]["journey_id"], "m56.journey.1");
+        assert_eq!(
+            result["journey"]["objective_context"]["objective_id"],
+            "m56.objective.1"
+        );
+        assert_eq!(
+            result["journey"]["objective_context"]["next_action"],
+            "run_admitted_coding_task"
+        );
+        assert!(
+            result["journey"]["objective_context"]["objective_context_fingerprint"]
+                .as_str()
+                .expect("objective context fingerprint")
+                .starts_with("sha256:")
+        );
+        assert!(result["journey"]["objective_context"]
+            .get("content")
+            .is_none());
+        assert!(result["journey"]["objective_context"].get("path").is_none());
+        assert_eq!(
+            result["advances"][0]["steps"][0]["context_budget"]["selected_index_context_present"],
+            true
+        );
+
+        let task_count_after_first_drive = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_first_drive, 1);
+        let replay = parse_line(&request)
+            .result
+            .expect("objective admission replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey"]["replayed"], true);
+        assert_eq!(
+            replay["journey"]["objective_context"],
+            result["journey"]["objective_context"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::CodebaseIndexPromptContextMaterialized
+                )
+                .count(),
+            1
+        );
+        let journey_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+            .and_then(|event| event.payload.as_ref())
+            .expect("journey payload");
+        assert!(journey_payload
+            .get("objective_context")
+            .expect("objective context")
+            .get("content")
+            .is_none());
+        assert!(journey_payload["objective_context"].get("path").is_none());
+
+        let mut conflicting = serde_json::from_str::<Value>(&request).expect("request json");
+        conflicting["params"]["journey_admission"]["objective_context"]["objective_fingerprint"] =
+            json!(format!("sha256:{}", "9".repeat(64)));
+        let conflict = parse_line(&conflicting.to_string());
+        assert_eq!(conflict.error.expect("conflict").code, -32602);
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_admission_rejects_stale_selected_context_before_task_start() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (store, mut selected_context) =
+            prepared_selected_index_context(temp.path(), "pub fn stale_context() {}\n");
+        selected_context["content_sha256"] = json!(format!("sha256:{}", "9".repeat(64)));
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m56.stale",
+                "drive_id": "m56.stale.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "m56.stale.1",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": "Reject stale selected context",
+                        "mode_id": "implementer"
+                    },
+                    "objective_context": {
+                        "authorize_objective_context_admission": true,
+                        "objective_id": "m56.objective.stale",
+                        "objective_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                        "selected_index_context": selected_context
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let response = parse_line(&request);
+        assert_eq!(response.error.expect("stale context").code, -32602);
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m56.stale.1")
+            .expect("checkpoint")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_run_drive_journey_execution_admits_checkpoints_and_replays_without_new_task() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -56362,6 +56812,7 @@ mod tests {
                 "sha256:{}",
                 hex_sha256(journey_seed.to_string().as_bytes())
             ),
+            objective_context: None,
         };
         store
             .tasks()
@@ -57376,6 +57827,7 @@ mod tests {
             continuation_id: Some("run.session.2".to_string()),
             max_steps: Some(1),
             context_budget: None,
+            selected_index_context: None,
             verification_recovery_source: None,
             verification_recovery_goal: None,
             verification_recovery_mode_id: None,
@@ -80589,6 +81041,7 @@ mod tests {
             continuation_id: Some("continue.modepack:registry-selection:1".to_string()),
             max_steps: None,
             context_budget: None,
+            selected_index_context: None,
             verification_recovery_source: None,
             verification_recovery_goal: None,
             verification_recovery_mode_id: None,
@@ -80728,6 +81181,7 @@ mod tests {
             continuation_id: Some("continue.modepack:fetch:1".to_string()),
             max_steps: None,
             context_budget: None,
+            selected_index_context: None,
             verification_recovery_source: None,
             verification_recovery_goal: None,
             verification_recovery_mode_id: None,

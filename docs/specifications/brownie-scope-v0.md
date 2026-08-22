@@ -62,6 +62,8 @@ Brownie treats AgentModes as an external Mode Pack:
 - llama-server wrapper design.
 - Qdrant wrapper design.
 - Codebase indexing design.
+- Runtime-owned arbitrary repository coding journey admission from bounded
+  objective and selected index context evidence.
 - stdio JSON-RPC boundary between VSIX and runtime.
 
 ## Out of scope for v0

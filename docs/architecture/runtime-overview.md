@@ -891,3 +891,14 @@ post-delete absence, consumes authorization, and records bounded
 commands, environment values, secrets, absolute paths, or canonical paths.
 
 M55.1 closes the M50.1 journey-admission atomicity gap. During an existing `headless.run.drive` journey admission, if the runtime creates the initial task but cannot persist the journey checkpoint, it removes that just-created task/run before returning failure. If the checkpoint is written but bounded `HeadlessJourneyStarted` ledger evidence cannot be committed, the runtime removes the matching checkpoint and the just-created task/run. Retries therefore either replay an already committed journey or start from no journey side effects; they do not need external orphan-task cleanup. Cleanup is scoped by matching task id, run id, and checkpoint equality, and no raw prompt, provider response, file content, diff, stdout/stderr, command, environment, absolute path, canonical path, raw request, raw ledger payload, or secret is exposed.
+
+M56.1 extends that same journey-admission boundary for arbitrary repository
+coding objectives. `headless.run.drive` can carry one authorized
+`journey_admission.objective_context` with a bounded objective id/fingerprint
+and one prior `CodebaseIndexSelectionReadCompleted` result. Rust validates the
+selected index evidence before task creation, persists only bounded objective,
+query, selection, snapshot, source-event, count, and SHA-256 provenance on the
+journey checkpoint and `HeadlessJourneyStarted` event, then forwards the
+selected context to the first admitted `task.run`. Exact replay returns the
+same task/run and objective-context metadata; conflicting objective or selected
+context evidence is denied before a duplicate task can be created.

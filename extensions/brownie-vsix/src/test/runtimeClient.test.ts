@@ -944,6 +944,30 @@ describe('protocol validation', () => {
       prompt_chars: 512,
       prompt_within_budget: true,
     };
+    const selectedIndexContext = {
+      query_id: 'query_abcdef1234567890',
+      selection_id: 'selection_0123456789abcdef',
+      query_fingerprint: `sha256:${'c'.repeat(64)}`,
+      selection_fingerprint: `sha256:${'d'.repeat(64)}`,
+      snapshot: {
+        index_id: 'idx_abcdef1234567890',
+        root: '.',
+        workspace_fingerprint: `sha256:${'a'.repeat(64)}`,
+        snapshot_fingerprint: `sha256:${'b'.repeat(64)}`,
+        built_at: '2026-07-24T00:00:00Z',
+        truncated: false,
+      },
+      path: 'src/runtime/query.rs',
+      file_kind: 'Rust',
+      content: 'pub fn selected() {}\n',
+      truncated: false,
+      bytes_read: 21,
+      content_sha256: `sha256:${'e'.repeat(64)}`,
+      content_hash_verified: true,
+      ledger_event_id: 'event_3',
+      ledger_event_kind: 'CodebaseIndexSelectionReadCompleted',
+      next_action: 'use_selected_file_context_for_prompt_materialization',
+    };
     const headlessResult = {
       status: 'task_executed',
       decision_id: `headless_decision_${'a'.repeat(32)}`,
@@ -974,6 +998,8 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceParams(headlessParams)).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 2 })).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: contextBudget })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, selected_index_context: selectedIndexContext })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, selected_index_context: { ...selectedIndexContext, raw_content: 'secret' } })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, authorize: false })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, expected_progress_fingerprint: 'not-a-fingerprint' })).toBe(false);
@@ -1928,6 +1954,7 @@ describe('protocol validation', () => {
       next_action: 'start_verification_recovery_explicitly',
     };
     expect(isHeadlessRunAdvanceParams(headlessRunAdvanceParams)).toBe(true);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, selected_index_context: selectedIndexContext })).toBe(true);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, authorize: false })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, session_id: 'x'.repeat(49) })).toBe(false);
@@ -2171,6 +2198,12 @@ describe('protocol validation', () => {
         mode_id: 'implementer',
       },
     };
+    const headlessRunJourneyObjectiveContext = {
+      authorize_objective_context_admission: true,
+      objective_id: 'm56.objective.1',
+      objective_fingerprint: `sha256:${'8'.repeat(64)}`,
+      selected_index_context: selectedIndexContext,
+    };
     const headlessRunJourneyRouteResume = {
       journey_id: 'm50.journey.1',
       authorize_journey_route_resume: true,
@@ -2225,6 +2258,28 @@ describe('protocol validation', () => {
       next_action: 'inspect_progress_overview',
       replayed: false,
       journey_fingerprint: `sha256:${'3'.repeat(64)}`,
+    };
+    const headlessRunJourneyObjectiveContextMetadata = {
+      objective_id: 'm56.objective.1',
+      objective_fingerprint: `sha256:${'8'.repeat(64)}`,
+      objective_context_fingerprint: `sha256:${'9'.repeat(64)}`,
+      selected_context_fingerprint: `sha256:${'0'.repeat(64)}`,
+      prompt_context_id: 'prompt_context_1',
+      source_event_id: 'event_3',
+      source_event_kind: 'CodebaseIndexSelectionReadCompleted',
+      query_id: selectedIndexContext.query_id,
+      selection_id: selectedIndexContext.selection_id,
+      query_fingerprint: selectedIndexContext.query_fingerprint,
+      selection_fingerprint: selectedIndexContext.selection_fingerprint,
+      index_id: selectedIndexContext.snapshot.index_id,
+      workspace_fingerprint: selectedIndexContext.snapshot.workspace_fingerprint,
+      snapshot_fingerprint: selectedIndexContext.snapshot.snapshot_fingerprint,
+      read_path_fingerprint: `sha256:${'7'.repeat(64)}`,
+      file_kind: 'Rust',
+      bytes_read: selectedIndexContext.bytes_read,
+      content_char_count: selectedIndexContext.content.length,
+      content_sha256: selectedIndexContext.content_sha256,
+      next_action: 'run_admitted_coding_task',
     };
     const headlessRunJourneyRouteResumeMetadata = {
       journey_id: 'm50.journey.1',
@@ -2333,6 +2388,20 @@ describe('protocol validation', () => {
       max_steps_per_advance: 1,
       context_budget: contextBudget,
       journey_admission: headlessRunJourneyAdmission,
+    })).toBe(true);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm56.journey',
+      drive_id: 'm56.journey.drive',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      max_steps_per_advance: 1,
+      context_budget: contextBudget,
+      journey_admission: {
+        ...headlessRunJourneyAdmission,
+        journey_id: 'm56.journey.1',
+        objective_context: headlessRunJourneyObjectiveContext,
+      },
     })).toBe(true);
     expect(isHeadlessRunDriveParams({
       authorize: true,
@@ -2565,6 +2634,21 @@ describe('protocol validation', () => {
       max_advances: 1,
       journey_admission: { ...headlessRunJourneyAdmission, task_start: { ...headlessRunJourneyAdmission.task_start, raw_prompt: 'secret' } },
     })).toBe(false);
+    expect(isHeadlessRunDriveParams({
+      authorize: true,
+      session_id: 'm56.journey',
+      drive_id: 'm56.journey.drive',
+      expected_start_session_sequence: 0,
+      max_advances: 1,
+      journey_admission: {
+        ...headlessRunJourneyAdmission,
+        journey_id: 'm56.journey.1',
+        objective_context: {
+          ...headlessRunJourneyObjectiveContext,
+          objective_fingerprint: 'not-a-fingerprint',
+        },
+      },
+    })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, expected_completion_closure_fingerprint: 'not-a-fingerprint' })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, authorize_product_completion_decision: false } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, expected_product_evidence_fingerprint: 'not-a-fingerprint' } })).toBe(false);
@@ -2593,11 +2677,13 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunApprovalJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunReplacementJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: headlessRunJourneyMetadata })).toBe(true);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: { ...headlessRunJourneyMetadata, objective_context: headlessRunJourneyObjectiveContextMetadata } })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: headlessRunJourneyClosureMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: headlessRunJourneyExecutionMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, journey_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, raw_prompt: 'secret' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, objective_context: { ...headlessRunJourneyObjectiveContextMetadata, content: 'raw' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunProvenanceJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_fetch_target' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunApprovalJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_provenance_verification_target' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunReplacementJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_approval_target' } })).toBe(false);

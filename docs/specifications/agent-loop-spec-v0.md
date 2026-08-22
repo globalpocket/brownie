@@ -486,3 +486,18 @@ visible without blocking completion. Continued development carries the derived
 active debt state into `product_continuation_provenance`.
 
 M55.1 makes the existing `headless.run.drive` journey admission boundary atomic or cleanly recoverable for late commit failures. A failed checkpoint write after initial task creation must remove the just-created task/run. A failed `HeadlessJourneyStarted` ledger append after checkpoint persistence must remove the matching checkpoint and just-created task/run. A retry for the same request must create exactly one committed journey admission, while exact replay of a committed admission and conflicting replay denial retain existing behavior. This adds no new RPC, generic transaction engine, report, history, readiness, inspection, shell/git/network/service execution, workspace mutation, VSIX-owned policy, or raw data exposure.
+
+M56.1 allows the existing `headless.run.drive` journey admission request to
+bind one arbitrary repository coding objective to selected index context before
+the first coding task runs. The optional `journey_admission.objective_context`
+requires explicit authorization, a bounded objective id, a SHA-256 objective
+fingerprint, and one selected index read result. The runtime validates selected
+context evidence before task creation, records bounded objective/index/context
+metadata on the journey checkpoint and `HeadlessJourneyStarted` event, and
+passes the selected context through the first `headless.run.advance` and
+`headless.continue_once` into `task.run`. Exact replay is duplicate-free;
+changed objective or selected-context evidence for the same journey id is
+rejected before mutation. Persisted metadata must not store raw selected file
+content, raw selected paths, prompts, provider responses, command output,
+environment values, absolute paths, canonical paths, raw requests, raw ledger
+payloads, or secrets.
