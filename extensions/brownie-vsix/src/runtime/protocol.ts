@@ -496,6 +496,23 @@ export interface ProductContinuationProvenance {
   decision_status: 'continue_development';
   decision_next_action: 'plan_next_phase';
   remaining_capability?: string | null;
+  technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
+}
+
+export interface TechnicalDebtCarryForwardItem {
+  debt_id: string;
+  summary: string;
+  source_milestone: string;
+  source_phase: string;
+  source_pr?: string | null;
+  target_capability: string;
+  status: string;
+  next_action: string;
+}
+
+export interface TechnicalDebtCarryForward {
+  fingerprint: string;
+  items: TechnicalDebtCarryForwardItem[];
 }
 
 export interface ToolIntentParseResult {
@@ -658,6 +675,7 @@ export interface HeadlessRunProductCompletionDecisionRequest {
   technical_debt_reviewed: boolean;
   remaining_capability?: string | null;
   milestone_exit_rationale?: string | null;
+  technical_debt_carry_forward?: TechnicalDebtCarryForwardItem[] | null;
 }
 
 export interface HeadlessRunProductEvidenceDerivationRequest {
@@ -1215,6 +1233,7 @@ export interface HeadlessRunProductCompletionDecision {
   technical_debt_reviewed: boolean;
   remaining_capability?: string | null;
   milestone_exit_rationale?: string | null;
+  technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
   replayed: boolean;
 }
 
@@ -4748,6 +4767,7 @@ const PRODUCT_CONTINUATION_PROVENANCE_KEYS = new Set([
   'decision_status',
   'decision_next_action',
   'remaining_capability',
+  'technical_debt_carry_forward',
 ]);
 
 const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
@@ -5205,7 +5225,62 @@ export function isProductContinuationProvenance(value: unknown): value is Produc
     value.decision_next_action === 'plan_next_phase' &&
     (value.remaining_capability === undefined ||
       value.remaining_capability === null ||
-      isBoundedAsciiMetadata(value.remaining_capability, 120))
+      isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
+    (value.technical_debt_carry_forward === undefined ||
+      value.technical_debt_carry_forward === null ||
+      isTechnicalDebtCarryForward(value.technical_debt_carry_forward))
+  );
+}
+
+export function isTechnicalDebtCarryForwardItem(value: unknown): value is TechnicalDebtCarryForwardItem {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'debt_id',
+      'summary',
+      'source_milestone',
+      'source_phase',
+      'source_pr',
+      'target_capability',
+      'status',
+      'next_action',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.debt_id) &&
+    isBoundedAsciiMetadata(value.summary, 160) &&
+    isBoundedAsciiMetadata(value.source_milestone, 96) &&
+    isBoundedAsciiMetadata(value.source_phase, 96) &&
+    (value.source_pr === undefined || value.source_pr === null || isBoundedAsciiMetadata(value.source_pr, 32)) &&
+    isBoundedAsciiMetadata(value.target_capability, 96) &&
+    isBoundedAsciiMetadata(value.status, 48) &&
+    isBoundedAsciiMetadata(value.next_action, 120)
+  );
+}
+
+export function isTechnicalDebtCarryForward(value: unknown): value is TechnicalDebtCarryForward {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['fingerprint', 'items']) &&
+    hasNoForbiddenRawFields(value) &&
+    typeof value.fingerprint === 'string' &&
+    isSha256Fingerprint(value.fingerprint) &&
+    Array.isArray(value.items) &&
+    isValidTechnicalDebtCarryForwardItems(value.items)
+  );
+}
+
+function isValidTechnicalDebtCarryForwardItems(items: unknown[]): items is TechnicalDebtCarryForwardItem[] {
+  if (items.length < 1 || items.length > 8 || !items.every(isTechnicalDebtCarryForwardItem)) {
+    return false;
+  }
+  return new Set(items.map((item) => item.debt_id)).size === items.length;
+}
+
+function isOptionalTechnicalDebtCarryForwardItems(value: unknown): value is TechnicalDebtCarryForwardItem[] | null | undefined {
+  return (
+    value === undefined ||
+    value === null ||
+    (Array.isArray(value) && isValidTechnicalDebtCarryForwardItems(value))
   );
 }
 
@@ -7233,6 +7308,7 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
       'technical_debt_reviewed',
       'remaining_capability',
       'milestone_exit_rationale',
+      'technical_debt_carry_forward',
     ]) &&
     hasNoForbiddenRawFields(value) &&
     value.authorize_product_completion_decision === true &&
@@ -7258,7 +7334,8 @@ export function isHeadlessRunProductCompletionDecisionRequest(value: unknown): v
     typeof value.non_goals_reviewed === 'boolean' &&
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.remaining_capability === undefined || value.remaining_capability === null || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
-    (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160))
+    (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160)) &&
+    isOptionalTechnicalDebtCarryForwardItems(value.technical_debt_carry_forward)
   );
 }
 
@@ -7415,6 +7492,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
       'technical_debt_reviewed',
       'remaining_capability',
       'milestone_exit_rationale',
+      'technical_debt_carry_forward',
       'replayed',
     ]) &&
     hasNoForbiddenRawFields(value) &&
@@ -7447,6 +7525,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.remaining_capability === undefined || value.remaining_capability === null || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
     (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160)) &&
+    (value.technical_debt_carry_forward === undefined || value.technical_debt_carry_forward === null || isTechnicalDebtCarryForward(value.technical_debt_carry_forward)) &&
     typeof value.replayed === 'boolean'
   );
 }

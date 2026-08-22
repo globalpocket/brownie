@@ -1214,6 +1214,8 @@ pub struct HeadlessRunProductCompletionDecisionRequest {
     pub remaining_capability: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub milestone_exit_rationale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub technical_debt_carry_forward: Option<Vec<TechnicalDebtCarryForwardItem>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2220,7 +2222,30 @@ pub struct HeadlessRunProductCompletionDecision {
     pub remaining_capability: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub milestone_exit_rationale: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub technical_debt_carry_forward: Option<TechnicalDebtCarryForward>,
     pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TechnicalDebtCarryForwardItem {
+    pub debt_id: String,
+    pub summary: String,
+    pub source_milestone: String,
+    pub source_phase: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_pr: Option<String>,
+    pub target_capability: String,
+    pub status: String,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct TechnicalDebtCarryForward {
+    pub fingerprint: String,
+    pub items: Vec<TechnicalDebtCarryForwardItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -4703,6 +4728,8 @@ pub struct ProductContinuationProvenance {
     pub decision_next_action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remaining_capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub technical_debt_carry_forward: Option<TechnicalDebtCarryForward>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

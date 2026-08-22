@@ -844,6 +844,20 @@ rejected before execution side effects. Terminal task-run replay remains the
 existing duplicate-free replay path rather than re-failing because source product
 evidence changed after the continuation task already ran.
 
+M54.1 adds bounded runtime-owned technical-debt carry-forward to that same
+product-decision and continuation-admission path. A `continue_development`
+product completion decision may include `technical_debt_carry_forward` items;
+Rust validates bounded ASCII debt ids, summaries, milestone/phase/PR references,
+status, next action, and target capability, sorts the items by debt id, derives
+a SHA-256 fingerprint, and persists only that bounded metadata in the product
+decision ledger payload. Exact replay requires the same carry-forward evidence,
+and product-continuation admission copies the carry-forward fingerprint and
+bounded item summaries into `product_continuation_provenance`. No new RPC,
+standalone debt registry, report, automatic execution, provider/verifier/apply
+call, shell/git/network/service action, workspace mutation, or raw prompt,
+provider response, file content, diff, command output, path, environment, or
+secret exposure is introduced.
+
 M24.2 extends the existing `proposal.apply` transaction recovery path for
 partial `delete_file_transaction` evidence. A recovery call supplies
 `transaction_recovery_source` plus one to five delete recovery items; the Rust
