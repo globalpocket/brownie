@@ -446,3 +446,13 @@ admission conflict and must fail before task creation or replay. The source
 decision's bounded `remaining_capability` is copied into
 `product_continuation_provenance`; malformed or over-budget capability metadata
 is rejected as invalid product-continuation evidence.
+
+M53.2 revalidates that stored `product_continuation_provenance` at the existing
+`task.run` boundary for Created product-continuation tasks. The runtime must
+reload the source task/run ledger, require the latest source product decision to
+match the provenance decision id and all expected fingerprints, and require the
+decision to remain `continue_development` with `next_action = plan_next_phase`
+before `TaskRunning` is appended. Superseded, terminal-product, malformed, or
+fingerprint-mismatched source evidence fails closed before provider, verifier,
+tool, apply, shell, git, network, service, or workspace side effects. Already
+terminal continuation tasks keep existing `task.run` replay behavior.
