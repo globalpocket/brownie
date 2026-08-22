@@ -3713,6 +3713,41 @@ impl TaskStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn remove_headless_journey_start_checkpoint(
+        &self,
+        checkpoint: &HeadlessJourneyStartCheckpoint,
+    ) -> Result<()> {
+        let path = self.headless_journey_start_path(&checkpoint.journey_id);
+        match self.read_headless_journey_start_checkpoint(&checkpoint.journey_id)? {
+            Some(existing) if existing == *checkpoint => {
+                fs::remove_file(&path)
+                    .with_context(|| format!("failed to remove {}", path.display()))?;
+            }
+            Some(_) => bail!(
+                "refusing to remove conflicting headless journey start checkpoint for {}",
+                checkpoint.journey_id
+            ),
+            None => {}
+        }
+        Ok(())
+    }
+
+    pub fn remove_task_run(&self, task_id: &str, run_id: &str) -> Result<()> {
+        let Some(record) = self.get_task(task_id)? else {
+            return Ok(());
+        };
+        if record.run_id != run_id {
+            bail!("refusing to remove task {task_id} with mismatched run {run_id}");
+        }
+        let run_dir = self.run_dir(run_id);
+        match fs::remove_dir_all(&run_dir) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error)
+                .with_context(|| format!("failed to remove task run {}", run_dir.display())),
+        }
+    }
+
     pub fn read_headless_journey_execution_checkpoint(
         &self,
         journey_id: &str,

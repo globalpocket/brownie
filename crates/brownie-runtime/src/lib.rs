@@ -13243,15 +13243,67 @@ fn headless_journey_start_checkpoint_for_admission(
         start_progress,
         journey_fingerprint: format!("sha256:{}", hex_sha256(journey_seed.to_string().as_bytes())),
     };
+    #[cfg(test)]
+    if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE").is_some() {
+        let cleanup = store
+            .tasks()
+            .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+        let message = match cleanup {
+            Ok(()) => {
+                "internal error: simulated journey admission checkpoint commit failure".to_string()
+            }
+            Err(cleanup_error) => format!(
+                "internal error: simulated journey admission checkpoint commit failure; cleanup failed: {cleanup_error}"
+            ),
+        };
+        return Err(error_response(id.clone(), -32603, &message));
+    }
     store
         .tasks()
         .write_headless_journey_start_checkpoint(&checkpoint)
-        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+        .map_err(|error| {
+            let cleanup = store
+                .tasks()
+                .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+            let message = match cleanup {
+                Ok(()) => format!("internal error: journey admission checkpoint commit failed: {error}"),
+                Err(cleanup_error) => format!(
+                    "internal error: journey admission checkpoint commit failed: {error}; cleanup failed: {cleanup_error}"
+                ),
+            };
+            error_response(id.clone(), -32603, &message)
+        })?;
     if let Some(record) = store
         .tasks()
         .get_task(&checkpoint.task_id)
         .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
     {
+        #[cfg(test)]
+        if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_STARTED_APPEND").is_some() {
+            let checkpoint_cleanup = store
+                .tasks()
+                .remove_headless_journey_start_checkpoint(&checkpoint);
+            let task_cleanup = store
+                .tasks()
+                .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+            let message = match (checkpoint_cleanup, task_cleanup) {
+                (Ok(()), Ok(())) => {
+                    "internal error: simulated HeadlessJourneyStarted append failure".to_string()
+                }
+                (checkpoint_result, task_result) => format!(
+                    "internal error: simulated HeadlessJourneyStarted append failure; checkpoint cleanup: {}; task cleanup: {}",
+                    checkpoint_result
+                        .err()
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
+                    task_result
+                        .err()
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "ok".to_string())
+                ),
+            };
+            return Err(error_response(id.clone(), -32603, &message));
+        }
         store
             .tasks()
             .append_task_event_with_payload(
@@ -13271,7 +13323,31 @@ fn headless_journey_start_checkpoint_for_admission(
                     "reason": "Headless journey admitted one initial task under bounded runtime-owned drive authority."
                 })),
             )
-            .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
+            .map_err(|error| {
+                let checkpoint_cleanup = store
+                    .tasks()
+                    .remove_headless_journey_start_checkpoint(&checkpoint);
+                let task_cleanup = store
+                    .tasks()
+                    .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+                let message = match (checkpoint_cleanup, task_cleanup) {
+                    (Ok(()), Ok(())) => {
+                        format!("internal error: journey admission event commit failed: {error}")
+                    }
+                    (checkpoint_result, task_result) => format!(
+                        "internal error: journey admission event commit failed: {error}; checkpoint cleanup: {}; task cleanup: {}",
+                        checkpoint_result
+                            .err()
+                            .map(|cleanup_error| cleanup_error.to_string())
+                            .unwrap_or_else(|| "ok".to_string()),
+                        task_result
+                            .err()
+                            .map(|cleanup_error| cleanup_error.to_string())
+                            .unwrap_or_else(|| "ok".to_string())
+                    ),
+                };
+                error_response(id.clone(), -32603, &message)
+            })?;
     }
     Ok(checkpoint)
 }
@@ -55820,6 +55896,78 @@ mod tests {
             .read_headless_journey_start_checkpoint("m50.bad.1")
             .expect("journey checkpoint")
             .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_checkpoint_failure_rolls_back_started_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE", "1");
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m55.atomic.checkpoint","drive_id":"m55.atomic.checkpoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m55.atomic.checkpoint","authorize_journey_start":true,"task_start":{"goal":"Rollback checkpoint failure","mode_id":"implementer"}}}}"#;
+        let response = parse_line(request);
+        assert!(response.result.is_none());
+        assert!(response
+            .error
+            .expect("checkpoint failure")
+            .message
+            .contains("simulated journey admission checkpoint commit failure"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m55.atomic.checkpoint")
+            .expect("checkpoint read")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE");
+        let retry = parse_line(request);
+        assert!(retry.error.is_none(), "{:?}", retry.error);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m55.atomic.checkpoint")
+            .expect("checkpoint read")
+            .is_some());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_journey_started_event_failure_rolls_back_checkpoint_and_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_STARTED_APPEND", "1");
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m55.atomic.event","drive_id":"m55.atomic.event.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"m55.atomic.event","authorize_journey_start":true,"task_start":{"goal":"Rollback event failure","mode_id":"implementer"}}}}"#;
+        let response = parse_line(request);
+        assert!(response.result.is_none());
+        assert!(response
+            .error
+            .expect("event failure")
+            .message
+            .contains("simulated HeadlessJourneyStarted append failure"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m55.atomic.event")
+            .expect("checkpoint read")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_STARTED_APPEND");
+        let retry = parse_line(request);
+        assert!(retry.error.is_none(), "{:?}", retry.error);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m55.atomic.event")
+            .expect("checkpoint read")
+            .is_some());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

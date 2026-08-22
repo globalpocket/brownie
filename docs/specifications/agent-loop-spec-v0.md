@@ -484,3 +484,5 @@ items have bounded `classification` values of `blocking`,
 required-before-release debt remains active, while post-v0 debt can remain
 visible without blocking completion. Continued development carries the derived
 active debt state into `product_continuation_provenance`.
+
+M55.1 makes the existing `headless.run.drive` journey admission boundary atomic or cleanly recoverable for late commit failures. A failed checkpoint write after initial task creation must remove the just-created task/run. A failed `HeadlessJourneyStarted` ledger append after checkpoint persistence must remove the matching checkpoint and just-created task/run. A retry for the same request must create exactly one committed journey admission, while exact replay of a committed admission and conflicting replay denial retain existing behavior. This adds no new RPC, generic transaction engine, report, history, readiness, inspection, shell/git/network/service execution, workspace mutation, VSIX-owned policy, or raw data exposure.
