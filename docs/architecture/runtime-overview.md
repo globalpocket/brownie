@@ -889,3 +889,5 @@ deletion diffs. Successful recovery deletes the remaining files, verifies
 post-delete absence, consumes authorization, and records bounded
 `delete_file_transaction_recovery` evidence with no raw file content, raw diffs,
 commands, environment values, secrets, absolute paths, or canonical paths.
+
+M55.1 closes the M50.1 journey-admission atomicity gap. During an existing `headless.run.drive` journey admission, if the runtime creates the initial task but cannot persist the journey checkpoint, it removes that just-created task/run before returning failure. If the checkpoint is written but bounded `HeadlessJourneyStarted` ledger evidence cannot be committed, the runtime removes the matching checkpoint and the just-created task/run. Retries therefore either replay an already committed journey or start from no journey side effects; they do not need external orphan-task cleanup. Cleanup is scoped by matching task id, run id, and checkpoint equality, and no raw prompt, provider response, file content, diff, stdout/stderr, command, environment, absolute path, canonical path, raw request, raw ledger payload, or secret is exposed.
