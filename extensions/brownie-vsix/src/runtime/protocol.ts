@@ -495,6 +495,7 @@ export interface ProductContinuationProvenance {
   concrete_capability_transition: string;
   decision_status: 'continue_development';
   decision_next_action: 'plan_next_phase';
+  remaining_capability?: string | null;
 }
 
 export interface ToolIntentParseResult {
@@ -4746,6 +4747,7 @@ const PRODUCT_CONTINUATION_PROVENANCE_KEYS = new Set([
   'concrete_capability_transition',
   'decision_status',
   'decision_next_action',
+  'remaining_capability',
 ]);
 
 const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
@@ -5200,7 +5202,10 @@ export function isProductContinuationProvenance(value: unknown): value is Produc
     isBoundedAsciiMetadata(value.target_capability, 96) &&
     isBoundedAsciiMetadata(value.concrete_capability_transition, 120) &&
     value.decision_status === 'continue_development' &&
-    value.decision_next_action === 'plan_next_phase'
+    value.decision_next_action === 'plan_next_phase' &&
+    (value.remaining_capability === undefined ||
+      value.remaining_capability === null ||
+      isBoundedAsciiMetadata(value.remaining_capability, 120))
   );
 }
 

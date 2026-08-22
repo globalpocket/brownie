@@ -4701,6 +4701,8 @@ pub struct ProductContinuationProvenance {
     pub concrete_capability_transition: String,
     pub decision_status: String,
     pub decision_next_action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remaining_capability: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
