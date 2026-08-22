@@ -10,16 +10,16 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, HeadlessRunJourneyExecutionMetadata,
-    HeadlessRunProgressCheckpoint, LlmProviderFailureRetryProvenance,
-    ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
-    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
-    ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
-    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
-    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
-    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
-    PatchApplyRecoveryProvenance, ProductContinuationProvenance, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    HeadlessRunJourneyObjectiveContextMetadata, HeadlessRunProgressCheckpoint,
+    LlmProviderFailureRetryProvenance, ModePackActiveSnapshotSummary,
+    ModePackApproveCandidateResult, ModePackApprovedCandidateSummary,
+    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
+    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveResult,
+    ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
+    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
+    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
+    ProductContinuationProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
+    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -2104,6 +2104,8 @@ pub struct HeadlessJourneyStartCheckpoint {
     pub task_start_fingerprint: String,
     pub start_progress: HeadlessRunProgressCheckpoint,
     pub journey_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_context: Option<HeadlessRunJourneyObjectiveContextMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -4532,6 +4534,7 @@ mod tests {
             task_start_fingerprint: format!("sha256:{}", "b".repeat(64)),
             start_progress: progress.clone(),
             journey_fingerprint: format!("sha256:{}", "c".repeat(64)),
+            objective_context: None,
         };
         store
             .write_headless_journey_start_checkpoint(&start_checkpoint)

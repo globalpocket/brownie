@@ -1057,6 +1057,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_index_context: Option<TaskRunSelectedIndexContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_source: Option<VerificationRecoverySource>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_goal: Option<String>,
@@ -1125,6 +1127,8 @@ pub struct HeadlessRunAdvanceParams {
     pub max_steps: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_index_context: Option<TaskRunSelectedIndexContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1248,6 +1252,8 @@ pub struct HeadlessRunJourneyAdmission {
     pub journey_id: String,
     pub authorize_journey_start: bool,
     pub task_start: HeadlessRunJourneyTaskStartEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_context: Option<HeadlessRunJourneyObjectiveContext>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1289,6 +1295,15 @@ pub struct HeadlessRunJourneyTaskStartEnvelope {
     pub goal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyObjectiveContext {
+    pub authorize_objective_context_admission: bool,
+    pub objective_id: String,
+    pub objective_fingerprint: String,
+    pub selected_index_context: TaskRunSelectedIndexContext,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2319,6 +2334,33 @@ pub struct HeadlessRunJourneyMetadata {
     pub next_action: String,
     pub replayed: bool,
     pub journey_fingerprint: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_context: Option<HeadlessRunJourneyObjectiveContextMetadata>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunJourneyObjectiveContextMetadata {
+    pub objective_id: String,
+    pub objective_fingerprint: String,
+    pub objective_context_fingerprint: String,
+    pub selected_context_fingerprint: String,
+    pub prompt_context_id: String,
+    pub source_event_id: String,
+    pub source_event_kind: String,
+    pub query_id: String,
+    pub selection_id: String,
+    pub query_fingerprint: String,
+    pub selection_fingerprint: String,
+    pub index_id: String,
+    pub workspace_fingerprint: String,
+    pub snapshot_fingerprint: String,
+    pub read_path_fingerprint: String,
+    pub file_kind: String,
+    pub bytes_read: usize,
+    pub content_char_count: usize,
+    pub content_sha256: String,
+    pub next_action: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
