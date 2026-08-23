@@ -591,6 +591,27 @@ export interface ParentJoinRunTarget {
   expected_terminal_failed_child_count: number;
 }
 
+export interface ObjectiveProposalAuthorizationPreflightTarget {
+  authorize_objective_proposal_preflight: true;
+  journey_id: string;
+  session_id: string;
+  source_drive_id: string;
+  expected_journey_fingerprint: string;
+  expected_candidate_fingerprint: string;
+  expected_objective_context_fingerprint: string;
+  expected_selected_context_fingerprint: string;
+  expected_task_id: string;
+  expected_run_id: string;
+  expected_proposal_id: string;
+  expected_source_event_id: string;
+  expected_source_event_kind: 'WorkspacePatchProposed';
+  expected_operation: 'replace_file';
+  expected_path_fingerprint: string;
+  expected_validation_status: 'Valid';
+  expected_approval_status: 'Pending';
+  authorization_token_fingerprint: string;
+}
+
 export interface HeadlessContinueOnceParams {
   authorize: true;
   expected_progress_fingerprint: string;
@@ -619,6 +640,7 @@ export interface HeadlessContinueOnceParams {
   verification_recovery_retry_run_target?: VerificationRecoveryRetryRunTarget | null;
   llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
   parent_join_run_target?: ParentJoinRunTarget | null;
+  objective_proposal_authorization_preflight_target?: ObjectiveProposalAuthorizationPreflightTarget | null;
   modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
@@ -995,6 +1017,7 @@ export type HeadlessContinueRouteKind =
   | 'review_and_authorize_recovery_proposal'
   | 'review_and_authorize_objective_proposal'
   | 'apply_approved_recovery_proposal_explicitly'
+  | 'apply_authorized_objective_proposal_explicitly'
   | 'start_verification_retry_explicitly'
   | 'run_verification_retry_task_explicitly'
   | 'run_llm_provider_retry_task_explicitly'
@@ -1041,6 +1064,7 @@ export interface HeadlessContinueOnceResult {
   replayed: boolean;
   task_run_result?: TaskRunResult | null;
   proposal_apply_result?: ProposalApplyResult | null;
+  objective_proposal_authorization_preflight_result?: HeadlessRunObjectiveProposalAuthorizationPreflight | null;
   modepack_select_registry_update_result?: ModePackSelectRegistryUpdateResult | null;
   modepack_fetch_candidate_result?: ModePackFetchCandidateResult | null;
   modepack_verify_candidate_provenance_result?: ModePackVerifyCandidateProvenanceResult | null;
@@ -1329,6 +1353,32 @@ export interface HeadlessRunObjectiveProposalCandidate {
   candidate_fingerprint: string;
   replayed: boolean;
   next_action: string;
+}
+
+export interface HeadlessRunObjectiveProposalAuthorizationPreflight {
+  status: 'authorized_preflight_ready';
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  source_drive_id: string;
+  proposal_id: string;
+  source_event_id: string;
+  source_event_kind: 'WorkspacePatchProposed';
+  operation: 'replace_file';
+  path_fingerprint: string;
+  objective_context_fingerprint: string;
+  selected_context_fingerprint: string;
+  candidate_fingerprint: string;
+  authorization_token_fingerprint: string;
+  validation_status: 'Valid';
+  approval_status: 'Approved';
+  approved_at?: string | null;
+  preflight_snapshot: WorkspacePatchPreflightSnapshotSummary;
+  apply_plan: WorkspacePatchApplyPlanSummary;
+  authorization_preflight_fingerprint: string;
+  replayed: boolean;
+  next_action: 'apply_authorized_objective_proposal';
 }
 
 export interface HeadlessRunJourneyObjectiveContextMetadata {
@@ -5902,7 +5952,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -5931,12 +5981,68 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.verification_recovery_retry_run_target === undefined || value.verification_recovery_retry_run_target === null || isVerificationRecoveryRetryRunTarget(value.verification_recovery_retry_run_target)) &&
     (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target)) &&
     (value.parent_join_run_target === undefined || value.parent_join_run_target === null || isParentJoinRunTarget(value.parent_join_run_target)) &&
+    (value.objective_proposal_authorization_preflight_target === undefined || value.objective_proposal_authorization_preflight_target === null || isObjectiveProposalAuthorizationPreflightTarget(value.objective_proposal_authorization_preflight_target)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
     (value.modepack_selected_candidate_approval_target === undefined || value.modepack_selected_candidate_approval_target === null || isModePackSelectedCandidateApprovalTarget(value.modepack_selected_candidate_approval_target)) &&
     (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
     (value.modepack_selected_active_rollback_target === undefined || value.modepack_selected_active_rollback_target === null || isModePackSelectedActiveRollbackTarget(value.modepack_selected_active_rollback_target))
+  );
+}
+
+function isObjectiveProposalAuthorizationPreflightTarget(value: unknown): value is ObjectiveProposalAuthorizationPreflightTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_objective_proposal_preflight',
+      'journey_id',
+      'session_id',
+      'source_drive_id',
+      'expected_journey_fingerprint',
+      'expected_candidate_fingerprint',
+      'expected_objective_context_fingerprint',
+      'expected_selected_context_fingerprint',
+      'expected_task_id',
+      'expected_run_id',
+      'expected_proposal_id',
+      'expected_source_event_id',
+      'expected_source_event_kind',
+      'expected_operation',
+      'expected_path_fingerprint',
+      'expected_validation_status',
+      'expected_approval_status',
+      'authorization_token_fingerprint',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    value.authorize_objective_proposal_preflight === true &&
+    isHeadlessRunId(value.journey_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.source_drive_id) &&
+    typeof value.expected_journey_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_journey_fingerprint) &&
+    typeof value.expected_candidate_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_candidate_fingerprint) &&
+    typeof value.expected_objective_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_objective_context_fingerprint) &&
+    typeof value.expected_selected_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_selected_context_fingerprint) &&
+    isBoundedHandle(value.expected_task_id) &&
+    isBoundedHandle(value.expected_run_id) &&
+    isBoundedHandle(value.expected_proposal_id) &&
+    isBoundedHandle(value.expected_source_event_id) &&
+    value.expected_source_event_kind === 'WorkspacePatchProposed' &&
+    value.expected_operation === 'replace_file' &&
+    typeof value.expected_path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_path_fingerprint) &&
+    value.expected_validation_status === 'Valid' &&
+    value.expected_approval_status === 'Pending' &&
+    typeof value.authorization_token_fingerprint === 'string' &&
+    isSha256Fingerprint(value.authorization_token_fingerprint) &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_prompt')
   );
 }
 
@@ -6781,6 +6887,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'replayed',
       'task_run_result',
       'proposal_apply_result',
+      'objective_proposal_authorization_preflight_result',
       'modepack_select_registry_update_result',
       'modepack_fetch_candidate_result',
       'modepack_verify_candidate_provenance_result',
@@ -6816,6 +6923,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     typeof value.replayed !== 'boolean' ||
     (value.task_run_result !== undefined && value.task_run_result !== null && !isTaskRunResult(value.task_run_result)) ||
     (value.proposal_apply_result !== undefined && value.proposal_apply_result !== null && !isProposalApplyResult(value.proposal_apply_result)) ||
+    (value.objective_proposal_authorization_preflight_result !== undefined && value.objective_proposal_authorization_preflight_result !== null && !isHeadlessRunObjectiveProposalAuthorizationPreflight(value.objective_proposal_authorization_preflight_result)) ||
     (value.modepack_select_registry_update_result !== undefined && value.modepack_select_registry_update_result !== null && !isModePackSelectRegistryUpdateResult(value.modepack_select_registry_update_result)) ||
     (value.modepack_fetch_candidate_result !== undefined && value.modepack_fetch_candidate_result !== null && !isModePackFetchCandidateResult(value.modepack_fetch_candidate_result)) ||
     (value.modepack_verify_candidate_provenance_result !== undefined && value.modepack_verify_candidate_provenance_result !== null && !isModePackVerifyCandidateProvenanceResult(value.modepack_verify_candidate_provenance_result)) ||
@@ -6867,10 +6975,20 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.stale === false &&
     value.decision_id !== undefined &&
     value.decision_id !== null &&
+    value.objective_proposal_authorization_preflight_result !== undefined &&
+    value.objective_proposal_authorization_preflight_result !== null
+  ) {
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.proposal_apply_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'apply_authorized_objective_proposal_explicitly';
+  }
+  if (
+    value.status === 'task_executed' &&
+    value.stale === false &&
+    value.decision_id !== undefined &&
+    value.decision_id !== null &&
     value.modepack_select_registry_update_result !== undefined &&
     value.modepack_select_registry_update_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'fetch_selected_mode_pack_candidate_explicitly', 'fetch_selected_modepack_candidate_explicitly');
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'fetch_selected_mode_pack_candidate_explicitly', 'fetch_selected_modepack_candidate_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6880,7 +6998,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_fetch_candidate_result !== undefined &&
     value.modepack_fetch_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'verify_selected_mode_pack_candidate_provenance_explicitly', 'verify_selected_modepack_candidate_provenance_explicitly');
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'verify_selected_mode_pack_candidate_provenance_explicitly', 'verify_selected_modepack_candidate_provenance_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6890,7 +7008,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_verify_candidate_provenance_result !== undefined &&
     value.modepack_verify_candidate_provenance_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'approve_verified_mode_pack_candidate_explicitly', 'approve_verified_modepack_candidate_explicitly');
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && isModePackRouteKind(value.next_route.kind, 'approve_verified_mode_pack_candidate_explicitly', 'approve_verified_modepack_candidate_explicitly');
   }
   if (
     value.status === 'task_executed' &&
@@ -6900,7 +7018,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_approve_candidate_result !== undefined &&
     value.modepack_approve_candidate_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && (isModePackRouteKind(value.next_route.kind, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly') || (value.next_route.kind === 'refresh_progress_overview' && isModePackRouteKind(value.next_route.next_action, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly')));
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_replace_active_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && (isModePackRouteKind(value.next_route.kind, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly') || (value.next_route.kind === 'refresh_progress_overview' && isModePackRouteKind(value.next_route.next_action, 'replace_active_with_approved_mode_pack_candidate_explicitly', 'replace_active_with_approved_modepack_candidate_explicitly')));
   }
   if (
     value.status === 'task_executed' &&
@@ -6910,7 +7028,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_replace_active_result !== undefined &&
     value.modepack_replace_active_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_rollback_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
   }
   if (
     value.status === 'task_executed' &&
@@ -6920,7 +7038,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.modepack_rollback_active_result !== undefined &&
     value.modepack_rollback_active_result !== null
   ) {
-    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
+    return value.selected_task_id == null && value.selected_run_id == null && value.task_run_result == null && value.objective_proposal_authorization_preflight_result == null && value.modepack_select_registry_update_result == null && value.modepack_fetch_candidate_result == null && value.modepack_verify_candidate_provenance_result == null && value.modepack_approve_candidate_result == null && value.modepack_replace_active_result == null && value.next_route !== undefined && value.next_route !== null && value.next_route.kind === 'refresh_progress_overview';
   }
   return (
     value.status === 'task_executed' &&
@@ -6933,6 +7051,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.selected_run_id !== null &&
     value.task_run_result !== undefined &&
     value.task_run_result !== null &&
+    value.objective_proposal_authorization_preflight_result == null &&
     value.modepack_fetch_candidate_result == null &&
     value.modepack_verify_candidate_provenance_result == null &&
     value.modepack_approve_candidate_result == null &&
@@ -7189,6 +7308,51 @@ export function isHeadlessRunObjectiveProposalCandidate(value: unknown): value i
     typeof value.next_action === 'string' &&
     value.next_action.length > 0 &&
     value.next_action.length <= 120
+  );
+}
+
+export function isHeadlessRunObjectiveProposalAuthorizationPreflight(value: unknown): value is HeadlessRunObjectiveProposalAuthorizationPreflight {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['status', 'journey_id', 'task_id', 'run_id', 'session_id', 'source_drive_id', 'proposal_id', 'source_event_id', 'source_event_kind', 'operation', 'path_fingerprint', 'objective_context_fingerprint', 'selected_context_fingerprint', 'candidate_fingerprint', 'authorization_token_fingerprint', 'validation_status', 'approval_status', 'approved_at', 'preflight_snapshot', 'apply_plan', 'authorization_preflight_fingerprint', 'replayed', 'next_action']) &&
+    hasNoForbiddenRawFields(value) &&
+    value.status === 'authorized_preflight_ready' &&
+    isHeadlessRunId(value.journey_id) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.source_drive_id) &&
+    isBoundedHandle(value.proposal_id) &&
+    isBoundedHandle(value.source_event_id) &&
+    value.source_event_kind === 'WorkspacePatchProposed' &&
+    value.operation === 'replace_file' &&
+    typeof value.path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.path_fingerprint) &&
+    typeof value.objective_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.objective_context_fingerprint) &&
+    typeof value.selected_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.selected_context_fingerprint) &&
+    typeof value.candidate_fingerprint === 'string' &&
+    isSha256Fingerprint(value.candidate_fingerprint) &&
+    typeof value.authorization_token_fingerprint === 'string' &&
+    isSha256Fingerprint(value.authorization_token_fingerprint) &&
+    value.validation_status === 'Valid' &&
+    value.approval_status === 'Approved' &&
+    (value.approved_at === undefined || value.approved_at === null || (typeof value.approved_at === 'string' && value.approved_at.length > 0 && value.approved_at.length <= 64)) &&
+    isWorkspacePatchPreflightSnapshotSummary(value.preflight_snapshot) &&
+    isWorkspacePatchApplyPlanSummary(value.apply_plan) &&
+    value.preflight_snapshot.proposal_id === value.proposal_id &&
+    value.apply_plan.proposal_id === value.proposal_id &&
+    value.apply_plan.status === 'Ready' &&
+    typeof value.authorization_preflight_fingerprint === 'string' &&
+    isSha256Fingerprint(value.authorization_preflight_fingerprint) &&
+    typeof value.replayed === 'boolean' &&
+    value.next_action === 'apply_authorized_objective_proposal' &&
+    !Object.prototype.hasOwnProperty.call(value, 'content') &&
+    !Object.prototype.hasOwnProperty.call(value, 'diff') &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload')
   );
 }
 
@@ -7790,7 +7954,7 @@ function isBoundedRelativePath(value: unknown): value is string {
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
-  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'review_and_authorize_objective_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'review_and_authorize_objective_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'apply_authorized_objective_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
 }
 
 function isModePackRouteKind(value: unknown, canonical: HeadlessContinueRouteKind, legacy: HeadlessContinueRouteKind): boolean {

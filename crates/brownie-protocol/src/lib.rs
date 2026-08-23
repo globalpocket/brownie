@@ -1046,6 +1046,29 @@ pub struct ParentJoinRunTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ObjectiveProposalAuthorizationPreflightTarget {
+    pub authorize_objective_proposal_preflight: bool,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub expected_journey_fingerprint: String,
+    pub expected_candidate_fingerprint: String,
+    pub expected_objective_context_fingerprint: String,
+    pub expected_selected_context_fingerprint: String,
+    pub expected_task_id: String,
+    pub expected_run_id: String,
+    pub expected_proposal_id: String,
+    pub expected_source_event_id: String,
+    pub expected_source_event_kind: String,
+    pub expected_operation: String,
+    pub expected_path_fingerprint: String,
+    pub expected_validation_status: String,
+    pub expected_approval_status: String,
+    pub authorization_token_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessContinueOnceParams {
     pub authorize: bool,
     pub expected_progress_fingerprint: String,
@@ -1098,6 +1121,9 @@ pub struct HeadlessContinueOnceParams {
     pub llm_provider_failure_retry_run_target: Option<LlmProviderFailureRetryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_join_run_target: Option<ParentJoinRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_proposal_authorization_preflight_target:
+        Option<ObjectiveProposalAuthorizationPreflightTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1959,6 +1985,7 @@ pub enum HeadlessContinueRouteKind {
     ReviewAndAuthorizeRecoveryProposal,
     ReviewAndAuthorizeObjectiveProposal,
     ApplyApprovedRecoveryProposalExplicitly,
+    ApplyAuthorizedObjectiveProposalExplicitly,
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
@@ -2013,6 +2040,9 @@ pub struct HeadlessContinueOnceResult {
     pub task_run_result: Option<TaskRunResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposal_apply_result: Option<ProposalApplyResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_proposal_authorization_preflight_result:
+        Option<HeadlessRunObjectiveProposalAuthorizationPreflight>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2159,6 +2189,34 @@ pub struct HeadlessRunObjectiveProposalCandidate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub denial_reason: Option<String>,
     pub candidate_fingerprint: String,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunObjectiveProposalAuthorizationPreflight {
+    pub status: String,
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub proposal_id: String,
+    pub source_event_id: String,
+    pub source_event_kind: String,
+    pub operation: String,
+    pub path_fingerprint: String,
+    pub objective_context_fingerprint: String,
+    pub selected_context_fingerprint: String,
+    pub candidate_fingerprint: String,
+    pub authorization_token_fingerprint: String,
+    pub validation_status: String,
+    pub approval_status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approved_at: Option<String>,
+    pub preflight_snapshot: WorkspacePatchPreflightSnapshotSummary,
+    pub apply_plan: WorkspacePatchApplyPlanSummary,
+    pub authorization_preflight_fingerprint: String,
     pub replayed: bool,
     pub next_action: String,
 }

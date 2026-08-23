@@ -917,3 +917,20 @@ blocked, non-pending, stale, or conflicting evidence fails closed without
 approval, preflight, apply, provider, shell, git, network, service, or verifier
 execution. Exact replay verifies the persisted candidate fingerprint and does
 not duplicate task, proposal, drive checkpoint, or drive-completed evidence.
+
+M56.3 consumes that objective proposal candidate through `headless.continue_once`
+without adding a new RPC. The caller supplies
+`objective_proposal_authorization_preflight_target` with the journey/session/drive
+ids, task/run/proposal/source event ids, expected objective/context/path/candidate
+fingerprints, expected `Valid`/`Pending` labels, and an authorization token
+fingerprint. Rust verifies the latest journey checkpoint, source drive route,
+candidate identity, source proposal event, and current proposal status before any
+side effect. It then approves that exact proposal once, refreshes or creates the
+latest preflight snapshot/apply plan, persists a bounded continuation checkpoint,
+and routes to `apply_authorized_objective_proposal_explicitly`. Replay returns the
+same `objective_proposal_authorization_preflight_result` without duplicate
+approval, preflight, apply-plan, or checkpoint side effects. This remains
+non-mutating: it does not apply workspace changes and exposes no raw prompt,
+provider response, proposed content, file content, diff, command output,
+environment value, raw request, raw ledger payload, absolute path, canonical path,
+secret, or raw authorization token.
