@@ -556,3 +556,15 @@ matching hash routes to `accept_objective_completion_explicitly`; a mismatch
 routes to `start_verification_recovery_explicitly`. The checkpoint and ledger
 evidence remain bounded to identifiers, hashes, route/status labels, and
 sequence metadata.
+
+M56.6 consumes the verified `accept_objective_completion_explicitly` route. The
+caller supplies `objective_completion_acceptance_target`, and Rust must validate
+explicit acceptance authorization, current progress, the M56.5 verification
+continuation, decision id, journey/session/drive/task/run/proposal/apply ids,
+operation/status labels, path/apply/current-target hashes, verified status,
+route kind, and verification fingerprint before recording objective completion
+acceptance. Replay of the same continuation returns the accepted decision
+without duplicate ledger or checkpoint mutation; mismatched, stale, non-verified,
+or recovery-route evidence fails before acceptance. This does not add a new RPC,
+workspace mutation, provider/tool execution, VSIX policy, or summary/report
+surface.

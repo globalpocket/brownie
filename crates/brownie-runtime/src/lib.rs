@@ -62,13 +62,14 @@ use brownie_protocol::{
     ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
     ModePermissionsSummary, ModeSummary, ObjectiveApplyVerificationTarget,
-    ObjectiveProposalApplyTarget, ObjectiveProposalAuthorizationPreflightTarget,
-    ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
-    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
-    PermissionCheckParams, PermissionCheckResult, ProductContinuationAdmission,
-    ProductContinuationProvenance, ProductContinuationSource, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ObjectiveCompletionAcceptanceTarget, ObjectiveProposalApplyTarget,
+    ObjectiveProposalAuthorizationPreflightTarget, ParentJoinRunTarget,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
+    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
+    PermissionCheckResult, ProductContinuationAdmission, ProductContinuationProvenance,
+    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -255,7 +256,8 @@ use brownie_store::{
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessModePackSelectedCandidateReplacementCheckpoint,
-    HeadlessObjectiveApplyVerificationCheckpoint, HeadlessObjectiveProposalApplyCheckpoint,
+    HeadlessObjectiveApplyVerificationCheckpoint, HeadlessObjectiveCompletionAcceptanceCheckpoint,
+    HeadlessObjectiveProposalApplyCheckpoint,
     HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
     HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
     HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
@@ -8697,6 +8699,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: objective_apply_verification_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.objective_completion_acceptance_target.is_some() && params.max_steps.unwrap_or(1) > 1
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_completion_acceptance_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.modepack_registry_update_selection_target.is_some()
         && params.max_steps.unwrap_or(1) > 1
     {
@@ -9034,6 +9044,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 .objective_proposal_authorization_preflight_target
                 .is_some()
             || params.objective_apply_verification_target.is_some()
+            || params.objective_completion_acceptance_target.is_some()
             || params.modepack_registry_update_selection_target.is_some()
             || params.modepack_selected_candidate_fetch_target.is_some()
             || params
@@ -9378,6 +9389,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 .objective_proposal_authorization_preflight_target
                 .is_some()
             || params.objective_proposal_apply_target.is_some()
+            || params.objective_completion_acceptance_target.is_some()
             || params.modepack_registry_update_selection_target.is_some()
             || params.modepack_selected_candidate_fetch_target.is_some()
             || params
@@ -9393,6 +9405,51 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: objective_apply_verification_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective preflight, or objective apply fields",
+        );
+    }
+    if params.objective_completion_acceptance_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.objective_proposal_apply_target.is_some()
+            || params.objective_apply_verification_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_completion_acceptance_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective preflight, objective apply, or objective verification fields",
         );
     }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
@@ -9624,6 +9681,22 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 }
             }
         }
+        if params.objective_completion_acceptance_target.is_some() {
+            match store.read_headless_objective_completion_acceptance_checkpoint(continuation_id) {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_objective_completion_acceptance_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
         if params
             .modepack_selected_approved_candidate_replacement_target
             .is_some()
@@ -9781,6 +9854,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.objective_apply_verification_target.is_some() {
         return handle_headless_continue_objective_apply_verification(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.objective_completion_acceptance_target.is_some() {
+        return handle_headless_continue_objective_completion_acceptance(
             id,
             &store,
             &progress_overview,
@@ -13113,6 +13194,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
         objective_apply_verification_target: None,
+        objective_completion_acceptance_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: Some(target),
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13320,6 +13402,7 @@ fn validate_headless_run_registry_selection_replay_target(
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
         objective_apply_verification_target: None,
+        objective_completion_acceptance_target: None,
         modepack_registry_update_selection_target: Some(target),
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13372,6 +13455,7 @@ fn headless_run_replay_continue_once_params(
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
         objective_apply_verification_target: None,
+        objective_completion_acceptance_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -15687,6 +15771,447 @@ fn headless_continue_objective_apply_verification(
         } else {
             None
         },
+        apply_fingerprint: Some(target.expected_apply_fingerprint.clone()),
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: next_action.to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: Some(selected_record.task_id),
+        selected_run_id: Some(selected_record.run_id),
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        objective_proposal_authorization_preflight_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: next_action.to_string(),
+    })
+}
+
+fn validate_objective_completion_acceptance_target(
+    target: &ObjectiveCompletionAcceptanceTarget,
+) -> Result<(), String> {
+    if !target.authorize_objective_completion_acceptance {
+        return Err("objective completion acceptance failed: authorization required".to_string());
+    }
+    if !is_valid_headless_continuation_id(&target.objective_apply_verification_continuation_id) {
+        return Err(
+            "objective completion acceptance failed: objective_apply_verification_continuation_id must be a valid continuation id"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&target.journey_id)
+        || !is_valid_headless_run_id(&target.session_id)
+        || !is_valid_headless_run_id(&target.source_drive_id)
+    {
+        return Err(
+            "objective completion acceptance failed: journey, session, and drive ids must be valid headless ids"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_path_fingerprint",
+            target.expected_path_fingerprint.as_str(),
+        ),
+        (
+            "expected_apply_fingerprint",
+            target.expected_apply_fingerprint.as_str(),
+        ),
+        (
+            "expected_post_write_sha256",
+            target.expected_post_write_sha256.as_str(),
+        ),
+        (
+            "expected_current_target_sha256",
+            target.expected_current_target_sha256.as_str(),
+        ),
+        (
+            "expected_verification_fingerprint",
+            target.expected_verification_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "objective completion acceptance failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target
+        .expected_objective_apply_verification_decision_id
+        .trim()
+        .is_empty()
+        || target.expected_task_id.trim().is_empty()
+        || target.expected_run_id.trim().is_empty()
+        || target.expected_proposal_id.trim().is_empty()
+        || target.expected_apply_id.trim().is_empty()
+    {
+        return Err(
+            "objective completion acceptance failed: decision, task, run, proposal, and apply ids are required"
+                .to_string(),
+        );
+    }
+    if target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || target.expected_apply_status != "Applied"
+        || !target.expected_authorization_consumed
+        || target.expected_verification_status != "verified"
+        || target.expected_verification_route_kind
+            != HeadlessContinueRouteKind::AcceptObjectiveCompletionExplicitly
+    {
+        return Err(
+            "objective completion acceptance failed: expected labels must describe a verified objective replace_file apply"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn objective_completion_acceptance_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .objective_completion_acceptance_target
+        .as_ref()
+        .ok_or_else(|| "objective completion acceptance target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "objective completion acceptance failed: continuation_id is required".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "objective_completion_acceptance",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_objective_completion_acceptance": target.authorize_objective_completion_acceptance,
+        "objective_apply_verification_continuation_id": target.objective_apply_verification_continuation_id,
+        "expected_objective_apply_verification_decision_id": target.expected_objective_apply_verification_decision_id,
+        "journey_id": target.journey_id,
+        "session_id": target.session_id,
+        "source_drive_id": target.source_drive_id,
+        "expected_task_id": target.expected_task_id,
+        "expected_run_id": target.expected_run_id,
+        "expected_proposal_id": target.expected_proposal_id,
+        "expected_apply_id": target.expected_apply_id,
+        "expected_operation": target.expected_operation,
+        "expected_apply_status": target.expected_apply_status,
+        "expected_authorization_consumed": target.expected_authorization_consumed,
+        "expected_path_fingerprint": target.expected_path_fingerprint,
+        "expected_apply_fingerprint": target.expected_apply_fingerprint,
+        "expected_post_write_sha256": target.expected_post_write_sha256,
+        "expected_current_target_sha256": target.expected_current_target_sha256,
+        "expected_verification_status": target.expected_verification_status,
+        "expected_verification_route_kind": target.expected_verification_route_kind,
+        "expected_verification_fingerprint": target.expected_verification_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_objective_completion_acceptance_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessObjectiveCompletionAcceptanceCheckpoint,
+) -> Result<(), String> {
+    let current = objective_completion_acceptance_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless objective completion acceptance continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless objective completion acceptance checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
+}
+
+fn validate_objective_completion_acceptance_route(
+    store: &BrownieStore,
+    target: &ObjectiveCompletionAcceptanceTarget,
+) -> Result<HeadlessObjectiveApplyVerificationCheckpoint, String> {
+    let checkpoint = store
+        .read_headless_objective_apply_verification_checkpoint(
+            &target.objective_apply_verification_continuation_id,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "objective completion acceptance failed: objective apply verification checkpoint not found"
+                .to_string()
+        })?;
+    if checkpoint.decision_id != target.expected_objective_apply_verification_decision_id {
+        return Err(
+            "objective completion acceptance failed: objective apply verification decision mismatch"
+                .to_string(),
+        );
+    }
+    if checkpoint.journey_id != target.journey_id
+        || checkpoint.session_id != target.session_id
+        || checkpoint.source_drive_id != target.source_drive_id
+        || checkpoint.task_id != target.expected_task_id
+        || checkpoint.run_id != target.expected_run_id
+        || checkpoint.proposal_id != target.expected_proposal_id
+        || checkpoint.apply_id != target.expected_apply_id
+        || checkpoint.expected_path_fingerprint != target.expected_path_fingerprint
+        || checkpoint.expected_apply_fingerprint != target.expected_apply_fingerprint
+        || checkpoint.expected_post_write_sha256 != target.expected_post_write_sha256
+        || checkpoint.current_target_sha256 != target.expected_current_target_sha256
+        || checkpoint.verification_status != target.expected_verification_status
+        || checkpoint.route_kind != target.expected_verification_route_kind
+        || checkpoint.request_fingerprint.as_deref()
+            != Some(target.expected_verification_fingerprint.as_str())
+    {
+        return Err(
+            "objective completion acceptance failed: verification evidence mismatch".to_string(),
+        );
+    }
+    if checkpoint.verification_status != "verified"
+        || checkpoint.route_kind != HeadlessContinueRouteKind::AcceptObjectiveCompletionExplicitly
+        || checkpoint.next_action != "accept_objective_completion"
+    {
+        return Err(
+            "objective completion acceptance failed: verification route is not eligible for completion acceptance"
+                .to_string(),
+        );
+    }
+    Ok(checkpoint)
+}
+
+fn handle_headless_continue_objective_completion_acceptance(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result = match headless_continue_objective_completion_acceptance(
+        store,
+        progress_overview,
+        &params,
+    ) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_objective_completion_acceptance_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessObjectiveCompletionAcceptanceCheckpoint,
+) -> JsonRpcResponse<Value> {
+    if let Err(message) =
+        validate_objective_completion_acceptance_replay_request(&params, &checkpoint)
+    {
+        return error_response(id, -32602, &message);
+    }
+    let next_route = HeadlessContinueRoute {
+        kind: checkpoint.route_kind.clone(),
+        reason:
+            "Objective completion was already accepted by this continuation; replaying bounded acceptance route."
+                .to_string(),
+        task_id: Some(checkpoint.task_id.clone()),
+        run_id: Some(checkpoint.run_id.clone()),
+        proposal_id: Some(checkpoint.proposal_id.clone()),
+        apply_id: Some(checkpoint.apply_id.clone()),
+        failure_fingerprint: None,
+        apply_fingerprint: Some(checkpoint.expected_apply_fingerprint.clone()),
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: checkpoint.next_action.clone(),
+    };
+    let next_action = next_route.next_action.clone();
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: Some(checkpoint.task_id),
+            selected_run_id: Some(checkpoint.run_id),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn headless_continue_objective_completion_acceptance(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    let target = params
+        .objective_completion_acceptance_target
+        .as_ref()
+        .ok_or_else(|| "objective completion acceptance target missing".to_string())?;
+    validate_objective_completion_acceptance_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "objective completion acceptance failed: continuation_id is required".to_string()
+    })?;
+    let request_fingerprint = objective_completion_acceptance_request_fingerprint(params)?;
+    let verification_checkpoint = validate_objective_completion_acceptance_route(store, target)?;
+    let selected_record = store
+        .tasks()
+        .get_task(&target.expected_task_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "objective completion acceptance failed: source task not found".to_string()
+        })?;
+    if selected_record.run_id != target.expected_run_id {
+        return Err("objective completion acceptance failed: source task/run mismatch".to_string());
+    }
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    let next_action = "close_headless_run";
+    let route_reason =
+        "Objective apply verification was accepted as completed; close the Golden Journey explicitly.";
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &selected_record,
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            Some(json!({
+                "decision_id": decision_id.clone(),
+                "continuation_id": continuation_id.clone(),
+                "selected_task_id": selected_record.task_id.clone(),
+                "selected_run_id": selected_record.run_id.clone(),
+                "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+                "expected_aggregate_sequence": params.expected_aggregate_sequence,
+                "candidate_count": 1,
+                "policy_version": policy_version,
+                "authorize": true,
+                "authorize_objective_completion_acceptance": true,
+                "objective_apply_verification_continuation_id": target.objective_apply_verification_continuation_id.clone(),
+                "objective_apply_verification_decision_id": verification_checkpoint.decision_id.clone(),
+                "journey_id": target.journey_id.clone(),
+                "session_id": target.session_id.clone(),
+                "source_drive_id": target.source_drive_id.clone(),
+                "proposal_id": target.expected_proposal_id.clone(),
+                "apply_id": target.expected_apply_id.clone(),
+                "operation": target.expected_operation.clone(),
+                "path_fingerprint": target.expected_path_fingerprint.clone(),
+                "expected_apply_fingerprint": target.expected_apply_fingerprint.clone(),
+                "expected_post_write_sha256": target.expected_post_write_sha256.clone(),
+                "expected_current_target_sha256": target.expected_current_target_sha256.clone(),
+                "expected_verification_fingerprint": target.expected_verification_fingerprint.clone(),
+                "acceptance_status": "accepted",
+                "next_action": next_action,
+                "reason": route_reason
+            })),
+        )
+        .map_err(|error| error.to_string())?;
+    store
+        .tasks()
+        .write_headless_continuation_decision(&HeadlessContinuationDecisionLookup {
+            decision_id: decision_id.clone(),
+            continuation_id: continuation_id.clone(),
+            selected_task_id: selected_record.task_id.clone(),
+            selected_run_id: selected_record.run_id.clone(),
+            expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            candidate_count: 1,
+            policy_version: policy_version.to_string(),
+        })
+        .map_err(|error| error.to_string())?;
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    store
+        .write_headless_objective_completion_acceptance_checkpoint(
+            &HeadlessObjectiveCompletionAcceptanceCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
+                objective_apply_verification_continuation_id: target
+                    .objective_apply_verification_continuation_id
+                    .clone(),
+                expected_objective_apply_verification_decision_id: target
+                    .expected_objective_apply_verification_decision_id
+                    .clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                journey_id: target.journey_id.clone(),
+                session_id: target.session_id.clone(),
+                source_drive_id: target.source_drive_id.clone(),
+                task_id: target.expected_task_id.clone(),
+                run_id: target.expected_run_id.clone(),
+                proposal_id: target.expected_proposal_id.clone(),
+                apply_id: target.expected_apply_id.clone(),
+                expected_path_fingerprint: target.expected_path_fingerprint.clone(),
+                expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
+                expected_post_write_sha256: target.expected_post_write_sha256.clone(),
+                expected_current_target_sha256: target.expected_current_target_sha256.clone(),
+                expected_verification_fingerprint: target.expected_verification_fingerprint.clone(),
+                acceptance_status: "accepted".to_string(),
+                route_kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+                next_action: next_action.to_string(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+        reason: route_reason.to_string(),
+        task_id: Some(target.expected_task_id.clone()),
+        run_id: Some(target.expected_run_id.clone()),
+        proposal_id: Some(target.expected_proposal_id.clone()),
+        apply_id: Some(target.expected_apply_id.clone()),
+        failure_fingerprint: None,
         apply_fingerprint: Some(target.expected_apply_fingerprint.clone()),
         progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
         aggregate_sequence: Some(post_progress.aggregate_sequence),
@@ -58805,6 +59330,134 @@ mod tests {
             verification_checkpoint.current_target_sha256,
             post_write_sha256
         );
+        let completion_target = json!({
+            "authorize_objective_completion_acceptance": true,
+            "objective_apply_verification_continuation_id": "m56.apply.verify",
+            "expected_objective_apply_verification_decision_id": verified["decision_id"],
+            "journey_id": authorization_result["journey_id"],
+            "session_id": authorization_result["session_id"],
+            "source_drive_id": authorization_result["source_drive_id"],
+            "expected_task_id": authorization_result["task_id"],
+            "expected_run_id": authorization_result["run_id"],
+            "expected_proposal_id": authorization_result["proposal_id"],
+            "expected_apply_id": apply_id,
+            "expected_operation": "replace_file",
+            "expected_apply_status": "Applied",
+            "expected_authorization_consumed": true,
+            "expected_path_fingerprint": authorization_result["path_fingerprint"],
+            "expected_apply_fingerprint": apply_fingerprint,
+            "expected_post_write_sha256": post_write_sha256,
+            "expected_current_target_sha256": verification_checkpoint.current_target_sha256,
+            "expected_verification_status": "verified",
+            "expected_verification_route_kind": "accept_objective_completion_explicitly",
+            "expected_verification_fingerprint": verification_checkpoint
+                .request_fingerprint
+                .clone()
+                .expect("verification request fingerprint"),
+        });
+        let denied_completion = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 7,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "continuation_id": "m56.apply.complete.denied",
+                    "expected_progress_fingerprint": verified["post_progress_fingerprint"],
+                    "expected_aggregate_sequence": verified["post_aggregate_sequence"],
+                    "objective_completion_acceptance_target": {
+                        "authorize_objective_completion_acceptance": false,
+                        "objective_apply_verification_continuation_id": "m56.apply.verify",
+                        "expected_objective_apply_verification_decision_id": verified["decision_id"],
+                        "journey_id": authorization_result["journey_id"],
+                        "session_id": authorization_result["session_id"],
+                        "source_drive_id": authorization_result["source_drive_id"],
+                        "expected_task_id": authorization_result["task_id"],
+                        "expected_run_id": authorization_result["run_id"],
+                        "expected_proposal_id": authorization_result["proposal_id"],
+                        "expected_apply_id": apply_id,
+                        "expected_operation": "replace_file",
+                        "expected_apply_status": "Applied",
+                        "expected_authorization_consumed": true,
+                        "expected_path_fingerprint": authorization_result["path_fingerprint"],
+                        "expected_apply_fingerprint": apply_fingerprint,
+                        "expected_post_write_sha256": post_write_sha256,
+                        "expected_current_target_sha256": verification_checkpoint.current_target_sha256,
+                        "expected_verification_status": "verified",
+                        "expected_verification_route_kind": "accept_objective_completion_explicitly",
+                        "expected_verification_fingerprint": verification_checkpoint
+                            .request_fingerprint
+                            .clone()
+                            .expect("verification request fingerprint"),
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .error
+        .expect("denied completion");
+        assert_eq!(denied_completion.code, -32602);
+        assert!(store
+            .read_headless_objective_completion_acceptance_checkpoint("m56.apply.complete.denied")
+            .expect("read denied completion checkpoint")
+            .is_none());
+        let completion_request = json!({
+            "jsonrpc": "2.0",
+            "id": 8,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m56.apply.complete",
+                "expected_progress_fingerprint": verified["post_progress_fingerprint"],
+                "expected_aggregate_sequence": verified["post_aggregate_sequence"],
+                "objective_completion_acceptance_target": completion_target
+            }
+        });
+        let completed = parse_line(&completion_request.to_string())
+            .result
+            .expect("completion acceptance result");
+        assert_eq!(completed["status"], "task_executed");
+        assert_eq!(completed["next_action"], "close_headless_run");
+        assert_eq!(completed["next_route"]["kind"], "refresh_progress_overview");
+        assert_eq!(completed["next_route"]["next_action"], "close_headless_run");
+        let completion_checkpoint = store
+            .read_headless_objective_completion_acceptance_checkpoint("m56.apply.complete")
+            .expect("read completion checkpoint")
+            .expect("completion checkpoint");
+        assert_eq!(completion_checkpoint.acceptance_status, "accepted");
+        assert_eq!(
+            completion_checkpoint.expected_verification_fingerprint,
+            verification_checkpoint
+                .request_fingerprint
+                .clone()
+                .expect("verification request fingerprint")
+        );
+        let completion_events = || {
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .filter(|event| {
+                    event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| {
+                            payload.get("authorize_objective_completion_acceptance")
+                        })
+                        .and_then(Value::as_bool)
+                        == Some(true)
+                })
+                .count()
+        };
+        assert_eq!(completion_events(), 1);
+        let completion_replay = parse_line(&completion_request.to_string())
+            .result
+            .expect("completion replay");
+        assert_eq!(completion_replay["replayed"], true);
+        assert_eq!(completion_replay["decision_id"], completed["decision_id"]);
+        assert_eq!(completion_events(), 1);
         let verify_replay = parse_line(&verify_request.to_string())
             .result
             .expect("verify replay");
@@ -60935,6 +61588,7 @@ mod tests {
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
             objective_apply_verification_target: None,
+            objective_completion_acceptance_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(target.clone()),
             modepack_selected_candidate_provenance_verification_target: None,
@@ -84153,6 +84807,7 @@ mod tests {
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
             objective_apply_verification_target: None,
+            objective_completion_acceptance_target: None,
             modepack_registry_update_selection_target: Some(
                 ModePackRegistryUpdateSelectionTarget {
                     authorize_modepack_registry_update_selection: true,
@@ -84296,6 +84951,7 @@ mod tests {
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
             objective_apply_verification_target: None,
+            objective_completion_acceptance_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(ModePackSelectedCandidateFetchTarget {
                 authorize_selected_candidate_fetch: true,

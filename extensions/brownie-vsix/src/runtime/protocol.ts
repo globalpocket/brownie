@@ -658,6 +658,29 @@ export interface ObjectiveApplyVerificationTarget {
   expected_post_write_sha256: string;
 }
 
+export interface ObjectiveCompletionAcceptanceTarget {
+  authorize_objective_completion_acceptance: true;
+  objective_apply_verification_continuation_id: string;
+  expected_objective_apply_verification_decision_id: string;
+  journey_id: string;
+  session_id: string;
+  source_drive_id: string;
+  expected_task_id: string;
+  expected_run_id: string;
+  expected_proposal_id: string;
+  expected_apply_id: string;
+  expected_operation: 'replace_file';
+  expected_apply_status: 'Applied';
+  expected_authorization_consumed: true;
+  expected_path_fingerprint: string;
+  expected_apply_fingerprint: string;
+  expected_post_write_sha256: string;
+  expected_current_target_sha256: string;
+  expected_verification_status: 'verified';
+  expected_verification_route_kind: 'accept_objective_completion_explicitly';
+  expected_verification_fingerprint: string;
+}
+
 export interface HeadlessContinueOnceParams {
   authorize: true;
   expected_progress_fingerprint: string;
@@ -689,6 +712,7 @@ export interface HeadlessContinueOnceParams {
   objective_proposal_authorization_preflight_target?: ObjectiveProposalAuthorizationPreflightTarget | null;
   objective_proposal_apply_target?: ObjectiveProposalApplyTarget | null;
   objective_apply_verification_target?: ObjectiveApplyVerificationTarget | null;
+  objective_completion_acceptance_target?: ObjectiveCompletionAcceptanceTarget | null;
   modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
@@ -6002,7 +6026,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -6034,6 +6058,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.objective_proposal_authorization_preflight_target === undefined || value.objective_proposal_authorization_preflight_target === null || isObjectiveProposalAuthorizationPreflightTarget(value.objective_proposal_authorization_preflight_target)) &&
     (value.objective_proposal_apply_target === undefined || value.objective_proposal_apply_target === null || isObjectiveProposalApplyTarget(value.objective_proposal_apply_target)) &&
     (value.objective_apply_verification_target === undefined || value.objective_apply_verification_target === null || isObjectiveApplyVerificationTarget(value.objective_apply_verification_target)) &&
+    (value.objective_completion_acceptance_target === undefined || value.objective_completion_acceptance_target === null || isObjectiveCompletionAcceptanceTarget(value.objective_completion_acceptance_target)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
@@ -6207,6 +6232,65 @@ function isObjectiveApplyVerificationTarget(value: unknown): value is ObjectiveA
     isSha256Fingerprint(value.expected_apply_fingerprint) &&
     typeof value.expected_post_write_sha256 === 'string' &&
     isSha256Fingerprint(value.expected_post_write_sha256) &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_prompt') &&
+    !Object.prototype.hasOwnProperty.call(value, 'file_content')
+  );
+}
+
+function isObjectiveCompletionAcceptanceTarget(value: unknown): value is ObjectiveCompletionAcceptanceTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_objective_completion_acceptance',
+      'objective_apply_verification_continuation_id',
+      'expected_objective_apply_verification_decision_id',
+      'journey_id',
+      'session_id',
+      'source_drive_id',
+      'expected_task_id',
+      'expected_run_id',
+      'expected_proposal_id',
+      'expected_apply_id',
+      'expected_operation',
+      'expected_apply_status',
+      'expected_authorization_consumed',
+      'expected_path_fingerprint',
+      'expected_apply_fingerprint',
+      'expected_post_write_sha256',
+      'expected_current_target_sha256',
+      'expected_verification_status',
+      'expected_verification_route_kind',
+      'expected_verification_fingerprint',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    value.authorize_objective_completion_acceptance === true &&
+    isHeadlessContinuationId(value.objective_apply_verification_continuation_id) &&
+    isBoundedHandle(value.expected_objective_apply_verification_decision_id) &&
+    isHeadlessRunId(value.journey_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.source_drive_id) &&
+    isBoundedHandle(value.expected_task_id) &&
+    isBoundedHandle(value.expected_run_id) &&
+    isBoundedHandle(value.expected_proposal_id) &&
+    isBoundedHandle(value.expected_apply_id) &&
+    value.expected_operation === 'replace_file' &&
+    value.expected_apply_status === 'Applied' &&
+    value.expected_authorization_consumed === true &&
+    typeof value.expected_path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_path_fingerprint) &&
+    typeof value.expected_apply_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_apply_fingerprint) &&
+    typeof value.expected_post_write_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_post_write_sha256) &&
+    typeof value.expected_current_target_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_current_target_sha256) &&
+    value.expected_verification_status === 'verified' &&
+    value.expected_verification_route_kind === 'accept_objective_completion_explicitly' &&
+    typeof value.expected_verification_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_verification_fingerprint) &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&

@@ -954,3 +954,18 @@ a mismatch writes bounded mismatch evidence and routes to
 `start_verification_recovery_explicitly`. The route does not perform additional
 workspace mutation and never exposes raw file content, diffs, prompts, commands,
 environment, raw requests, paths, tokens, or secrets.
+
+M56.6 consumes the verified acceptance route through the same
+`headless.continue_once` surface with `objective_completion_acceptance_target`.
+Rust validates explicit completion-acceptance authorization, current progress,
+the M56.5 verification checkpoint decision, journey/session/drive/task/run/
+proposal/apply identity, operation/status labels, path/apply/current-target
+hashes, verification status, route kind, and verification fingerprint before
+recording bounded objective completion acceptance evidence. Exact replay returns
+the same acceptance decision without duplicate ledger or checkpoint mutation;
+missing authorization, stale progress, mismatched evidence, non-verified
+checkpoints, and conflicting replay fail closed. The checkpoint and ledger event
+store only bounded ids, hashes, status, route, sequence, and replay metadata and
+exclude raw file content, proposed content, diffs, prompts, provider responses,
+stdout/stderr, commands, environment values, raw requests, raw ledger payloads,
+absolute paths, canonical paths, tokens, and secrets.
