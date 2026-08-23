@@ -7164,8 +7164,8 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     value.stale === false &&
     value.decision_id !== undefined &&
     value.decision_id !== null &&
-    value.selected_task_id == null &&
-    value.selected_run_id == null &&
+    (value.selected_task_id == null || typeof value.selected_task_id === 'string') &&
+    (value.selected_run_id == null || typeof value.selected_run_id === 'string') &&
     value.task_run_result == null &&
     value.proposal_apply_result == null &&
     value.objective_proposal_authorization_preflight_result == null &&

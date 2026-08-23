@@ -1540,6 +1540,25 @@ describe('protocol validation', () => {
       modepack_selected_active_rollback_target: { ...modePackSelectedActiveRollbackTarget, raw_ledger_payload: '{}' },
     })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...headlessResult,
+      task_run_result: null,
+      proposal_apply_result: null,
+      objective_proposal_authorization_preflight_result: null,
+      next_route: {
+        kind: 'accept_objective_completion_explicitly',
+        reason: 'Objective apply verification matched.',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        proposal_id: 'proposal_objective_1',
+        apply_id: 'apply_objective_1',
+        apply_fingerprint: `sha256:${'9'.repeat(64)}`,
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'accept_objective_completion',
+      },
+      next_action: 'accept_objective_completion',
+    })).toBe(true);
     const objectiveProposalPreflightSnapshot = {
       proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
       snapshot_id: 'snapshot_objective_1',
