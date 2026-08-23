@@ -61,14 +61,14 @@ use brownie_protocol::{
     ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
     ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
-    ModePermissionsSummary, ModeSummary, ObjectiveProposalApplyTarget,
-    ObjectiveProposalAuthorizationPreflightTarget, ParentJoinRunTarget,
-    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
-    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
-    PermissionCheckResult, ProductContinuationAdmission, ProductContinuationProvenance,
-    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ModePermissionsSummary, ModeSummary, ObjectiveApplyVerificationTarget,
+    ObjectiveProposalApplyTarget, ObjectiveProposalAuthorizationPreflightTarget,
+    ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
+    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
+    PermissionCheckParams, PermissionCheckResult, ProductContinuationAdmission,
+    ProductContinuationProvenance, ProductContinuationSource, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -255,7 +255,7 @@ use brownie_store::{
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessModePackSelectedCandidateReplacementCheckpoint,
-    HeadlessObjectiveProposalApplyCheckpoint,
+    HeadlessObjectiveApplyVerificationCheckpoint, HeadlessObjectiveProposalApplyCheckpoint,
     HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
     HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
     HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
@@ -8690,6 +8690,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: objective_proposal_apply_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.objective_apply_verification_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_apply_verification_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.modepack_registry_update_selection_target.is_some()
         && params.max_steps.unwrap_or(1) > 1
     {
@@ -9026,6 +9033,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params
                 .objective_proposal_authorization_preflight_target
                 .is_some()
+            || params.objective_apply_verification_target.is_some()
             || params.modepack_registry_update_selection_target.is_some()
             || params.modepack_selected_candidate_fetch_target.is_some()
             || params
@@ -9343,6 +9351,50 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: objective_proposal_apply_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, or objective preflight fields",
         );
     }
+    if params.objective_apply_verification_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.objective_proposal_apply_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_apply_verification_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective preflight, or objective apply fields",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
@@ -9556,6 +9608,22 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 }
             }
         }
+        if params.objective_apply_verification_target.is_some() {
+            match store.read_headless_objective_apply_verification_checkpoint(continuation_id) {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_objective_apply_verification_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
         if params
             .modepack_selected_approved_candidate_replacement_target
             .is_some()
@@ -9705,6 +9773,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.objective_proposal_apply_target.is_some() {
         return handle_headless_continue_objective_proposal_apply(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.objective_apply_verification_target.is_some() {
+        return handle_headless_continue_objective_apply_verification(
             id,
             &store,
             &progress_overview,
@@ -13036,6 +13112,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
+        objective_apply_verification_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: Some(target),
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13242,6 +13319,7 @@ fn validate_headless_run_registry_selection_replay_target(
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
+        objective_apply_verification_target: None,
         modepack_registry_update_selection_target: Some(target),
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13293,6 +13371,7 @@ fn headless_run_replay_continue_once_params(
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
         objective_proposal_apply_target: None,
+        objective_apply_verification_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -14962,7 +15041,7 @@ fn headless_continue_objective_proposal_apply_replay_result(
         return error_response(id, -32602, &message);
     }
     let next_route = HeadlessContinueRoute {
-        kind: HeadlessContinueRouteKind::InspectProgressOverview,
+        kind: HeadlessContinueRouteKind::VerifyObjectiveApplyExplicitly,
         reason: "Objective proposal apply was already completed by this continuation; replaying bounded apply result."
             .to_string(),
         task_id: Some(checkpoint.task_id.clone()),
@@ -14973,7 +15052,7 @@ fn headless_continue_objective_proposal_apply_replay_result(
         apply_fingerprint: Some(checkpoint.apply_fingerprint.clone()),
         progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
         aggregate_sequence: Some(progress_overview.aggregate_sequence),
-        next_action: "inspect_progress_overview".to_string(),
+        next_action: "verify_objective_apply".to_string(),
     };
     result_response(
         id,
@@ -15009,7 +15088,7 @@ fn headless_continue_objective_proposal_apply_replay_result(
             replayed_count: None,
             stop_reason: None,
             steps: Vec::new(),
-            next_action: "inspect_progress_overview".to_string(),
+            next_action: "verify_objective_apply".to_string(),
         }),
     )
 }
@@ -15161,8 +15240,8 @@ fn headless_continue_objective_proposal_apply(
         )
         .map_err(|error| error.to_string())?;
     let next_route = HeadlessContinueRoute {
-        kind: HeadlessContinueRouteKind::InspectProgressOverview,
-        reason: "Objective proposal apply completed with bounded apply result; inspect progress."
+        kind: HeadlessContinueRouteKind::VerifyObjectiveApplyExplicitly,
+        reason: "Objective proposal apply completed with bounded apply result; verify the current target state."
             .to_string(),
         task_id: Some(target.expected_task_id.clone()),
         run_id: Some(target.expected_run_id.clone()),
@@ -15172,7 +15251,7 @@ fn headless_continue_objective_proposal_apply(
         apply_fingerprint: Some(apply_fingerprint),
         progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
         aggregate_sequence: Some(post_progress.aggregate_sequence),
-        next_action: "inspect_progress_overview".to_string(),
+        next_action: "verify_objective_apply".to_string(),
     };
     let next_action = next_route.next_action.clone();
     Ok(HeadlessContinueOnceResult {
@@ -15208,6 +15287,444 @@ fn headless_continue_objective_proposal_apply(
         stop_reason: None,
         steps: Vec::new(),
         next_action,
+    })
+}
+
+fn validate_objective_apply_verification_target(
+    target: &ObjectiveApplyVerificationTarget,
+) -> Result<(), String> {
+    if !target.authorize_objective_apply_verification {
+        return Err("objective apply verification failed: authorization required".to_string());
+    }
+    if !is_valid_headless_continuation_id(&target.objective_apply_continuation_id) {
+        return Err(
+            "objective apply verification failed: objective_apply_continuation_id must be a valid continuation id"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&target.journey_id)
+        || !is_valid_headless_run_id(&target.session_id)
+        || !is_valid_headless_run_id(&target.source_drive_id)
+    {
+        return Err(
+            "objective apply verification failed: journey, session, and drive ids must be valid headless ids"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_path_fingerprint",
+            target.expected_path_fingerprint.as_str(),
+        ),
+        (
+            "expected_apply_fingerprint",
+            target.expected_apply_fingerprint.as_str(),
+        ),
+        (
+            "expected_post_write_sha256",
+            target.expected_post_write_sha256.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "objective apply verification failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target
+        .expected_objective_apply_decision_id
+        .trim()
+        .is_empty()
+        || target.expected_task_id.trim().is_empty()
+        || target.expected_run_id.trim().is_empty()
+        || target.expected_proposal_id.trim().is_empty()
+        || target.expected_apply_id.trim().is_empty()
+    {
+        return Err(
+            "objective apply verification failed: decision, task, run, proposal, and apply ids are required"
+                .to_string(),
+        );
+    }
+    if target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || target.expected_apply_status != "Applied"
+        || !target.expected_authorization_consumed
+    {
+        return Err(
+            "objective apply verification failed: expected labels must describe a successful authorized replace_file apply"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn objective_apply_verification_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .objective_apply_verification_target
+        .as_ref()
+        .ok_or_else(|| "objective apply verification target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "objective apply verification failed: continuation_id is required".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "objective_apply_verification",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_objective_apply_verification": target.authorize_objective_apply_verification,
+        "objective_apply_continuation_id": target.objective_apply_continuation_id,
+        "expected_objective_apply_decision_id": target.expected_objective_apply_decision_id,
+        "journey_id": target.journey_id,
+        "session_id": target.session_id,
+        "source_drive_id": target.source_drive_id,
+        "expected_task_id": target.expected_task_id,
+        "expected_run_id": target.expected_run_id,
+        "expected_proposal_id": target.expected_proposal_id,
+        "expected_apply_id": target.expected_apply_id,
+        "expected_operation": target.expected_operation,
+        "expected_apply_status": target.expected_apply_status,
+        "expected_authorization_consumed": target.expected_authorization_consumed,
+        "expected_path_fingerprint": target.expected_path_fingerprint,
+        "expected_apply_fingerprint": target.expected_apply_fingerprint,
+        "expected_post_write_sha256": target.expected_post_write_sha256,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_objective_apply_verification_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessObjectiveApplyVerificationCheckpoint,
+) -> Result<(), String> {
+    let current = objective_apply_verification_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless objective apply verification continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless objective apply verification checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
+}
+
+fn validate_objective_apply_verification_route(
+    store: &BrownieStore,
+    target: &ObjectiveApplyVerificationTarget,
+) -> Result<(HeadlessObjectiveProposalApplyCheckpoint, String), String> {
+    let checkpoint = store
+        .read_headless_objective_proposal_apply_checkpoint(&target.objective_apply_continuation_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "objective apply verification failed: objective apply checkpoint not found".to_string()
+        })?;
+    if checkpoint.decision_id != target.expected_objective_apply_decision_id {
+        return Err(
+            "objective apply verification failed: objective apply decision mismatch".to_string(),
+        );
+    }
+    let apply = &checkpoint.result.apply_result;
+    if checkpoint.journey_id != target.journey_id
+        || checkpoint.session_id != target.session_id
+        || checkpoint.source_drive_id != target.source_drive_id
+        || checkpoint.task_id != target.expected_task_id
+        || checkpoint.run_id != target.expected_run_id
+        || checkpoint.proposal_id != target.expected_proposal_id
+        || checkpoint.apply_fingerprint != target.expected_apply_fingerprint
+        || apply.apply_id != target.expected_apply_id
+        || apply.operation != target.expected_operation
+        || apply.apply_status != target.expected_apply_status
+        || apply.authorization_consumed != target.expected_authorization_consumed
+        || apply.post_write_sha256.as_deref() != Some(target.expected_post_write_sha256.as_str())
+        || apply.path != checkpoint.result.proposal.path
+    {
+        return Err("objective apply verification failed: apply evidence mismatch".to_string());
+    }
+    if !apply.applied || !apply.failed_checks.is_empty() || !apply.blocked_checks.is_empty() {
+        return Err(
+            "objective apply verification failed: apply result is not a clean success".to_string(),
+        );
+    }
+    let actual_path_fingerprint = format!("sha256:{}", hex_sha256(apply.path.as_bytes()));
+    if actual_path_fingerprint != target.expected_path_fingerprint {
+        return Err("objective apply verification failed: path fingerprint mismatch".to_string());
+    }
+    let target_path = resolve_apply_target_path(store, &checkpoint.result.proposal)
+        .map_err(|reason| format!("objective apply verification failed: {reason}"))?;
+    let bytes = fs::read(&target_path).map_err(|_| {
+        "objective apply verification failed: target file is not readable".to_string()
+    })?;
+    let current_target_sha256 = format!("sha256:{}", hex_sha256(&bytes));
+    Ok((checkpoint, current_target_sha256))
+}
+
+fn handle_headless_continue_objective_apply_verification(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result =
+        match headless_continue_objective_apply_verification(store, progress_overview, &params) {
+            Ok(result) => result,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_objective_apply_verification_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessObjectiveApplyVerificationCheckpoint,
+) -> JsonRpcResponse<Value> {
+    if let Err(message) = validate_objective_apply_verification_replay_request(&params, &checkpoint)
+    {
+        return error_response(id, -32602, &message);
+    }
+    let next_route = HeadlessContinueRoute {
+        kind: checkpoint.route_kind.clone(),
+        reason: "Objective apply verification was already completed by this continuation; replaying bounded verification route."
+            .to_string(),
+        task_id: Some(checkpoint.task_id.clone()),
+        run_id: Some(checkpoint.run_id.clone()),
+        proposal_id: Some(checkpoint.proposal_id.clone()),
+        apply_id: Some(checkpoint.apply_id.clone()),
+        failure_fingerprint: if checkpoint.verification_status == "mismatch" {
+            Some(checkpoint.expected_apply_fingerprint.clone())
+        } else {
+            None
+        },
+        apply_fingerprint: Some(checkpoint.expected_apply_fingerprint.clone()),
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: checkpoint.next_action.clone(),
+    };
+    let next_action = next_route.next_action.clone();
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: Some(checkpoint.task_id),
+            selected_run_id: Some(checkpoint.run_id),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn headless_continue_objective_apply_verification(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    let target = params
+        .objective_apply_verification_target
+        .as_ref()
+        .ok_or_else(|| "objective apply verification target missing".to_string())?;
+    validate_objective_apply_verification_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "objective apply verification failed: continuation_id is required".to_string()
+    })?;
+    let request_fingerprint = objective_apply_verification_request_fingerprint(params)?;
+    let (apply_checkpoint, current_target_sha256) =
+        validate_objective_apply_verification_route(store, target)?;
+    let selected_record = store
+        .tasks()
+        .get_task(&target.expected_task_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "objective apply verification failed: source task not found".to_string())?;
+    if selected_record.run_id != target.expected_run_id {
+        return Err("objective apply verification failed: source task/run mismatch".to_string());
+    }
+    let verification_status = if current_target_sha256 == target.expected_post_write_sha256 {
+        "verified"
+    } else {
+        "mismatch"
+    };
+    let (route_kind, next_action, route_reason) = if verification_status == "verified" {
+        (
+            HeadlessContinueRouteKind::AcceptObjectiveCompletionExplicitly,
+            "accept_objective_completion",
+            "Objective apply verification matched the current target hash; proceed to accepted completion boundary.",
+        )
+    } else {
+        (
+            HeadlessContinueRouteKind::StartVerificationRecoveryExplicitly,
+            "start_verification_recovery",
+            "Objective apply verification found a current target hash mismatch; start verification recovery explicitly.",
+        )
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &selected_record,
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            Some(json!({
+                "decision_id": decision_id.clone(),
+                "continuation_id": continuation_id.clone(),
+                "selected_task_id": selected_record.task_id.clone(),
+                "selected_run_id": selected_record.run_id.clone(),
+                "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+                "expected_aggregate_sequence": params.expected_aggregate_sequence,
+                "candidate_count": 1,
+                "policy_version": policy_version,
+                "authorize": true,
+                "authorize_objective_apply_verification": true,
+                "objective_apply_continuation_id": target.objective_apply_continuation_id.clone(),
+                "objective_apply_decision_id": apply_checkpoint.decision_id.clone(),
+                "journey_id": target.journey_id.clone(),
+                "session_id": target.session_id.clone(),
+                "source_drive_id": target.source_drive_id.clone(),
+                "proposal_id": target.expected_proposal_id.clone(),
+                "apply_id": target.expected_apply_id.clone(),
+                "operation": target.expected_operation.clone(),
+                "path_fingerprint": target.expected_path_fingerprint.clone(),
+                "expected_apply_fingerprint": target.expected_apply_fingerprint.clone(),
+                "expected_post_write_sha256": target.expected_post_write_sha256.clone(),
+                "current_target_sha256": current_target_sha256.clone(),
+                "verification_status": verification_status,
+                "next_action": next_action,
+                "reason": route_reason
+            })),
+        )
+        .map_err(|error| error.to_string())?;
+    store
+        .tasks()
+        .write_headless_continuation_decision(&HeadlessContinuationDecisionLookup {
+            decision_id: decision_id.clone(),
+            continuation_id: continuation_id.clone(),
+            selected_task_id: selected_record.task_id.clone(),
+            selected_run_id: selected_record.run_id.clone(),
+            expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            candidate_count: 1,
+            policy_version: policy_version.to_string(),
+        })
+        .map_err(|error| error.to_string())?;
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    store
+        .write_headless_objective_apply_verification_checkpoint(
+            &HeadlessObjectiveApplyVerificationCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
+                objective_apply_continuation_id: target.objective_apply_continuation_id.clone(),
+                expected_objective_apply_decision_id: target
+                    .expected_objective_apply_decision_id
+                    .clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                journey_id: target.journey_id.clone(),
+                session_id: target.session_id.clone(),
+                source_drive_id: target.source_drive_id.clone(),
+                task_id: target.expected_task_id.clone(),
+                run_id: target.expected_run_id.clone(),
+                proposal_id: target.expected_proposal_id.clone(),
+                apply_id: target.expected_apply_id.clone(),
+                expected_path_fingerprint: target.expected_path_fingerprint.clone(),
+                expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
+                expected_post_write_sha256: target.expected_post_write_sha256.clone(),
+                current_target_sha256: current_target_sha256.clone(),
+                verification_status: verification_status.to_string(),
+                route_kind: route_kind.clone(),
+                next_action: next_action.to_string(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: route_kind,
+        reason: route_reason.to_string(),
+        task_id: Some(target.expected_task_id.clone()),
+        run_id: Some(target.expected_run_id.clone()),
+        proposal_id: Some(target.expected_proposal_id.clone()),
+        apply_id: Some(target.expected_apply_id.clone()),
+        failure_fingerprint: if verification_status == "mismatch" {
+            Some(target.expected_apply_fingerprint.clone())
+        } else {
+            None
+        },
+        apply_fingerprint: Some(target.expected_apply_fingerprint.clone()),
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: next_action.to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: Some(selected_record.task_id),
+        selected_run_id: Some(selected_record.run_id),
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        objective_proposal_authorization_preflight_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: next_action.to_string(),
     })
 }
 
@@ -21485,6 +22002,12 @@ fn headless_continue_budget_stop_reason(
                 }
                 Some(HeadlessContinueRouteKind::ApplyAuthorizedObjectiveProposalExplicitly) => {
                     "explicit_objective_apply_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::VerifyObjectiveApplyExplicitly) => {
+                    "explicit_objective_apply_verification_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::AcceptObjectiveCompletionExplicitly) => {
+                    "explicit_objective_completion_acceptance_boundary".to_string()
                 }
                 Some(HeadlessContinueRouteKind::StartVerificationRetryExplicitly) => {
                     "explicit_verification_retry_boundary".to_string()
@@ -58164,7 +58687,10 @@ mod tests {
             applied["proposal_apply_result"]["apply_result"]["authorization_consumed"],
             true
         );
-        assert_eq!(applied["next_route"]["kind"], "inspect_progress_overview");
+        assert_eq!(
+            applied["next_route"]["kind"],
+            "verify_objective_apply_explicitly"
+        );
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
             "new README content"
@@ -58190,6 +58716,13 @@ mod tests {
         assert_eq!(checkpoint.proposal_id, proposal_id);
         assert_eq!(checkpoint.result.apply_result.apply_id, apply_id);
         assert!(checkpoint.replacement_content_sha256.starts_with("sha256:"));
+        let apply_fingerprint = checkpoint.apply_fingerprint.clone();
+        let post_write_sha256 = checkpoint
+            .result
+            .apply_result
+            .post_write_sha256
+            .clone()
+            .expect("post write hash");
 
         let replay = parse_line(&apply_request.to_string())
             .result
@@ -58223,6 +58756,94 @@ mod tests {
         ] {
             assert!(!serialized_events.contains(forbidden));
         }
+
+        let verify_target = json!({
+            "authorize_objective_apply_verification": true,
+            "objective_apply_continuation_id": "m56.apply.objective",
+            "expected_objective_apply_decision_id": applied["decision_id"],
+            "journey_id": authorization_result["journey_id"],
+            "session_id": authorization_result["session_id"],
+            "source_drive_id": authorization_result["source_drive_id"],
+            "expected_task_id": authorization_result["task_id"],
+            "expected_run_id": authorization_result["run_id"],
+            "expected_proposal_id": authorization_result["proposal_id"],
+            "expected_apply_id": apply_id,
+            "expected_operation": "replace_file",
+            "expected_apply_status": "Applied",
+            "expected_authorization_consumed": true,
+            "expected_path_fingerprint": authorization_result["path_fingerprint"],
+            "expected_apply_fingerprint": apply_fingerprint,
+            "expected_post_write_sha256": post_write_sha256
+        });
+        let verify_request = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m56.apply.verify",
+                "expected_progress_fingerprint": applied["post_progress_fingerprint"],
+                "expected_aggregate_sequence": applied["post_aggregate_sequence"],
+                "objective_apply_verification_target": verify_target
+            }
+        });
+        let verified = parse_line(&verify_request.to_string())
+            .result
+            .expect("verify result");
+        assert_eq!(verified["status"], "task_executed");
+        assert_eq!(
+            verified["next_route"]["kind"],
+            "accept_objective_completion_explicitly"
+        );
+        assert_eq!(verified["next_action"], "accept_objective_completion");
+        let verification_checkpoint = store
+            .read_headless_objective_apply_verification_checkpoint("m56.apply.verify")
+            .expect("read verification checkpoint")
+            .expect("verification checkpoint");
+        assert_eq!(verification_checkpoint.verification_status, "verified");
+        assert_eq!(
+            verification_checkpoint.current_target_sha256,
+            post_write_sha256
+        );
+        let verify_replay = parse_line(&verify_request.to_string())
+            .result
+            .expect("verify replay");
+        assert_eq!(verify_replay["replayed"], true);
+        assert_eq!(
+            verify_replay["next_route"]["kind"],
+            verified["next_route"]["kind"]
+        );
+
+        std::fs::write(temp.path().join("README.md"), "drifted README").expect("drift target");
+        let mismatch_request = json!({
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m56.apply.verify.mismatch",
+                "expected_progress_fingerprint": verified["post_progress_fingerprint"],
+                "expected_aggregate_sequence": verified["post_aggregate_sequence"],
+                "objective_apply_verification_target": verify_target
+            }
+        });
+        let mismatch = parse_line(&mismatch_request.to_string())
+            .result
+            .expect("mismatch result");
+        assert_eq!(
+            mismatch["next_route"]["kind"],
+            "start_verification_recovery_explicitly"
+        );
+        assert_eq!(mismatch["next_action"], "start_verification_recovery");
+        let mismatch_checkpoint = store
+            .read_headless_objective_apply_verification_checkpoint("m56.apply.verify.mismatch")
+            .expect("read mismatch checkpoint")
+            .expect("mismatch checkpoint");
+        assert_eq!(mismatch_checkpoint.verification_status, "mismatch");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "drifted README"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
@@ -60313,6 +60934,7 @@ mod tests {
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
+            objective_apply_verification_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(target.clone()),
             modepack_selected_candidate_provenance_verification_target: None,
@@ -83530,6 +84152,7 @@ mod tests {
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
+            objective_apply_verification_target: None,
             modepack_registry_update_selection_target: Some(
                 ModePackRegistryUpdateSelectionTarget {
                     authorize_modepack_registry_update_selection: true,
@@ -83672,6 +84295,7 @@ mod tests {
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
             objective_proposal_apply_target: None,
+            objective_apply_verification_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(ModePackSelectedCandidateFetchTarget {
                 authorize_selected_candidate_fetch: true,

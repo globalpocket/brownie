@@ -934,3 +934,23 @@ non-mutating: it does not apply workspace changes and exposes no raw prompt,
 provider response, proposed content, file content, diff, command output,
 environment value, raw request, raw ledger payload, absolute path, canonical path,
 secret, or raw authorization token.
+
+M56.4 consumes the authorized objective proposal through `headless.continue_once`
+with `objective_proposal_apply_target`. Rust verifies the M56.3
+authorization/preflight checkpoint, journey/session/drive/task/run/proposal
+identity, proposal/source-event evidence, expected status labels, target hash,
+and one-time authorization before delegating to the existing `proposal.apply`
+replace-file authority. Success records bounded apply evidence and routes to
+`verify_objective_apply_explicitly`; exact replay returns the checkpointed apply
+result without a second mutation.
+
+M56.5 consumes that apply checkpoint through `headless.continue_once` with
+`objective_apply_verification_target`. Rust validates the objective apply
+decision, provenance, operation/status labels, consumed authorization, apply and
+path fingerprints, and expected post-write hash, then recomputes the current
+target SHA-256 through workspace-relative resolution. A match writes bounded
+verification evidence and routes to `accept_objective_completion_explicitly`;
+a mismatch writes bounded mismatch evidence and routes to
+`start_verification_recovery_explicitly`. The route does not perform additional
+workspace mutation and never exposes raw file content, diffs, prompts, commands,
+environment, raw requests, paths, tokens, or secrets.

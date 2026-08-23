@@ -1098,6 +1098,27 @@ pub struct ObjectiveProposalApplyTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ObjectiveApplyVerificationTarget {
+    pub authorize_objective_apply_verification: bool,
+    pub objective_apply_continuation_id: String,
+    pub expected_objective_apply_decision_id: String,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub expected_task_id: String,
+    pub expected_run_id: String,
+    pub expected_proposal_id: String,
+    pub expected_apply_id: String,
+    pub expected_operation: String,
+    pub expected_apply_status: String,
+    pub expected_authorization_consumed: bool,
+    pub expected_path_fingerprint: String,
+    pub expected_apply_fingerprint: String,
+    pub expected_post_write_sha256: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessContinueOnceParams {
     pub authorize: bool,
     pub expected_progress_fingerprint: String,
@@ -1155,6 +1176,8 @@ pub struct HeadlessContinueOnceParams {
         Option<ObjectiveProposalAuthorizationPreflightTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_proposal_apply_target: Option<ObjectiveProposalApplyTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_apply_verification_target: Option<ObjectiveApplyVerificationTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2017,6 +2040,8 @@ pub enum HeadlessContinueRouteKind {
     ReviewAndAuthorizeObjectiveProposal,
     ApplyApprovedRecoveryProposalExplicitly,
     ApplyAuthorizedObjectiveProposalExplicitly,
+    VerifyObjectiveApplyExplicitly,
+    AcceptObjectiveCompletionExplicitly,
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
