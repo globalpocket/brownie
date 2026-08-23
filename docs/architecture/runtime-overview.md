@@ -994,3 +994,15 @@ creates or replays exactly one Created continuation task, records bounded
 evidence so it cannot be mistaken for a runnable task-selection decision.
 
 M57.2 consumes the M57.1 product-continuation admission route through the existing `headless.continue_once` surface with `product_continuation_run_target`. Rust validates explicit run authorization, current aggregate progress, bounded continuation task/run identity, source task/run and product-decision identity, expected decision and product-evidence fingerprints, admission route evidence, and current product-continuation provenance before delegating to existing `task.run` authority. Success records bounded `HeadlessContinuationDecisionRecorded` evidence with route kind `product_continuation_run` and returns the bounded `task_run_result`; exact replay validates the same request fingerprint and reconstructs the run result without duplicate `TaskRunning`, provider/tool, terminal, or continuation-decision evidence. The route adds no JSON-RPC method, report, readiness, preview, inspection, provider expansion, workspace mutation expansion, shell/git/network/service execution, raw prompt, provider response, file content, diff, command output, environment value, raw request, raw ledger payload, absolute path, canonical path, token, or secret exposure.
+
+M58.1 lets `headless.run.drive` consume those product-continuation route
+boundaries without adding a new RPC. The drive and advance envelopes now accept
+one explicit `product_continuation_admission_target` or
+`product_continuation_run_target`, require the persisted session checkpoint to
+carry the matching admission or run route, and forward the target to the existing
+M57 `headless.continue_once` implementation. Drive replay validates the
+product-continuation request identity before returning a persisted result, so a
+conflicting replay target fails closed instead of silently reusing stale drive
+evidence. Admission remains non-running, run execution still delegates to
+`task.run`, and outputs stay limited to bounded ids, hashes, route metadata,
+progress fingerprints, and task-run evidence.

@@ -1267,6 +1267,10 @@ pub struct HeadlessRunAdvanceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_index_context: Option<TaskRunSelectedIndexContext>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_aggregate_sequence: Option<u64>,
@@ -1299,6 +1303,10 @@ pub struct HeadlessRunDriveParams {
     pub max_steps_per_advance: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorize_completion_finalization: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
