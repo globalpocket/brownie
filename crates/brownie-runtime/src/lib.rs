@@ -67,14 +67,14 @@ use brownie_protocol::{
     PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
     PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
     PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
-    ProductContinuationProvenance, ProductContinuationSource, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProductContinuationProvenance, ProductContinuationRunTarget, ProductContinuationSource,
+    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
+    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
+    ProposalPatchHunk, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
     ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
     ProposalReviewBundleParams, ProposalReviewBundleResult,
     ProposalReviewQueueDiagnosticsDigestHistoryParams,
@@ -8667,6 +8667,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: product_continuation_admission_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.product_continuation_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.llm_provider_failure_retry_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -9462,6 +9469,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     if params.product_continuation_admission_target.is_some()
         && (params.context_budget.is_some()
             || params.selected_index_context.is_some()
+            || params.product_continuation_run_target.is_some()
             || params.verification_recovery_source.is_some()
             || params.verification_recovery_goal.is_some()
             || params.verification_recovery_mode_id.is_some()
@@ -9505,6 +9513,53 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: product_continuation_admission_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective, or index-context fields",
         );
     }
+    if params.product_continuation_run_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.product_continuation_admission_target.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.objective_proposal_apply_target.is_some()
+            || params.objective_apply_verification_target.is_some()
+            || params.objective_completion_acceptance_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_run_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective, admission, or index-context fields",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
@@ -9539,6 +9594,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_retry_source.is_some()
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
+            || params.product_continuation_run_target.is_some()
             || params.verification_recovery_run_target.is_some()
             || params.verification_recovery_context_read.is_some()
             || params.patch_apply_recovery_source.is_some()
@@ -9567,6 +9623,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             || params.verification_recovery_retry_source.is_some()
             || params.llm_provider_failure_retry_source.is_some()
             || params.llm_provider_failure_retry_run_target.is_some()
+            || params.product_continuation_run_target.is_some()
             || params.verification_recovery_run_target.is_some()
             || params.verification_recovery_context_read.is_some()
             || params.patch_apply_recovery_source.is_some()
@@ -9619,6 +9676,28 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                         &progress_overview,
                         params,
                         decision,
+                    );
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+        if params.product_continuation_run_target.is_some() {
+            match headless_product_continuation_run_decision_for_replay(
+                &store,
+                &tasks,
+                continuation_id,
+            ) {
+                Ok(Some((decision, request_fingerprint))) => {
+                    return headless_continue_product_continuation_run_replay_result(
+                        id,
+                        &store,
+                        &progress_overview,
+                        params,
+                        decision,
+                        request_fingerprint,
                     );
                 }
                 Ok(None) => {}
@@ -9944,6 +10023,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.product_continuation_admission_target.is_some() {
         return handle_headless_continue_product_continuation_admission(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.product_continuation_run_target.is_some() {
+        return handle_headless_continue_product_continuation_run(
             id,
             &store,
             &progress_overview,
@@ -10702,6 +10789,342 @@ fn headless_continue_product_continuation_admission_replay_result(
             stop_reason: None,
             steps: Vec::new(),
             next_action: "run_product_continuation_task_explicitly".to_string(),
+        }),
+    )
+}
+
+fn headless_product_continuation_run_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .product_continuation_run_target
+        .as_ref()
+        .ok_or_else(|| "invalid params: product_continuation_run_target is required".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "invalid params: product_continuation_run_target requires continuation_id".to_string()
+    })?;
+    let seed = json!({
+        "route_kind": "product_continuation_run",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_product_continuation_run": target.authorize_product_continuation_run,
+        "continuation_task_id": target.continuation_task_id,
+        "continuation_run_id": target.continuation_run_id,
+        "source_task_id": target.source_task_id,
+        "source_run_id": target.source_run_id,
+        "source_decision_id": target.source_decision_id,
+        "expected_decision_fingerprint": target.expected_decision_fingerprint,
+        "expected_product_evidence_fingerprint": target.expected_product_evidence_fingerprint,
+        "expected_admission_route_kind": target.expected_admission_route_kind,
+        "expected_admission_request_fingerprint": target.expected_admission_request_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn headless_product_continuation_run_decision_for_replay(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    continuation_id: &str,
+) -> Result<Option<(HeadlessContinuationDecisionLookup, String)>, String> {
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| error.to_string())?;
+        for payload in events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .filter_map(|event| event.payload.as_ref())
+        {
+            if payload.get("route_kind").and_then(Value::as_str) != Some("product_continuation_run")
+                || payload.get("continuation_id").and_then(Value::as_str) != Some(continuation_id)
+            {
+                continue;
+            }
+            let decision =
+                headless_continuation_decision_from_payload(payload).ok_or_else(|| {
+                    format!(
+                        "invalid product continuation run decision evidence for {continuation_id}"
+                    )
+                })?;
+            let request_fingerprint = payload_string(payload, "request_fingerprint")?;
+            return Ok(Some((decision, request_fingerprint)));
+        }
+    }
+    Ok(None)
+}
+
+fn headless_continue_product_continuation_run_replay_result(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    decision: HeadlessContinuationDecisionLookup,
+    request_fingerprint: String,
+) -> JsonRpcResponse<Value> {
+    let current = match headless_product_continuation_run_request_fingerprint(&params) {
+        Ok(fingerprint) => fingerprint,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if request_fingerprint != current {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_run_target continuation request identity mismatch",
+        );
+    }
+    let selected_record = match store.tasks().get_task(&decision.selected_task_id) {
+        Ok(Some(record)) if record.run_id == decision.selected_run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: product continuation run task/run mismatch",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: product continuation run task not found",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let task_run_result = match task_run_result_for_headless_replay(store, &selected_record) {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &selected_record,
+        task_run_result.as_ref(),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+    let status = if task_run_result.is_some() {
+        HeadlessContinueOnceStatus::TaskExecuted
+    } else {
+        HeadlessContinueOnceStatus::TaskInProgress
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status,
+            decision_id: Some(decision.decision_id),
+            continuation_id: Some(decision.continuation_id),
+            selected_task_id: Some(selected_record.task_id),
+            selected_run_id: Some(selected_record.run_id),
+            candidate_count: decision.candidate_count,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result,
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
+        }),
+    )
+}
+
+fn handle_headless_continue_product_continuation_run(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let Some(target) = params.product_continuation_run_target.as_ref() else {
+        return error_response(
+            id,
+            -32603,
+            "internal error: missing product continuation run target",
+        );
+    };
+    let request_fingerprint = match headless_product_continuation_run_request_fingerprint(&params) {
+        Ok(fingerprint) => fingerprint,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    let selected_record = match product_continuation_record_for_headless_run_target(store, target) {
+        Ok(record) => record,
+        Err(rejection) => {
+            return match rejection {
+                TaskRunAdmissionRejection::InvalidParams(message) => {
+                    error_response(id, -32602, message)
+                }
+                TaskRunAdmissionRejection::Internal(message) => {
+                    error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+    };
+    if let Err(message) = validate_product_continuation_admission_evidence(store, target) {
+        return error_response(id, -32602, &message);
+    }
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    let task_run_response = handle_task_run(
+        id.clone(),
+        Some(json!({
+            "task_id": selected_record.task_id.clone(),
+        })),
+    );
+    let Some(task_run_value) = task_run_response.result else {
+        return JsonRpcResponse {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            id,
+            result: None,
+            error: task_run_response.error,
+        };
+    };
+    let task_run_result: TaskRunResult = match serde_json::from_value(task_run_value) {
+        Ok(result) => result,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_run_record = match store.tasks().get_task(&selected_record.task_id) {
+        Ok(Some(record)) if record.run_id == selected_record.run_id => record,
+        Ok(Some(_)) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: product continuation run task/run mismatch after execution",
+            );
+        }
+        Ok(None) => {
+            return error_response(
+                id,
+                -32603,
+                "internal error: product continuation run task not found after execution",
+            );
+        }
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    if let Err(error) = store.tasks().append_task_event_with_payload(
+        &post_run_record,
+        LedgerEventKind::HeadlessContinuationDecisionRecorded,
+        Some(json!({
+            "decision_id": decision_id.clone(),
+            "continuation_id": params.continuation_id.clone(),
+            "route_kind": "product_continuation_run",
+            "request_fingerprint": request_fingerprint,
+            "selected_task_id": post_run_record.task_id.clone(),
+            "selected_run_id": post_run_record.run_id.clone(),
+            "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+            "expected_aggregate_sequence": params.expected_aggregate_sequence,
+            "candidate_count": 1,
+            "policy_version": policy_version,
+            "authorize": true,
+            "authorize_product_continuation_run": true,
+            "source_task_id": target.source_task_id.clone(),
+            "source_run_id": target.source_run_id.clone(),
+            "source_decision_id": target.source_decision_id.clone(),
+            "decision_fingerprint": target.expected_decision_fingerprint.clone(),
+            "product_evidence_fingerprint": target.expected_product_evidence_fingerprint.clone(),
+            "admission_route_kind": "run_product_continuation_task_explicitly",
+            "next_action": "inspect_progress_overview",
+            "reason": "Headless continue-once explicitly ran one admitted product-continuation task through existing task.run authority."
+        })),
+    ) {
+        return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    if let Some(continuation_id) = params.continuation_id.as_ref() {
+        if let Err(error) = store.tasks().write_headless_continuation_decision(
+            &HeadlessContinuationDecisionLookup {
+                decision_id: decision_id.clone(),
+                continuation_id: continuation_id.clone(),
+                selected_task_id: post_run_record.task_id.clone(),
+                selected_run_id: post_run_record.run_id.clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                candidate_count: 1,
+                policy_version: policy_version.to_string(),
+            },
+        ) {
+            return error_response(id, -32603, &format!("internal error: {error}"));
+        }
+    }
+
+    let post_tasks = match store.tasks().list_tasks() {
+        Ok(tasks) => tasks,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let post_progress_overview = match task_list_progress_overview(store, &post_tasks) {
+        Ok(progress_overview) => progress_overview,
+        Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
+    };
+    let next_route = headless_continue_next_route(
+        &post_run_record,
+        Some(&task_run_result),
+        &post_progress_overview,
+    );
+    let next_action = next_route.next_action.clone();
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(decision_id),
+            continuation_id: params.continuation_id,
+            selected_task_id: Some(task_run_result.task_id.clone()),
+            selected_run_id: Some(task_run_result.run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+            stale: false,
+            replayed: false,
+            task_run_result: Some(task_run_result),
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action,
         }),
     )
 }
@@ -13686,6 +14109,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
+        product_continuation_run_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -13895,6 +14319,7 @@ fn validate_headless_run_registry_selection_replay_target(
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
+        product_continuation_run_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -13949,6 +14374,7 @@ fn headless_run_replay_continue_once_params(
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
+        product_continuation_run_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -46276,6 +46702,171 @@ fn verification_recovery_record_for_headless_run_target(
     Ok(record)
 }
 
+fn product_continuation_record_for_headless_run_target(
+    store: &BrownieStore,
+    target: &ProductContinuationRunTarget,
+) -> Result<TaskRecord, TaskRunAdmissionRejection> {
+    for value in [
+        target.continuation_task_id.as_str(),
+        target.continuation_run_id.as_str(),
+        target.source_task_id.as_str(),
+        target.source_run_id.as_str(),
+        target.source_decision_id.as_str(),
+    ] {
+        if value.trim().is_empty() || value.len() > 128 {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: product_continuation_run_target fields must be bounded and non-empty",
+            ));
+        }
+    }
+    if !target.authorize_product_continuation_run {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.authorize_product_continuation_run must be true",
+        ));
+    }
+    if target.expected_admission_route_kind
+        != HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly
+    {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.expected_admission_route_kind must be run_product_continuation_task_explicitly",
+        ));
+    }
+    for value in [
+        (target.expected_decision_fingerprint.as_str()),
+        (target.expected_product_evidence_fingerprint.as_str()),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: product_continuation_run_target fingerprint fields must be sha256 fingerprints",
+            ));
+        }
+    }
+    if let Some(fingerprint) = target.expected_admission_request_fingerprint.as_deref() {
+        if !is_sha256_fingerprint(fingerprint) {
+            return Err(TaskRunAdmissionRejection::InvalidParams(
+                "invalid params: product_continuation_run_target.expected_admission_request_fingerprint must be a sha256 fingerprint",
+            ));
+        }
+    }
+
+    let record = store
+        .tasks()
+        .get_task(&target.continuation_task_id)
+        .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?
+        .ok_or(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.continuation_task_id was not found",
+        ))?;
+    if record.run_id != target.continuation_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.continuation_run_id does not match continuation task",
+        ));
+    }
+    if record.status != TaskStatus::Created {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product continuation run target task must be Created before execution",
+        ));
+    }
+    let Some(provenance) = record.product_continuation_provenance.as_ref() else {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product continuation run target task has no product-continuation provenance",
+        ));
+    };
+    if provenance.source_task_id != target.source_task_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.source_task_id is stale",
+        ));
+    }
+    if provenance.source_run_id != target.source_run_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.source_run_id is stale",
+        ));
+    }
+    if provenance.source_decision_id != target.source_decision_id {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.source_decision_id is stale",
+        ));
+    }
+    if provenance.decision_fingerprint != target.expected_decision_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.expected_decision_fingerprint is stale",
+        ));
+    }
+    if provenance.product_evidence_fingerprint != target.expected_product_evidence_fingerprint {
+        return Err(TaskRunAdmissionRejection::InvalidParams(
+            "invalid params: product_continuation_run_target.expected_product_evidence_fingerprint is stale",
+        ));
+    }
+    revalidate_product_continuation_task_for_run(store, &record)?;
+    Ok(record)
+}
+
+fn validate_product_continuation_admission_evidence(
+    store: &BrownieStore,
+    target: &ProductContinuationRunTarget,
+) -> Result<(), String> {
+    let events = store
+        .tasks()
+        .read_ledger_events(&target.continuation_run_id)
+        .map_err(|error| error.to_string())?;
+    let Some(payload) = events.iter().rev().find_map(|event| {
+        if event.kind != LedgerEventKind::HeadlessContinuationDecisionRecorded {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload.get("route_kind").and_then(Value::as_str)
+            == Some("product_continuation_admission")
+            && payload.get("selected_task_id").and_then(Value::as_str)
+                == Some(target.continuation_task_id.as_str())
+            && payload.get("selected_run_id").and_then(Value::as_str)
+                == Some(target.continuation_run_id.as_str())
+        {
+            Some(payload)
+        } else {
+            None
+        }
+    }) else {
+        return Err(
+            "invalid params: product_continuation_run_target missing admission evidence"
+                .to_string(),
+        );
+    };
+    for (field, expected) in [
+        ("source_task_id", target.source_task_id.as_str()),
+        ("source_run_id", target.source_run_id.as_str()),
+        ("source_decision_id", target.source_decision_id.as_str()),
+        (
+            "decision_fingerprint",
+            target.expected_decision_fingerprint.as_str(),
+        ),
+        (
+            "product_evidence_fingerprint",
+            target.expected_product_evidence_fingerprint.as_str(),
+        ),
+    ] {
+        if payload.get(field).and_then(Value::as_str) != Some(expected) {
+            return Err(format!(
+                "invalid params: product_continuation_run_target admission {field} is stale"
+            ));
+        }
+    }
+    if payload.get("next_action").and_then(Value::as_str)
+        != Some("run_product_continuation_task_explicitly")
+    {
+        return Err(
+            "invalid params: product_continuation_run_target admission route is stale".to_string(),
+        );
+    }
+    if let Some(expected) = target.expected_admission_request_fingerprint.as_deref() {
+        if payload.get("request_fingerprint").and_then(Value::as_str) != Some(expected) {
+            return Err(
+                "invalid params: product_continuation_run_target admission request fingerprint is stale"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
 fn parent_join_record_for_headless_run_target(
     store: &BrownieStore,
     target: &ParentJoinRunTarget,
@@ -62172,6 +62763,7 @@ mod tests {
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
+            product_continuation_run_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -83996,6 +84588,250 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_runs_product_continuation_admission_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let source_start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"M57.2 source task","mode_id":"implementer"}}"#,
+        );
+        assert!(source_start.error.is_none(), "{:?}", source_start.error);
+        let source_task_id = source_start.result.expect("source start result")["task_id"]
+            .as_str()
+            .expect("source task id")
+            .to_string();
+        let source = store
+            .tasks()
+            .update_task_status(
+                &source_task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete source");
+        let decision = HeadlessRunProductCompletionDecision {
+            decision_id: "m57-2-product-decision".to_string(),
+            task_id: source.task_id.clone(),
+            run_id: source.run_id.clone(),
+            acceptance_id: "m57-2-acceptance".to_string(),
+            status: "continue_development".to_string(),
+            next_action: "plan_next_phase".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition:
+                "headless_continue_once_product_continuation_explicit_run_route".to_string(),
+            accepted_completion_fingerprint: fp('a'),
+            terminal_completion_fingerprint: fp('b'),
+            completion_closure_fingerprint: fp('c'),
+            product_evidence_fingerprint: fp('d'),
+            decision_fingerprint: fp('e'),
+            validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                .iter()
+                .map(|category| category.to_string())
+                .collect(),
+            derived_product_evidence_matrix_fingerprint: None,
+            behavior_evidence_count: 3,
+            rejected_alternatives_count: 2,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: Some("run_next_phase".to_string()),
+            milestone_exit_rationale: None,
+            technical_debt_carry_forward: None,
+            replayed: false,
+        };
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source,
+                LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                Some(headless_product_completion_decision_payload(&decision)),
+            )
+            .expect("append decision");
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let admission_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m57.2.product.admit",
+                "expected_progress_fingerprint": progress["source_fingerprint"],
+                "expected_aggregate_sequence": progress["aggregate_sequence"],
+                "product_continuation_admission_target": {
+                    "authorize_product_continuation_admission": true,
+                    "continuation_goal": "Run the next product continuation task",
+                    "continuation_mode_id": "implementer",
+                    "product_continuation_source": {
+                        "source_task_id": decision.task_id,
+                        "source_run_id": decision.run_id,
+                        "source_decision_id": decision.decision_id,
+                        "expected_decision_fingerprint": decision.decision_fingerprint,
+                        "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+                        "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+                        "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
+                        "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+                        "authorize_product_continuation": true,
+                    }
+                }
+            }
+        });
+        let admitted = parse_line(&admission_request.to_string());
+        assert!(admitted.error.is_none(), "{:?}", admitted.error);
+        let admitted_result = admitted.result.expect("admitted result");
+        let admission = &admitted_result["product_continuation_admission"];
+        let continuation_task_id = admission["continuation_task_id"]
+            .as_str()
+            .expect("continuation task id")
+            .to_string();
+        let continuation_run_id = admission["continuation_run_id"]
+            .as_str()
+            .expect("continuation run id")
+            .to_string();
+        assert_eq!(
+            admitted_result["next_route"]["kind"],
+            "run_product_continuation_task_explicitly"
+        );
+
+        let post_admission_progress =
+            parse_line(r#"{"jsonrpc":"2.0","id":4,"method":"task.list"}"#)
+                .result
+                .expect("post admission progress result")["progress_overview"]
+                .clone();
+        let run_request = json!({
+            "jsonrpc": "2.0",
+            "id": 5,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m57.2.product.run",
+                "expected_progress_fingerprint": post_admission_progress["source_fingerprint"],
+                "expected_aggregate_sequence": post_admission_progress["aggregate_sequence"],
+                "product_continuation_run_target": {
+                    "authorize_product_continuation_run": true,
+                    "continuation_task_id": continuation_task_id,
+                    "continuation_run_id": continuation_run_id,
+                    "source_task_id": admission["source_task_id"],
+                    "source_run_id": admission["source_run_id"],
+                    "source_decision_id": admission["source_decision_id"],
+                    "expected_decision_fingerprint": admission["decision_fingerprint"],
+                    "expected_product_evidence_fingerprint": admission["product_evidence_fingerprint"],
+                    "expected_admission_route_kind": "run_product_continuation_task_explicitly"
+                }
+            }
+        });
+        let run = parse_line(&run_request.to_string());
+        assert!(run.error.is_none(), "{:?}", run.error);
+        let run_result = run.result.expect("run result");
+        assert_eq!(run_result["status"], "task_executed");
+        assert_eq!(run_result["replayed"], false);
+        assert_eq!(run_result["selected_task_id"], continuation_task_id);
+        assert_eq!(run_result["selected_run_id"], continuation_run_id);
+        assert_eq!(
+            run_result["task_run_result"]["task_id"],
+            continuation_task_id
+        );
+        assert_eq!(run_result["task_run_result"]["run_id"], continuation_run_id);
+        assert!(run_result["task_run_result"]["agent_loop"]["final_state"].is_string());
+
+        let events_after_run = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("events after run");
+        assert_eq!(
+            events_after_run
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events_after_run
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            2
+        );
+
+        let replay = parse_line(&run_request.to_string());
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(
+            replay_result["task_run_result"]["task_id"],
+            continuation_task_id
+        );
+        let events_after_replay = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("events after replay");
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            2
+        );
+
+        let mut stale_request = run_request.clone();
+        stale_request["id"] = json!(6);
+        stale_request["params"]["continuation_id"] = json!("m57.2.product.run.stale");
+        stale_request["params"]["expected_progress_fingerprint"] = json!(fp('f'));
+        let stale = parse_line(&stale_request.to_string());
+        assert!(stale.error.is_none(), "{:?}", stale.error);
+        let stale_result = stale.result.expect("stale result");
+        assert_eq!(stale_result["status"], "stale_progress");
+        let events_after_stale = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("events after stale");
+        assert_eq!(
+            events_after_stale
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+
+        let serialized = serde_json::to_string(&run_result).expect("serialize run result");
+        for forbidden in [
+            "raw_prompt",
+            "provider_response",
+            "final_response",
+            "file_content",
+            "diff",
+            "stdout",
+            "stderr",
+            "command",
+            "environment",
+            "raw_request",
+            "raw_ledger_payload",
+            "absolute_path",
+            "canonical_path",
+            "secret",
+        ] {
+            assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_revalidates_product_continuation_provenance_before_running() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -85492,6 +86328,7 @@ mod tests {
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
+            product_continuation_run_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -85637,6 +86474,7 @@ mod tests {
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
+            product_continuation_run_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,

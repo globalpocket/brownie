@@ -908,6 +908,22 @@ pub struct ProductContinuationAdmissionTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductContinuationRunTarget {
+    pub authorize_product_continuation_run: bool,
+    pub continuation_task_id: String,
+    pub continuation_run_id: String,
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub expected_decision_fingerprint: String,
+    pub expected_product_evidence_fingerprint: String,
+    pub expected_admission_route_kind: HeadlessContinueRouteKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_admission_request_fingerprint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -1186,6 +1202,8 @@ pub struct HeadlessContinueOnceParams {
     pub llm_provider_failure_retry_mode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
