@@ -70,6 +70,32 @@ raw hunks, raw diffs, raw ledger payloads, prompts, provider responses,
 commands, stdout/stderr, environment values, absolute paths, canonical paths, or
 secrets.
 
+## M56.3 objective-scoped authorization and preflight
+
+An M56.2 `review_and_authorize_objective_proposal` route may be consumed by
+`headless.continue_once` with
+`objective_proposal_authorization_preflight_target`. The target must include the
+current journey/session/drive ids, source task/run/proposal/source event ids,
+expected source event kind, expected `replace_file` operation, expected
+`Valid`/`Pending` status labels, expected journey/objective-context/selected-
+context/path/candidate SHA-256 fingerprints, and an authorization token
+fingerprint. It must not include the raw authorization token, raw proposal
+content, raw diffs, raw file content, prompts, provider responses, commands,
+stdout/stderr, environment values, raw requests, raw ledger payloads, absolute
+paths, canonical paths, or secrets.
+
+Before side effects, the runtime must verify the target against the journey
+start checkpoint, the source drive checkpoint route, the persisted objective
+candidate fingerprint, the source `WorkspacePatchProposed` event, and the
+current proposal summary. When the proposal is still valid and pending, the
+runtime may approve that exact proposal once, run the latest preflight/apply-plan
+boundary, persist a bounded continuation checkpoint, and return
+`objective_proposal_authorization_preflight_result` plus
+`apply_authorized_objective_proposal_explicitly`. Replay of the same
+continuation must return the checkpointed result without duplicate approval,
+preflight, apply-plan, or checkpoint side effects. The route does not apply
+workspace changes.
+
 ## Phase 3.1 validation and diff preview
 
 Phase 3.1 keeps the Phase 3.0 dry-run contract: `workspace.write` proposals never write workspace files and never apply patches. A proposal is inspected against the current workspace and receives `validation_status` (`Valid`, `Invalid`, or `Blocked`) plus optional `validation_reason`.

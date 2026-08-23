@@ -10,16 +10,17 @@ use anyhow::{bail, Context, Result};
 use brownie_protocol::{
     ChildTaskSourceIntentSummary, CodebaseIndexSnapshotManifest, HeadlessRunAdvanceResult,
     HeadlessRunCompletionFinalization, HeadlessRunDriveResult, HeadlessRunJourneyExecutionMetadata,
-    HeadlessRunJourneyObjectiveContextMetadata, HeadlessRunProgressCheckpoint,
-    LlmProviderFailureRetryProvenance, ModePackActiveSnapshotSummary,
-    ModePackApproveCandidateResult, ModePackApprovedCandidateSummary,
-    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
-    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveResult,
-    ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
-    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
-    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
-    ProductContinuationProvenance, RecoveryCycleChildProvenance, TaskRecord, TaskStartParams,
-    TaskStatus, VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    HeadlessRunJourneyObjectiveContextMetadata, HeadlessRunObjectiveProposalAuthorizationPreflight,
+    HeadlessRunProgressCheckpoint, LlmProviderFailureRetryProvenance,
+    ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
+    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
+    ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
+    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
+    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
+    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
+    PatchApplyRecoveryProvenance, ProductContinuationProvenance, RecoveryCycleChildProvenance,
+    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -799,6 +800,51 @@ impl BrownieStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_objective_proposal_authorization_preflight_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessObjectiveProposalAuthorizationPreflightCheckpoint>> {
+        let path = self.headless_objective_proposal_authorization_preflight_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_objective_proposal_authorization_preflight_checkpoint(
+        &self,
+        checkpoint: &HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path = self
+            .headless_objective_proposal_authorization_preflight_path(&checkpoint.continuation_id);
+        if let Some(existing) = self
+            .read_headless_objective_proposal_authorization_preflight_checkpoint(
+                &checkpoint.continuation_id,
+            )?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless objective proposal authorization preflight checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint).context(
+            "failed to serialize headless objective proposal authorization preflight checkpoint",
+        )?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn read_headless_modepack_selected_candidate_replacement_checkpoint(
         &self,
         continuation_id: &str,
@@ -1381,6 +1427,18 @@ impl BrownieStore {
             ))
     }
 
+    fn headless_objective_proposal_authorization_preflight_path(
+        &self,
+        continuation_id: &str,
+    ) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!(
+                "objective-proposal-authorization-preflight-{continuation_id}.json"
+            ))
+    }
+
     fn headless_modepack_selected_candidate_replacement_path(
         &self,
         continuation_id: &str,
@@ -1950,6 +2008,25 @@ pub struct HeadlessModePackSelectedCandidateApprovalCheckpoint {
     pub selection_id: String,
     pub selection_event_id: String,
     pub result: ModePackApproveCandidateResult,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessObjectiveProposalAuthorizationPreflightCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub proposal_id: String,
+    pub result: HeadlessRunObjectiveProposalAuthorizationPreflight,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

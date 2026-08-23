@@ -1242,6 +1242,51 @@ describe('protocol validation', () => {
       ...headlessParams,
       parent_join_run_target: { ...parentJoinRunTarget, raw_child_output: 'do not expose' },
     })).toBe(false);
+    const objectiveProposalAuthorizationPreflightTarget = {
+      authorize_objective_proposal_preflight: true,
+      journey_id: 'm56.auth.1',
+      session_id: 'm56.auth',
+      source_drive_id: 'm56.auth.drive',
+      expected_journey_fingerprint: `sha256:${'1'.repeat(64)}`,
+      expected_candidate_fingerprint: `sha256:${'2'.repeat(64)}`,
+      expected_objective_context_fingerprint: `sha256:${'3'.repeat(64)}`,
+      expected_selected_context_fingerprint: `sha256:${'4'.repeat(64)}`,
+      expected_task_id: 'task_objective_1',
+      expected_run_id: 'run_objective_1',
+      expected_proposal_id: 'proposal_objective_1',
+      expected_source_event_id: 'event_objective_proposal_1',
+      expected_source_event_kind: 'WorkspacePatchProposed',
+      expected_operation: 'replace_file',
+      expected_path_fingerprint: `sha256:${'5'.repeat(64)}`,
+      expected_validation_status: 'Valid',
+      expected_approval_status: 'Pending',
+      authorization_token_fingerprint: `sha256:${'6'.repeat(64)}`,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_authorization_preflight_target: objectiveProposalAuthorizationPreflightTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_authorization_preflight_target: {
+        ...objectiveProposalAuthorizationPreflightTarget,
+        authorize_objective_proposal_preflight: false,
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_authorization_preflight_target: {
+        ...objectiveProposalAuthorizationPreflightTarget,
+        expected_candidate_fingerprint: 'not-a-fingerprint',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_authorization_preflight_target: {
+        ...objectiveProposalAuthorizationPreflightTarget,
+        authorization_token: 'raw-token',
+      },
+    })).toBe(false);
     const modePackSelectedCandidateFetchTarget = {
       authorize_selected_candidate_fetch: true,
       selection_id: 'modepack_registry_selection_123',
@@ -1401,6 +1446,96 @@ describe('protocol validation', () => {
       modepack_selected_active_rollback_target: { ...modePackSelectedActiveRollbackTarget, raw_ledger_payload: '{}' },
     })).toBe(false);
     expect(isHeadlessContinueOnceResult(headlessResult)).toBe(true);
+    const objectiveProposalPreflightSnapshot = {
+      proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+      snapshot_id: 'snapshot_objective_1',
+      path: 'README.md',
+      canonical_path_hash: `sha256:${'7'.repeat(64)}`,
+      file_exists: true,
+      file_kind: 'File',
+      file_size_bytes: 32,
+      file_modified_unix_ms: 1_782_000_000_000,
+      file_sha256: `sha256:${'8'.repeat(64)}`,
+      captured_at: '2026-08-23T04:06:01Z',
+      stale: false,
+      stale_reason: null,
+    };
+    const objectiveProposalApplyPlan = {
+      proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+      plan_id: 'apply_plan_objective_1',
+      status: 'Ready',
+      checklist: [
+        { name: 'approved_proposal', status: 'Pass', reason: null },
+        { name: 'latest_preflight', status: 'Pass', reason: null },
+      ],
+    };
+    const objectiveProposalAuthorizationPreflightResult = {
+      status: 'authorized_preflight_ready',
+      journey_id: objectiveProposalAuthorizationPreflightTarget.journey_id,
+      task_id: objectiveProposalAuthorizationPreflightTarget.expected_task_id,
+      run_id: objectiveProposalAuthorizationPreflightTarget.expected_run_id,
+      session_id: objectiveProposalAuthorizationPreflightTarget.session_id,
+      source_drive_id: objectiveProposalAuthorizationPreflightTarget.source_drive_id,
+      proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+      source_event_id: objectiveProposalAuthorizationPreflightTarget.expected_source_event_id,
+      source_event_kind: objectiveProposalAuthorizationPreflightTarget.expected_source_event_kind,
+      operation: objectiveProposalAuthorizationPreflightTarget.expected_operation,
+      path_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_path_fingerprint,
+      objective_context_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_objective_context_fingerprint,
+      selected_context_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_selected_context_fingerprint,
+      candidate_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_candidate_fingerprint,
+      authorization_token_fingerprint: objectiveProposalAuthorizationPreflightTarget.authorization_token_fingerprint,
+      validation_status: 'Valid',
+      approval_status: 'Approved',
+      approved_at: '2026-08-23T04:06:01Z',
+      preflight_snapshot: objectiveProposalPreflightSnapshot,
+      apply_plan: objectiveProposalApplyPlan,
+      authorization_preflight_fingerprint: `sha256:${'9'.repeat(64)}`,
+      replayed: false,
+      next_action: 'apply_authorized_objective_proposal',
+    };
+    const objectiveAuthorizationPreflightHeadlessResult = {
+      ...headlessResult,
+      selected_task_id: null,
+      selected_run_id: null,
+      task_run_result: null,
+      proposal_apply_result: null,
+      objective_proposal_authorization_preflight_result: objectiveProposalAuthorizationPreflightResult,
+      next_route: {
+        kind: 'apply_authorized_objective_proposal_explicitly',
+        reason: 'Authorized and preflighted the objective proposal candidate.',
+        task_id: objectiveProposalAuthorizationPreflightTarget.expected_task_id,
+        run_id: objectiveProposalAuthorizationPreflightTarget.expected_run_id,
+        proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+        apply_fingerprint: objectiveProposalAuthorizationPreflightResult.authorization_preflight_fingerprint,
+        progress_fingerprint: `sha256:${'c'.repeat(64)}`,
+        aggregate_sequence: taskListProgressOverview.aggregate_sequence + 1,
+        next_action: 'apply_authorized_objective_proposal',
+      },
+      next_action: 'apply_authorized_objective_proposal',
+    };
+    expect(isHeadlessContinueOnceResult(objectiveAuthorizationPreflightHeadlessResult)).toBe(true);
+    expect(isHeadlessContinueOnceResult({
+      ...objectiveAuthorizationPreflightHeadlessResult,
+      task_run_result: taskRunResult,
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...objectiveAuthorizationPreflightHeadlessResult,
+      objective_proposal_authorization_preflight_result: {
+        ...objectiveProposalAuthorizationPreflightResult,
+        authorization_token: 'raw-token',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceResult({
+      ...objectiveAuthorizationPreflightHeadlessResult,
+      objective_proposal_authorization_preflight_result: {
+        ...objectiveProposalAuthorizationPreflightResult,
+        preflight_snapshot: {
+          ...objectiveProposalPreflightSnapshot,
+          canonical_path: '/tmp/README.md',
+        },
+      },
+    })).toBe(false);
     const modePackRegistryUpdateSelectionTarget = {
       authorize_modepack_registry_update_selection: true,
       authorize_registry_trust: true,

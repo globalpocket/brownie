@@ -518,3 +518,21 @@ execute shell/git/tests, access network/services, or expose raw prompts,
 provider responses, proposed content, file content, hunks, diffs, command
 output, environment values, raw requests, raw ledger payloads, absolute paths,
 canonical paths, or secrets.
+
+M56.3 moves the same Golden Journey from candidate review to an explicit
+authorization and preflight route through `headless.continue_once`. The
+`objective_proposal_authorization_preflight_target` must bind the current
+journey/session/drive route, source task/run/proposal/source event, expected
+objective/context/path/candidate fingerprints, expected `Valid` and `Pending`
+labels, and only an authorization token fingerprint. Rust must verify those
+inputs against the latest journey checkpoint, source drive checkpoint, candidate
+fingerprint, source proposal event, and current proposal state before approval.
+If the evidence still matches, the runtime approves that exact proposal, creates
+or refreshes the latest preflight snapshot/apply plan, writes one bounded
+continuation checkpoint/result, and routes to
+`apply_authorized_objective_proposal_explicitly`. Replays must return the same
+bounded authorization/preflight result without duplicate approval/preflight/apply
+plan side effects. This boundary still does not apply workspace changes or
+expose raw prompts, provider responses, proposed content, file content, hunks,
+diffs, command output, environment values, raw requests, raw ledger payloads,
+absolute paths, canonical paths, secrets, or raw authorization tokens.
