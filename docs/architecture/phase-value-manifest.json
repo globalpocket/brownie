@@ -1,81 +1,51 @@
 {
   "schema_version": 1,
-  "phase": "M56.6",
-  "current_milestone": "m56_arbitrary_repository_coding_golden_journey",
-  "milestone": "M56 Arbitrary Repository Coding Golden Journey",
-  "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "runtime_owned_objective_completion_acceptance_route",
-  "forbidden_pattern": "new_json_rpc_method_report_digest_history_readiness_verdict_inspection_preview_dashboard_summary_wrapper_only_generic_transaction_engine_scheduler_daemon_workflow_engine_vsix_owned_policy_auto_apply_auto_recover_auto_provider_auto_modepack_shell_git_network_service_raw_prompt_provider_response_file_content_diff_stdout_stderr_command_environment_raw_request_raw_ledger_payload_absolute_path_canonical_path_secret_broad_runtime_modularization",
+  "phase": "M12.4",
+  "current_milestone": "m12_external_mode_pack_execution_policy",
+  "milestone": "M12 External Mode Pack Execution Policy",
+  "target_capability": "mode_pack_runtime",
+  "concrete_capability_transition": "active_modepack_task_run_policy_snapshot_binding",
+  "forbidden_pattern": "new_json_rpc_method_report_digest_history_readiness_verdict_inspection_preview_dashboard_summary_wrapper_only_generic_modepack_status_wrapper_vsix_owned_policy_auto_run_auto_provider_auto_tool_auto_workspace_mutation_shell_git_network_service_raw_modepack_json_raw_prompt_provider_response_file_content_diff_stdout_stderr_command_environment_raw_request_raw_ledger_payload_absolute_path_canonical_path_secret_broad_runtime_refactor",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
-      "capability": "headless_autonomous_development",
-      "relationship": "headless.continue_once can now consume a verified objective apply verification checkpoint and record explicit objective completion acceptance without caller-side ledger interpretation."
+      "capability": "mode_pack_runtime",
+      "relationship": "Direct external active Mode Pack tasks are now bound to the runtime-owned active snapshot identity captured at task.start and revalidated at task.run."
     },
     {
       "capability": "runtime_permission_enforcement",
-      "relationship": "The runtime requires explicit objective completion acceptance authorization and rejects stale or mismatched verification evidence before recording acceptance."
+      "relationship": "Rust denies stale active Mode Pack snapshot, missing mode, malformed provenance, or policy fingerprint mismatch before TaskRunning or side effects."
     },
     {
-      "capability": "agent_loop",
-      "relationship": "The Golden Journey gains a replay-safe route from verified objective apply evidence into accepted completion, rather than stopping at a verification route suggestion."
+      "capability": "headless_autonomous_development",
+      "relationship": "Headless callers can resume delayed external Mode Pack tasks without reconstructing active policy state or trusting stale caller-side evidence."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development with direct support for persistent_structured_ledger, agent_loop, and runtime_permission_enforcement.",
-      "new_capability": "A headless caller can provide objective_completion_acceptance_target to headless.continue_once and have Rust validate a verified M56.5 checkpoint, persist bounded acceptance evidence, and route the Golden Journey toward closure.",
-      "why_existing_functionality_is_insufficient": "M56.5 only emits accept_objective_completion_explicitly after hash verification. It does not consume that route, require explicit acceptance authorization, or record durable accepted objective completion evidence.",
-      "product_gap_if_skipped": "The arbitrary-repository Golden Journey can apply and verify a workspace edit but remains unable to finish from bounded runtime proof.",
-      "non_duplicative": "Distinct from M56.3 authorization/preflight, M56.4 apply, and M56.5 verification because this phase consumes the verified acceptance route and records completion acceptance.",
-      "no_new_rpc": "Yes. The implementation extends existing headless.continue_once params and routing; it adds no JSON-RPC method.",
-      "no_new_summary": "Yes. It adds no report, digest, history, verdict, readiness, inspection, preview, or dashboard surface.",
-      "runtime_behavior_change": "Rust validates objective completion acceptance authorization, current progress, M56.5 verification checkpoint identity, route kind, status, hashes, and replay fingerprint before recording bounded acceptance evidence.",
-      "headless_autonomous_contribution": "The scheduled controller can continue from verified workspace mutation to accepted objective completion without manually reading ledger details or file content.",
-      "milestone_progress": "This closes the acceptance gap after M56.5 verification and brings M56 close to milestone closeout or one final distinct closure step."
+      "strategic_capabilities": "Advances mode_pack_runtime with supporting runtime_permission_enforcement, persistent_structured_ledger, and headless_autonomous_development.",
+      "new_capability": "A task started under an active external Mode Pack can run only when the current active snapshot source, activation fingerprint, mode, and policy fingerprint still match the bounded task-start provenance.",
+      "why_existing_functionality_is_insufficient": "M21.1 revalidated live workspace Mode Pack files, but active replacement and rollback can change runtime-owned active snapshots without a live-file provenance model being sufficient.",
+      "product_gap_if_skipped": "A delayed external active Mode Pack task can be admitted under one active policy and later run after replacement or rollback without a point-of-use active-snapshot denial.",
+      "non_duplicative": "Distinct from M56.4 apply, M56.5 verification, and M56.6 objective acceptance, and also distinct from M12.1 handoff target admission, M12.2 child provenance, M12.3 initial activation, and M21.1 live-file revalidation.",
+      "no_new_rpc": "Yes. The implementation extends existing task.start provenance and task.run admission; it adds no JSON-RPC method.",
+      "no_new_summary": "Yes. It adds no report, digest, history, readiness, verdict, preview, dashboard, or inspection surface.",
+      "runtime_behavior_change": "task.run compares captured external Mode Pack task provenance against the current active snapshot including source kind, source token, policy fingerprint, and activation fingerprint before TaskRunning.",
+      "headless_autonomous_contribution": "Controllers can safely run or reject external Mode Pack tasks after long delays using bounded runtime evidence instead of re-reading raw Mode Pack files.",
+      "milestone_progress": "Closes the direct active-snapshot execution-policy gap after local activation, active replacement, rollback, and remote candidate lifecycle work."
     },
     "questions": [
-      {
-        "id": "strategic_capabilities",
-        "question": "Which strategic capabilities does this phase advance?"
-      },
-      {
-        "id": "new_capability",
-        "question": "What new user-visible, operator-visible, or runtime capability does it add?"
-      },
-      {
-        "id": "why_existing_functionality_is_insufficient",
-        "question": "Why can existing functionality not substitute for this work?"
-      },
-      {
-        "id": "product_gap_if_skipped",
-        "question": "What concrete product gap remains if this is not implemented?"
-      },
-      {
-        "id": "non_duplicative",
-        "question": "Is this semantically distinct from the previous three phases?"
-      },
-      {
-        "id": "no_new_rpc",
-        "question": "Can this be done without adding a new RPC?"
-      },
-      {
-        "id": "no_new_summary",
-        "question": "Can this be done without adding a new summary surface?"
-      },
-      {
-        "id": "runtime_behavior_change",
-        "question": "What runtime or development-control behavior actually changes?"
-      },
-      {
-        "id": "headless_autonomous_contribution",
-        "question": "How does this help headless autonomous development?"
-      },
-      {
-        "id": "milestone_progress",
-        "question": "How does this move the milestone toward completion?"
-      }
+      {"id": "strategic_capabilities", "question": "Which strategic capabilities does this phase advance?"},
+      {"id": "new_capability", "question": "What new user-visible, operator-visible, or runtime capability does it add?"},
+      {"id": "why_existing_functionality_is_insufficient", "question": "Why can existing functionality not substitute for this work?"},
+      {"id": "product_gap_if_skipped", "question": "What concrete product gap remains if this is not implemented?"},
+      {"id": "non_duplicative", "question": "Is this semantically distinct from the previous three phases?"},
+      {"id": "no_new_rpc", "question": "Can this be done without adding a new RPC?"},
+      {"id": "no_new_summary", "question": "Can this be done without adding a new summary surface?"},
+      {"id": "runtime_behavior_change", "question": "What runtime or development-control behavior actually changes?"},
+      {"id": "headless_autonomous_contribution", "question": "How does this help headless autonomous development?"},
+      {"id": "milestone_progress", "question": "How does this move the milestone toward completion?"}
     ]
   },
   "review_value_gate": {
@@ -85,77 +55,76 @@
       "report_only",
       "inspection_only_without_execution",
       "new_json_rpc_method",
-      "caller_owned_completion_as_substitute",
+      "live_file_revalidation_as_substitute_for_active_snapshot_binding",
+      "child_provenance_only_as_substitute_for_direct_task_binding",
       "vsix_owned_policy",
-      "automatic_completion_without_explicit_authorization",
-      "raw_prompt_provider_response_file_content_diff_stdout_stderr_command_environment_path_token_or_secret_exposure",
+      "raw_modepack_prompt_provider_file_command_environment_or_secret_exposure",
       "behavior_tests_missing"
     ]
   },
   "exit_criteria": [
-    "headless.continue_once accepts a bounded objective_completion_acceptance_target for accept_objective_completion_explicitly routes",
-    "Rust validates the M56.5 verification checkpoint decision id, journey/session/drive/task/run/proposal/apply ids, operation/status labels, path/apply/current-target hashes, verification status, route kind, and verification fingerprint",
-    "Missing authorization, stale progress, mismatch evidence, non-verified status, and conflicting replay fail before acceptance mutation",
-    "Successful acceptance writes bounded completion acceptance checkpoint and HeadlessContinuationDecisionRecorded evidence",
-    "Exact replay returns the same bounded decision without duplicate ledger events or checkpoint mutation",
-    "Ledger/checkpoint/RPC payloads exclude raw prompts, provider responses, file content, diffs, stdout/stderr, commands, environment, raw requests, raw ledger payloads, absolute/canonical paths, secrets, and raw tokens"
+    "task.start records bounded external_modepack_task_provenance with active snapshot source kind, source token, policy fingerprint, and activation fingerprint when an external mode resolves from active Mode Pack state",
+    "task.run accepts matching active external Mode Pack provenance and proceeds through the existing task execution path",
+    "task.run denies stale active snapshot, missing mode, malformed provenance, replacement, rollback, or activation/policy fingerprint mismatch before TaskRunning",
+    "denial evidence is duplicate-safe on replay and excludes raw Mode Pack JSON, prompts, provider responses, file content, commands, outputs, environment values, absolute paths, canonical paths, and secrets",
+    "built-in mode tasks and existing live-workspace external Mode Pack revalidation continue to pass"
   ],
   "behavior_evidence": [
-    "Rust behavior test headless_continue_applies_objective_proposal_after_authorization_preflight_and_replays covers objective completion acceptance success, authorization denial, bounded checkpointing, and duplicate-free replay",
-    "cargo check --workspace validates protocol/runtime/store integration for objective completion acceptance target and checkpoint types",
-    "VSIX protocol tests accept bounded objective completion acceptance params and reject malformed or raw-data-bearing payloads"
+    "Rust tests cover active external Mode Pack task.run success for a remote active candidate snapshot",
+    "Rust tests cover stale active snapshot denial after active remote replacement before TaskRunning",
+    "Existing Rust tests continue to cover live workspace Mode Pack deletion/change/malformed denial and built-in mode compatibility",
+    "cargo check --workspace validates protocol/runtime/store integration",
+    "pnpm guard:phase-value validates current and archived manifest metadata"
   ],
   "product_completion_gate": {
     "required": true,
     "completion_scope": "phase",
     "product_completion_claim": true,
     "accepted_capability": [
-      "Runtime-owned objective completion acceptance route"
+      "Active Mode Pack task-run policy snapshot binding"
     ],
     "behavior_evidence": [
-      "cargo test -p brownie-runtime headless_continue_applies_objective_proposal_after_authorization_preflight_and_replays",
-      "pnpm --filter brownie-vsix test"
+      "cargo test -p brownie-runtime modepack_replace_active_consumes_approved_remote_candidate_admits_update_and_replays",
+      "cargo test -p brownie-runtime task_run_rejects_deleted_external_modepack_before_task_running",
+      "cargo test -p brownie-runtime task_run_rejects_changed_external_modepack_before_task_running"
     ],
     "safety_boundary": [
-      "uses existing M56.5 objective apply verification checkpoint evidence",
-      "requires explicit objective completion acceptance authorization",
-      "stores bounded hashes, identifiers, route, status, and sequence metadata only",
-      "keeps VSIX policy-free"
+      "denies before TaskRunning and before provider/tool/workspace/verifier/child side effects",
+      "stores bounded identifiers and SHA-256 fingerprints only",
+      "keeps VSIX policy-free",
+      "does not add a new RPC or wrapper surface"
     ],
     "non_goals": [
-      "no new JSON-RPC method",
+      "no Mode Pack fetch, approval, replacement, rollback, or route-drive expansion",
       "no workspace mutation",
-      "no proposal/apply/verification/recovery execution",
-      "no shell, git, network, provider, service, scheduler, or daemon execution",
-      "no report/readiness/history/digest/inspection wrapper",
-      "no broad runtime modularization"
+      "no provider, shell, git, network, process, test, service, scheduler, or daemon execution expansion",
+      "no report/readiness/history/digest/inspection wrapper"
     ],
     "rejected_alternatives": [
-      "caller-side ledger interpretation after M56.5 verification",
-      "direct acceptance without verified checkpoint evidence",
-      "adding a completion report or inspection endpoint",
-      "persisting raw file content, diffs, raw requests, commands, paths, or environment in acceptance evidence"
+      "treating live workspace provenance revalidation as sufficient for active snapshots",
+      "adding an active Mode Pack task status report",
+      "moving policy checks into the VSIX",
+      "persisting raw Mode Pack JSON or raw task content"
     ],
     "technical_debt": [
-      "A following phase_complete assessment must decide whether M56 can close or whether one distinct closure route remains.",
-      "Runtime lib.rs remains large and should be split only by a later behavior-preserving MOVE-only refactor."
+      "Runtime lib.rs remains large and should only be split by a behavior-preserving refactor.",
+      "Future closeout should decide whether M12 remains open after this active execution-policy hardening slice."
     ],
     "next_capability_rationale": [
-      "If objective completion acceptance supplies terminal Golden Journey closure, proceed to M56 closeout; otherwise plan one distinct closure phase."
+      "After M12.4, perform phase completion assessment and likely M12 closeout unless a distinct active Mode Pack execution-policy gap remains."
     ]
   },
   "guard_engine_change_review": {
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "M56.6 updates current and archived phase-value manifests for the objective completion acceptance route. Review must confirm guard enforcement is not weakened and no wrapper/report/readiness surface was added.",
+    "review_intent": "M12.4 updates current and archived phase-value manifests for active Mode Pack task-run policy snapshot binding. Review must confirm guard enforcement is not weakened and no wrapper/report/readiness surface was added.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m56.5.json",
-      "docs/architecture/phase-value-manifest.m56.6.json"
+      "docs/architecture/phase-value-manifest.m12.4.json"
     ],
     "required_checks": [
-      "cargo test -p brownie-runtime headless_continue_applies_objective_proposal_after_authorization_preflight_and_replays",
+      "cargo test -p brownie-runtime modepack_replace_active_consumes_approved_remote_candidate_admits_update_and_replays",
       "pnpm guard:diagnostics",
       "pnpm guard:phase-value",
       "pnpm --filter brownie-vsix check"
