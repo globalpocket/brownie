@@ -13592,6 +13592,29 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: modepack_registry_update_selection_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.product_continuation_admission_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_admission_target cannot be combined with max_steps greater than 1",
+        );
+    }
+    if params.product_continuation_run_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
+    if params.product_continuation_admission_target.is_some()
+        && params.product_continuation_run_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: only one explicit product-continuation run-control target may be supplied",
+        );
+    }
     if params.modepack_selected_candidate_fetch_target.is_some() && max_steps > 1 {
         return error_response(
             id,
@@ -13646,7 +13669,27 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
+    if (params.product_continuation_admission_target.is_some()
+        || params.product_continuation_run_target.is_some())
+        && params.context_budget.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
+    }
     if headless_run_advance_has_explicit_modepack_target(&params)
+        && params.selected_index_context.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: selected_index_context is supported only for normal headless task continuation",
+        );
+    }
+    if (params.product_continuation_admission_target.is_some()
+        || params.product_continuation_run_target.is_some())
         && params.selected_index_context.is_some()
     {
         return error_response(
@@ -13736,6 +13779,14 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             ) {
                 return error_response(id, -32602, &message);
             }
+            if let Err(message) = validate_headless_run_product_continuation_replay_target(
+                &store,
+                checkpoint,
+                params.product_continuation_admission_target.as_ref(),
+                params.product_continuation_run_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
             let mut result = checkpoint.result.clone();
             result.replayed = true;
             return result_response(id, json!(result));
@@ -13818,6 +13869,30 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
             );
         }
+        if params.product_continuation_admission_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                checkpoint,
+                HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: product_continuation_admission_target requires persisted session route admit_product_continuation_task_explicitly",
+            );
+        }
+        if params.product_continuation_run_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                checkpoint,
+                HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: product_continuation_run_target requires persisted session route run_product_continuation_task_explicitly",
+            );
+        }
     } else if params.expected_session_sequence != 1 {
         return error_response(
             id,
@@ -13832,11 +13907,13 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
         || params
             .modepack_selected_approved_candidate_replacement_target
             .is_some()
+        || params.product_continuation_admission_target.is_some()
+        || params.product_continuation_run_target.is_some()
     {
         return error_response(
             id,
             -32602,
-            "invalid params: explicit modepack run-control target requires an existing session checkpoint",
+            "invalid params: explicit route run-control target requires an existing session checkpoint",
         );
     }
 
@@ -13896,6 +13973,12 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
     });
     if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
         continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
+    }
+    if let Some(target) = params.product_continuation_admission_target.clone() {
+        continue_params["product_continuation_admission_target"] = json!(target);
+    }
+    if let Some(target) = params.product_continuation_run_target.clone() {
+        continue_params["product_continuation_run_target"] = json!(target);
     }
     if let Some(target) = params.modepack_registry_update_selection_target.clone() {
         continue_params["modepack_registry_update_selection_target"] = json!(target);
@@ -14136,6 +14219,82 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         &replay_params,
         &fetch_checkpoint,
     )
+}
+
+fn validate_headless_run_product_continuation_replay_target(
+    store: &BrownieStore,
+    checkpoint: &HeadlessRunSessionCheckpoint,
+    admission_target: Option<&ProductContinuationAdmissionTarget>,
+    run_target: Option<&ProductContinuationRunTarget>,
+) -> Result<(), String> {
+    if admission_target.is_none() && run_target.is_none() {
+        return Ok(());
+    }
+    if admission_target.is_some() && run_target.is_some() {
+        return Err(
+            "invalid params: only one explicit product-continuation replay target may be supplied"
+                .to_string(),
+        );
+    }
+    let continuation_id = checkpoint
+        .result
+        .steps
+        .iter()
+        .find_map(|step| step.continuation_id.as_deref());
+    let Some(continuation_id) = continuation_id else {
+        return Err(
+            "invalid params: product-continuation replay checkpoint is missing continuation_id"
+                .to_string(),
+        );
+    };
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let mut replay_params = headless_run_replay_continue_once_params(checkpoint, continuation_id);
+    if let Some(target) = admission_target.cloned() {
+        replay_params.product_continuation_admission_target = Some(target);
+        let Some(replay) = headless_product_continuation_admission_decision_for_replay(
+            store,
+            &tasks,
+            continuation_id,
+        )?
+        else {
+            return Err(
+                "invalid params: product-continuation admission replay evidence is missing"
+                    .to_string(),
+            );
+        };
+        let current = headless_product_continuation_admission_request_fingerprint(&replay_params)
+            .map_err(|error| match error {
+            VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+            VerificationRecoveryAdmissionError::Internal(message) => message,
+        })?;
+        if replay.request_fingerprint != current {
+            return Err(
+                "invalid params: product_continuation_admission_target continuation request identity mismatch"
+                    .to_string(),
+            );
+        }
+    }
+    if let Some(target) = run_target.cloned() {
+        replay_params.product_continuation_run_target = Some(target);
+        let Some((_decision, request_fingerprint)) =
+            headless_product_continuation_run_decision_for_replay(store, &tasks, continuation_id)?
+        else {
+            return Err(
+                "invalid params: product-continuation run replay evidence is missing".to_string(),
+            );
+        };
+        let current = headless_product_continuation_run_request_fingerprint(&replay_params)?;
+        if request_fingerprint != current {
+            return Err(
+                "invalid params: product_continuation_run_target continuation request identity mismatch"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
 }
 
 fn validate_headless_run_selected_candidate_provenance_verification_replay_target(
@@ -20016,6 +20175,29 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: modepack_selected_approved_candidate_replacement_target cannot be combined with max_steps_per_advance greater than 1",
         );
     }
+    if params.product_continuation_admission_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_admission_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
+    if params.product_continuation_run_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_run_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
+    if params.product_continuation_admission_target.is_some()
+        && params.product_continuation_run_target.is_some()
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: only one explicit product-continuation drive target may be supplied",
+        );
+    }
     if let Err(message) =
         validate_headless_journey_route_resume(&params, max_advances, max_steps_per_advance)
     {
@@ -20042,6 +20224,16 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         return error_response(id, -32602, message);
     }
     if headless_run_drive_has_explicit_modepack_target(&params) && params.context_budget.is_some() {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: context_budget is supported only for normal headless task continuation",
+        );
+    }
+    if (params.product_continuation_admission_target.is_some()
+        || params.product_continuation_run_target.is_some())
+        && params.context_budget.is_some()
+    {
         return error_response(
             id,
             -32602,
@@ -20155,6 +20347,14 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                             .as_ref(),
                     )
                 {
+                    return error_response(id, -32602, &message);
+                }
+                if let Err(message) = validate_headless_run_product_continuation_replay_target(
+                    &store,
+                    &replay_checkpoint,
+                    params.product_continuation_admission_target.as_ref(),
+                    params.product_continuation_run_target.as_ref(),
+                ) {
                     return error_response(id, -32602, &message);
                 }
             }
@@ -20356,6 +20556,30 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 id,
                 -32602,
                 "invalid params: modepack_registry_update_selection_target requires a persisted progress overview route boundary",
+            );
+        }
+        if params.product_continuation_admission_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: product_continuation_admission_target requires persisted session route admit_product_continuation_task_explicitly",
+            );
+        }
+        if params.product_continuation_run_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: product_continuation_run_target requires persisted session route run_product_continuation_task_explicitly",
             );
         }
     }
@@ -20617,6 +20841,12 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             }
             if let Some(target) = params.modepack_registry_update_selection_target.clone() {
                 advance_params["modepack_registry_update_selection_target"] = json!(target);
+            }
+            if let Some(target) = params.product_continuation_admission_target.clone() {
+                advance_params["product_continuation_admission_target"] = json!(target);
+            }
+            if let Some(target) = params.product_continuation_run_target.clone() {
+                advance_params["product_continuation_run_target"] = json!(target);
             }
             if let Some(target) = params
                 .modepack_selected_candidate_provenance_verification_target
@@ -84827,6 +85057,265 @@ mod tests {
         ] {
             assert!(!serialized.contains(&format!(r#"\"{forbidden}\""#)));
         }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_advances_product_continuation_routes_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let source_start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"M58.1 source task","mode_id":"implementer"}}"#,
+        );
+        assert!(source_start.error.is_none(), "{:?}", source_start.error);
+        let source_task_id = source_start.result.expect("source start result")["task_id"]
+            .as_str()
+            .expect("source task id")
+            .to_string();
+        let source = store
+            .tasks()
+            .update_task_status(
+                &source_task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete source");
+        let decision = HeadlessRunProductCompletionDecision {
+            decision_id: "m58-1-product-decision".to_string(),
+            task_id: source.task_id.clone(),
+            run_id: source.run_id.clone(),
+            acceptance_id: "m58-1-acceptance".to_string(),
+            status: "continue_development".to_string(),
+            next_action: "plan_next_phase".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "headless_run_drive_product_continuation_route_step"
+                .to_string(),
+            accepted_completion_fingerprint: fp('a'),
+            terminal_completion_fingerprint: fp('b'),
+            completion_closure_fingerprint: fp('c'),
+            product_evidence_fingerprint: fp('d'),
+            decision_fingerprint: fp('e'),
+            validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                .iter()
+                .map(|category| category.to_string())
+                .collect(),
+            derived_product_evidence_matrix_fingerprint: None,
+            behavior_evidence_count: 3,
+            rejected_alternatives_count: 2,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: Some("run_next_phase".to_string()),
+            milestone_exit_rationale: None,
+            technical_debt_carry_forward: None,
+            replayed: false,
+        };
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source,
+                LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                Some(headless_product_completion_decision_payload(&decision)),
+            )
+            .expect("append decision");
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let progress_fingerprint = progress["source_fingerprint"]
+            .as_str()
+            .expect("progress fingerprint")
+            .to_string();
+        let aggregate_sequence = progress["aggregate_sequence"]
+            .as_u64()
+            .expect("aggregate sequence");
+        let seed_checkpoint = HeadlessRunSessionCheckpoint {
+            session_id: "m58.product.drive".to_string(),
+            advance_id: "m58.product.drive.seed".to_string(),
+            session_sequence: 1,
+            result: HeadlessRunAdvanceResult {
+                status: HeadlessContinueOnceStatus::NoEligibleTask,
+                session_id: "m58.product.drive".to_string(),
+                advance_id: "m58.product.drive.seed".to_string(),
+                session_sequence: 1,
+                replayed: false,
+                start_progress: HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: progress_fingerprint.clone(),
+                    aggregate_sequence,
+                },
+                post_progress: Some(HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: progress_fingerprint.clone(),
+                    aggregate_sequence,
+                }),
+                max_steps: 1,
+                step_count: 0,
+                executed_count: 0,
+                replayed_count: 0,
+                stop_reason: "seeded_product_continuation_boundary".to_string(),
+                checkpoint_fingerprint: fp('f'),
+                terminal_completion_evidence: None,
+                next_route: Some(HeadlessContinueRoute {
+                    kind: HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly,
+                    reason: "Seeded product-continuation boundary".to_string(),
+                    task_id: Some(decision.task_id.clone()),
+                    run_id: Some(decision.run_id.clone()),
+                    proposal_id: None,
+                    apply_id: None,
+                    failure_fingerprint: None,
+                    apply_fingerprint: None,
+                    progress_fingerprint: Some(progress_fingerprint.clone()),
+                    aggregate_sequence: Some(aggregate_sequence),
+                    next_action: "admit_product_continuation_task_explicitly".to_string(),
+                }),
+                steps: Vec::new(),
+                next_action: "admit_product_continuation_task_explicitly".to_string(),
+            },
+        };
+        store
+            .tasks()
+            .write_headless_run_session_checkpoint(&seed_checkpoint)
+            .expect("write seed checkpoint");
+
+        let product_source = json!({
+            "source_task_id": decision.task_id,
+            "source_run_id": decision.run_id,
+            "source_decision_id": decision.decision_id,
+            "expected_decision_fingerprint": decision.decision_fingerprint,
+            "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+            "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+            "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
+            "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+            "authorize_product_continuation": true,
+        });
+        let admit_drive_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m58.product.drive",
+                "drive_id": "m58.product.drive.admit",
+                "expected_start_session_sequence": 1,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "product_continuation_admission_target": {
+                    "authorize_product_continuation_admission": true,
+                    "continuation_goal": "Run the next product continuation task through drive",
+                    "continuation_mode_id": "implementer",
+                    "product_continuation_source": product_source,
+                }
+            }
+        });
+        let admit_drive = parse_line(&admit_drive_request.to_string());
+        assert!(admit_drive.error.is_none(), "{:?}", admit_drive.error);
+        let admit_drive_result = admit_drive.result.expect("admit drive result");
+        assert_eq!(admit_drive_result["advance_count"], 1);
+        assert_eq!(admit_drive_result["advances"][0]["session_sequence"], 2);
+        assert_eq!(
+            admit_drive_result["advances"][0]["steps"][0]["next_action"],
+            "run_product_continuation_task_explicitly"
+        );
+        let admission = &admit_drive_result["advances"][0]["steps"][0];
+        let continuation_task_id = admission["selected_task_id"]
+            .as_str()
+            .expect("continuation task")
+            .to_string();
+        let continuation_run_id = admission["selected_run_id"]
+            .as_str()
+            .expect("continuation run")
+            .to_string();
+        assert_eq!(
+            admit_drive_result["next_route"]["kind"],
+            "run_product_continuation_task_explicitly"
+        );
+        let admitted_events = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("admitted events");
+        assert!(admitted_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        let admit_replay = parse_line(&admit_drive_request.to_string());
+        assert!(admit_replay.error.is_none(), "{:?}", admit_replay.error);
+        assert_eq!(admit_replay.result.expect("admit replay")["replayed"], true);
+        let events_after_admit_replay = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("events after admit replay");
+        assert_eq!(
+            events_after_admit_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+
+        let run_drive_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m58.product.drive",
+                "drive_id": "m58.product.drive.run",
+                "expected_start_session_sequence": 2,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "product_continuation_run_target": {
+                    "authorize_product_continuation_run": true,
+                    "continuation_task_id": continuation_task_id,
+                    "continuation_run_id": continuation_run_id,
+                    "source_task_id": decision.task_id,
+                    "source_run_id": decision.run_id,
+                    "source_decision_id": decision.decision_id,
+                    "expected_decision_fingerprint": decision.decision_fingerprint,
+                    "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+                    "expected_admission_route_kind": "run_product_continuation_task_explicitly"
+                }
+            }
+        });
+        let run_drive = parse_line(&run_drive_request.to_string());
+        assert!(run_drive.error.is_none(), "{:?}", run_drive.error);
+        let run_drive_result = run_drive.result.expect("run drive result");
+        assert_eq!(run_drive_result["advance_count"], 1);
+        assert_eq!(run_drive_result["advances"][0]["status"], "task_executed");
+        assert_eq!(
+            run_drive_result["advances"][0]["steps"][0]["selected_task_id"],
+            continuation_task_id
+        );
+        let run_events = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("run events");
+        assert_eq!(
+            run_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+
+        let mut mismatched_replay = admit_drive_request.clone();
+        mismatched_replay["id"] = json!(5);
+        mismatched_replay["params"]["product_continuation_admission_target"]["continuation_goal"] =
+            json!("conflicting drive replay goal");
+        let mismatch = parse_line(&mismatched_replay.to_string());
+        assert!(mismatch.result.is_none());
+        assert!(mismatch
+            .error
+            .expect("mismatched replay error")
+            .message
+            .contains("request identity mismatch"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
