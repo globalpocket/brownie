@@ -1006,3 +1006,21 @@ conflicting replay target fails closed instead of silently reusing stale drive
 evidence. Admission remains non-running, run execution still delegates to
 `task.run`, and outputs stay limited to bounded ids, hashes, route metadata,
 progress fingerprints, and task-run evidence.
+
+M58.2 moves the next slice of that product-continuation drive control under
+Rust runtime authority. `headless.run.advance` and `headless.run.drive` now
+accept one bounded `product_continuation_derived_target` that authorizes the
+runtime to derive either an admission target or a run target from the current
+persisted product-continuation route. Admission derivation requires the
+checkpoint route `admit_product_continuation_task_explicitly` plus a bounded
+continuation goal, reads the latest current product-completion decision evidence,
+reconstructs the existing M57 admission target, and delegates to
+`headless.continue_once`. Run derivation requires route
+`run_product_continuation_task_explicitly`, validates the referenced
+continuation task/run and product-continuation provenance, reconstructs the
+existing M57 run target, and delegates to `task.run` through the same
+continuation path. Replay validates the derived request identity against the
+bounded subordinate admission/run evidence before returning persisted drive or
+advance results. The runtime still executes only one derived product-continuation
+route step per advance, adds no JSON-RPC method or report surface, and persists
+only bounded ids, route data, and SHA-256 fingerprints.

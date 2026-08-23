@@ -733,6 +733,7 @@ export interface HeadlessRunAdvanceParams {
   selected_index_context?: TaskRunSelectedIndexContext | null;
   product_continuation_admission_target?: ProductContinuationAdmissionTarget | null;
   product_continuation_run_target?: ProductContinuationRunTarget | null;
+  product_continuation_derived_target?: ProductContinuationDerivedTarget | null;
   expected_progress_fingerprint?: string | null;
   expected_aggregate_sequence?: number | null;
   modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
@@ -752,6 +753,7 @@ export interface HeadlessRunDriveParams {
   context_budget?: TaskRunContextBudget | null;
   product_continuation_admission_target?: ProductContinuationAdmissionTarget | null;
   product_continuation_run_target?: ProductContinuationRunTarget | null;
+  product_continuation_derived_target?: ProductContinuationDerivedTarget | null;
   authorize_completion_finalization?: boolean | null;
   expected_completion_closure_fingerprint?: string | null;
   product_evidence_derivation?: HeadlessRunProductEvidenceDerivationRequest | null;
@@ -974,6 +976,12 @@ export interface ProductContinuationRunTarget {
   expected_product_evidence_fingerprint: string;
   expected_admission_route_kind: 'run_product_continuation_task_explicitly';
   expected_admission_request_fingerprint?: string | null;
+}
+
+export interface ProductContinuationDerivedTarget {
+  authorize_product_continuation_target_derivation: true;
+  continuation_goal?: string | null;
+  continuation_mode_id?: string | null;
 }
 
 export interface LlmProviderFailureRetryRunTarget {
@@ -6634,7 +6642,7 @@ function isModePackSelectedActiveRollbackTarget(value: unknown): value is ModePa
 export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRunAdvanceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'context_budget', 'selected_index_context', 'product_continuation_admission_target', 'product_continuation_run_target', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'context_budget', 'selected_index_context', 'product_continuation_admission_target', 'product_continuation_run_target', 'product_continuation_derived_target', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.advance_id === undefined || value.advance_id === null || isHeadlessRunId(value.advance_id)) &&
@@ -6645,6 +6653,7 @@ export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRun
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
     (value.product_continuation_admission_target === undefined || value.product_continuation_admission_target === null || isProductContinuationAdmissionTarget(value.product_continuation_admission_target)) &&
     (value.product_continuation_run_target === undefined || value.product_continuation_run_target === null || isProductContinuationRunTarget(value.product_continuation_run_target)) &&
+    (value.product_continuation_derived_target === undefined || value.product_continuation_derived_target === null || isProductContinuationDerivedTarget(value.product_continuation_derived_target)) &&
     (value.expected_progress_fingerprint === undefined || value.expected_progress_fingerprint === null || (typeof value.expected_progress_fingerprint === 'string' && isSha256Fingerprint(value.expected_progress_fingerprint))) &&
     (value.expected_aggregate_sequence === undefined || value.expected_aggregate_sequence === null || isNonNegativeInteger(value.expected_aggregate_sequence)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
@@ -6671,7 +6680,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     : 0;
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'product_continuation_admission_target', 'product_continuation_run_target', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'product_evidence_derivation', 'product_completion_decision', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume', 'journey_closure', 'journey_execution']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'drive_id', 'expected_start_session_sequence', 'max_advances', 'max_steps_per_advance', 'context_budget', 'product_continuation_admission_target', 'product_continuation_run_target', 'product_continuation_derived_target', 'authorize_completion_finalization', 'expected_completion_closure_fingerprint', 'product_evidence_derivation', 'product_completion_decision', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'journey_admission', 'journey_route_resume', 'journey_closure', 'journey_execution']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.drive_id === undefined || value.drive_id === null || isHeadlessRunId(value.drive_id)) &&
@@ -6686,6 +6695,7 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.product_continuation_admission_target === undefined || value.product_continuation_admission_target === null || isProductContinuationAdmissionTarget(value.product_continuation_admission_target)) &&
     (value.product_continuation_run_target === undefined || value.product_continuation_run_target === null || isProductContinuationRunTarget(value.product_continuation_run_target)) &&
+    (value.product_continuation_derived_target === undefined || value.product_continuation_derived_target === null || isProductContinuationDerivedTarget(value.product_continuation_derived_target)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
@@ -7056,6 +7066,20 @@ function isVerificationRecoveryRetryRunTarget(value: unknown): value is Verifica
     typeof value.expected_apply_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_apply_fingerprint) &&
     value.authorize_verification_retry_run === true
+  );
+}
+
+function isProductContinuationDerivedTarget(value: unknown): value is ProductContinuationDerivedTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_product_continuation_target_derivation',
+      'continuation_goal',
+      'continuation_mode_id',
+    ]) &&
+    value.authorize_product_continuation_target_derivation === true &&
+    (value.continuation_goal === undefined || value.continuation_goal === null || (typeof value.continuation_goal === 'string' && value.continuation_goal.trim().length > 0 && value.continuation_goal.length <= 500)) &&
+    (value.continuation_mode_id === undefined || value.continuation_mode_id === null || (typeof value.continuation_mode_id === 'string' && value.continuation_mode_id.trim().length > 0 && value.continuation_mode_id.length <= 96))
   );
 }
 

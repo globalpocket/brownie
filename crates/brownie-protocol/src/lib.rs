@@ -924,6 +924,16 @@ pub struct ProductContinuationRunTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductContinuationDerivedTarget {
+    pub authorize_product_continuation_target_derivation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_goal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -1271,6 +1281,8 @@ pub struct HeadlessRunAdvanceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_derived_target: Option<ProductContinuationDerivedTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_aggregate_sequence: Option<u64>,
@@ -1307,6 +1319,8 @@ pub struct HeadlessRunDriveParams {
     pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_derived_target: Option<ProductContinuationDerivedTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub authorize_completion_finalization: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
