@@ -928,6 +928,47 @@ impl BrownieStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_objective_completion_acceptance_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessObjectiveCompletionAcceptanceCheckpoint>> {
+        let path = self.headless_objective_completion_acceptance_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_objective_completion_acceptance_checkpoint(
+        &self,
+        checkpoint: &HeadlessObjectiveCompletionAcceptanceCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path = self.headless_objective_completion_acceptance_path(&checkpoint.continuation_id);
+        if let Some(existing) = self
+            .read_headless_objective_completion_acceptance_checkpoint(&checkpoint.continuation_id)?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless objective completion acceptance checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless objective completion acceptance checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn read_headless_modepack_selected_candidate_replacement_checkpoint(
         &self,
         continuation_id: &str,
@@ -1535,6 +1576,15 @@ impl BrownieStore {
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!(
                 "objective-apply-verification-{continuation_id}.json"
+            ))
+    }
+
+    fn headless_objective_completion_acceptance_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!(
+                "objective-completion-acceptance-{continuation_id}.json"
             ))
     }
 
@@ -2184,6 +2234,37 @@ pub struct HeadlessObjectiveApplyVerificationCheckpoint {
     pub expected_post_write_sha256: String,
     pub current_target_sha256: String,
     pub verification_status: String,
+    pub route_kind: HeadlessContinueRouteKind,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessObjectiveCompletionAcceptanceCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+    pub objective_apply_verification_continuation_id: String,
+    pub expected_objective_apply_verification_decision_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub proposal_id: String,
+    pub apply_id: String,
+    pub expected_path_fingerprint: String,
+    pub expected_apply_fingerprint: String,
+    pub expected_post_write_sha256: String,
+    pub expected_current_target_sha256: String,
+    pub expected_verification_fingerprint: String,
+    pub acceptance_status: String,
     pub route_kind: HeadlessContinueRouteKind,
     pub next_action: String,
 }

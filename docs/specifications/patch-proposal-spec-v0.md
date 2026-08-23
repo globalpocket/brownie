@@ -122,6 +122,22 @@ routes to `accept_objective_completion_explicitly`; mismatch routes to
 `start_verification_recovery_explicitly`. Verification performs no additional
 workspace mutation.
 
+## M56.6 objective completion acceptance
+
+An M56.5 `accept_objective_completion_explicitly` route may be consumed by
+`headless.continue_once` with `objective_completion_acceptance_target`. The
+target must bind the objective apply verification continuation, decision id,
+journey/session/drive ids, source task/run/proposal/apply ids, expected
+`replace_file` operation, expected `Applied` status, consumed authorization,
+path/apply/post-write/current-target SHA-256 fingerprints, expected `verified`
+status, the `accept_objective_completion_explicitly` route kind, and the
+verification request fingerprint. The runtime must verify this evidence against
+the persisted M56.5 checkpoint and current progress before recording bounded
+objective completion acceptance evidence. Replay must not duplicate acceptance
+events or checkpoints. This route performs no workspace mutation, proposal
+operation, verification execution, shell/git/network/provider/service work, or
+summary/report/inspection output.
+
 ## Phase 3.1 validation and diff preview
 
 Phase 3.1 keeps the Phase 3.0 dry-run contract: `workspace.write` proposals never write workspace files and never apply patches. A proposal is inspected against the current workspace and receives `validation_status` (`Valid`, `Invalid`, or `Blocked`) plus optional `validation_reason`.

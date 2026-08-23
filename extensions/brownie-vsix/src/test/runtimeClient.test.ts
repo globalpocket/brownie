@@ -1381,6 +1381,53 @@ describe('protocol validation', () => {
         raw_file_content: 'secret body',
       },
     })).toBe(false);
+    const objectiveCompletionAcceptanceTarget = {
+      authorize_objective_completion_acceptance: true,
+      objective_apply_verification_continuation_id: 'm56.apply.verify',
+      expected_objective_apply_verification_decision_id: `headless_decision_${'b'.repeat(32)}`,
+      journey_id: objectiveProposalAuthorizationPreflightTarget.journey_id,
+      session_id: objectiveProposalAuthorizationPreflightTarget.session_id,
+      source_drive_id: objectiveProposalAuthorizationPreflightTarget.source_drive_id,
+      expected_task_id: objectiveProposalAuthorizationPreflightTarget.expected_task_id,
+      expected_run_id: objectiveProposalAuthorizationPreflightTarget.expected_run_id,
+      expected_proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+      expected_apply_id: 'apply_objective_1',
+      expected_operation: 'replace_file',
+      expected_apply_status: 'Applied',
+      expected_authorization_consumed: true,
+      expected_path_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_path_fingerprint,
+      expected_apply_fingerprint: `sha256:${'9'.repeat(64)}`,
+      expected_post_write_sha256: `sha256:${'a'.repeat(64)}`,
+      expected_current_target_sha256: `sha256:${'a'.repeat(64)}`,
+      expected_verification_status: 'verified',
+      expected_verification_route_kind: 'accept_objective_completion_explicitly',
+      expected_verification_fingerprint: `sha256:${'b'.repeat(64)}`,
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_completion_acceptance_target: objectiveCompletionAcceptanceTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_completion_acceptance_target: {
+        ...objectiveCompletionAcceptanceTarget,
+        expected_verification_status: 'mismatch',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_completion_acceptance_target: {
+        ...objectiveCompletionAcceptanceTarget,
+        expected_verification_fingerprint: 'not-a-fingerprint',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_completion_acceptance_target: {
+        ...objectiveCompletionAcceptanceTarget,
+        file_content: 'raw content alias',
+      },
+    })).toBe(false);
     const modePackSelectedCandidateFetchTarget = {
       authorize_selected_candidate_fetch: true,
       selection_id: 'modepack_registry_selection_123',

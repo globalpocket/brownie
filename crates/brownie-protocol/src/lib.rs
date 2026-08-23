@@ -1119,6 +1119,31 @@ pub struct ObjectiveApplyVerificationTarget {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct ObjectiveCompletionAcceptanceTarget {
+    pub authorize_objective_completion_acceptance: bool,
+    pub objective_apply_verification_continuation_id: String,
+    pub expected_objective_apply_verification_decision_id: String,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub expected_task_id: String,
+    pub expected_run_id: String,
+    pub expected_proposal_id: String,
+    pub expected_apply_id: String,
+    pub expected_operation: String,
+    pub expected_apply_status: String,
+    pub expected_authorization_consumed: bool,
+    pub expected_path_fingerprint: String,
+    pub expected_apply_fingerprint: String,
+    pub expected_post_write_sha256: String,
+    pub expected_current_target_sha256: String,
+    pub expected_verification_status: String,
+    pub expected_verification_route_kind: HeadlessContinueRouteKind,
+    pub expected_verification_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct HeadlessContinueOnceParams {
     pub authorize: bool,
     pub expected_progress_fingerprint: String,
@@ -1178,6 +1203,8 @@ pub struct HeadlessContinueOnceParams {
     pub objective_proposal_apply_target: Option<ObjectiveProposalApplyTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_apply_verification_target: Option<ObjectiveApplyVerificationTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_completion_acceptance_target: Option<ObjectiveCompletionAcceptanceTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
