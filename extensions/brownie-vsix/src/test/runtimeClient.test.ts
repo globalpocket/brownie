@@ -1287,6 +1287,57 @@ describe('protocol validation', () => {
         authorization_token: 'raw-token',
       },
     })).toBe(false);
+    const objectiveProposalApplyTarget = {
+      authorize_objective_proposal_apply: true,
+      authorization_preflight_continuation_id: 'm56.apply.auth.preflight',
+      expected_authorization_preflight_decision_id: 'headless_decision_objective_apply_auth',
+      journey_id: objectiveProposalAuthorizationPreflightTarget.journey_id,
+      session_id: objectiveProposalAuthorizationPreflightTarget.session_id,
+      source_drive_id: objectiveProposalAuthorizationPreflightTarget.source_drive_id,
+      expected_journey_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_journey_fingerprint,
+      expected_candidate_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_candidate_fingerprint,
+      expected_objective_context_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_objective_context_fingerprint,
+      expected_selected_context_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_selected_context_fingerprint,
+      expected_task_id: objectiveProposalAuthorizationPreflightTarget.expected_task_id,
+      expected_run_id: objectiveProposalAuthorizationPreflightTarget.expected_run_id,
+      expected_proposal_id: objectiveProposalAuthorizationPreflightTarget.expected_proposal_id,
+      expected_source_event_id: objectiveProposalAuthorizationPreflightTarget.expected_source_event_id,
+      expected_source_event_kind: objectiveProposalAuthorizationPreflightTarget.expected_source_event_kind,
+      expected_operation: objectiveProposalAuthorizationPreflightTarget.expected_operation,
+      expected_path_fingerprint: objectiveProposalAuthorizationPreflightTarget.expected_path_fingerprint,
+      expected_validation_status: 'Valid',
+      expected_approval_status: 'Approved',
+      expected_authorization_preflight_fingerprint: `sha256:${'7'.repeat(64)}`,
+      expected_preflight_snapshot_id: 'snapshot_objective_1',
+      expected_apply_plan_id: 'apply_plan_objective_1',
+      expected_target_sha256: `sha256:${'8'.repeat(64)}`,
+      replacement_content: 'bounded replacement content',
+    };
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_apply_target: objectiveProposalApplyTarget,
+    })).toBe(true);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_apply_target: {
+        ...objectiveProposalApplyTarget,
+        authorize_objective_proposal_apply: false,
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_apply_target: {
+        ...objectiveProposalApplyTarget,
+        expected_approval_status: 'Pending',
+      },
+    })).toBe(false);
+    expect(isHeadlessContinueOnceParams({
+      ...headlessParams,
+      objective_proposal_apply_target: {
+        ...objectiveProposalApplyTarget,
+        file_content: 'raw content alias',
+      },
+    })).toBe(false);
     const modePackSelectedCandidateFetchTarget = {
       authorize_selected_candidate_fetch: true,
       selection_id: 'modepack_registry_selection_123',

@@ -18,9 +18,9 @@ use brownie_protocol::{
     ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
     ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
     ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
-    PatchApplyRecoveryProvenance, ProductContinuationProvenance, RecoveryCycleChildProvenance,
-    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    PatchApplyRecoveryProvenance, ProductContinuationProvenance, ProposalApplyResult,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -845,6 +845,47 @@ impl BrownieStore {
         write_file_atomically(&path, body.as_bytes())
     }
 
+    pub fn read_headless_objective_proposal_apply_checkpoint(
+        &self,
+        continuation_id: &str,
+    ) -> Result<Option<HeadlessObjectiveProposalApplyCheckpoint>> {
+        let path = self.headless_objective_proposal_apply_path(continuation_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_objective_proposal_apply_checkpoint(
+        &self,
+        checkpoint: &HeadlessObjectiveProposalApplyCheckpoint,
+    ) -> Result<()> {
+        let root = self
+            .workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR);
+        fs::create_dir_all(&root)
+            .with_context(|| format!("failed to create {}", root.display()))?;
+        let path = self.headless_objective_proposal_apply_path(&checkpoint.continuation_id);
+        if let Some(existing) =
+            self.read_headless_objective_proposal_apply_checkpoint(&checkpoint.continuation_id)?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless objective proposal apply checkpoint for {}",
+                checkpoint.continuation_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless objective proposal apply checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn read_headless_modepack_selected_candidate_replacement_checkpoint(
         &self,
         continuation_id: &str,
@@ -1439,6 +1480,13 @@ impl BrownieStore {
             ))
     }
 
+    fn headless_objective_proposal_apply_path(&self, continuation_id: &str) -> PathBuf {
+        self.workspace_root()
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_CONTINUATIONS_DIR)
+            .join(format!("objective-proposal-apply-{continuation_id}.json"))
+    }
+
     fn headless_modepack_selected_candidate_replacement_path(
         &self,
         continuation_id: &str,
@@ -2027,6 +2075,36 @@ pub struct HeadlessObjectiveProposalAuthorizationPreflightCheckpoint {
     pub source_drive_id: String,
     pub proposal_id: String,
     pub result: HeadlessRunObjectiveProposalAuthorizationPreflight,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessObjectiveProposalApplyCheckpoint {
+    pub continuation_id: String,
+    pub decision_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_fingerprint: Option<String>,
+    pub authorization_preflight_continuation_id: String,
+    pub expected_authorization_preflight_decision_id: String,
+    pub expected_progress_fingerprint: String,
+    pub expected_aggregate_sequence: u64,
+    pub current_progress_fingerprint: String,
+    pub current_aggregate_sequence: u64,
+    pub post_progress_fingerprint: String,
+    pub post_aggregate_sequence: u64,
+    pub journey_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub proposal_id: String,
+    pub source_event_id: String,
+    pub source_event_kind: String,
+    pub expected_authorization_preflight_fingerprint: String,
+    pub expected_preflight_snapshot_id: String,
+    pub expected_apply_plan_id: String,
+    pub replacement_content_sha256: String,
+    pub apply_fingerprint: String,
+    pub result: ProposalApplyResult,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
