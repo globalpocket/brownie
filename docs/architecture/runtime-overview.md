@@ -902,3 +902,18 @@ journey checkpoint and `HeadlessJourneyStarted` event, then forwards the
 selected context to the first admitted `task.run`. Exact replay returns the
 same task/run and objective-context metadata; conflicting objective or selected
 context evidence is denied before a duplicate task can be created.
+
+M56.2 extends the same `headless.run.drive` result/checkpoint boundary from
+admitted objective-context task/run to one objective-scoped workspace proposal
+candidate. After the admitted run has durable `WorkspacePatchProposed` evidence,
+Rust derives a bounded `objective_proposal_candidate` only when exactly one
+non-recovery proposal is `Valid` and `Pending`. The candidate binds
+journey/session/drive ids, source task/run ids, proposal id, operation,
+validation and approval status, source event id/kind, objective/context
+fingerprints, a path fingerprint, and a deterministic candidate fingerprint.
+Ready candidates set `next_route.kind` and `next_action` to
+`review_and_authorize_objective_proposal`; zero, multiple, malformed, invalid,
+blocked, non-pending, stale, or conflicting evidence fails closed without
+approval, preflight, apply, provider, shell, git, network, service, or verifier
+execution. Exact replay verifies the persisted candidate fingerprint and does
+not duplicate task, proposal, drive checkpoint, or drive-completed evidence.

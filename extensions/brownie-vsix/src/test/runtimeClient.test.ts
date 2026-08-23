@@ -2259,6 +2259,27 @@ describe('protocol validation', () => {
       replayed: false,
       journey_fingerprint: `sha256:${'3'.repeat(64)}`,
     };
+    const headlessRunObjectiveProposalCandidate = {
+      status: 'ready_for_review',
+      journey_id: 'm50.journey.1',
+      task_id: 'task_1',
+      run_id: 'run_1',
+      session_id: 'm50.journey',
+      drive_id: 'm50.journey.drive',
+      objective_context_fingerprint: `sha256:${'9'.repeat(64)}`,
+      selected_context_fingerprint: `sha256:${'0'.repeat(64)}`,
+      candidate_count: 1,
+      proposal_id: 'proposal_1',
+      source_event_id: 'event_4',
+      source_event_kind: 'WorkspacePatchProposed',
+      operation: 'replace_file',
+      path_fingerprint: `sha256:${'5'.repeat(64)}`,
+      validation_status: 'Valid',
+      approval_status: 'Pending',
+      candidate_fingerprint: `sha256:${'6'.repeat(64)}`,
+      replayed: false,
+      next_action: 'review_and_authorize_objective_proposal',
+    };
     const headlessRunJourneyObjectiveContextMetadata = {
       objective_id: 'm56.objective.1',
       objective_fingerprint: `sha256:${'8'.repeat(64)}`,
@@ -2678,12 +2699,35 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: headlessRunReplacementJourneyRouteResumeMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: headlessRunJourneyMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0, journey: { ...headlessRunJourneyMetadata, objective_context: headlessRunJourneyObjectiveContextMetadata } })).toBe(true);
+    expect(isHeadlessRunDriveResult({
+      ...headlessRunDriveResult,
+      start_session_sequence: 0,
+      next_route: {
+        kind: 'review_and_authorize_objective_proposal',
+        reason: 'Objective-context journey produced one bounded proposal candidate; review and authorize it explicitly.',
+        task_id: 'task_1',
+        run_id: 'run_1',
+        proposal_id: 'proposal_1',
+        progress_fingerprint: `sha256:${'2'.repeat(64)}`,
+        aggregate_sequence: 1,
+        next_action: 'review_and_authorize_objective_proposal',
+      },
+      objective_proposal_candidate: headlessRunObjectiveProposalCandidate,
+      journey: {
+        ...headlessRunJourneyMetadata,
+        objective_context: headlessRunJourneyObjectiveContextMetadata,
+        proposal_candidate: headlessRunObjectiveProposalCandidate,
+      },
+      next_action: 'review_and_authorize_objective_proposal',
+    })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_closure: headlessRunJourneyClosureMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_execution: headlessRunJourneyExecutionMetadata })).toBe(true);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, start_session_sequence: 0 })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, journey_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, raw_prompt: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey: { ...headlessRunJourneyMetadata, objective_context: { ...headlessRunJourneyObjectiveContextMetadata, content: 'raw' } } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, objective_proposal_candidate: { ...headlessRunObjectiveProposalCandidate, content: 'raw' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, objective_proposal_candidate: { ...headlessRunObjectiveProposalCandidate, candidate_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunProvenanceJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_fetch_target' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunApprovalJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_provenance_verification_target' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, journey_route_resume: { ...headlessRunReplacementJourneyRouteResumeMetadata, derived_target_class: 'modepack_selected_candidate_approval_target' } })).toBe(false);

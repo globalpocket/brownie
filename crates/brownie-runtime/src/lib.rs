@@ -39,12 +39,12 @@ use brownie_protocol::{
     HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyObjectiveContextMetadata,
-    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunProductCompletionDecision,
-    HeadlessRunProductCompletionDecisionRequest, HeadlessRunProductEvidenceArtifact,
-    HeadlessRunProductEvidenceDerivationRequest, HeadlessRunProductEvidenceMatrix,
-    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
-    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunObjectiveProposalCandidate,
+    HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
+    HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
+    HeadlessRunProductEvidenceMatrix, HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -13634,7 +13634,265 @@ fn headless_journey_metadata(
         replayed,
         journey_fingerprint: checkpoint.journey_fingerprint.clone(),
         objective_context: checkpoint.objective_context.clone(),
+        proposal_candidate: result.objective_proposal_candidate.clone(),
     }
+}
+
+fn objective_proposal_candidate_route(
+    candidate: &HeadlessRunObjectiveProposalCandidate,
+    progress_overview: &TaskListProgressOverview,
+) -> HeadlessContinueRoute {
+    HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::ReviewAndAuthorizeObjectiveProposal,
+        reason:
+            "Objective-context journey produced one bounded proposal candidate; review and authorize it explicitly."
+                .to_string(),
+        task_id: Some(candidate.task_id.clone()),
+        run_id: Some(candidate.run_id.clone()),
+        proposal_id: candidate.proposal_id.clone(),
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "review_and_authorize_objective_proposal".to_string(),
+    }
+}
+
+fn objective_proposal_candidate_fingerprint(
+    candidate: &HeadlessRunObjectiveProposalCandidate,
+) -> String {
+    let seed = json!({
+        "version": "headless_objective_proposal_candidate_v1",
+        "status": candidate.status,
+        "journey_id": candidate.journey_id,
+        "task_id": candidate.task_id,
+        "run_id": candidate.run_id,
+        "session_id": candidate.session_id,
+        "drive_id": candidate.drive_id,
+        "objective_context_fingerprint": candidate.objective_context_fingerprint,
+        "selected_context_fingerprint": candidate.selected_context_fingerprint,
+        "candidate_count": candidate.candidate_count,
+        "proposal_id": candidate.proposal_id,
+        "source_event_id": candidate.source_event_id,
+        "source_event_kind": candidate.source_event_kind,
+        "operation": candidate.operation,
+        "path_fingerprint": candidate.path_fingerprint,
+        "validation_status": candidate.validation_status,
+        "approval_status": candidate.approval_status,
+        "denial_reason": candidate.denial_reason,
+        "next_action": candidate.next_action,
+    });
+    format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn finalize_objective_proposal_candidate(
+    mut candidate: HeadlessRunObjectiveProposalCandidate,
+) -> HeadlessRunObjectiveProposalCandidate {
+    candidate.candidate_fingerprint = objective_proposal_candidate_fingerprint(&candidate);
+    candidate
+}
+
+fn denied_objective_proposal_candidate(
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    session_id: &str,
+    drive_id: &str,
+    status: &str,
+    candidate_count: usize,
+    denial_reason: &str,
+    replayed: bool,
+) -> HeadlessRunObjectiveProposalCandidate {
+    let objective_context = checkpoint
+        .objective_context
+        .as_ref()
+        .expect("objective context candidate requires objective context");
+    finalize_objective_proposal_candidate(HeadlessRunObjectiveProposalCandidate {
+        status: status.to_string(),
+        journey_id: checkpoint.journey_id.clone(),
+        task_id: checkpoint.task_id.clone(),
+        run_id: checkpoint.run_id.clone(),
+        session_id: session_id.to_string(),
+        drive_id: drive_id.to_string(),
+        objective_context_fingerprint: objective_context.objective_context_fingerprint.clone(),
+        selected_context_fingerprint: objective_context.selected_context_fingerprint.clone(),
+        candidate_count: candidate_count.min(16),
+        proposal_id: None,
+        source_event_id: None,
+        source_event_kind: None,
+        operation: None,
+        path_fingerprint: None,
+        validation_status: None,
+        approval_status: None,
+        denial_reason: Some(denial_reason.to_string()),
+        candidate_fingerprint: String::new(),
+        replayed,
+        next_action: "inspect_progress_overview".to_string(),
+    })
+}
+
+fn headless_objective_proposal_candidate_outcome(
+    store: &BrownieStore,
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    session_id: &str,
+    drive_id: &str,
+    replayed: bool,
+) -> Result<Option<HeadlessRunObjectiveProposalCandidate>, String> {
+    let Some(objective_context) = checkpoint.objective_context.as_ref() else {
+        return Ok(None);
+    };
+    let events = read_existing_run_events(store, &checkpoint.run_id)?;
+    let mut candidates: Vec<(LedgerEvent, Value)> = Vec::new();
+    for event in events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+    {
+        let Some(payload) = sanitize_ledger_payload(event.payload.clone()) else {
+            return Ok(Some(denied_objective_proposal_candidate(
+                checkpoint,
+                session_id,
+                drive_id,
+                "blocked_malformed_candidate_evidence",
+                candidates.len(),
+                "workspace proposal evidence is malformed",
+                replayed,
+            )));
+        };
+        if payload
+            .get("verification_recovery_repair")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            || payload
+                .get("patch_apply_recovery_repair")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        {
+            continue;
+        }
+        let Some(proposal_id) = payload.get("proposal_id").and_then(Value::as_str) else {
+            return Ok(Some(denied_objective_proposal_candidate(
+                checkpoint,
+                session_id,
+                drive_id,
+                "blocked_malformed_candidate_evidence",
+                candidates.len(),
+                "workspace proposal evidence is missing proposal_id",
+                replayed,
+            )));
+        };
+        if proposal_id.trim().is_empty()
+            || payload.get("path").and_then(Value::as_str).is_none()
+            || payload.get("operation").and_then(Value::as_str).is_none()
+            || payload
+                .get("validation_status")
+                .and_then(Value::as_str)
+                .is_none()
+        {
+            return Ok(Some(denied_objective_proposal_candidate(
+                checkpoint,
+                session_id,
+                drive_id,
+                "blocked_malformed_candidate_evidence",
+                candidates.len(),
+                "workspace proposal evidence is missing bounded candidate fields",
+                replayed,
+            )));
+        }
+        let approval = approval_state(&events, proposal_id);
+        if payload.get("validation_status").and_then(Value::as_str) == Some("Valid")
+            && approval.approval_status == "Pending"
+        {
+            candidates.push((event.clone(), payload));
+        }
+    }
+    if candidates.is_empty() {
+        return Ok(Some(denied_objective_proposal_candidate(
+            checkpoint,
+            session_id,
+            drive_id,
+            "blocked_no_candidate",
+            0,
+            "no valid pending workspace proposal belongs to the objective-context run",
+            replayed,
+        )));
+    }
+    if candidates.len() > 1 {
+        return Ok(Some(denied_objective_proposal_candidate(
+            checkpoint,
+            session_id,
+            drive_id,
+            "blocked_ambiguous_candidates",
+            candidates.len(),
+            "more than one valid pending workspace proposal belongs to the objective-context run",
+            replayed,
+        )));
+    }
+    let (event, payload) = candidates.pop().expect("one candidate");
+    let proposal_id = payload
+        .get("proposal_id")
+        .and_then(Value::as_str)
+        .expect("candidate proposal_id");
+    let path = payload
+        .get("path")
+        .and_then(Value::as_str)
+        .expect("candidate path");
+    let operation = payload
+        .get("operation")
+        .and_then(Value::as_str)
+        .expect("candidate operation");
+    let validation_status = payload
+        .get("validation_status")
+        .and_then(Value::as_str)
+        .expect("candidate validation status");
+    Ok(Some(finalize_objective_proposal_candidate(
+        HeadlessRunObjectiveProposalCandidate {
+            status: "ready_for_review".to_string(),
+            journey_id: checkpoint.journey_id.clone(),
+            task_id: checkpoint.task_id.clone(),
+            run_id: checkpoint.run_id.clone(),
+            session_id: session_id.to_string(),
+            drive_id: drive_id.to_string(),
+            objective_context_fingerprint: objective_context.objective_context_fingerprint.clone(),
+            selected_context_fingerprint: objective_context.selected_context_fingerprint.clone(),
+            candidate_count: 1,
+            proposal_id: Some(proposal_id.to_string()),
+            source_event_id: Some(event.event_id),
+            source_event_kind: Some("WorkspacePatchProposed".to_string()),
+            operation: Some(operation.to_string()),
+            path_fingerprint: Some(format!("sha256:{}", hex_sha256(path.as_bytes()))),
+            validation_status: Some(validation_status.to_string()),
+            approval_status: Some("Pending".to_string()),
+            denial_reason: None,
+            candidate_fingerprint: String::new(),
+            replayed,
+            next_action: "review_and_authorize_objective_proposal".to_string(),
+        },
+    )))
+}
+
+fn validate_headless_objective_proposal_candidate_replay(
+    store: &BrownieStore,
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    session_id: &str,
+    drive_id: &str,
+    persisted: &HeadlessRunObjectiveProposalCandidate,
+) -> Result<HeadlessRunObjectiveProposalCandidate, String> {
+    let Some(mut current) = headless_objective_proposal_candidate_outcome(
+        store, checkpoint, session_id, drive_id, true,
+    )?
+    else {
+        return Err(
+            "invalid params: objective proposal candidate checkpoint cannot be replayed without objective context"
+                .to_string(),
+        );
+    };
+    if current.candidate_fingerprint != persisted.candidate_fingerprint {
+        return Err(
+            "invalid params: objective proposal candidate evidence is stale for persisted drive checkpoint"
+                .to_string(),
+        );
+    }
+    current.replayed = true;
+    Ok(current)
 }
 
 #[derive(Debug, Clone)]
@@ -16629,6 +16887,18 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             product_completion_decision.replayed = true;
         }
         if let Some(checkpoint) = journey_checkpoint.as_ref() {
+            if let Some(persisted) = result.objective_proposal_candidate.as_ref() {
+                match validate_headless_objective_proposal_candidate_replay(
+                    &store,
+                    checkpoint,
+                    &result.session_id,
+                    &result.drive_id,
+                    persisted,
+                ) {
+                    Ok(candidate) => result.objective_proposal_candidate = Some(candidate),
+                    Err(message) => return error_response(id, -32602, &message),
+                }
+            }
             result.journey = Some(headless_journey_metadata(checkpoint, &result, true));
         }
         let closure_expected_fingerprint = result
@@ -16888,6 +17158,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             start_progress: start_progress.clone(),
             post_progress: post_progress.clone(),
             next_route: None,
+            objective_proposal_candidate: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -16935,6 +17206,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "accepted_completion": null,
             "product_evidence_matrix": null,
             "product_completion_decision": null,
+            "objective_proposal_candidate": null,
             "journey_closure": journey_closure_metadata,
             "next_action": next_action
         });
@@ -16962,6 +17234,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             start_progress,
             post_progress,
             next_route: None,
+            objective_proposal_candidate: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: Some(journey_closure_metadata),
@@ -17135,6 +17408,29 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             );
         }
     }
+    let objective_proposal_candidate = match journey_checkpoint.as_ref() {
+        Some(checkpoint) => match headless_objective_proposal_candidate_outcome(
+            &store,
+            checkpoint,
+            &params.session_id,
+            &drive_id,
+            false,
+        ) {
+            Ok(candidate) => candidate,
+            Err(message) => return error_response(id, -32602, &message),
+        },
+        None => None,
+    };
+    if let Some(candidate) = objective_proposal_candidate.as_ref() {
+        if candidate.status == "ready_for_review" {
+            next_route = Some(objective_proposal_candidate_route(
+                candidate,
+                &post_overview,
+            ));
+            next_action = "review_and_authorize_objective_proposal".to_string();
+            stop_reason = "objective_proposal_candidate_ready".to_string();
+        }
+    }
     let completion_closure = headless_run_completion_closure(
         status.clone(),
         &stop_reason,
@@ -17177,6 +17473,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         start_progress: start_progress.clone(),
         post_progress: post_progress.clone(),
         next_route: next_route.clone(),
+        objective_proposal_candidate: objective_proposal_candidate.clone(),
         advances: advances.clone(),
         journey_route_resume: journey_route_resume_metadata.clone(),
         journey_closure: None,
@@ -17229,6 +17526,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "accepted_completion": accepted_completion,
         "product_evidence_matrix": product_evidence_matrix,
         "product_completion_decision": product_completion_decision,
+        "objective_proposal_candidate": objective_proposal_candidate,
         "journey_route_resume": journey_route_resume_metadata,
         "journey_closure": null,
         "next_action": next_action
@@ -17257,6 +17555,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         start_progress,
         post_progress,
         next_route,
+        objective_proposal_candidate,
         advances,
         journey_route_resume: journey_route_resume_metadata,
         journey_closure: None,
@@ -19849,6 +20148,9 @@ fn headless_continue_budget_stop_reason(
                 }
                 Some(HeadlessContinueRouteKind::ReviewAndAuthorizeRecoveryProposal) => {
                     "explicit_recovery_proposal_review_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::ReviewAndAuthorizeObjectiveProposal) => {
+                    "explicit_objective_proposal_review_boundary".to_string()
                 }
                 Some(HeadlessContinueRouteKind::ApplyApprovedRecoveryProposalExplicitly) => {
                     "explicit_recovery_apply_boundary".to_string()
@@ -54898,6 +55200,7 @@ mod tests {
                 aggregate_sequence: progress.aggregate_sequence,
             }),
             next_route: None,
+            objective_proposal_candidate: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -55168,6 +55471,7 @@ mod tests {
                 aggregate_sequence: progress.aggregate_sequence,
             }),
             next_route: None,
+            objective_proposal_candidate: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -55314,6 +55618,7 @@ mod tests {
                 aggregate_sequence: progress.aggregate_sequence,
             }),
             next_route: None,
+            objective_proposal_candidate: None,
             advances: Vec::new(),
             journey_route_resume: None,
             journey_closure: None,
@@ -55870,6 +56175,246 @@ mod tests {
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_binds_objective_workspace_proposal_candidate_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let (store, selected_context) = prepared_selected_index_context(
+            temp.path(),
+            "pub fn selected_context_for_candidate() {}\n",
+        );
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m56.candidate",
+                "drive_id": "m56.candidate.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "context_budget": {
+                    "max_prompt_chars": 4096,
+                    "max_ledger_events": 16,
+                    "max_selected_index_chars": 1024
+                },
+                "journey_admission": {
+                    "journey_id": "m56.candidate.1",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": "Implement README update",
+                        "mode_id": "implementer"
+                    },
+                    "objective_context": {
+                        "authorize_objective_context_admission": true,
+                        "objective_id": "m56.objective.candidate",
+                        "objective_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                        "selected_index_context": selected_context
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let result = parse_line(&request)
+            .result
+            .expect("objective candidate drive result");
+        let candidate = &result["objective_proposal_candidate"];
+        assert_eq!(candidate["status"], "ready_for_review");
+        assert_eq!(candidate["journey_id"], "m56.candidate.1");
+        assert_eq!(candidate["run_id"], result["journey"]["run_id"]);
+        assert_eq!(candidate["candidate_count"], 1);
+        assert_eq!(candidate["operation"], "replace_file");
+        assert_eq!(candidate["validation_status"], "Valid");
+        assert_eq!(candidate["approval_status"], "Pending");
+        assert_eq!(
+            candidate["next_action"],
+            "review_and_authorize_objective_proposal"
+        );
+        assert_eq!(
+            result["next_route"]["kind"],
+            "review_and_authorize_objective_proposal"
+        );
+        assert_eq!(
+            result["next_route"]["proposal_id"],
+            candidate["proposal_id"]
+        );
+        assert_eq!(
+            result["next_action"],
+            "review_and_authorize_objective_proposal"
+        );
+        assert_eq!(&result["journey"]["proposal_candidate"], candidate);
+        assert!(candidate["candidate_fingerprint"]
+            .as_str()
+            .expect("candidate fingerprint")
+            .starts_with("sha256:"));
+        assert!(candidate["path_fingerprint"]
+            .as_str()
+            .expect("path fingerprint")
+            .starts_with("sha256:"));
+        assert!(candidate.get("content").is_none());
+        assert!(candidate.get("diff").is_none());
+        assert!(candidate.get("absolute_path").is_none());
+        assert!(candidate.get("raw_ledger_payload").is_none());
+
+        let task_count_after_first_drive = store.tasks().list_tasks().expect("tasks").len();
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
+                .count(),
+            1
+        );
+
+        let replay = parse_line(&request).result.expect("candidate replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["objective_proposal_candidate"]["replayed"], true);
+        assert_eq!(
+            replay["objective_proposal_candidate"]["candidate_fingerprint"],
+            candidate["candidate_fingerprint"]
+        );
+        assert_eq!(
+            replay["objective_proposal_candidate"]["proposal_id"],
+            candidate["proposal_id"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+        let events_after_replay = store.tasks().read_ledger_events(run_id).expect("events");
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn headless_objective_workspace_proposal_candidate_denies_ambiguous_or_non_pending_evidence() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let (store, selected_context) = prepared_selected_index_context(
+            temp.path(),
+            "pub fn selected_context_for_denial() {}\n",
+        );
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m56.denial",
+                "drive_id": "m56.denial.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "context_budget": {
+                    "max_prompt_chars": 4096,
+                    "max_ledger_events": 16,
+                    "max_selected_index_chars": 1024
+                },
+                "journey_admission": {
+                    "journey_id": "m56.denial.1",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": "Inspect selected context without writing",
+                        "mode_id": "orchestrator"
+                    },
+                    "objective_context": {
+                        "authorize_objective_context_admission": true,
+                        "objective_id": "m56.objective.denial",
+                        "objective_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                        "selected_index_context": selected_context
+                    }
+                }
+            }
+        })
+        .to_string();
+        let result = parse_line(&request)
+            .result
+            .expect("objective denial drive result");
+        assert_eq!(
+            result["objective_proposal_candidate"]["status"],
+            "blocked_no_candidate"
+        );
+        assert_eq!(
+            result["objective_proposal_candidate"]["next_action"],
+            "inspect_progress_overview"
+        );
+        assert!(result["objective_proposal_candidate"]
+            .get("proposal_id")
+            .is_none());
+
+        let checkpoint = store
+            .tasks()
+            .read_headless_journey_start_checkpoint("m56.denial.1")
+            .expect("read journey checkpoint")
+            .expect("journey checkpoint");
+        let record = store
+            .tasks()
+            .get_task(&checkpoint.task_id)
+            .expect("get task")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_m56_denial_a",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README A",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &record,
+            "proposal_m56_denial_b",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README B",
+        );
+        let ambiguous = headless_objective_proposal_candidate_outcome(
+            &store,
+            &checkpoint,
+            "m56.denial",
+            "m56.denial.drive",
+            false,
+        )
+        .expect("candidate outcome")
+        .expect("candidate metadata");
+        assert_eq!(ambiguous.status, "blocked_ambiguous_candidates");
+        assert_eq!(ambiguous.candidate_count, 2);
+        assert!(ambiguous.proposal_id.is_none());
+        assert_eq!(ambiguous.next_action, "inspect_progress_overview");
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
@@ -79199,6 +79744,7 @@ mod tests {
                 aggregate_sequence: 2,
             }),
             next_route: None,
+            objective_proposal_candidate: None,
             advances: vec![],
             journey_route_resume: None,
             journey_closure: None,

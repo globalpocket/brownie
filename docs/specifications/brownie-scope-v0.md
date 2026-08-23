@@ -64,6 +64,8 @@ Brownie treats AgentModes as an external Mode Pack:
 - Codebase indexing design.
 - Runtime-owned arbitrary repository coding journey admission from bounded
   objective and selected index context evidence.
+- Runtime-owned objective-scoped workspace proposal candidate binding from the
+  admitted journey task/run to one bounded non-mutating review target.
 - stdio JSON-RPC boundary between VSIX and runtime.
 
 ## Out of scope for v0

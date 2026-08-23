@@ -501,3 +501,20 @@ rejected before mutation. Persisted metadata must not store raw selected file
 content, raw selected paths, prompts, provider responses, command output,
 environment values, absolute paths, canonical paths, raw requests, raw ledger
 payloads, or secrets.
+
+M56.2 continues the arbitrary-repository Golden Journey through the existing
+`headless.run.drive` response and checkpoint shape. When the M56.1 admitted
+task/run produces exactly one `Valid` and `Pending` non-recovery
+`WorkspacePatchProposed` event, the runtime returns
+`objective_proposal_candidate` metadata and mirrors it in journey metadata as
+`proposal_candidate`. The bounded candidate contains only ids, status labels,
+counts, source event id/kind, operation, approval/validation states, SHA-256
+objective/context/path/candidate fingerprints, replay state, and
+`review_and_authorize_objective_proposal`. The runtime must deny zero,
+ambiguous, malformed, invalid, blocked, non-pending, stale, conflicting, or
+recovery-scoped proposal evidence before candidate side effects. This phase is
+non-mutating: it does not approve, reject, preflight, apply, run providers,
+execute shell/git/tests, access network/services, or expose raw prompts,
+provider responses, proposed content, file content, hunks, diffs, command
+output, environment values, raw requests, raw ledger payloads, absolute paths,
+canonical paths, or secrets.

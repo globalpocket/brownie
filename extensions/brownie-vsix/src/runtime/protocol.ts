@@ -993,6 +993,7 @@ export type HeadlessContinueRouteKind =
   | 'start_verification_recovery_explicitly'
   | 'run_recovery_task_explicitly'
   | 'review_and_authorize_recovery_proposal'
+  | 'review_and_authorize_objective_proposal'
   | 'apply_approved_recovery_proposal_explicitly'
   | 'start_verification_retry_explicitly'
   | 'run_verification_retry_task_explicitly'
@@ -1222,6 +1223,7 @@ export interface HeadlessRunDriveResult {
   start_progress: HeadlessRunProgressCheckpoint;
   post_progress?: HeadlessRunProgressCheckpoint | null;
   next_route?: HeadlessContinueRoute | null;
+  objective_proposal_candidate?: HeadlessRunObjectiveProposalCandidate | null;
   advances?: HeadlessRunAdvanceResult[];
   journey_route_resume?: HeadlessRunJourneyRouteResumeMetadata | null;
   journey_closure?: HeadlessRunJourneyClosureMetadata | null;
@@ -1303,6 +1305,30 @@ export interface HeadlessRunJourneyMetadata {
   replayed: boolean;
   journey_fingerprint: string;
   objective_context?: HeadlessRunJourneyObjectiveContextMetadata | null;
+  proposal_candidate?: HeadlessRunObjectiveProposalCandidate | null;
+}
+
+export interface HeadlessRunObjectiveProposalCandidate {
+  status: 'ready_for_review' | 'blocked_no_candidate' | 'blocked_ambiguous_candidates' | 'blocked_malformed_candidate_evidence';
+  journey_id: string;
+  task_id: string;
+  run_id: string;
+  session_id: string;
+  drive_id: string;
+  objective_context_fingerprint: string;
+  selected_context_fingerprint: string;
+  candidate_count: number;
+  proposal_id?: string | null;
+  source_event_id?: string | null;
+  source_event_kind?: 'WorkspacePatchProposed' | null;
+  operation?: string | null;
+  path_fingerprint?: string | null;
+  validation_status?: 'Valid' | 'Invalid' | 'Blocked' | null;
+  approval_status?: 'Pending' | 'Approved' | 'Rejected' | 'Superseded' | null;
+  denial_reason?: string | null;
+  candidate_fingerprint: string;
+  replayed: boolean;
+  next_action: string;
 }
 
 export interface HeadlessRunJourneyObjectiveContextMetadata {
@@ -7055,6 +7081,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
       'start_progress',
       'post_progress',
       'next_route',
+      'objective_proposal_candidate',
       'advances',
       'journey_route_resume',
       'journey_closure',
@@ -7094,6 +7121,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
     isHeadlessRunProgressCheckpoint(value.start_progress) &&
     (value.post_progress === undefined || value.post_progress === null || isHeadlessRunProgressCheckpoint(value.post_progress)) &&
     (value.next_route === undefined || value.next_route === null || isHeadlessContinueRoute(value.next_route)) &&
+    (value.objective_proposal_candidate === undefined || value.objective_proposal_candidate === null || isHeadlessRunObjectiveProposalCandidate(value.objective_proposal_candidate)) &&
     (value.advances === undefined || (Array.isArray(value.advances) && value.advances.length === value.advance_count && value.advances.every(isHeadlessRunAdvanceResult))) &&
     (value.journey_route_resume === undefined || value.journey_route_resume === null || isHeadlessRunJourneyRouteResumeMetadata(value.journey_route_resume)) &&
     (value.journey_closure === undefined || value.journey_closure === null || isHeadlessRunJourneyClosureMetadata(value.journey_closure)) &&
@@ -7106,7 +7134,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
 export function isHeadlessRunJourneyMetadata(value: unknown): value is HeadlessRunJourneyMetadata {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'start_progress_fingerprint', 'start_aggregate_sequence', 'post_progress_fingerprint', 'post_aggregate_sequence', 'closure_status', 'next_action', 'replayed', 'journey_fingerprint', 'objective_context']) &&
+    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'start_progress_fingerprint', 'start_aggregate_sequence', 'post_progress_fingerprint', 'post_aggregate_sequence', 'closure_status', 'next_action', 'replayed', 'journey_fingerprint', 'objective_context', 'proposal_candidate']) &&
     hasNoForbiddenRawFields(value) &&
     isHeadlessRunId(value.journey_id) &&
     isBoundedHandle(value.task_id) &&
@@ -7125,7 +7153,42 @@ export function isHeadlessRunJourneyMetadata(value: unknown): value is HeadlessR
     typeof value.replayed === 'boolean' &&
     typeof value.journey_fingerprint === 'string' &&
     isSha256Fingerprint(value.journey_fingerprint) &&
-    (value.objective_context === undefined || value.objective_context === null || isHeadlessRunJourneyObjectiveContextMetadata(value.objective_context))
+    (value.objective_context === undefined || value.objective_context === null || isHeadlessRunJourneyObjectiveContextMetadata(value.objective_context)) &&
+    (value.proposal_candidate === undefined || value.proposal_candidate === null || isHeadlessRunObjectiveProposalCandidate(value.proposal_candidate))
+  );
+}
+
+export function isHeadlessRunObjectiveProposalCandidate(value: unknown): value is HeadlessRunObjectiveProposalCandidate {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['status', 'journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'objective_context_fingerprint', 'selected_context_fingerprint', 'candidate_count', 'proposal_id', 'source_event_id', 'source_event_kind', 'operation', 'path_fingerprint', 'validation_status', 'approval_status', 'denial_reason', 'candidate_fingerprint', 'replayed', 'next_action']) &&
+    hasNoForbiddenRawFields(value) &&
+    (value.status === 'ready_for_review' || value.status === 'blocked_no_candidate' || value.status === 'blocked_ambiguous_candidates' || value.status === 'blocked_malformed_candidate_evidence') &&
+    isHeadlessRunId(value.journey_id) &&
+    isBoundedHandle(value.task_id) &&
+    isBoundedHandle(value.run_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.drive_id) &&
+    typeof value.objective_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.objective_context_fingerprint) &&
+    typeof value.selected_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.selected_context_fingerprint) &&
+    isNonNegativeInteger(value.candidate_count) &&
+    value.candidate_count <= 16 &&
+    (value.proposal_id === undefined || value.proposal_id === null || isBoundedHandle(value.proposal_id)) &&
+    (value.source_event_id === undefined || value.source_event_id === null || isBoundedHandle(value.source_event_id)) &&
+    (value.source_event_kind === undefined || value.source_event_kind === null || value.source_event_kind === 'WorkspacePatchProposed') &&
+    (value.operation === undefined || value.operation === null || (typeof value.operation === 'string' && value.operation.length > 0 && value.operation.length <= 64)) &&
+    (value.path_fingerprint === undefined || value.path_fingerprint === null || (typeof value.path_fingerprint === 'string' && isSha256Fingerprint(value.path_fingerprint))) &&
+    (value.validation_status === undefined || value.validation_status === null || value.validation_status === 'Valid' || value.validation_status === 'Invalid' || value.validation_status === 'Blocked') &&
+    (value.approval_status === undefined || value.approval_status === null || value.approval_status === 'Pending' || value.approval_status === 'Approved' || value.approval_status === 'Rejected' || value.approval_status === 'Superseded') &&
+    (value.denial_reason === undefined || value.denial_reason === null || (typeof value.denial_reason === 'string' && value.denial_reason.length > 0 && value.denial_reason.length <= 240)) &&
+    typeof value.candidate_fingerprint === 'string' &&
+    isSha256Fingerprint(value.candidate_fingerprint) &&
+    typeof value.replayed === 'boolean' &&
+    typeof value.next_action === 'string' &&
+    value.next_action.length > 0 &&
+    value.next_action.length <= 120
   );
 }
 
@@ -7727,7 +7790,7 @@ function isBoundedRelativePath(value: unknown): value is string {
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
-  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'review_and_authorize_objective_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
 }
 
 function isModePackRouteKind(value: unknown, canonical: HeadlessContinueRouteKind, legacy: HeadlessContinueRouteKind): boolean {
