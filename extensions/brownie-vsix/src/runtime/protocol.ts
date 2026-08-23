@@ -699,6 +699,7 @@ export interface HeadlessContinueOnceParams {
   llm_provider_failure_retry_goal?: string | null;
   llm_provider_failure_retry_mode_id?: string | null;
   product_continuation_admission_target?: ProductContinuationAdmissionTarget | null;
+  product_continuation_run_target?: ProductContinuationRunTarget | null;
   verification_recovery_run_target?: VerificationRecoveryRunTarget | null;
   verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   patch_apply_recovery_source?: PatchApplyRecoverySource | null;
@@ -956,6 +957,19 @@ export interface ProductContinuationAdmissionTarget {
   product_continuation_source: ProductContinuationSource;
   continuation_goal: string;
   continuation_mode_id?: string | null;
+}
+
+export interface ProductContinuationRunTarget {
+  authorize_product_continuation_run: true;
+  continuation_task_id: string;
+  continuation_run_id: string;
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  expected_decision_fingerprint: string;
+  expected_product_evidence_fingerprint: string;
+  expected_admission_route_kind: 'run_product_continuation_task_explicitly';
+  expected_admission_request_fingerprint?: string | null;
 }
 
 export interface LlmProviderFailureRetryRunTarget {
@@ -6037,7 +6051,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'product_continuation_run_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -6056,6 +6070,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.llm_provider_failure_retry_goal === undefined || value.llm_provider_failure_retry_goal === null || typeof value.llm_provider_failure_retry_goal === 'string') &&
     (value.llm_provider_failure_retry_mode_id === undefined || value.llm_provider_failure_retry_mode_id === null || typeof value.llm_provider_failure_retry_mode_id === 'string') &&
     (value.product_continuation_admission_target === undefined || value.product_continuation_admission_target === null || isProductContinuationAdmissionTarget(value.product_continuation_admission_target)) &&
+    (value.product_continuation_run_target === undefined || value.product_continuation_run_target === null || isProductContinuationRunTarget(value.product_continuation_run_target)) &&
     (value.verification_recovery_run_target === undefined || value.verification_recovery_run_target === null || isVerificationRecoveryRunTarget(value.verification_recovery_run_target)) &&
     (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
     (value.patch_apply_recovery_source === undefined || value.patch_apply_recovery_source === null || isPatchApplyRecoverySource(value.patch_apply_recovery_source)) &&
@@ -6973,6 +6988,36 @@ function isProductContinuationAdmissionTarget(value: unknown): value is ProductC
     value.continuation_goal.trim().length > 0 &&
     value.continuation_goal.length <= 500 &&
     (value.continuation_mode_id === undefined || value.continuation_mode_id === null || (typeof value.continuation_mode_id === 'string' && value.continuation_mode_id.trim().length > 0 && value.continuation_mode_id.length <= 96))
+  );
+}
+
+function isProductContinuationRunTarget(value: unknown): value is ProductContinuationRunTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_product_continuation_run',
+      'continuation_task_id',
+      'continuation_run_id',
+      'source_task_id',
+      'source_run_id',
+      'source_decision_id',
+      'expected_decision_fingerprint',
+      'expected_product_evidence_fingerprint',
+      'expected_admission_route_kind',
+      'expected_admission_request_fingerprint',
+    ]) &&
+    value.authorize_product_continuation_run === true &&
+    isBoundedHandle(value.continuation_task_id) &&
+    isBoundedHandle(value.continuation_run_id) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    typeof value.expected_decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_decision_fingerprint) &&
+    typeof value.expected_product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_product_evidence_fingerprint) &&
+    value.expected_admission_route_kind === 'run_product_continuation_task_explicitly' &&
+    (value.expected_admission_request_fingerprint === undefined || value.expected_admission_request_fingerprint === null || (typeof value.expected_admission_request_fingerprint === 'string' && isSha256Fingerprint(value.expected_admission_request_fingerprint)))
   );
 }
 
