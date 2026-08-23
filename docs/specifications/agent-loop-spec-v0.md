@@ -536,3 +536,23 @@ plan side effects. This boundary still does not apply workspace changes or
 expose raw prompts, provider responses, proposed content, file content, hunks,
 diffs, command output, environment values, raw requests, raw ledger payloads,
 absolute paths, canonical paths, secrets, or raw authorization tokens.
+
+M56.4 applies the authorized objective proposal through the same
+`headless.continue_once` continuation surface. The caller supplies
+`objective_proposal_apply_target`, and Rust must verify the M56.3 checkpoint,
+route identity, source proposal evidence, expected target hash, approved status,
+and one-time authorization before invoking the existing replace-file
+`proposal.apply` boundary. The continuation persists bounded apply evidence,
+routes to `verify_objective_apply_explicitly`, and replays without duplicate
+workspace mutation.
+
+M56.5 verifies that M56.4 apply result before accepting completion. The caller
+supplies `objective_apply_verification_target`, and Rust must validate the
+objective apply continuation, decision id, journey/session/drive/task/run/
+proposal/apply ids, operation/status labels, consumed authorization, apply
+fingerprint, path fingerprint, and expected post-write SHA-256. The runtime
+recomputes the current target SHA-256 without returning raw file content. A
+matching hash routes to `accept_objective_completion_explicitly`; a mismatch
+routes to `start_verification_recovery_explicitly`. The checkpoint and ledger
+evidence remain bounded to identifiers, hashes, route/status labels, and
+sequence metadata.

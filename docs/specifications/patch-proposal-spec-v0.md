@@ -96,6 +96,32 @@ continuation must return the checkpointed result without duplicate approval,
 preflight, apply-plan, or checkpoint side effects. The route does not apply
 workspace changes.
 
+## M56.4 objective-scoped replace-file apply
+
+An M56.3 `apply_authorized_objective_proposal_explicitly` route may be consumed
+by `headless.continue_once` with `objective_proposal_apply_target`. The target
+must bind the authorization/preflight continuation, decision id, journey/session/
+drive ids, source task/run/proposal/source event ids, operation/status labels,
+objective/context/path/candidate fingerprints, preflight fingerprint, snapshot
+and apply-plan ids, expected target SHA-256, and request-only replacement
+content. The runtime must verify this evidence before invoking `proposal.apply`
+for exactly one existing UTF-8 `replace_file` proposal. Success records bounded
+apply evidence and routes to `verify_objective_apply_explicitly`; replay must
+not repeat the file mutation.
+
+## M56.5 objective apply verification
+
+An M56.4 `verify_objective_apply_explicitly` route may be consumed by
+`headless.continue_once` with `objective_apply_verification_target`. The target
+must bind the objective apply continuation, decision id, journey/session/drive
+ids, source task/run/proposal/apply ids, expected `replace_file` operation,
+expected `Applied` status, consumed authorization, path/apply fingerprints, and
+expected post-write SHA-256. The runtime must recompute the current target file
+SHA-256 without returning or persisting raw file content. Matching evidence
+routes to `accept_objective_completion_explicitly`; mismatch routes to
+`start_verification_recovery_explicitly`. Verification performs no additional
+workspace mutation.
+
 ## Phase 3.1 validation and diff preview
 
 Phase 3.1 keeps the Phase 3.0 dry-run contract: `workspace.write` proposals never write workspace files and never apply patches. A proposal is inspected against the current workspace and receives `validation_status` (`Valid`, `Invalid`, or `Blocked`) plus optional `validation_reason`.
