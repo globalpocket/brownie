@@ -898,6 +898,16 @@ pub struct ProductContinuationSource {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductContinuationAdmissionTarget {
+    pub authorize_product_continuation_admission: bool,
+    pub product_continuation_source: ProductContinuationSource,
+    pub continuation_goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -1174,6 +1184,8 @@ pub struct HeadlessContinueOnceParams {
     pub llm_provider_failure_retry_goal: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_mode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2072,6 +2084,8 @@ pub enum HeadlessContinueRouteKind {
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
     RunLlmProviderRetryTaskExplicitly,
+    AdmitProductContinuationTaskExplicitly,
+    RunProductContinuationTaskExplicitly,
     FetchSelectedModePackCandidateExplicitly,
     VerifySelectedModePackCandidateProvenanceExplicitly,
     ApproveVerifiedModePackCandidateExplicitly,
@@ -2128,6 +2142,8 @@ pub struct HeadlessContinueOnceResult {
         Option<HeadlessRunObjectiveProposalAuthorizationPreflight>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_continuation_admission: Option<ProductContinuationAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub modepack_select_registry_update_result: Option<ModePackSelectRegistryUpdateResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
