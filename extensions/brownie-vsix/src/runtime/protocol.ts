@@ -612,6 +612,33 @@ export interface ObjectiveProposalAuthorizationPreflightTarget {
   authorization_token_fingerprint: string;
 }
 
+export interface ObjectiveProposalApplyTarget {
+  authorize_objective_proposal_apply: true;
+  authorization_preflight_continuation_id: string;
+  expected_authorization_preflight_decision_id: string;
+  journey_id: string;
+  session_id: string;
+  source_drive_id: string;
+  expected_journey_fingerprint: string;
+  expected_candidate_fingerprint: string;
+  expected_objective_context_fingerprint: string;
+  expected_selected_context_fingerprint: string;
+  expected_task_id: string;
+  expected_run_id: string;
+  expected_proposal_id: string;
+  expected_source_event_id: string;
+  expected_source_event_kind: 'WorkspacePatchProposed';
+  expected_operation: 'replace_file';
+  expected_path_fingerprint: string;
+  expected_validation_status: 'Valid';
+  expected_approval_status: 'Approved';
+  expected_authorization_preflight_fingerprint: string;
+  expected_preflight_snapshot_id: string;
+  expected_apply_plan_id: string;
+  expected_target_sha256: string;
+  replacement_content: string;
+}
+
 export interface HeadlessContinueOnceParams {
   authorize: true;
   expected_progress_fingerprint: string;
@@ -641,6 +668,7 @@ export interface HeadlessContinueOnceParams {
   llm_provider_failure_retry_run_target?: LlmProviderFailureRetryRunTarget | null;
   parent_join_run_target?: ParentJoinRunTarget | null;
   objective_proposal_authorization_preflight_target?: ObjectiveProposalAuthorizationPreflightTarget | null;
+  objective_proposal_apply_target?: ObjectiveProposalApplyTarget | null;
   modepack_registry_update_selection_target?: ModePackRegistryUpdateSelectionTarget | null;
   modepack_selected_candidate_fetch_target?: ModePackSelectedCandidateFetchTarget | null;
   modepack_selected_candidate_provenance_verification_target?: ModePackSelectedCandidateProvenanceVerificationTarget | null;
@@ -5952,7 +5980,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -5982,6 +6010,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.llm_provider_failure_retry_run_target === undefined || value.llm_provider_failure_retry_run_target === null || isLlmProviderFailureRetryRunTarget(value.llm_provider_failure_retry_run_target)) &&
     (value.parent_join_run_target === undefined || value.parent_join_run_target === null || isParentJoinRunTarget(value.parent_join_run_target)) &&
     (value.objective_proposal_authorization_preflight_target === undefined || value.objective_proposal_authorization_preflight_target === null || isObjectiveProposalAuthorizationPreflightTarget(value.objective_proposal_authorization_preflight_target)) &&
+    (value.objective_proposal_apply_target === undefined || value.objective_proposal_apply_target === null || isObjectiveProposalApplyTarget(value.objective_proposal_apply_target)) &&
     (value.modepack_registry_update_selection_target === undefined || value.modepack_registry_update_selection_target === null || isModePackRegistryUpdateSelectionTarget(value.modepack_registry_update_selection_target)) &&
     (value.modepack_selected_candidate_fetch_target === undefined || value.modepack_selected_candidate_fetch_target === null || isModePackSelectedCandidateFetchTarget(value.modepack_selected_candidate_fetch_target)) &&
     (value.modepack_selected_candidate_provenance_verification_target === undefined || value.modepack_selected_candidate_provenance_verification_target === null || isModePackSelectedCandidateProvenanceVerificationTarget(value.modepack_selected_candidate_provenance_verification_target)) &&
@@ -6039,6 +6068,74 @@ function isObjectiveProposalAuthorizationPreflightTarget(value: unknown): value 
     value.expected_approval_status === 'Pending' &&
     typeof value.authorization_token_fingerprint === 'string' &&
     isSha256Fingerprint(value.authorization_token_fingerprint) &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
+    !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&
+    !Object.prototype.hasOwnProperty.call(value, 'raw_prompt')
+  );
+}
+
+function isObjectiveProposalApplyTarget(value: unknown): value is ObjectiveProposalApplyTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_objective_proposal_apply',
+      'authorization_preflight_continuation_id',
+      'expected_authorization_preflight_decision_id',
+      'journey_id',
+      'session_id',
+      'source_drive_id',
+      'expected_journey_fingerprint',
+      'expected_candidate_fingerprint',
+      'expected_objective_context_fingerprint',
+      'expected_selected_context_fingerprint',
+      'expected_task_id',
+      'expected_run_id',
+      'expected_proposal_id',
+      'expected_source_event_id',
+      'expected_source_event_kind',
+      'expected_operation',
+      'expected_path_fingerprint',
+      'expected_validation_status',
+      'expected_approval_status',
+      'expected_authorization_preflight_fingerprint',
+      'expected_preflight_snapshot_id',
+      'expected_apply_plan_id',
+      'expected_target_sha256',
+      'replacement_content',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    value.authorize_objective_proposal_apply === true &&
+    isHeadlessContinuationId(value.authorization_preflight_continuation_id) &&
+    isBoundedHandle(value.expected_authorization_preflight_decision_id) &&
+    isHeadlessRunId(value.journey_id) &&
+    isHeadlessRunId(value.session_id) &&
+    isHeadlessRunId(value.source_drive_id) &&
+    typeof value.expected_journey_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_journey_fingerprint) &&
+    typeof value.expected_candidate_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_candidate_fingerprint) &&
+    typeof value.expected_objective_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_objective_context_fingerprint) &&
+    typeof value.expected_selected_context_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_selected_context_fingerprint) &&
+    isBoundedHandle(value.expected_task_id) &&
+    isBoundedHandle(value.expected_run_id) &&
+    isBoundedHandle(value.expected_proposal_id) &&
+    isBoundedHandle(value.expected_source_event_id) &&
+    value.expected_source_event_kind === 'WorkspacePatchProposed' &&
+    value.expected_operation === 'replace_file' &&
+    typeof value.expected_path_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_path_fingerprint) &&
+    value.expected_validation_status === 'Valid' &&
+    value.expected_approval_status === 'Approved' &&
+    typeof value.expected_authorization_preflight_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_authorization_preflight_fingerprint) &&
+    isBoundedHandle(value.expected_preflight_snapshot_id) &&
+    isBoundedHandle(value.expected_apply_plan_id) &&
+    typeof value.expected_target_sha256 === 'string' &&
+    isSha256Fingerprint(value.expected_target_sha256) &&
+    typeof value.replacement_content === 'string' &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_token') &&
     !Object.prototype.hasOwnProperty.call(value, 'authorization_reason') &&
     !Object.prototype.hasOwnProperty.call(value, 'raw_ledger_payload') &&

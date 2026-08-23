@@ -61,13 +61,14 @@ use brownie_protocol::{
     ModePackTrustSignerParams, ModePackTrustSignerResult, ModePackTrustedSignerSummary,
     ModePackUpdateAdmissionParams, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceParams, ModePackVerifyCandidateProvenanceResult,
-    ModePermissionsSummary, ModeSummary, ObjectiveProposalAuthorizationPreflightTarget,
-    ParentJoinRunTarget, PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget,
-    PatchApplyRecoveryProvenance, PatchApplyRecoveryRunTarget, PatchApplyRecoverySource,
-    PermissionCheckParams, PermissionCheckResult, ProductContinuationAdmission,
-    ProductContinuationProvenance, ProductContinuationSource, ProgressCurrentStage,
-    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
-    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ModePermissionsSummary, ModeSummary, ObjectiveProposalApplyTarget,
+    ObjectiveProposalAuthorizationPreflightTarget, ParentJoinRunTarget,
+    PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
+    PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
+    PermissionCheckResult, ProductContinuationAdmission, ProductContinuationProvenance,
+    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -254,6 +255,7 @@ use brownie_store::{
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessModePackSelectedCandidateReplacementCheckpoint,
+    HeadlessObjectiveProposalApplyCheckpoint,
     HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
     HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
     HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
@@ -8681,6 +8683,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: objective_proposal_authorization_preflight_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.objective_proposal_apply_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_proposal_apply_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.modepack_registry_update_selection_target.is_some()
         && params.max_steps.unwrap_or(1) > 1
     {
@@ -9291,6 +9300,49 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: modepack_selected_active_rollback_target cannot be combined with task, recovery, apply, retry, provider, context-read, parent-join, fetch, provenance verification, approval, or replacement fields",
         );
     }
+    if params.objective_proposal_apply_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_proposal_apply_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, or objective preflight fields",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
@@ -9488,6 +9540,22 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 }
             }
         }
+        if params.objective_proposal_apply_target.is_some() {
+            match store.read_headless_objective_proposal_apply_checkpoint(continuation_id) {
+                Ok(Some(checkpoint)) => {
+                    return headless_continue_objective_proposal_apply_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        checkpoint,
+                    );
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            }
+        }
         if params
             .modepack_selected_approved_candidate_replacement_target
             .is_some()
@@ -9629,6 +9697,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         .is_some()
     {
         return handle_headless_continue_objective_proposal_authorization_preflight(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.objective_proposal_apply_target.is_some() {
+        return handle_headless_continue_objective_proposal_apply(
             id,
             &store,
             &progress_overview,
@@ -12959,6 +13035,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         llm_provider_failure_retry_run_target: None,
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
+        objective_proposal_apply_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: Some(target),
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13164,6 +13241,7 @@ fn validate_headless_run_registry_selection_replay_target(
         llm_provider_failure_retry_run_target: None,
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
+        objective_proposal_apply_target: None,
         modepack_registry_update_selection_target: Some(target),
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -13214,6 +13292,7 @@ fn headless_run_replay_continue_once_params(
         llm_provider_failure_retry_run_target: None,
         parent_join_run_target: None,
         objective_proposal_authorization_preflight_target: None,
+        objective_proposal_apply_target: None,
         modepack_registry_update_selection_target: None,
         modepack_selected_candidate_fetch_target: None,
         modepack_selected_candidate_provenance_verification_target: None,
@@ -14628,6 +14707,507 @@ fn headless_continue_objective_proposal_authorization_preflight(
         stop_reason: None,
         steps: Vec::new(),
         next_action: "apply_authorized_objective_proposal".to_string(),
+    })
+}
+
+fn objective_proposal_apply_replacement_content_fingerprint(content: &str) -> String {
+    format!("sha256:{}", hex_sha256(content.as_bytes()))
+}
+
+fn validate_objective_proposal_apply_target(
+    target: &ObjectiveProposalApplyTarget,
+) -> Result<(), String> {
+    if !target.authorize_objective_proposal_apply {
+        return Err("objective proposal apply failed: authorization required".to_string());
+    }
+    if !is_valid_headless_continuation_id(&target.authorization_preflight_continuation_id) {
+        return Err(
+            "objective proposal apply failed: authorization_preflight_continuation_id must be a valid continuation id"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&target.journey_id)
+        || !is_valid_headless_run_id(&target.session_id)
+        || !is_valid_headless_run_id(&target.source_drive_id)
+    {
+        return Err(
+            "objective proposal apply failed: journey, session, and drive ids must be valid headless ids"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_journey_fingerprint",
+            target.expected_journey_fingerprint.as_str(),
+        ),
+        (
+            "expected_candidate_fingerprint",
+            target.expected_candidate_fingerprint.as_str(),
+        ),
+        (
+            "expected_objective_context_fingerprint",
+            target.expected_objective_context_fingerprint.as_str(),
+        ),
+        (
+            "expected_selected_context_fingerprint",
+            target.expected_selected_context_fingerprint.as_str(),
+        ),
+        (
+            "expected_path_fingerprint",
+            target.expected_path_fingerprint.as_str(),
+        ),
+        (
+            "expected_authorization_preflight_fingerprint",
+            target.expected_authorization_preflight_fingerprint.as_str(),
+        ),
+        (
+            "expected_target_sha256",
+            target.expected_target_sha256.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "objective proposal apply failed: {field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    if target.expected_task_id.trim().is_empty()
+        || target.expected_run_id.trim().is_empty()
+        || target.expected_proposal_id.trim().is_empty()
+        || target.expected_source_event_id.trim().is_empty()
+        || target
+            .expected_authorization_preflight_decision_id
+            .trim()
+            .is_empty()
+        || target.expected_preflight_snapshot_id.trim().is_empty()
+        || target.expected_apply_plan_id.trim().is_empty()
+    {
+        return Err(
+            "objective proposal apply failed: task, run, proposal, source event, authorization, snapshot, and plan ids are required"
+                .to_string(),
+        );
+    }
+    if target.expected_source_event_kind != "WorkspacePatchProposed"
+        || target.expected_operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || target.expected_validation_status != "Valid"
+        || target.expected_approval_status != "Approved"
+    {
+        return Err(
+            "objective proposal apply failed: expected route labels must describe an approved valid replace_file proposal"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn objective_proposal_apply_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, String> {
+    let target = params
+        .objective_proposal_apply_target
+        .as_ref()
+        .ok_or_else(|| "objective proposal apply target missing".to_string())?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        "objective proposal apply failed: continuation_id is required".to_string()
+    })?;
+    let replacement_content_sha256 =
+        objective_proposal_apply_replacement_content_fingerprint(&target.replacement_content);
+    let seed = json!({
+        "route_kind": "objective_proposal_apply",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_objective_proposal_apply": target.authorize_objective_proposal_apply,
+        "authorization_preflight_continuation_id": target.authorization_preflight_continuation_id,
+        "expected_authorization_preflight_decision_id": target.expected_authorization_preflight_decision_id,
+        "journey_id": target.journey_id,
+        "session_id": target.session_id,
+        "source_drive_id": target.source_drive_id,
+        "expected_journey_fingerprint": target.expected_journey_fingerprint,
+        "expected_candidate_fingerprint": target.expected_candidate_fingerprint,
+        "expected_objective_context_fingerprint": target.expected_objective_context_fingerprint,
+        "expected_selected_context_fingerprint": target.expected_selected_context_fingerprint,
+        "expected_task_id": target.expected_task_id,
+        "expected_run_id": target.expected_run_id,
+        "expected_proposal_id": target.expected_proposal_id,
+        "expected_source_event_id": target.expected_source_event_id,
+        "expected_source_event_kind": target.expected_source_event_kind,
+        "expected_operation": target.expected_operation,
+        "expected_path_fingerprint": target.expected_path_fingerprint,
+        "expected_validation_status": target.expected_validation_status,
+        "expected_approval_status": target.expected_approval_status,
+        "expected_authorization_preflight_fingerprint": target.expected_authorization_preflight_fingerprint,
+        "expected_preflight_snapshot_id": target.expected_preflight_snapshot_id,
+        "expected_apply_plan_id": target.expected_apply_plan_id,
+        "expected_target_sha256": target.expected_target_sha256,
+        "replacement_content_sha256": replacement_content_sha256,
+        "replacement_content_bytes": target.replacement_content.as_bytes().len(),
+        "replacement_content_chars": target.replacement_content.chars().count(),
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_objective_proposal_apply_replay_request(
+    params: &HeadlessContinueOnceParams,
+    checkpoint: &HeadlessObjectiveProposalApplyCheckpoint,
+) -> Result<(), String> {
+    let current = objective_proposal_apply_request_fingerprint(params)?;
+    match checkpoint.request_fingerprint.as_deref() {
+        Some(stored) if stored == current => Ok(()),
+        Some(_) => Err(
+            "invalid params: headless objective proposal apply continuation request identity mismatch"
+                .to_string(),
+        ),
+        None => Err(
+            "invalid params: headless objective proposal apply checkpoint is missing request identity fingerprint"
+                .to_string(),
+        ),
+    }
+}
+
+fn validate_objective_proposal_apply_route(
+    store: &BrownieStore,
+    target: &ObjectiveProposalApplyTarget,
+) -> Result<HeadlessObjectiveProposalAuthorizationPreflightCheckpoint, String> {
+    let checkpoint = store
+        .read_headless_objective_proposal_authorization_preflight_checkpoint(
+            &target.authorization_preflight_continuation_id,
+        )
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "objective proposal apply failed: authorization preflight checkpoint not found"
+                .to_string()
+        })?;
+    if checkpoint.decision_id != target.expected_authorization_preflight_decision_id {
+        return Err(
+            "objective proposal apply failed: authorization preflight decision mismatch"
+                .to_string(),
+        );
+    }
+    let result = &checkpoint.result;
+    if result.status != "authorized_preflight_ready"
+        || result.journey_id != target.journey_id
+        || result.session_id != target.session_id
+        || result.source_drive_id != target.source_drive_id
+        || result.task_id != target.expected_task_id
+        || result.run_id != target.expected_run_id
+        || result.proposal_id != target.expected_proposal_id
+        || result.source_event_id != target.expected_source_event_id
+        || result.source_event_kind != target.expected_source_event_kind
+        || result.operation != target.expected_operation
+        || result.path_fingerprint != target.expected_path_fingerprint
+        || result.objective_context_fingerprint != target.expected_objective_context_fingerprint
+        || result.selected_context_fingerprint != target.expected_selected_context_fingerprint
+        || result.candidate_fingerprint != target.expected_candidate_fingerprint
+        || result.validation_status != target.expected_validation_status
+        || result.approval_status != target.expected_approval_status
+        || result.authorization_preflight_fingerprint
+            != target.expected_authorization_preflight_fingerprint
+        || result.preflight_snapshot.snapshot_id != target.expected_preflight_snapshot_id
+        || result.apply_plan.plan_id != target.expected_apply_plan_id
+    {
+        return Err(
+            "objective proposal apply failed: authorization preflight evidence mismatch"
+                .to_string(),
+        );
+    }
+    if result.preflight_snapshot.file_sha256.as_deref()
+        != Some(target.expected_target_sha256.as_str())
+        || result.preflight_snapshot.stale
+        || result.apply_plan.status != "Ready"
+    {
+        return Err(
+            "objective proposal apply failed: authorization preflight is not current and ready"
+                .to_string(),
+        );
+    }
+    let proposal = inspect_proposal(store, &target.expected_run_id, &target.expected_proposal_id)?;
+    if proposal.operation != WorkspacePatchOperation::ReplaceFile.as_str()
+        || proposal.validation_status != "Valid"
+        || proposal.approval_status != "Approved"
+    {
+        return Err(
+            "objective proposal apply failed: proposal is not an approved valid replace_file proposal"
+                .to_string(),
+        );
+    }
+    Ok(checkpoint)
+}
+
+fn handle_headless_continue_objective_proposal_apply(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result = match headless_continue_objective_proposal_apply(store, progress_overview, &params)
+    {
+        Ok(result) => result,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    result_response(id, json!(result))
+}
+
+fn headless_continue_objective_proposal_apply_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    checkpoint: HeadlessObjectiveProposalApplyCheckpoint,
+) -> JsonRpcResponse<Value> {
+    if let Err(message) = validate_objective_proposal_apply_replay_request(&params, &checkpoint) {
+        return error_response(id, -32602, &message);
+    }
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::InspectProgressOverview,
+        reason: "Objective proposal apply was already completed by this continuation; replaying bounded apply result."
+            .to_string(),
+        task_id: Some(checkpoint.task_id.clone()),
+        run_id: Some(checkpoint.run_id.clone()),
+        proposal_id: Some(checkpoint.proposal_id.clone()),
+        apply_id: Some(checkpoint.result.apply_result.apply_id.clone()),
+        failure_fingerprint: None,
+        apply_fingerprint: Some(checkpoint.apply_fingerprint.clone()),
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "inspect_progress_overview".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(checkpoint.decision_id),
+            continuation_id: Some(checkpoint.continuation_id),
+            selected_task_id: Some(checkpoint.task_id),
+            selected_run_id: Some(checkpoint.run_id),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(checkpoint.post_progress_fingerprint),
+            post_aggregate_sequence: Some(checkpoint.post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: Some(checkpoint.result),
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action: "inspect_progress_overview".to_string(),
+        }),
+    )
+}
+
+fn headless_continue_objective_proposal_apply(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, String> {
+    let target = params
+        .objective_proposal_apply_target
+        .as_ref()
+        .ok_or_else(|| "objective proposal apply target missing".to_string())?;
+    validate_objective_proposal_apply_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        "objective proposal apply failed: continuation_id is required".to_string()
+    })?;
+    let request_fingerprint = objective_proposal_apply_request_fingerprint(params)?;
+    let authorization_checkpoint = validate_objective_proposal_apply_route(store, target)?;
+    let selected_record = store
+        .tasks()
+        .get_task(&target.expected_task_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "objective proposal apply failed: source task not found".to_string())?;
+    if selected_record.run_id != target.expected_run_id {
+        return Err("objective proposal apply failed: source task/run mismatch".to_string());
+    }
+
+    let (proposal, apply_result) = apply_proposal(
+        store,
+        &ProposalApplyParams {
+            run_id: target.expected_run_id.clone(),
+            proposal_id: target.expected_proposal_id.clone(),
+            expected_target_sha256: Some(target.expected_target_sha256.clone()),
+            expected_target_absent: None,
+            replacement_content: Some(target.replacement_content.clone()),
+            patch_old_text: None,
+            patch_new_text: None,
+            patch_hunks: None,
+            authorize: true,
+            transaction_items: None,
+            transaction_recovery_source: None,
+        },
+    )?;
+    let proposal_apply_result = ProposalApplyResult {
+        proposal,
+        apply_result,
+    };
+    let apply_payload = json!(proposal_apply_result.apply_result);
+    let apply_fingerprint = verification_recovery_apply_fingerprint(&apply_payload);
+    let replacement_content_sha256 =
+        objective_proposal_apply_replacement_content_fingerprint(&target.replacement_content);
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    let policy_version = "headless_continue_once_v1";
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &selected_record,
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            Some(json!({
+                "decision_id": decision_id.clone(),
+                "continuation_id": continuation_id.clone(),
+                "selected_task_id": selected_record.task_id.clone(),
+                "selected_run_id": selected_record.run_id.clone(),
+                "expected_progress_fingerprint": params.expected_progress_fingerprint.clone(),
+                "expected_aggregate_sequence": params.expected_aggregate_sequence,
+                "candidate_count": 1,
+                "policy_version": policy_version,
+                "authorize": true,
+                "authorize_objective_proposal_apply": true,
+                "authorization_preflight_continuation_id": target.authorization_preflight_continuation_id.clone(),
+                "authorization_preflight_decision_id": authorization_checkpoint.decision_id.clone(),
+                "authorization_preflight_fingerprint": target.expected_authorization_preflight_fingerprint.clone(),
+                "journey_id": target.journey_id.clone(),
+                "session_id": target.session_id.clone(),
+                "source_drive_id": target.source_drive_id.clone(),
+                "source_event_id": target.expected_source_event_id.clone(),
+                "source_event_kind": target.expected_source_event_kind.clone(),
+                "proposal_id": target.expected_proposal_id.clone(),
+                "operation": target.expected_operation.clone(),
+                "path_fingerprint": target.expected_path_fingerprint.clone(),
+                "expected_target_sha256": target.expected_target_sha256.clone(),
+                "replacement_content_sha256": replacement_content_sha256.clone(),
+                "replacement_content_bytes": target.replacement_content.as_bytes().len(),
+                "replacement_content_chars": target.replacement_content.chars().count(),
+                "apply_id": proposal_apply_result.apply_result.apply_id.clone(),
+                "apply_status": proposal_apply_result.apply_result.apply_status.clone(),
+                "applied": proposal_apply_result.apply_result.applied,
+                "apply_fingerprint": apply_fingerprint.clone(),
+                "next_action": "inspect_progress_overview",
+                "reason": "Headless continue-once applied one authorized objective replace_file proposal under explicit authorization."
+            })),
+        )
+        .map_err(|error| error.to_string())?;
+    store
+        .tasks()
+        .write_headless_continuation_decision(&HeadlessContinuationDecisionLookup {
+            decision_id: decision_id.clone(),
+            continuation_id: continuation_id.clone(),
+            selected_task_id: selected_record.task_id.clone(),
+            selected_run_id: selected_record.run_id.clone(),
+            expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            candidate_count: 1,
+            policy_version: policy_version.to_string(),
+        })
+        .map_err(|error| error.to_string())?;
+
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    store
+        .write_headless_objective_proposal_apply_checkpoint(
+            &HeadlessObjectiveProposalApplyCheckpoint {
+                continuation_id: continuation_id.clone(),
+                decision_id: decision_id.clone(),
+                request_fingerprint: Some(request_fingerprint),
+                authorization_preflight_continuation_id: target
+                    .authorization_preflight_continuation_id
+                    .clone(),
+                expected_authorization_preflight_decision_id: target
+                    .expected_authorization_preflight_decision_id
+                    .clone(),
+                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+                expected_aggregate_sequence: params.expected_aggregate_sequence,
+                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+                current_aggregate_sequence: progress_overview.aggregate_sequence,
+                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+                post_aggregate_sequence: post_progress.aggregate_sequence,
+                journey_id: target.journey_id.clone(),
+                session_id: target.session_id.clone(),
+                source_drive_id: target.source_drive_id.clone(),
+                task_id: target.expected_task_id.clone(),
+                run_id: target.expected_run_id.clone(),
+                proposal_id: target.expected_proposal_id.clone(),
+                source_event_id: target.expected_source_event_id.clone(),
+                source_event_kind: target.expected_source_event_kind.clone(),
+                expected_authorization_preflight_fingerprint: target
+                    .expected_authorization_preflight_fingerprint
+                    .clone(),
+                expected_preflight_snapshot_id: target.expected_preflight_snapshot_id.clone(),
+                expected_apply_plan_id: target.expected_apply_plan_id.clone(),
+                replacement_content_sha256,
+                apply_fingerprint: apply_fingerprint.clone(),
+                result: proposal_apply_result.clone(),
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::InspectProgressOverview,
+        reason: "Objective proposal apply completed with bounded apply result; inspect progress."
+            .to_string(),
+        task_id: Some(target.expected_task_id.clone()),
+        run_id: Some(target.expected_run_id.clone()),
+        proposal_id: Some(target.expected_proposal_id.clone()),
+        apply_id: Some(proposal_apply_result.apply_result.apply_id.clone()),
+        failure_fingerprint: None,
+        apply_fingerprint: Some(apply_fingerprint),
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "inspect_progress_overview".to_string(),
+    };
+    let next_action = next_route.next_action.clone();
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: Some(selected_record.task_id),
+        selected_run_id: Some(selected_record.run_id),
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: Some(proposal_apply_result),
+        objective_proposal_authorization_preflight_result: None,
+        llm_provider_failure_retry_admission: None,
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action,
     })
 }
 
@@ -21128,6 +21708,10 @@ fn headless_recovery_apply_result_for_replay(
                 && payload
                     .get("authorize_patch_apply_recovery_apply")
                     .and_then(Value::as_bool)
+                    != Some(true)
+                && payload
+                    .get("authorize_objective_proposal_apply")
+                    .and_then(Value::as_bool)
                     != Some(true))
         {
             return None;
@@ -21195,7 +21779,32 @@ fn headless_recovery_apply_result_for_replay(
         .get("authorize_patch_apply_recovery_apply")
         .and_then(Value::as_bool)
         == Some(true);
-    let next_route = if is_patch_recovery_apply {
+    let is_objective_proposal_apply = decision_payload
+        .get("authorize_objective_proposal_apply")
+        .and_then(Value::as_bool)
+        == Some(true);
+    let next_route = if is_objective_proposal_apply {
+        HeadlessContinueRoute {
+            kind: HeadlessContinueRouteKind::InspectProgressOverview,
+            reason: "Objective proposal was already applied by this continuation; replaying bounded apply result."
+                .to_string(),
+            task_id: decision_payload
+                .get("selected_task_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            run_id: decision_payload
+                .get("selected_run_id")
+                .and_then(Value::as_str)
+                .map(ToString::to_string),
+            proposal_id: Some(proposal_id.to_string()),
+            apply_id: Some(apply_id.to_string()),
+            failure_fingerprint: None,
+            apply_fingerprint: Some(apply_fingerprint),
+            progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+            aggregate_sequence: Some(progress_overview.aggregate_sequence),
+            next_action: "inspect_progress_overview".to_string(),
+        }
+    } else if is_patch_recovery_apply {
         HeadlessContinueRoute {
             kind: HeadlessContinueRouteKind::InspectProgressOverview,
             reason: "Patch recovery proposal was already applied by this continuation; replaying bounded apply result."
@@ -57361,6 +57970,265 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_applies_objective_proposal_after_authorization_preflight_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let (_store, selected_context) = prepared_selected_index_context(
+            temp.path(),
+            "pub fn selected_context_for_objective_apply() {}\n",
+        );
+        let store = BrownieStore::new(temp.path());
+        let drive_request = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m56.apply",
+                "drive_id": "m56.apply.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "context_budget": {
+                    "max_prompt_chars": 4096,
+                    "max_ledger_events": 16,
+                    "max_selected_index_chars": 1024
+                },
+                "journey_admission": {
+                    "journey_id": "m56.apply.1",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": "Implement README update",
+                        "mode_id": "implementer"
+                    },
+                    "objective_context": {
+                        "authorize_objective_context_admission": true,
+                        "objective_id": "m56.objective.apply",
+                        "objective_fingerprint": format!("sha256:{}", "8".repeat(64)),
+                        "selected_index_context": selected_context
+                    }
+                }
+            }
+        });
+        let drive = parse_line(&drive_request.to_string())
+            .result
+            .expect("drive result");
+        let candidate = &drive["objective_proposal_candidate"];
+        let run_id = candidate["run_id"].as_str().expect("run id").to_string();
+        let proposal_id = candidate["proposal_id"]
+            .as_str()
+            .expect("proposal id")
+            .to_string();
+        let progress = drive["post_progress"].as_object().expect("post progress");
+        let authorization_target = json!({
+            "authorize_objective_proposal_preflight": true,
+            "journey_id": candidate["journey_id"],
+            "session_id": candidate["session_id"],
+            "source_drive_id": candidate["drive_id"],
+            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
+            "expected_candidate_fingerprint": candidate["candidate_fingerprint"],
+            "expected_objective_context_fingerprint": candidate["objective_context_fingerprint"],
+            "expected_selected_context_fingerprint": candidate["selected_context_fingerprint"],
+            "expected_task_id": candidate["task_id"],
+            "expected_run_id": candidate["run_id"],
+            "expected_proposal_id": candidate["proposal_id"],
+            "expected_source_event_id": candidate["source_event_id"],
+            "expected_source_event_kind": candidate["source_event_kind"],
+            "expected_operation": candidate["operation"],
+            "expected_path_fingerprint": candidate["path_fingerprint"],
+            "expected_validation_status": candidate["validation_status"],
+            "expected_approval_status": candidate["approval_status"],
+            "authorization_token_fingerprint": format!("sha256:{}", "c".repeat(64)),
+        });
+        let authorization_request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m56.apply.auth.preflight",
+                "expected_progress_fingerprint": progress["progress_fingerprint"],
+                "expected_aggregate_sequence": progress["aggregate_sequence"],
+                "objective_proposal_authorization_preflight_target": authorization_target
+            }
+        });
+        let authorized = parse_line(&authorization_request.to_string())
+            .result
+            .expect("authorization result");
+        let authorization_result = &authorized["objective_proposal_authorization_preflight_result"];
+        let expected_hash = authorization_result["preflight_snapshot"]["file_sha256"]
+            .as_str()
+            .expect("preflight file hash")
+            .to_string();
+        let apply_progress_fingerprint = authorized["post_progress_fingerprint"]
+            .as_str()
+            .expect("post progress")
+            .to_string();
+        let apply_aggregate_sequence = authorized["post_aggregate_sequence"]
+            .as_u64()
+            .expect("post sequence");
+        let apply_target = json!({
+            "authorize_objective_proposal_apply": true,
+            "authorization_preflight_continuation_id": "m56.apply.auth.preflight",
+            "expected_authorization_preflight_decision_id": authorized["decision_id"],
+            "journey_id": authorization_result["journey_id"],
+            "session_id": authorization_result["session_id"],
+            "source_drive_id": authorization_result["source_drive_id"],
+            "expected_journey_fingerprint": drive["journey"]["journey_fingerprint"],
+            "expected_candidate_fingerprint": authorization_result["candidate_fingerprint"],
+            "expected_objective_context_fingerprint": authorization_result["objective_context_fingerprint"],
+            "expected_selected_context_fingerprint": authorization_result["selected_context_fingerprint"],
+            "expected_task_id": authorization_result["task_id"],
+            "expected_run_id": authorization_result["run_id"],
+            "expected_proposal_id": authorization_result["proposal_id"],
+            "expected_source_event_id": authorization_result["source_event_id"],
+            "expected_source_event_kind": authorization_result["source_event_kind"],
+            "expected_operation": authorization_result["operation"],
+            "expected_path_fingerprint": authorization_result["path_fingerprint"],
+            "expected_validation_status": authorization_result["validation_status"],
+            "expected_approval_status": authorization_result["approval_status"],
+            "expected_authorization_preflight_fingerprint": authorization_result["authorization_preflight_fingerprint"],
+            "expected_preflight_snapshot_id": authorization_result["preflight_snapshot"]["snapshot_id"],
+            "expected_apply_plan_id": authorization_result["apply_plan"]["plan_id"],
+            "expected_target_sha256": expected_hash,
+            "replacement_content": "new README content"
+        });
+        let mut denied_target = apply_target.clone();
+        denied_target["expected_authorization_preflight_fingerprint"] =
+            json!(format!("sha256:{}", "9".repeat(64)));
+        let denied = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "headless.continue_once",
+                "params": {
+                    "authorize": true,
+                    "continuation_id": "m56.apply.denied",
+                    "expected_progress_fingerprint": apply_progress_fingerprint,
+                    "expected_aggregate_sequence": apply_aggregate_sequence,
+                    "objective_proposal_apply_target": denied_target
+                }
+            })
+            .to_string(),
+        )
+        .error
+        .expect("denied apply");
+        assert_eq!(denied.code, -32602);
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count(),
+            0
+        );
+
+        let apply_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m56.apply.objective",
+                "expected_progress_fingerprint": apply_progress_fingerprint,
+                "expected_aggregate_sequence": apply_aggregate_sequence,
+                "objective_proposal_apply_target": apply_target
+            }
+        });
+        let applied = parse_line(&apply_request.to_string());
+        assert!(applied.error.is_none(), "apply error: {:?}", applied.error);
+        let applied = applied.result.expect("apply result");
+        assert_eq!(applied["status"], "task_executed");
+        assert_eq!(applied["task_run_result"], Value::Null);
+        assert_eq!(
+            applied["objective_proposal_authorization_preflight_result"],
+            Value::Null
+        );
+        assert_eq!(
+            applied["proposal_apply_result"]["apply_result"]["apply_status"],
+            "Applied"
+        );
+        assert_eq!(
+            applied["proposal_apply_result"]["apply_result"]["applied"],
+            true
+        );
+        assert_eq!(
+            applied["proposal_apply_result"]["apply_result"]["authorization_consumed"],
+            true
+        );
+        assert_eq!(applied["next_route"]["kind"], "inspect_progress_overview");
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "new README content"
+        );
+        let apply_id = applied["proposal_apply_result"]["apply_result"]["apply_id"]
+            .as_str()
+            .expect("apply id")
+            .to_string();
+        let apply_event_count = || {
+            store
+                .tasks()
+                .read_ledger_events(&run_id)
+                .expect("events")
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count()
+        };
+        assert_eq!(apply_event_count(), 1);
+        let checkpoint = store
+            .read_headless_objective_proposal_apply_checkpoint("m56.apply.objective")
+            .expect("read checkpoint")
+            .expect("checkpoint");
+        assert_eq!(checkpoint.proposal_id, proposal_id);
+        assert_eq!(checkpoint.result.apply_result.apply_id, apply_id);
+        assert!(checkpoint.replacement_content_sha256.starts_with("sha256:"));
+
+        let replay = parse_line(&apply_request.to_string())
+            .result
+            .expect("apply replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(
+            replay["proposal_apply_result"]["apply_result"]["apply_id"],
+            apply_id
+        );
+        assert_eq!(apply_event_count(), 1);
+        let bounded_events: Vec<_> = store
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events")
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event.kind,
+                    LedgerEventKind::WorkspacePatchApplyResultRecorded
+                        | LedgerEventKind::HeadlessContinuationDecisionRecorded
+                )
+            })
+            .collect();
+        let serialized_events = serde_json::to_string(&bounded_events).unwrap();
+        for forbidden in [
+            "new README content",
+            "raw_content",
+            "full_content",
+            "raw_input",
+            "file_content",
+        ] {
+            assert!(!serialized_events.contains(forbidden));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn headless_continue_objective_authorization_preflight_denies_mismatch_before_side_effects() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
@@ -59444,6 +60312,7 @@ mod tests {
             llm_provider_failure_retry_run_target: None,
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
+            objective_proposal_apply_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(target.clone()),
             modepack_selected_candidate_provenance_verification_target: None,
@@ -82660,6 +83529,7 @@ mod tests {
             llm_provider_failure_retry_run_target: None,
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
+            objective_proposal_apply_target: None,
             modepack_registry_update_selection_target: Some(
                 ModePackRegistryUpdateSelectionTarget {
                     authorize_modepack_registry_update_selection: true,
@@ -82801,6 +83671,7 @@ mod tests {
             llm_provider_failure_retry_run_target: None,
             parent_join_run_target: None,
             objective_proposal_authorization_preflight_target: None,
+            objective_proposal_apply_target: None,
             modepack_registry_update_selection_target: None,
             modepack_selected_candidate_fetch_target: Some(ModePackSelectedCandidateFetchTarget {
                 authorize_selected_candidate_fetch: true,
