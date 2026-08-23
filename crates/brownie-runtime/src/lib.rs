@@ -67,14 +67,15 @@ use brownie_protocol::{
     PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
     PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
     PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
-    ProductContinuationProvenance, ProductContinuationRunTarget, ProductContinuationSource,
-    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
-    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
-    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
-    ProposalPatchHunk, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProductContinuationDerivedTarget, ProductContinuationProvenance, ProductContinuationRunTarget,
+    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
+    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
+    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
     ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
     ProposalReviewBundleParams, ProposalReviewBundleResult,
     ProposalReviewQueueDiagnosticsDigestHistoryParams,
@@ -13606,9 +13607,22 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: product_continuation_run_target cannot be combined with max_steps greater than 1",
         );
     }
-    if params.product_continuation_admission_target.is_some()
-        && params.product_continuation_run_target.is_some()
-    {
+    if params.product_continuation_derived_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_derived_target cannot be combined with max_steps greater than 1",
+        );
+    }
+    let product_continuation_target_count = [
+        params.product_continuation_admission_target.is_some(),
+        params.product_continuation_run_target.is_some(),
+        params.product_continuation_derived_target.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if product_continuation_target_count > 1 {
         return error_response(
             id,
             -32602,
@@ -13669,10 +13683,7 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
-    if (params.product_continuation_admission_target.is_some()
-        || params.product_continuation_run_target.is_some())
-        && params.context_budget.is_some()
-    {
+    if product_continuation_target_count > 0 && params.context_budget.is_some() {
         return error_response(
             id,
             -32602,
@@ -13688,10 +13699,7 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             "invalid params: selected_index_context is supported only for normal headless task continuation",
         );
     }
-    if (params.product_continuation_admission_target.is_some()
-        || params.product_continuation_run_target.is_some())
-        && params.selected_index_context.is_some()
-    {
+    if product_continuation_target_count > 0 && params.selected_index_context.is_some() {
         return error_response(
             id,
             -32602,
@@ -13784,6 +13792,13 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 checkpoint,
                 params.product_continuation_admission_target.as_ref(),
                 params.product_continuation_run_target.as_ref(),
+            ) {
+                return error_response(id, -32602, &message);
+            }
+            if let Err(message) = validate_headless_run_product_continuation_derived_replay_target(
+                &store,
+                checkpoint,
+                params.product_continuation_derived_target.as_ref(),
             ) {
                 return error_response(id, -32602, &message);
             }
@@ -13893,6 +13908,22 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 "invalid params: product_continuation_run_target requires persisted session route run_product_continuation_task_explicitly",
             );
         }
+        if let Some(target) = params.product_continuation_derived_target.as_ref() {
+            if let Err(message) = validate_product_continuation_derived_target(target) {
+                return error_response(id, -32602, &message);
+            }
+            if !matches!(
+                headless_run_checkpoint_next_route_kind(checkpoint),
+                Some(HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly)
+                    | Some(HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly)
+            ) {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: product_continuation_derived_target requires persisted product-continuation route",
+                );
+            }
+        }
     } else if params.expected_session_sequence != 1 {
         return error_response(
             id,
@@ -13909,6 +13940,7 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
             .is_some()
         || params.product_continuation_admission_target.is_some()
         || params.product_continuation_run_target.is_some()
+        || params.product_continuation_derived_target.is_some()
     {
         return error_response(
             id,
@@ -13951,6 +13983,17 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
         .advance_id
         .clone()
         .unwrap_or_else(|| format!("seq.{}", params.expected_session_sequence));
+    let (derived_admission_target, derived_run_target) = if let (Some(checkpoint), Some(target)) = (
+        existing.as_ref(),
+        params.product_continuation_derived_target.as_ref(),
+    ) {
+        match product_continuation_derived_targets_from_checkpoint(&store, checkpoint, target) {
+            Ok(targets) => targets,
+            Err(message) => return error_response(id, -32602, &message),
+        }
+    } else {
+        (None, None)
+    };
     let continuation_id = format!(
         "run.{}.{}",
         params.session_id, params.expected_session_sequence
@@ -13978,6 +14021,12 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
         continue_params["product_continuation_admission_target"] = json!(target);
     }
     if let Some(target) = params.product_continuation_run_target.clone() {
+        continue_params["product_continuation_run_target"] = json!(target);
+    }
+    if let Some(target) = derived_admission_target {
+        continue_params["product_continuation_admission_target"] = json!(target);
+    }
+    if let Some(target) = derived_run_target {
         continue_params["product_continuation_run_target"] = json!(target);
     }
     if let Some(target) = params.modepack_registry_update_selection_target.clone() {
@@ -14295,6 +14344,118 @@ fn validate_headless_run_product_continuation_replay_target(
         }
     }
     Ok(())
+}
+
+fn validate_headless_run_product_continuation_derived_replay_target(
+    store: &BrownieStore,
+    checkpoint: &HeadlessRunSessionCheckpoint,
+    target: Option<&ProductContinuationDerivedTarget>,
+) -> Result<(), String> {
+    let Some(target) = target else {
+        return Ok(());
+    };
+    validate_product_continuation_derived_target(target)?;
+    let continuation_id = checkpoint
+        .result
+        .steps
+        .iter()
+        .find_map(|step| step.continuation_id.as_deref())
+        .ok_or_else(|| {
+            "invalid params: product-continuation derived replay checkpoint is missing continuation_id"
+                .to_string()
+        })?;
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    if let Some(replay) =
+        headless_product_continuation_admission_decision_for_replay(store, &tasks, continuation_id)?
+    {
+        let source_route = HeadlessContinueRoute {
+            kind: HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly,
+            reason: "Replay-derived product continuation admission source.".to_string(),
+            task_id: Some(replay.admission.source_task_id),
+            run_id: Some(replay.admission.source_run_id),
+            proposal_id: None,
+            apply_id: None,
+            failure_fingerprint: None,
+            apply_fingerprint: None,
+            progress_fingerprint: None,
+            aggregate_sequence: None,
+            next_action: "admit_product_continuation_task_explicitly".to_string(),
+        };
+        let continuation_goal = target.continuation_goal.clone().ok_or_else(|| {
+            "invalid params: product_continuation_derived_target.continuation_goal is required for admission replay"
+                .to_string()
+        })?;
+        let mut replay_params =
+            headless_run_replay_continue_once_params(checkpoint, continuation_id);
+        replay_params.product_continuation_admission_target =
+            Some(ProductContinuationAdmissionTarget {
+                authorize_product_continuation_admission: true,
+                product_continuation_source: product_continuation_source_from_route(
+                    store,
+                    &source_route,
+                )?,
+                continuation_goal,
+                continuation_mode_id: target.continuation_mode_id.clone(),
+            });
+        let current = headless_product_continuation_admission_request_fingerprint(&replay_params)
+            .map_err(|error| match error {
+            VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+            VerificationRecoveryAdmissionError::Internal(message) => message,
+        })?;
+        if replay.request_fingerprint != current {
+            return Err(
+                "invalid params: product_continuation_derived_target continuation request identity mismatch"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    if let Some((decision, request_fingerprint)) =
+        headless_product_continuation_run_decision_for_replay(store, &tasks, continuation_id)?
+    {
+        let record = store
+            .tasks()
+            .get_task(&decision.selected_task_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| {
+                "invalid params: product-continuation derived run replay task is missing"
+                    .to_string()
+            })?;
+        let provenance = record
+            .product_continuation_provenance
+            .as_ref()
+            .ok_or_else(|| {
+                "invalid params: product-continuation derived run replay provenance is missing"
+                    .to_string()
+            })?;
+        let mut replay_params =
+            headless_run_replay_continue_once_params(checkpoint, continuation_id);
+        replay_params.product_continuation_run_target = Some(ProductContinuationRunTarget {
+            authorize_product_continuation_run: true,
+            continuation_task_id: record.task_id,
+            continuation_run_id: record.run_id,
+            source_task_id: provenance.source_task_id.clone(),
+            source_run_id: provenance.source_run_id.clone(),
+            source_decision_id: provenance.source_decision_id.clone(),
+            expected_decision_fingerprint: provenance.decision_fingerprint.clone(),
+            expected_product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
+            expected_admission_route_kind:
+                HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+            expected_admission_request_fingerprint: None,
+        });
+        let current = headless_product_continuation_run_request_fingerprint(&replay_params)?;
+        if request_fingerprint != current {
+            return Err(
+                "invalid params: product_continuation_derived_target continuation request identity mismatch"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    Err("invalid params: product-continuation derived replay evidence is missing".to_string())
 }
 
 fn validate_headless_run_selected_candidate_provenance_verification_replay_target(
@@ -20189,9 +20350,22 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: product_continuation_run_target cannot be combined with max_steps_per_advance greater than 1",
         );
     }
-    if params.product_continuation_admission_target.is_some()
-        && params.product_continuation_run_target.is_some()
-    {
+    if params.product_continuation_derived_target.is_some() && max_steps_per_advance > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_derived_target cannot be combined with max_steps_per_advance greater than 1",
+        );
+    }
+    let product_continuation_target_count = [
+        params.product_continuation_admission_target.is_some(),
+        params.product_continuation_run_target.is_some(),
+        params.product_continuation_derived_target.is_some(),
+    ]
+    .into_iter()
+    .filter(|present| *present)
+    .count();
+    if product_continuation_target_count > 1 {
         return error_response(
             id,
             -32602,
@@ -20230,10 +20404,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
-    if (params.product_continuation_admission_target.is_some()
-        || params.product_continuation_run_target.is_some())
-        && params.context_budget.is_some()
-    {
+    if product_continuation_target_count > 0 && params.context_budget.is_some() {
         return error_response(
             id,
             -32602,
@@ -20355,6 +20526,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                     params.product_continuation_admission_target.as_ref(),
                     params.product_continuation_run_target.as_ref(),
                 ) {
+                    return error_response(id, -32602, &message);
+                }
+                if let Err(message) =
+                    validate_headless_run_product_continuation_derived_replay_target(
+                        &store,
+                        &replay_checkpoint,
+                        params.product_continuation_derived_target.as_ref(),
+                    )
+                {
                     return error_response(id, -32602, &message);
                 }
             }
@@ -20581,6 +20761,22 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 -32602,
                 "invalid params: product_continuation_run_target requires persisted session route run_product_continuation_task_explicitly",
             );
+        }
+        if let Some(target) = params.product_continuation_derived_target.as_ref() {
+            if let Err(message) = validate_product_continuation_derived_target(target) {
+                return error_response(id, -32602, &message);
+            }
+            if !matches!(
+                headless_run_checkpoint_next_route_kind(start_checkpoint),
+                Some(HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly)
+                    | Some(HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly)
+            ) {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: product_continuation_derived_target requires persisted product-continuation route",
+                );
+            }
         }
     }
     let preflight_tasks = match store.tasks().list_tasks() {
@@ -20847,6 +21043,9 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             }
             if let Some(target) = params.product_continuation_run_target.clone() {
                 advance_params["product_continuation_run_target"] = json!(target);
+            }
+            if let Some(target) = params.product_continuation_derived_target.clone() {
+                advance_params["product_continuation_derived_target"] = json!(target);
             }
             if let Some(target) = params
                 .modepack_selected_candidate_provenance_verification_target
@@ -45960,6 +46159,15 @@ enum VerificationRecoveryAdmissionError {
     Internal(String),
 }
 
+impl std::fmt::Display for VerificationRecoveryAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VerificationRecoveryAdmissionError::InvalidParams(message)
+            | VerificationRecoveryAdmissionError::Internal(message) => formatter.write_str(message),
+        }
+    }
+}
+
 fn verification_recovery_provenance_for_source(
     store: &BrownieStore,
     source: &VerificationRecoverySource,
@@ -46451,6 +46659,182 @@ fn validate_product_continuation_source_shape(
         }
     }
     Ok(())
+}
+
+fn validate_product_continuation_derived_target(
+    target: &ProductContinuationDerivedTarget,
+) -> Result<(), String> {
+    if !target.authorize_product_continuation_target_derivation {
+        return Err(
+            "invalid params: product_continuation_derived_target.authorize_product_continuation_target_derivation must be true"
+                .to_string(),
+        );
+    }
+    if let Some(goal) = target.continuation_goal.as_deref() {
+        if goal.trim().is_empty() || goal.len() > 500 {
+            return Err(
+                "invalid params: product_continuation_derived_target.continuation_goal must be bounded and non-empty"
+                    .to_string(),
+            );
+        }
+    }
+    if let Some(mode_id) = target.continuation_mode_id.as_deref() {
+        if mode_id.trim().is_empty() || mode_id.len() > 96 {
+            return Err(
+                "invalid params: product_continuation_derived_target.continuation_mode_id must be bounded"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn product_continuation_source_from_route(
+    store: &BrownieStore,
+    route: &HeadlessContinueRoute,
+) -> Result<ProductContinuationSource, String> {
+    let source_task_id = route.task_id.clone().ok_or_else(|| {
+        "invalid params: product_continuation_derived_target route missing source task_id"
+            .to_string()
+    })?;
+    let source_run_id = route.run_id.clone().ok_or_else(|| {
+        "invalid params: product_continuation_derived_target route missing source run_id"
+            .to_string()
+    })?;
+    let events = store
+        .tasks()
+        .read_ledger_events(&source_run_id)
+        .map_err(|error| error.to_string())?;
+    let payload = latest_product_completion_decision_payload(
+        &events,
+        &source_task_id,
+        &source_run_id,
+    )
+    .ok_or_else(|| {
+        "invalid params: product_continuation_derived_target source decision evidence is missing"
+            .to_string()
+    })?;
+    let source = ProductContinuationSource {
+        source_task_id,
+        source_run_id,
+        source_decision_id: product_continuation_payload_string(payload, "decision_id")
+            .map_err(|error| error.to_string())?,
+        expected_decision_fingerprint: product_continuation_payload_sha256(
+            payload,
+            "decision_fingerprint",
+        )
+        .map_err(|error| error.to_string())?,
+        expected_accepted_completion_fingerprint: product_continuation_payload_sha256(
+            payload,
+            "accepted_completion_fingerprint",
+        )
+        .map_err(|error| error.to_string())?,
+        expected_terminal_completion_fingerprint: product_continuation_payload_sha256(
+            payload,
+            "terminal_completion_fingerprint",
+        )
+        .map_err(|error| error.to_string())?,
+        expected_completion_closure_fingerprint: product_continuation_payload_sha256(
+            payload,
+            "completion_closure_fingerprint",
+        )
+        .map_err(|error| error.to_string())?,
+        expected_product_evidence_fingerprint: product_continuation_payload_sha256(
+            payload,
+            "product_evidence_fingerprint",
+        )
+        .map_err(|error| error.to_string())?,
+        authorize_product_continuation: true,
+    };
+    product_continuation_provenance_for_source(store, &source).map_err(|error| match error {
+        VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+        VerificationRecoveryAdmissionError::Internal(message) => message,
+    })?;
+    Ok(source)
+}
+
+fn product_continuation_derived_targets_from_checkpoint(
+    store: &BrownieStore,
+    checkpoint: &HeadlessRunSessionCheckpoint,
+    target: &ProductContinuationDerivedTarget,
+) -> Result<
+    (
+        Option<ProductContinuationAdmissionTarget>,
+        Option<ProductContinuationRunTarget>,
+    ),
+    String,
+> {
+    validate_product_continuation_derived_target(target)?;
+    let route = checkpoint.result.next_route.as_ref().ok_or_else(|| {
+        "invalid params: product_continuation_derived_target requires a persisted product-continuation route"
+            .to_string()
+    })?;
+    match route.kind {
+        HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly => {
+            let continuation_goal = target.continuation_goal.clone().ok_or_else(|| {
+                "invalid params: product_continuation_derived_target.continuation_goal is required for admission derivation"
+                    .to_string()
+            })?;
+            let admission = ProductContinuationAdmissionTarget {
+                authorize_product_continuation_admission: true,
+                product_continuation_source: product_continuation_source_from_route(store, route)?,
+                continuation_goal,
+                continuation_mode_id: target.continuation_mode_id.clone(),
+            };
+            validate_product_continuation_admission_target(&admission)
+                .map_err(|error| error.to_string())?;
+            Ok((Some(admission), None))
+        }
+        HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly => {
+            let continuation_task_id = route.task_id.clone().ok_or_else(|| {
+                "invalid params: product_continuation_derived_target route missing continuation task_id"
+                    .to_string()
+            })?;
+            let continuation_run_id = route.run_id.clone().ok_or_else(|| {
+                "invalid params: product_continuation_derived_target route missing continuation run_id"
+                    .to_string()
+            })?;
+            let record = store
+                .tasks()
+                .get_task(&continuation_task_id)
+                .map_err(|error| error.to_string())?
+                .ok_or_else(|| {
+                    "invalid params: product_continuation_derived_target continuation task was not found"
+                        .to_string()
+                })?;
+            if record.run_id != continuation_run_id {
+                return Err(
+                    "invalid params: product_continuation_derived_target route task/run mismatch"
+                        .to_string(),
+                );
+            }
+            let provenance = record.product_continuation_provenance.as_ref().ok_or_else(|| {
+                "invalid params: product_continuation_derived_target continuation provenance is missing"
+                    .to_string()
+            })?;
+            let run = ProductContinuationRunTarget {
+                authorize_product_continuation_run: true,
+                continuation_task_id,
+                continuation_run_id,
+                source_task_id: provenance.source_task_id.clone(),
+                source_run_id: provenance.source_run_id.clone(),
+                source_decision_id: provenance.source_decision_id.clone(),
+                expected_decision_fingerprint: provenance.decision_fingerprint.clone(),
+                expected_product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
+                expected_admission_route_kind:
+                    HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+                expected_admission_request_fingerprint: None,
+            };
+            product_continuation_record_for_headless_run_target(store, &run)
+                .map_err(task_run_admission_rejection_message)?;
+            validate_product_continuation_admission_evidence(store, &run)?;
+            Ok((None, Some(run)))
+        }
+        _ => Err(
+            "invalid params: product_continuation_derived_target requires persisted route admit_product_continuation_task_explicitly or run_product_continuation_task_explicitly"
+                .to_string(),
+        ),
+    }
 }
 
 fn latest_product_completion_decision_payload<'a>(
@@ -85185,17 +85569,6 @@ mod tests {
             .write_headless_run_session_checkpoint(&seed_checkpoint)
             .expect("write seed checkpoint");
 
-        let product_source = json!({
-            "source_task_id": decision.task_id,
-            "source_run_id": decision.run_id,
-            "source_decision_id": decision.decision_id,
-            "expected_decision_fingerprint": decision.decision_fingerprint,
-            "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
-            "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
-            "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
-            "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
-            "authorize_product_continuation": true,
-        });
         let admit_drive_request = json!({
             "jsonrpc": "2.0",
             "id": 3,
@@ -85207,11 +85580,10 @@ mod tests {
                 "expected_start_session_sequence": 1,
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
-                "product_continuation_admission_target": {
-                    "authorize_product_continuation_admission": true,
+                "product_continuation_derived_target": {
+                    "authorize_product_continuation_target_derivation": true,
                     "continuation_goal": "Run the next product continuation task through drive",
-                    "continuation_mode_id": "implementer",
-                    "product_continuation_source": product_source,
+                    "continuation_mode_id": "implementer"
                 }
             }
         });
@@ -85271,16 +85643,8 @@ mod tests {
                 "expected_start_session_sequence": 2,
                 "max_advances": 1,
                 "max_steps_per_advance": 1,
-                "product_continuation_run_target": {
-                    "authorize_product_continuation_run": true,
-                    "continuation_task_id": continuation_task_id,
-                    "continuation_run_id": continuation_run_id,
-                    "source_task_id": decision.task_id,
-                    "source_run_id": decision.run_id,
-                    "source_decision_id": decision.decision_id,
-                    "expected_decision_fingerprint": decision.decision_fingerprint,
-                    "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
-                    "expected_admission_route_kind": "run_product_continuation_task_explicitly"
+                "product_continuation_derived_target": {
+                    "authorize_product_continuation_target_derivation": true
                 }
             }
         });
@@ -85307,7 +85671,7 @@ mod tests {
 
         let mut mismatched_replay = admit_drive_request.clone();
         mismatched_replay["id"] = json!(5);
-        mismatched_replay["params"]["product_continuation_admission_target"]["continuation_goal"] =
+        mismatched_replay["params"]["product_continuation_derived_target"]["continuation_goal"] =
             json!("conflicting drive replay goal");
         let mismatch = parse_line(&mismatched_replay.to_string());
         assert!(mismatch.result.is_none());
