@@ -43604,8 +43604,8 @@ fn revalidate_external_modepack_task_provenance_for_run(
     };
     if provenance.get("version").and_then(Value::as_str)
         != Some(EXTERNAL_MODEPACK_TASK_PROVENANCE_VERSION)
-        || provenance.get("source_kind").and_then(Value::as_str) != Some("workspace_modepack")
-        || provenance.get("source_path").and_then(Value::as_str) != Some(WORKSPACE_MODEPACK_PATH)
+        || !is_bounded_modepack_provenance_string(provenance.get("source_kind"))
+        || !is_bounded_modepack_provenance_string(provenance.get("source_path"))
         || provenance.get("mode_id").and_then(Value::as_str) != Some(mode_id)
     {
         return external_modepack_task_provenance_denied(
@@ -43627,6 +43627,17 @@ fn revalidate_external_modepack_task_provenance_for_run(
             "invalid params: external Mode Pack task provenance is invalid",
         );
     };
+    let captured_activation_fingerprint = provenance
+        .get("activation_fingerprint")
+        .and_then(Value::as_str);
+    if captured_activation_fingerprint.is_some_and(|value| !is_sha256_fingerprint(value)) {
+        return external_modepack_task_provenance_denied(
+            record,
+            store,
+            "malformed_external_modepack_activation_fingerprint",
+            "invalid params: external Mode Pack task provenance is invalid",
+        );
+    }
     let current = match external_modepack_task_provenance_payload(store, mode_id) {
         Ok(current) => current,
         Err(_) => {
@@ -43647,6 +43658,7 @@ fn revalidate_external_modepack_task_provenance_for_run(
         );
     };
     for key in [
+        "source_kind",
         "modepack_name",
         "schema_version",
         "source_path",
@@ -43654,6 +43666,20 @@ fn revalidate_external_modepack_task_provenance_for_run(
         "policy_fingerprint",
     ] {
         if provenance.get(key) != current.get(key) {
+            return external_modepack_task_provenance_denied(
+                record,
+                store,
+                "stale_external_modepack_task_policy_mismatch",
+                "invalid params: external Mode Pack task provenance is stale",
+            );
+        }
+    }
+    if let Some(captured_activation_fingerprint) = captured_activation_fingerprint {
+        if current
+            .get("activation_fingerprint")
+            .and_then(Value::as_str)
+            != Some(captured_activation_fingerprint)
+        {
             return external_modepack_task_provenance_denied(
                 record,
                 store,
@@ -43671,6 +43697,37 @@ fn revalidate_external_modepack_task_provenance_for_run(
         );
     }
     Ok(())
+}
+
+fn is_bounded_modepack_provenance_string(value: Option<&Value>) -> bool {
+    value
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty() && value.len() <= 160 && is_bounded_ascii(value))
+}
+
+fn is_bounded_ascii(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii() && !byte.is_ascii_control())
+}
+
+fn modepack_provenance_denial_field(
+    record: &TaskRecord,
+    store: &BrownieStore,
+    field: &str,
+    fallback: &str,
+) -> String {
+    external_modepack_task_provenance_from_mode_resolved(store, record)
+        .ok()
+        .flatten()
+        .and_then(|provenance| {
+            provenance
+                .get(field)
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty() && value.len() <= 160 && is_bounded_ascii(value))
+                .map(ToString::to_string)
+        })
+        .unwrap_or_else(|| fallback.to_string())
 }
 
 fn external_modepack_task_provenance_denied(
@@ -43703,8 +43760,8 @@ fn external_modepack_task_provenance_denied(
                     "task_id": record.task_id,
                     "run_id": record.run_id,
                     "mode_id": record.mode_id,
-                    "source_kind": "workspace_modepack",
-                    "source_path": WORKSPACE_MODEPACK_PATH,
+                    "source_kind": modepack_provenance_denial_field(record, store, "source_kind", "workspace_modepack"),
+                    "source_path": modepack_provenance_denial_field(record, store, "source_path", WORKSPACE_MODEPACK_PATH),
                 })),
             )
             .map_err(|error| TaskRunAdmissionRejection::Internal(error.to_string()))?;
@@ -87471,6 +87528,55 @@ mod tests {
         assert!(modes
             .iter()
             .any(|mode| mode["mode_id"] == "remote-active-reviewer"));
+        let start_remote_success = parse_line(
+            r#"{"jsonrpc":"2.0","id":40,"method":"task.start","params":{"goal":"Use remote active mode pack","mode_id":"remote-active-reviewer"}}"#,
+        );
+        assert!(start_remote_success.error.is_none());
+        let start_remote_success_result = start_remote_success.result.expect("remote start");
+        let remote_success_task_id = start_remote_success_result["task_id"]
+            .as_str()
+            .expect("remote task id")
+            .to_string();
+        let remote_success_run_id = start_remote_success_result["run_id"]
+            .as_str()
+            .expect("remote run id")
+            .to_string();
+        let remote_success_events = store_events(temp.path(), &remote_success_run_id);
+        let remote_mode_resolved = remote_success_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("remote mode resolved");
+        assert_eq!(
+            remote_mode_resolved["external_modepack_task_provenance"]["source_kind"],
+            "remote_https_candidate"
+        );
+        assert_eq!(
+            remote_mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
+            candidate_fingerprint
+        );
+        let remote_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":41,"method":"task.run","params":{{"task_id":"{remote_success_task_id}"}}}}"#
+        ));
+        assert!(remote_run.error.is_none());
+        assert_eq!(
+            remote_run.result.expect("remote run")["status"],
+            "Completed"
+        );
+
+        let start_stale_remote = parse_line(
+            r#"{"jsonrpc":"2.0","id":42,"method":"task.start","params":{"goal":"Hold stale remote active mode pack","mode_id":"remote-active-reviewer"}}"#,
+        );
+        assert!(start_stale_remote.error.is_none());
+        let start_stale_remote_result = start_stale_remote.result.expect("stale remote start");
+        let stale_remote_task_id = start_stale_remote_result["task_id"]
+            .as_str()
+            .expect("stale remote task id")
+            .to_string();
+        let stale_remote_run_id = start_stale_remote_result["run_id"]
+            .as_str()
+            .expect("stale remote run id")
+            .to_string();
         let ledger = std::fs::read_to_string(
             temp.path()
                 .join(".brownie/modepack-candidates/ledger.jsonl"),
@@ -87673,6 +87779,34 @@ mod tests {
             1
         );
         assert!(!update_ledger.contains("Review remote updates without writing files."));
+
+        let stale_remote_run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":43,"method":"task.run","params":{{"task_id":"{stale_remote_task_id}"}}}}"#
+        ));
+        let stale_remote_error = stale_remote_run.error.expect("stale remote task error");
+        assert_eq!(stale_remote_error.code, -32602);
+        assert_eq!(
+            stale_remote_error.message,
+            "invalid params: external Mode Pack task provenance is stale"
+        );
+        let stale_remote_events = store_events(temp.path(), &stale_remote_run_id);
+        assert!(stale_remote_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+        let stale_remote_denial = stale_remote_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ExternalModePackTaskProvenanceDenied)
+            .and_then(|event| event.payload.as_ref())
+            .expect("stale remote denial");
+        assert_eq!(
+            stale_remote_denial["reason"],
+            "stale_external_modepack_task_policy_missing"
+        );
+        assert_eq!(stale_remote_denial["source_kind"], "remote_https_candidate");
+        assert_ne!(stale_remote_denial["source_path"], ".brownie/modepack.json");
+        let stale_remote_serialized = stale_remote_denial.to_string();
+        assert!(!stale_remote_serialized.contains("Review remote activation"));
+        assert!(!stale_remote_serialized.contains("Review remote updates"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

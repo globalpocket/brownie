@@ -1,0 +1,85 @@
+{
+  "schema_version": 1,
+  "phase": "M12.4",
+  "current_milestone": "m12_external_mode_pack_execution_policy",
+  "milestone": "M12 External Mode Pack Execution Policy",
+  "target_capability": "mode_pack_runtime",
+  "concrete_capability_transition": "active_modepack_task_run_policy_snapshot_binding",
+  "forbidden_pattern": "new_json_rpc_method_report_digest_history_readiness_verdict_inspection_preview_dashboard_summary_wrapper_only_generic_modepack_status_wrapper_vsix_owned_policy_auto_run_auto_provider_auto_tool_auto_workspace_mutation_shell_git_network_service_raw_modepack_json_raw_prompt_provider_response_file_content_diff_stdout_stderr_command_environment_raw_request_raw_ledger_payload_absolute_path_canonical_path_secret_broad_runtime_refactor",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "mode_pack_runtime",
+      "relationship": "Direct external active Mode Pack tasks are bound to runtime-owned active snapshot identity at task.run."
+    },
+    {
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Rust denies stale active policy before execution side effects."
+    },
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Headless callers can resume external active Mode Pack tasks without caller-side policy reconstruction."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "Advances mode_pack_runtime with supporting runtime_permission_enforcement and headless_autonomous_development.",
+      "new_capability": "Direct external active Mode Pack task.run requires the current active snapshot and compiled policy to match task-start provenance.",
+      "why_existing_functionality_is_insufficient": "Existing live-file provenance does not bind active replacement or rollback snapshots at the point of use.",
+      "product_gap_if_skipped": "Delayed tasks admitted under an old active Mode Pack can execute after active policy changes.",
+      "non_duplicative": "Distinct from recent M56 Golden Journey phases and older M12/M21 Mode Pack handoff, child, activation, and live-file revalidation work.",
+      "no_new_rpc": "Yes. Uses existing task.start and task.run.",
+      "no_new_summary": "Yes. Adds no report, history, digest, readiness, verdict, preview, dashboard, or inspection surface.",
+      "runtime_behavior_change": "task.run denies stale active snapshot source, activation fingerprint, mode, or policy fingerprint before TaskRunning.",
+      "headless_autonomous_contribution": "Headless controllers receive deterministic execution or denial without inspecting raw Mode Pack state.",
+      "milestone_progress": "Closes the direct active-snapshot execution-policy gap for external Mode Packs."
+    },
+    "questions": [
+      {"id": "strategic_capabilities", "question": "Which strategic capabilities does this phase advance?"},
+      {"id": "new_capability", "question": "What new user-visible, operator-visible, or runtime capability does it add?"},
+      {"id": "why_existing_functionality_is_insufficient", "question": "Why can existing functionality not substitute for this work?"},
+      {"id": "product_gap_if_skipped", "question": "What concrete product gap remains if this is not implemented?"},
+      {"id": "non_duplicative", "question": "Is this semantically distinct from the previous three phases?"},
+      {"id": "no_new_rpc", "question": "Can this be done without adding a new RPC?"},
+      {"id": "no_new_summary", "question": "Can this be done without adding a new summary surface?"},
+      {"id": "runtime_behavior_change", "question": "What runtime or development-control behavior actually changes?"},
+      {"id": "headless_autonomous_contribution", "question": "How does this help headless autonomous development?"},
+      {"id": "milestone_progress", "question": "How does this move the milestone toward completion?"}
+    ]
+  },
+  "review_value_gate": {
+    "required": true,
+    "reject_when": [
+      "wrapper_only",
+      "report_only",
+      "inspection_only_without_execution",
+      "new_json_rpc_method",
+      "live_file_revalidation_as_substitute_for_active_snapshot_binding",
+      "vsix_owned_policy",
+      "raw_modepack_prompt_provider_file_command_environment_or_secret_exposure",
+      "behavior_tests_missing"
+    ]
+  },
+  "exit_criteria": [
+    "active external Mode Pack task.start provenance includes bounded activation identity",
+    "matching active snapshot provenance allows task.run",
+    "replacement or rollback stale active snapshot evidence denies before TaskRunning",
+    "denial evidence is bounded and duplicate-safe",
+    "built-in and live-workspace Mode Pack task behavior remains compatible"
+  ],
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "M12.4 archives the phase-value gate for active Mode Pack task-run policy snapshot binding.",
+    "changed_files": [
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.m12.4.json"
+    ],
+    "required_checks": [
+      "cargo test -p brownie-runtime modepack_replace_active_consumes_approved_remote_candidate_admits_update_and_replays",
+      "pnpm guard:phase-value"
+    ]
+  }
+}

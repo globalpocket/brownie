@@ -368,6 +368,17 @@ malformed, or changed Mode Pack policy is denied with bounded
 workspace, or child-materialization behavior. Built-in mode tasks and M12.2
 external child provenance remain on their existing paths.
 
+M12.4 binds that direct-task path to active Mode Pack snapshots. When
+`task.start` resolves an external mode from a runtime-owned active snapshot, the
+stored provenance includes the active snapshot source kind, source token,
+policy fingerprint, and activation fingerprint. Before `task.run` enters
+`TaskRunning`, Rust re-reads the current active snapshot and requires those
+bounded identifiers to match. Active replacement, rollback, missing modes,
+malformed provenance, or policy/activation fingerprint mismatch is denied before
+provider, tool, workspace, verifier, or child-materialization side effects.
+Legacy live-workspace Mode Pack tasks keep the existing live-file revalidation
+path, and built-in modes are unaffected.
+
 ## Runtime Progress Visualization Boundary
 
 M10.1 adds the first runtime-owned progress visualization model. Existing
