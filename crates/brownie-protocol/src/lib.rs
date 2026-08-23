@@ -1957,6 +1957,7 @@ pub enum HeadlessContinueRouteKind {
     StartVerificationRecoveryExplicitly,
     RunRecoveryTaskExplicitly,
     ReviewAndAuthorizeRecoveryProposal,
+    ReviewAndAuthorizeObjectiveProposal,
     ApplyApprovedRecoveryProposalExplicitly,
     StartVerificationRetryExplicitly,
     RunVerificationRetryTaskExplicitly,
@@ -2131,6 +2132,38 @@ pub struct HeadlessRunCompletionFinalization {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunObjectiveProposalCandidate {
+    pub status: String,
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub objective_context_fingerprint: String,
+    pub selected_context_fingerprint: String,
+    pub candidate_count: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_event_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_event_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub validation_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub approval_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub denial_reason: Option<String>,
+    pub candidate_fingerprint: String,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessRunAcceptedCompletion {
     pub task_id: String,
     pub run_id: String,
@@ -2199,6 +2232,8 @@ pub struct HeadlessRunDriveResult {
     pub post_progress: Option<HeadlessRunProgressCheckpoint>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_route: Option<HeadlessContinueRoute>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_proposal_candidate: Option<HeadlessRunObjectiveProposalCandidate>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub advances: Vec<HeadlessRunAdvanceResult>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2336,6 +2371,8 @@ pub struct HeadlessRunJourneyMetadata {
     pub journey_fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective_context: Option<HeadlessRunJourneyObjectiveContextMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proposal_candidate: Option<HeadlessRunObjectiveProposalCandidate>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

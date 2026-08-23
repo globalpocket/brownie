@@ -50,6 +50,26 @@ Recovery-scoped M8.2 proposal payloads may add only bounded provenance fields: `
 
 `proposal.list` returns summaries reconstructed from sanitized ledger events for a run. It returns `-32602` when the run does not exist. Responses contain preview/count/truncation metadata only and never full proposed content.
 
+## M56.2 objective-scoped candidate
+
+For an arbitrary-repository Golden Journey admitted through
+`headless.run.drive`, the runtime may derive one bounded
+`objective_proposal_candidate` from existing proposal evidence. The candidate is
+eligible only when exactly one non-recovery `WorkspacePatchProposed` event for
+the admitted task/run has `validation_status = "Valid"` and reconstructed
+`approval_status = "Pending"`. The candidate binds the proposal id, operation,
+validation and approval status, source event id/kind, journey/session/drive ids,
+source task/run ids, objective/context fingerprints, a path SHA-256 fingerprint,
+and a deterministic candidate fingerprint.
+
+This boundary never applies, approves, rejects, or preflights a proposal. Zero,
+multiple, malformed, invalid, blocked, non-pending, recovery-scoped, stale, or
+conflicting proposal evidence fails closed before mutation or candidate replay.
+Candidate metadata must not include raw proposed content, raw target content,
+raw hunks, raw diffs, raw ledger payloads, prompts, provider responses,
+commands, stdout/stderr, environment values, absolute paths, canonical paths, or
+secrets.
+
 ## Phase 3.1 validation and diff preview
 
 Phase 3.1 keeps the Phase 3.0 dry-run contract: `workspace.write` proposals never write workspace files and never apply patches. A proposal is inspected against the current workspace and receives `validation_status` (`Valid`, `Invalid`, or `Blocked`) plus optional `validation_reason`.
