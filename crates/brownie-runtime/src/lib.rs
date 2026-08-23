@@ -66,10 +66,10 @@ use brownie_protocol::{
     ObjectiveProposalAuthorizationPreflightTarget, ParentJoinRunTarget,
     PatchApplyRecoveryAdmission, PatchApplyRecoveryApplyTarget, PatchApplyRecoveryProvenance,
     PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
-    PermissionCheckResult, ProductContinuationAdmission, ProductContinuationProvenance,
-    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
+    ProductContinuationProvenance, ProductContinuationSource, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -8660,6 +8660,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: llm_provider_failure_retry_source cannot be combined with max_steps greater than 1",
         );
     }
+    if params.product_continuation_admission_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_admission_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.llm_provider_failure_retry_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -9452,6 +9459,52 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: objective_completion_acceptance_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective preflight, objective apply, or objective verification fields",
         );
     }
+    if params.product_continuation_admission_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.objective_proposal_apply_target.is_some()
+            || params.objective_apply_verification_target.is_some()
+            || params.objective_completion_acceptance_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_admission_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective, or index-context fields",
+        );
+    }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
         return error_response(id, -32602, message);
     }
@@ -9554,6 +9607,26 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     };
 
     if let Some(continuation_id) = params.continuation_id.as_deref() {
+        if params.product_continuation_admission_target.is_some() {
+            match headless_product_continuation_admission_decision_for_replay(
+                &store,
+                &tasks,
+                continuation_id,
+            ) {
+                Ok(Some(decision)) => {
+                    return headless_continue_product_continuation_admission_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        decision,
+                    );
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
         if params.modepack_registry_update_selection_target.is_some() {
             match store.read_headless_modepack_registry_update_selection_checkpoint(continuation_id)
             {
@@ -9780,6 +9853,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 objective_proposal_authorization_preflight_result: None,
                 llm_provider_failure_retry_admission: None,
+                product_continuation_admission: None,
                 modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
@@ -9862,6 +9936,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.objective_completion_acceptance_target.is_some() {
         return handle_headless_continue_objective_completion_acceptance(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.product_continuation_admission_target.is_some() {
+        return handle_headless_continue_product_continuation_admission(
             id,
             &store,
             &progress_overview,
@@ -10001,6 +10083,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 objective_proposal_authorization_preflight_result: None,
                 llm_provider_failure_retry_admission: None,
+                product_continuation_admission: None,
                 modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
@@ -10053,6 +10136,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
                 proposal_apply_result: None,
                 objective_proposal_authorization_preflight_result: None,
                 llm_provider_failure_retry_admission: None,
+                product_continuation_admission: None,
                 modepack_select_registry_update_result: None,
                 modepack_fetch_candidate_result: None,
                 modepack_verify_candidate_provenance_result: None,
@@ -10178,6 +10262,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -10211,6 +10296,414 @@ fn handle_headless_continue_modepack_registry_update_selection(
         Err(message) => return error_response(id, -32603, &format!("internal error: {message}")),
     };
     result_response(id, json!(result))
+}
+
+#[derive(Debug, Clone)]
+struct HeadlessProductContinuationAdmissionReplay {
+    decision_id: String,
+    continuation_id: String,
+    request_fingerprint: String,
+    admission: ProductContinuationAdmission,
+    post_progress_fingerprint: String,
+    post_aggregate_sequence: u64,
+}
+
+fn handle_headless_continue_product_continuation_admission(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result =
+        match headless_continue_product_continuation_admission(store, progress_overview, &params) {
+            Ok(result) => result,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    result_response(id, json!(result))
+}
+
+fn headless_product_continuation_admission_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, VerificationRecoveryAdmissionError> {
+    let target = params
+        .product_continuation_admission_target
+        .as_ref()
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_continuation_admission_target is required".into(),
+            )
+        })?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target requires continuation_id".into(),
+        )
+    })?;
+    let source = &target.product_continuation_source;
+    let seed = json!({
+        "route_kind": "product_continuation_admission",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_product_continuation_admission": target.authorize_product_continuation_admission,
+        "continuation_goal": target.continuation_goal,
+        "continuation_mode_id": target.continuation_mode_id,
+        "source_task_id": source.source_task_id,
+        "source_run_id": source.source_run_id,
+        "source_decision_id": source.source_decision_id,
+        "expected_decision_fingerprint": source.expected_decision_fingerprint,
+        "expected_accepted_completion_fingerprint": source.expected_accepted_completion_fingerprint,
+        "expected_terminal_completion_fingerprint": source.expected_terminal_completion_fingerprint,
+        "expected_completion_closure_fingerprint": source.expected_completion_closure_fingerprint,
+        "expected_product_evidence_fingerprint": source.expected_product_evidence_fingerprint,
+        "authorize_product_continuation": source.authorize_product_continuation,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn validate_product_continuation_admission_target(
+    target: &ProductContinuationAdmissionTarget,
+) -> Result<(), VerificationRecoveryAdmissionError> {
+    if !target.authorize_product_continuation_admission {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target.authorize_product_continuation_admission must be true".into(),
+        ));
+    }
+    if target.continuation_goal.trim().is_empty() {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target.continuation_goal must not be empty"
+                .into(),
+        ));
+    }
+    if target.continuation_goal.len() > 500 {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target.continuation_goal is too long"
+                .into(),
+        ));
+    }
+    if let Some(mode_id) = target.continuation_mode_id.as_deref() {
+        if mode_id.trim().is_empty() || mode_id.len() > 96 {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_continuation_admission_target.continuation_mode_id must be bounded"
+                    .into(),
+            ));
+        }
+    }
+    validate_product_continuation_source_shape(&target.product_continuation_source)
+}
+
+fn headless_continue_product_continuation_admission(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, VerificationRecoveryAdmissionError> {
+    let target = params
+        .product_continuation_admission_target
+        .as_ref()
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_continuation_admission_target is required".into(),
+            )
+        })?;
+    validate_product_continuation_admission_target(target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target requires continuation_id".into(),
+        )
+    })?;
+    let request_fingerprint = headless_product_continuation_admission_request_fingerprint(params)?;
+    let policy = resolve_task_start_policy(target.continuation_mode_id.as_deref(), store)
+        .map_err(VerificationRecoveryAdmissionError::InvalidParams)?;
+    let provenance =
+        product_continuation_provenance_for_source(store, &target.product_continuation_source)?;
+    let decision_fingerprint = provenance.decision_fingerprint.clone();
+    let product_evidence_fingerprint = provenance.product_evidence_fingerprint.clone();
+    let admission = store
+        .tasks()
+        .start_product_continuation_task(ProductContinuationTaskStartParams {
+            goal: target.continuation_goal.clone(),
+            mode_id: Some(policy.mode_id.clone()),
+            provenance,
+        })
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    if !admission.replayed {
+        append_mode_resolved_event(store, &admission.record, &policy)
+            .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    }
+
+    let result_admission = ProductContinuationAdmission {
+        source_task_id: target.product_continuation_source.source_task_id.clone(),
+        source_run_id: target.product_continuation_source.source_run_id.clone(),
+        source_decision_id: target
+            .product_continuation_source
+            .source_decision_id
+            .clone(),
+        continuation_task_id: admission.record.task_id.clone(),
+        continuation_run_id: admission.record.run_id.clone(),
+        decision_fingerprint,
+        product_evidence_fingerprint,
+        continuation_running_enabled: false,
+        next_action: "run_product_continuation_task_explicitly".to_string(),
+        replayed: admission.replayed,
+    };
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &admission.record,
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            Some(json!({
+                "decision_id": decision_id,
+                "continuation_id": continuation_id,
+                "route_kind": "product_continuation_admission",
+                "request_fingerprint": request_fingerprint,
+                "selected_task_id": result_admission.continuation_task_id.clone(),
+                "selected_run_id": result_admission.continuation_run_id.clone(),
+                "source_task_id": result_admission.source_task_id.clone(),
+                "source_run_id": result_admission.source_run_id.clone(),
+                "source_decision_id": result_admission.source_decision_id.clone(),
+                "decision_fingerprint": result_admission.decision_fingerprint.clone(),
+                "product_evidence_fingerprint": result_admission.product_evidence_fingerprint.clone(),
+                "continuation_running_enabled": false,
+                "expected_progress_fingerprint": params.expected_progress_fingerprint,
+                "expected_aggregate_sequence": params.expected_aggregate_sequence,
+                "candidate_count": 1,
+                "policy_version": "headless_continue_once_v1",
+                "authorize": true,
+                "next_action": "run_product_continuation_task_explicitly",
+                "reason": "Headless continue-once admitted one product-continuation task from runtime product completion evidence."
+            })),
+        )
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)
+        .map_err(VerificationRecoveryAdmissionError::Internal)?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+        reason: "Product-continuation task was admitted; running it remains an explicit next step."
+            .to_string(),
+        task_id: Some(result_admission.continuation_task_id.clone()),
+        run_id: Some(result_admission.continuation_run_id.clone()),
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "run_product_continuation_task_explicitly".to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: Some(result_admission.continuation_task_id.clone()),
+        selected_run_id: Some(result_admission.continuation_run_id.clone()),
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: admission.replayed,
+        task_run_result: None,
+        proposal_apply_result: None,
+        objective_proposal_authorization_preflight_result: None,
+        llm_provider_failure_retry_admission: None,
+        product_continuation_admission: Some(result_admission),
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "run_product_continuation_task_explicitly".to_string(),
+    })
+}
+
+fn headless_product_continuation_admission_decision_for_replay(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    continuation_id: &str,
+) -> Result<Option<HeadlessProductContinuationAdmissionReplay>, String> {
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| error.to_string())?;
+        for payload in events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .filter_map(|event| event.payload.as_ref())
+        {
+            if payload.get("route_kind").and_then(Value::as_str)
+                != Some("product_continuation_admission")
+                || payload.get("continuation_id").and_then(Value::as_str) != Some(continuation_id)
+            {
+                continue;
+            }
+            let decision_id = payload
+                .get("decision_id")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "product continuation admission replay missing decision_id".to_string()
+                })?
+                .to_string();
+            let request_fingerprint = payload
+                .get("request_fingerprint")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    "product continuation admission replay missing request_fingerprint".to_string()
+                })?
+                .to_string();
+            let post_progress_fingerprint = payload
+                .get("post_progress_fingerprint")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let post_aggregate_sequence = payload
+                .get("post_aggregate_sequence")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let admission = ProductContinuationAdmission {
+                source_task_id: payload_string(payload, "source_task_id")?,
+                source_run_id: payload_string(payload, "source_run_id")?,
+                source_decision_id: payload_string(payload, "source_decision_id")?,
+                continuation_task_id: payload_string(payload, "selected_task_id")?,
+                continuation_run_id: payload_string(payload, "selected_run_id")?,
+                decision_fingerprint: payload_string(payload, "decision_fingerprint")?,
+                product_evidence_fingerprint: payload_string(
+                    payload,
+                    "product_evidence_fingerprint",
+                )?,
+                continuation_running_enabled: false,
+                next_action: "run_product_continuation_task_explicitly".to_string(),
+                replayed: true,
+            };
+            return Ok(Some(HeadlessProductContinuationAdmissionReplay {
+                decision_id,
+                continuation_id: continuation_id.to_string(),
+                request_fingerprint,
+                admission,
+                post_progress_fingerprint,
+                post_aggregate_sequence,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn payload_string(payload: &Value, field: &str) -> Result<String, String> {
+    payload
+        .get(field)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+        .ok_or_else(|| format!("product continuation admission replay missing {field}"))
+}
+
+fn headless_continue_product_continuation_admission_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    replay: HeadlessProductContinuationAdmissionReplay,
+) -> JsonRpcResponse<Value> {
+    let current = match headless_product_continuation_admission_request_fingerprint(&params) {
+        Ok(fingerprint) => fingerprint,
+        Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+            return error_response(id, -32602, &message)
+        }
+        Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+            return error_response(id, -32603, &format!("internal error: {message}"))
+        }
+    };
+    if replay.request_fingerprint != current {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_continuation_admission_target continuation request identity mismatch",
+        );
+    }
+    let post_progress_fingerprint = if replay.post_progress_fingerprint.is_empty() {
+        progress_overview.source_fingerprint.clone()
+    } else {
+        replay.post_progress_fingerprint.clone()
+    };
+    let post_aggregate_sequence = if replay.post_aggregate_sequence == 0 {
+        progress_overview.aggregate_sequence
+    } else {
+        replay.post_aggregate_sequence
+    };
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+        reason: "Product-continuation task was already admitted by this continuation; replaying bounded admission result.".to_string(),
+        task_id: Some(replay.admission.continuation_task_id.clone()),
+        run_id: Some(replay.admission.continuation_run_id.clone()),
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: None,
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "run_product_continuation_task_explicitly".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(replay.decision_id),
+            continuation_id: Some(replay.continuation_id),
+            selected_task_id: Some(replay.admission.continuation_task_id.clone()),
+            selected_run_id: Some(replay.admission.continuation_run_id.clone()),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_fingerprint),
+            post_aggregate_sequence: Some(post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            product_continuation_admission: Some(replay.admission),
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: None,
+            steps: Vec::new(),
+            next_action: "run_product_continuation_task_explicitly".to_string(),
+        }),
+    )
 }
 
 fn headless_continue_modepack_registry_update_selection_replay_result(
@@ -10262,6 +10755,7 @@ fn headless_continue_modepack_registry_update_selection_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: Some(selection_result),
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -10528,6 +11022,7 @@ where
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: Some(selection_result),
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -10610,6 +11105,7 @@ fn headless_continue_modepack_selected_candidate_fetch_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: Some(fetch_result),
             modepack_verify_candidate_provenance_result: None,
@@ -10924,6 +11420,7 @@ where
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: Some(fetch_result),
         modepack_verify_candidate_provenance_result: None,
@@ -11010,6 +11507,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification_replay_
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: Some(provenance_result),
@@ -11341,6 +11839,7 @@ fn headless_continue_modepack_selected_candidate_provenance_verification(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: Some(provenance_result),
@@ -11425,6 +11924,7 @@ fn headless_continue_modepack_selected_candidate_approval_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -11770,6 +12270,7 @@ fn headless_continue_modepack_selected_candidate_approval(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -11853,6 +12354,7 @@ fn headless_continue_modepack_selected_candidate_replacement_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -12309,6 +12811,7 @@ fn headless_continue_modepack_selected_candidate_replacement(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -12391,6 +12894,7 @@ fn headless_continue_modepack_selected_active_rollback_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -12608,6 +13112,7 @@ fn headless_continue_modepack_selected_active_rollback(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -13180,6 +13685,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         llm_provider_failure_retry_source: None,
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
+        product_continuation_admission_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -13388,6 +13894,7 @@ fn validate_headless_run_registry_selection_replay_target(
         llm_provider_failure_retry_source: None,
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
+        product_continuation_admission_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -13441,6 +13948,7 @@ fn headless_run_replay_continue_once_params(
         llm_provider_failure_retry_source: None,
         llm_provider_failure_retry_goal: None,
         llm_provider_failure_retry_mode_id: None,
+        product_continuation_admission_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -14693,6 +15201,7 @@ fn headless_continue_objective_proposal_authorization_preflight_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: Some(authorization_result),
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -14856,6 +15365,7 @@ fn headless_continue_objective_proposal_authorization_preflight(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: Some(authorization_result),
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -15159,6 +15669,7 @@ fn headless_continue_objective_proposal_apply_replay_result(
             proposal_apply_result: Some(checkpoint.result),
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -15357,6 +15868,7 @@ fn headless_continue_objective_proposal_apply(
         proposal_apply_result: Some(proposal_apply_result),
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -15612,6 +16124,7 @@ fn headless_continue_objective_apply_verification_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -15795,6 +16308,7 @@ fn headless_continue_objective_apply_verification(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -16067,6 +16581,7 @@ fn headless_continue_objective_completion_acceptance_replay_result(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -16236,6 +16751,7 @@ fn headless_continue_objective_completion_acceptance(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -20616,6 +21132,7 @@ fn handle_headless_continue_verification_recovery_retry_admission(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -20782,6 +21299,7 @@ fn handle_headless_continue_verification_recovery_admission(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -20950,6 +21468,7 @@ fn handle_headless_continue_llm_provider_failure_retry_admission(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: Some(admission),
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21118,6 +21637,7 @@ fn handle_headless_continue_patch_apply_recovery_admission(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21280,6 +21800,7 @@ fn handle_headless_continue_llm_provider_failure_retry_run(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21443,6 +21964,7 @@ fn handle_headless_continue_patch_apply_recovery_run(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21642,6 +22164,7 @@ fn handle_headless_continue_patch_apply_recovery_apply(
             }),
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21803,6 +22326,7 @@ fn handle_headless_continue_verification_recovery_retry_run(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -21978,6 +22502,7 @@ fn handle_headless_continue_verification_recovery_apply(
             }),
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -22159,6 +22684,7 @@ fn handle_headless_continue_verification_recovery_run(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -22316,6 +22842,7 @@ fn handle_headless_continue_parent_join_run(
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -22454,6 +22981,7 @@ fn handle_headless_continue_budget(
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
         llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
         modepack_select_registry_update_result: None,
         modepack_fetch_candidate_result: None,
         modepack_verify_candidate_provenance_result: None,
@@ -22542,6 +23070,12 @@ fn headless_continue_budget_stop_reason(
                 }
                 Some(HeadlessContinueRouteKind::RunLlmProviderRetryTaskExplicitly) => {
                     "explicit_llm_provider_retry_task_run_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly) => {
+                    "explicit_product_continuation_admission_boundary".to_string()
+                }
+                Some(HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly) => {
+                    "explicit_product_continuation_task_run_boundary".to_string()
                 }
                 Some(HeadlessContinueRouteKind::FetchSelectedModePackCandidateExplicitly) => {
                     "explicit_modepack_candidate_fetch_boundary".to_string()
@@ -22664,6 +23198,7 @@ fn headless_continue_once_replay_result(
             proposal_apply_result,
             objective_proposal_authorization_preflight_result: None,
             llm_provider_failure_retry_admission,
+            product_continuation_admission: None,
             modepack_select_registry_update_result: None,
             modepack_fetch_candidate_result: None,
             modepack_verify_candidate_provenance_result: None,
@@ -22929,6 +23464,11 @@ fn headless_continuation_decision_from_task_ledgers(
                 continue;
             };
             if payload.get("continuation_id").and_then(Value::as_str) != Some(continuation_id) {
+                continue;
+            }
+            if payload.get("route_kind").and_then(Value::as_str)
+                == Some("product_continuation_admission")
+            {
                 continue;
             }
             let Some(decision) = headless_continuation_decision_from_payload(payload) else {
@@ -61631,6 +62171,7 @@ mod tests {
             llm_provider_failure_retry_source: None,
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
+            product_continuation_admission_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -83351,6 +83892,106 @@ mod tests {
             task_count_before_denials + 2
         );
 
+        let (_headless_source, headless_decision) = create_source_decision(
+            &store,
+            "M57 headless product continuation source",
+            "product_decision_headless_continue",
+            "continue_development",
+            "plan_next_phase",
+            fp('5'),
+            fp('6'),
+        );
+        let progress_tasks = store.tasks().list_tasks().expect("list tasks for progress");
+        let progress =
+            task_list_progress_overview(&store, &progress_tasks).expect("progress overview");
+        let headless_request = json!({
+            "jsonrpc": "2.0",
+            "id": 160,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m57.product.continuation.admission",
+                "expected_progress_fingerprint": progress.source_fingerprint,
+                "expected_aggregate_sequence": progress.aggregate_sequence,
+                "product_continuation_admission_target": {
+                    "authorize_product_continuation_admission": true,
+                    "product_continuation_source": product_continuation_source(&headless_decision, true),
+                    "continuation_goal": "Plan the next Brownie phase through headless continuation",
+                    "continuation_mode_id": "implementer"
+                }
+            }
+        });
+        let headless = parse_line(&headless_request.to_string());
+        assert!(headless.error.is_none(), "{:?}", headless.error);
+        let headless_result = headless.result.expect("headless admission result");
+        assert_eq!(
+            headless_result["product_continuation_admission"]["source_decision_id"],
+            json!(headless_decision.decision_id)
+        );
+        assert_eq!(
+            headless_result["product_continuation_admission"]["next_action"],
+            "run_product_continuation_task_explicitly"
+        );
+        assert_eq!(
+            headless_result["product_continuation_admission"]["continuation_running_enabled"],
+            false
+        );
+        assert!(headless_result["task_run_result"].is_null());
+        assert_eq!(
+            headless_result["next_route"]["kind"],
+            "run_product_continuation_task_explicitly"
+        );
+        let headless_task_id = headless_result["product_continuation_admission"]
+            ["continuation_task_id"]
+            .as_str()
+            .expect("headless continuation task")
+            .to_string();
+        let headless_run_id = headless_result["product_continuation_admission"]
+            ["continuation_run_id"]
+            .as_str()
+            .expect("headless continuation run")
+            .to_string();
+        let headless_task = store
+            .tasks()
+            .get_task(&headless_task_id)
+            .expect("read headless continuation task")
+            .expect("headless continuation task exists");
+        assert_eq!(headless_task.status, TaskStatus::Created);
+        let headless_events = store
+            .tasks()
+            .read_ledger_events(&headless_run_id)
+            .expect("headless events");
+        assert!(headless_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded));
+        assert!(headless_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        let headless_replay = parse_line(&headless_request.to_string());
+        assert!(
+            headless_replay.error.is_none(),
+            "{:?}",
+            headless_replay.error
+        );
+        let headless_replay_result = headless_replay.result.expect("headless replay result");
+        assert_eq!(headless_replay_result["replayed"], true);
+        assert_eq!(
+            headless_replay_result["product_continuation_admission"]["continuation_task_id"],
+            headless_task_id
+        );
+        let headless_replay_events = store
+            .tasks()
+            .read_ledger_events(&headless_run_id)
+            .expect("headless replay events");
+        assert_eq!(
+            headless_replay_events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -84850,6 +85491,7 @@ mod tests {
             llm_provider_failure_retry_source: None,
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
+            product_continuation_admission_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -84994,6 +85636,7 @@ mod tests {
             llm_provider_failure_retry_source: None,
             llm_provider_failure_retry_goal: None,
             llm_provider_failure_retry_mode_id: None,
+            product_continuation_admission_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,

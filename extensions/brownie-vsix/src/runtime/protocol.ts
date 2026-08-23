@@ -698,6 +698,7 @@ export interface HeadlessContinueOnceParams {
   llm_provider_failure_retry_source?: LlmProviderFailureRetrySource | null;
   llm_provider_failure_retry_goal?: string | null;
   llm_provider_failure_retry_mode_id?: string | null;
+  product_continuation_admission_target?: ProductContinuationAdmissionTarget | null;
   verification_recovery_run_target?: VerificationRecoveryRunTarget | null;
   verification_recovery_context_read?: TaskRunVerificationRecoveryContextRead | null;
   patch_apply_recovery_source?: PatchApplyRecoverySource | null;
@@ -950,6 +951,13 @@ export interface ProductContinuationSource {
   authorize_product_continuation: boolean;
 }
 
+export interface ProductContinuationAdmissionTarget {
+  authorize_product_continuation_admission: true;
+  product_continuation_source: ProductContinuationSource;
+  continuation_goal: string;
+  continuation_mode_id?: string | null;
+}
+
 export interface LlmProviderFailureRetryRunTarget {
   retry_task_id: string;
   retry_run_id: string;
@@ -1095,6 +1103,8 @@ export type HeadlessContinueRouteKind =
   | 'start_verification_retry_explicitly'
   | 'run_verification_retry_task_explicitly'
   | 'run_llm_provider_retry_task_explicitly'
+  | 'admit_product_continuation_task_explicitly'
+  | 'run_product_continuation_task_explicitly'
   | 'fetch_selected_mode_pack_candidate_explicitly'
   | 'fetch_selected_modepack_candidate_explicitly'
   | 'verify_selected_mode_pack_candidate_provenance_explicitly'
@@ -1146,6 +1156,7 @@ export interface HeadlessContinueOnceResult {
   modepack_replace_active_result?: ModePackReplaceActiveResult | null;
   modepack_rollback_active_result?: ModePackRollbackActiveResult | null;
   llm_provider_failure_retry_admission?: LlmProviderFailureRetryAdmission | null;
+  product_continuation_admission?: ProductContinuationAdmission | null;
   next_route?: HeadlessContinueRoute | null;
   max_steps?: number | null;
   step_count?: number | null;
@@ -6026,7 +6037,7 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
@@ -6044,6 +6055,7 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.llm_provider_failure_retry_source === undefined || value.llm_provider_failure_retry_source === null || isLlmProviderFailureRetrySource(value.llm_provider_failure_retry_source)) &&
     (value.llm_provider_failure_retry_goal === undefined || value.llm_provider_failure_retry_goal === null || typeof value.llm_provider_failure_retry_goal === 'string') &&
     (value.llm_provider_failure_retry_mode_id === undefined || value.llm_provider_failure_retry_mode_id === null || typeof value.llm_provider_failure_retry_mode_id === 'string') &&
+    (value.product_continuation_admission_target === undefined || value.product_continuation_admission_target === null || isProductContinuationAdmissionTarget(value.product_continuation_admission_target)) &&
     (value.verification_recovery_run_target === undefined || value.verification_recovery_run_target === null || isVerificationRecoveryRunTarget(value.verification_recovery_run_target)) &&
     (value.verification_recovery_context_read === undefined || value.verification_recovery_context_read === null || isTaskRunVerificationRecoveryContextRead(value.verification_recovery_context_read)) &&
     (value.patch_apply_recovery_source === undefined || value.patch_apply_recovery_source === null || isPatchApplyRecoverySource(value.patch_apply_recovery_source)) &&
@@ -6946,6 +6958,24 @@ function isProductContinuationSource(value: unknown): value is ProductContinuati
   );
 }
 
+function isProductContinuationAdmissionTarget(value: unknown): value is ProductContinuationAdmissionTarget {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'authorize_product_continuation_admission',
+      'product_continuation_source',
+      'continuation_goal',
+      'continuation_mode_id',
+    ]) &&
+    value.authorize_product_continuation_admission === true &&
+    isProductContinuationSource(value.product_continuation_source) &&
+    typeof value.continuation_goal === 'string' &&
+    value.continuation_goal.trim().length > 0 &&
+    value.continuation_goal.length <= 500 &&
+    (value.continuation_mode_id === undefined || value.continuation_mode_id === null || (typeof value.continuation_mode_id === 'string' && value.continuation_mode_id.trim().length > 0 && value.continuation_mode_id.length <= 96))
+  );
+}
+
 function isLlmProviderFailureRetryRunTarget(value: unknown): value is LlmProviderFailureRetryRunTarget {
   return (
     isRecord(value) &&
@@ -7148,6 +7178,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
       'modepack_replace_active_result',
       'modepack_rollback_active_result',
       'llm_provider_failure_retry_admission',
+      'product_continuation_admission',
       'next_route',
       'max_steps',
       'step_count',
@@ -7184,6 +7215,7 @@ export function isHeadlessContinueOnceResult(value: unknown): value is HeadlessC
     (value.modepack_replace_active_result !== undefined && value.modepack_replace_active_result !== null && !isModePackReplaceActiveResult(value.modepack_replace_active_result)) ||
     (value.modepack_rollback_active_result !== undefined && value.modepack_rollback_active_result !== null && !isModePackRollbackActiveResult(value.modepack_rollback_active_result)) ||
     (value.llm_provider_failure_retry_admission !== undefined && value.llm_provider_failure_retry_admission !== null && !isLlmProviderFailureRetryAdmission(value.llm_provider_failure_retry_admission)) ||
+    (value.product_continuation_admission !== undefined && value.product_continuation_admission !== null && !isProductContinuationAdmission(value.product_continuation_admission)) ||
     (value.next_route !== undefined && value.next_route !== null && !isHeadlessContinueRoute(value.next_route)) ||
     (value.max_steps !== undefined && value.max_steps !== null && (!isNonNegativeInteger(value.max_steps) || value.max_steps < 1 || value.max_steps > 3)) ||
     (value.step_count !== undefined && value.step_count !== null && !isNonNegativeInteger(value.step_count)) ||
@@ -8239,7 +8271,7 @@ function isBoundedRelativePath(value: unknown): value is string {
 }
 
 function isHeadlessContinueRouteKind(value: unknown): value is HeadlessContinueRouteKind {
-  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'review_and_authorize_objective_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'apply_authorized_objective_proposal_explicitly' || value === 'verify_objective_apply_explicitly' || value === 'accept_objective_completion_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
+  return value === 'inspect_progress_overview' || value === 'start_verification_recovery_explicitly' || value === 'run_recovery_task_explicitly' || value === 'review_and_authorize_recovery_proposal' || value === 'review_and_authorize_objective_proposal' || value === 'apply_approved_recovery_proposal_explicitly' || value === 'apply_authorized_objective_proposal_explicitly' || value === 'verify_objective_apply_explicitly' || value === 'accept_objective_completion_explicitly' || value === 'start_verification_retry_explicitly' || value === 'run_verification_retry_task_explicitly' || value === 'run_llm_provider_retry_task_explicitly' || value === 'admit_product_continuation_task_explicitly' || value === 'run_product_continuation_task_explicitly' || value === 'fetch_selected_mode_pack_candidate_explicitly' || value === 'fetch_selected_modepack_candidate_explicitly' || value === 'verify_selected_mode_pack_candidate_provenance_explicitly' || value === 'verify_selected_modepack_candidate_provenance_explicitly' || value === 'approve_verified_mode_pack_candidate_explicitly' || value === 'approve_verified_modepack_candidate_explicitly' || value === 'replace_active_with_approved_mode_pack_candidate_explicitly' || value === 'replace_active_with_approved_modepack_candidate_explicitly' || value === 'run_parent_task_explicitly' || value === 'no_eligible_task' || value === 'refresh_progress_overview';
 }
 
 function isModePackRouteKind(value: unknown, canonical: HeadlessContinueRouteKind, legacy: HeadlessContinueRouteKind): boolean {

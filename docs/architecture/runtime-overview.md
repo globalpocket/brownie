@@ -980,3 +980,15 @@ store only bounded ids, hashes, status, route, sequence, and replay metadata and
 exclude raw file content, proposed content, diffs, prompts, provider responses,
 stdout/stderr, commands, environment values, raw requests, raw ledger payloads,
 absolute paths, canonical paths, tokens, and secrets.
+
+M57.1 routes product-continuation task admission through the existing
+`headless.continue_once` surface with `product_continuation_admission_target`.
+Rust validates explicit admission authorization, current aggregate progress, the
+source product-completion decision, accepted-completion, terminal-completion,
+completion-closure, product-evidence, requested goal, and requested mode before
+delegating to the existing product-continuation admission authority. Success
+creates or replays exactly one Created continuation task, records bounded
+`HeadlessContinuationDecisionRecorded` evidence, returns
+`next_route.kind=run_product_continuation_task_explicitly`, and never appends
+`TaskRunning`. Generic continuation replay ignores this product-admission route
+evidence so it cannot be mistaken for a runnable task-selection decision.
