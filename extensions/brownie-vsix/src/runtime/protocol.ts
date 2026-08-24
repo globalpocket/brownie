@@ -499,6 +499,23 @@ export interface ProductContinuationProvenance {
   technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
 }
 
+export interface ProductObjectiveContinuationProvenance {
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  decision_fingerprint: string;
+  accepted_completion_fingerprint: string;
+  terminal_completion_fingerprint: string;
+  completion_closure_fingerprint: string;
+  product_evidence_fingerprint: string;
+  target_capability: string;
+  concrete_capability_transition: string;
+  technical_debt_carry_forward_fingerprint?: string | null;
+  derived_objective_fingerprint: string;
+  derived_goal_fingerprint: string;
+  derivation_version: 'product_objective_continuation_v1';
+}
+
 export interface ProductLoopStopRecoveryProvenance {
   source_session_id: string;
   source_drive_id: string;
@@ -975,6 +992,7 @@ export interface ProductContinuationAdmissionTarget {
   product_continuation_source: ProductContinuationSource;
   continuation_goal: string;
   continuation_mode_id?: string | null;
+  runtime_derived_objective?: boolean;
 }
 
 export interface ProductContinuationRunTarget {
@@ -1910,6 +1928,7 @@ export interface TaskRecord {
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
   product_continuation_provenance?: ProductContinuationProvenance | null;
+  product_objective_continuation_provenance?: ProductObjectiveContinuationProvenance | null;
   product_loop_stop_recovery_provenance?: ProductLoopStopRecoveryProvenance | null;
   created_at: string;
   updated_at: string;
@@ -2115,6 +2134,7 @@ export interface ChildTaskInspectSummary {
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
   product_continuation_provenance?: ProductContinuationProvenance | null;
+  product_objective_continuation_provenance?: ProductObjectiveContinuationProvenance | null;
   product_loop_stop_recovery_provenance?: ProductLoopStopRecoveryProvenance | null;
   event_count: number;
   has_agent_loop_completed: boolean;

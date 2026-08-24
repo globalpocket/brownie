@@ -905,6 +905,8 @@ pub struct ProductContinuationAdmissionTarget {
     pub continuation_goal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_mode_id: Option<String>,
+    #[serde(default)]
+    pub runtime_derived_objective: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -4946,6 +4948,7 @@ pub struct ChildTaskInspectSummary {
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     pub product_continuation_provenance: Option<ProductContinuationProvenance>,
+    pub product_objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
     pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
@@ -5050,6 +5053,25 @@ pub struct ProductContinuationProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductObjectiveContinuationProvenance {
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub decision_fingerprint: String,
+    pub accepted_completion_fingerprint: String,
+    pub terminal_completion_fingerprint: String,
+    pub completion_closure_fingerprint: String,
+    pub product_evidence_fingerprint: String,
+    pub target_capability: String,
+    pub concrete_capability_transition: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub technical_debt_carry_forward_fingerprint: Option<String>,
+    pub derived_objective_fingerprint: String,
+    pub derived_goal_fingerprint: String,
+    pub derivation_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ProductLoopStopRecoveryProvenance {
     pub source_session_id: String,
     pub source_drive_id: String,
@@ -5098,6 +5120,8 @@ pub struct TaskRecord {
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     #[serde(default)]
     pub product_continuation_provenance: Option<ProductContinuationProvenance>,
+    #[serde(default)]
+    pub product_objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
     #[serde(default)]
     pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
     pub created_at: String,

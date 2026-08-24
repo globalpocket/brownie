@@ -69,13 +69,14 @@ use brownie_protocol::{
     PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
     ProductContinuationDerivedTarget, ProductContinuationProvenance, ProductContinuationRunTarget,
     ProductContinuationSource, ProductLoopStopRecoveryProvenance, ProductLoopStopRecoveryTarget,
-    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
-    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
-    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
-    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
-    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
-    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
-    ProposalPatchHunk, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProductObjectiveContinuationProvenance, ProgressCurrentStage, ProgressLifecyclePhase,
+    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
+    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
+    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
+    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
+    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
+    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
     ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
     ProposalReviewBundleParams, ProposalReviewBundleResult,
     ProposalReviewQueueDiagnosticsDigestHistoryParams,
@@ -2140,6 +2141,7 @@ fn handle_task_start(id: Value, params: Option<Value>) -> JsonRpcResponse<Value>
                 goal,
                 mode_id: Some(policy.mode_id.clone()),
                 provenance,
+                objective_continuation_provenance: None,
             }) {
             Ok(admission) => {
                 if !admission.replayed {
@@ -11174,6 +11176,7 @@ fn headless_product_continuation_admission_request_fingerprint(
         "expected_progress_fingerprint": params.expected_progress_fingerprint,
         "expected_aggregate_sequence": params.expected_aggregate_sequence,
         "authorize_product_continuation_admission": target.authorize_product_continuation_admission,
+        "runtime_derived_objective": target.runtime_derived_objective,
         "continuation_goal": target.continuation_goal,
         "continuation_mode_id": target.continuation_mode_id,
         "source_task_id": source.source_task_id,
@@ -11247,6 +11250,17 @@ fn headless_continue_product_continuation_admission(
         .map_err(VerificationRecoveryAdmissionError::InvalidParams)?;
     let provenance =
         product_continuation_provenance_for_source(store, &target.product_continuation_source)?;
+    if target.runtime_derived_objective
+        && target.continuation_goal != runtime_derived_product_objective_goal(&provenance)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_continuation_admission_target.runtime_derived_objective goal does not match runtime derivation"
+                .into(),
+        ));
+    }
+    let objective_continuation_provenance = target.runtime_derived_objective.then(|| {
+        product_objective_continuation_provenance_for(&provenance, &target.continuation_goal)
+    });
     let decision_fingerprint = provenance.decision_fingerprint.clone();
     let product_evidence_fingerprint = provenance.product_evidence_fingerprint.clone();
     let admission = store
@@ -11255,6 +11269,7 @@ fn headless_continue_product_continuation_admission(
             goal: target.continuation_goal.clone(),
             mode_id: Some(policy.mode_id.clone()),
             provenance,
+            objective_continuation_provenance,
         })
         .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
     if !admission.replayed {
@@ -15120,21 +15135,28 @@ fn validate_headless_run_product_continuation_derived_replay_target(
             aggregate_sequence: None,
             next_action: "admit_product_continuation_task_explicitly".to_string(),
         };
-        let continuation_goal = target.continuation_goal.clone().ok_or_else(|| {
-            "invalid params: product_continuation_derived_target.continuation_goal is required for admission replay"
-                .to_string()
-        })?;
+        let source = product_continuation_source_from_route(store, &source_route)?;
+        let provenance = product_continuation_provenance_for_source(store, &source).map_err(
+            |error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+                VerificationRecoveryAdmissionError::Internal(message) => message,
+            },
+        )?;
+        let (continuation_goal, runtime_derived_objective) =
+            if let Some(goal) = target.continuation_goal.clone() {
+                (goal, false)
+            } else {
+                (runtime_derived_product_objective_goal(&provenance), true)
+            };
         let mut replay_params =
             headless_run_replay_continue_once_params(checkpoint, continuation_id);
         replay_params.product_continuation_admission_target =
             Some(ProductContinuationAdmissionTarget {
                 authorize_product_continuation_admission: true,
-                product_continuation_source: product_continuation_source_from_route(
-                    store,
-                    &source_route,
-                )?,
+                product_continuation_source: source,
                 continuation_goal,
                 continuation_mode_id: target.continuation_mode_id.clone(),
+                runtime_derived_objective,
             });
         let current = headless_product_continuation_admission_request_fingerprint(&replay_params)
             .map_err(|error| match error {
@@ -42846,6 +42868,9 @@ fn child_task_inspect_summary(
         verification_recovery_retry_provenance: task.verification_recovery_retry_provenance.clone(),
         llm_provider_failure_retry_provenance: task.llm_provider_failure_retry_provenance.clone(),
         product_continuation_provenance: task.product_continuation_provenance.clone(),
+        product_objective_continuation_provenance: task
+            .product_objective_continuation_provenance
+            .clone(),
         product_loop_stop_recovery_provenance: task.product_loop_stop_recovery_provenance.clone(),
         event_count: events.len(),
         has_agent_loop_completed: completion_event.is_some(),
@@ -47471,6 +47496,71 @@ fn validate_product_continuation_derived_target(
     Ok(())
 }
 
+fn runtime_derived_product_objective_goal(provenance: &ProductContinuationProvenance) -> String {
+    let debt_fingerprint = provenance
+        .technical_debt_carry_forward
+        .as_ref()
+        .map(|carry_forward| carry_forward.fingerprint.as_str())
+        .unwrap_or("none");
+    format!(
+        "Continue Brownie development for capability {} via transition {} with debt fingerprint {}",
+        provenance.target_capability, provenance.concrete_capability_transition, debt_fingerprint
+    )
+}
+
+fn product_objective_continuation_fingerprint_seed(
+    provenance: &ProductContinuationProvenance,
+    goal: &str,
+) -> Value {
+    json!({
+        "version": "product_objective_continuation_v1",
+        "source_task_id": provenance.source_task_id,
+        "source_run_id": provenance.source_run_id,
+        "source_decision_id": provenance.source_decision_id,
+        "decision_fingerprint": provenance.decision_fingerprint,
+        "accepted_completion_fingerprint": provenance.accepted_completion_fingerprint,
+        "terminal_completion_fingerprint": provenance.terminal_completion_fingerprint,
+        "completion_closure_fingerprint": provenance.completion_closure_fingerprint,
+        "product_evidence_fingerprint": provenance.product_evidence_fingerprint,
+        "target_capability": provenance.target_capability,
+        "concrete_capability_transition": provenance.concrete_capability_transition,
+        "technical_debt_carry_forward_fingerprint": provenance
+            .technical_debt_carry_forward
+            .as_ref()
+            .map(|carry_forward| carry_forward.fingerprint.as_str()),
+        "derived_goal_sha256": format!("sha256:{}", hex_sha256(goal.as_bytes())),
+    })
+}
+
+fn product_objective_continuation_provenance_for(
+    provenance: &ProductContinuationProvenance,
+    goal: &str,
+) -> ProductObjectiveContinuationProvenance {
+    let seed = product_objective_continuation_fingerprint_seed(provenance, goal);
+    ProductObjectiveContinuationProvenance {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        source_decision_id: provenance.source_decision_id.clone(),
+        decision_fingerprint: provenance.decision_fingerprint.clone(),
+        accepted_completion_fingerprint: provenance.accepted_completion_fingerprint.clone(),
+        terminal_completion_fingerprint: provenance.terminal_completion_fingerprint.clone(),
+        completion_closure_fingerprint: provenance.completion_closure_fingerprint.clone(),
+        product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
+        target_capability: provenance.target_capability.clone(),
+        concrete_capability_transition: provenance.concrete_capability_transition.clone(),
+        technical_debt_carry_forward_fingerprint: provenance
+            .technical_debt_carry_forward
+            .as_ref()
+            .map(|carry_forward| carry_forward.fingerprint.clone()),
+        derived_objective_fingerprint: format!(
+            "sha256:{}",
+            hex_sha256(seed.to_string().as_bytes())
+        ),
+        derived_goal_fingerprint: format!("sha256:{}", hex_sha256(goal.as_bytes())),
+        derivation_version: "product_objective_continuation_v1".to_string(),
+    }
+}
+
 fn product_continuation_source_from_route(
     store: &BrownieStore,
     route: &HeadlessContinueRoute,
@@ -47553,15 +47643,26 @@ fn product_continuation_derived_targets_from_checkpoint(
     })?;
     match route.kind {
         HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly => {
-            let continuation_goal = target.continuation_goal.clone().ok_or_else(|| {
-                "invalid params: product_continuation_derived_target.continuation_goal is required for admission derivation"
-                    .to_string()
-            })?;
+            let source = product_continuation_source_from_route(store, route)?;
+            let provenance =
+                product_continuation_provenance_for_source(store, &source).map_err(|error| {
+                    match error {
+                        VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+                        VerificationRecoveryAdmissionError::Internal(message) => message,
+                    }
+                })?;
+            let (continuation_goal, runtime_derived_objective) =
+                if let Some(goal) = target.continuation_goal.clone() {
+                    (goal, false)
+                } else {
+                    (runtime_derived_product_objective_goal(&provenance), true)
+                };
             let admission = ProductContinuationAdmissionTarget {
                 authorize_product_continuation_admission: true,
-                product_continuation_source: product_continuation_source_from_route(store, route)?,
+                product_continuation_source: source,
                 continuation_goal,
                 continuation_mode_id: target.continuation_mode_id.clone(),
+                runtime_derived_objective,
             };
             validate_product_continuation_admission_target(&admission)
                 .map_err(|error| error.to_string())?;
@@ -86411,7 +86512,6 @@ mod tests {
                 "max_steps_per_advance": 1,
                 "product_continuation_derived_target": {
                     "authorize_product_continuation_target_derivation": true,
-                    "continuation_goal": "Run the next product continuation task through drive",
                     "continuation_mode_id": "implementer"
                 }
             }
@@ -86435,6 +86535,41 @@ mod tests {
             .as_str()
             .expect("continuation run")
             .to_string();
+        let continuation_record = store
+            .tasks()
+            .get_task(&continuation_task_id)
+            .expect("read runtime-derived continuation")
+            .expect("runtime-derived continuation exists");
+        assert_eq!(
+            continuation_record.goal,
+            "Continue Brownie development for capability headless_autonomous_development via transition headless_run_drive_product_continuation_route_step with debt fingerprint none"
+        );
+        let objective_provenance = continuation_record
+            .product_objective_continuation_provenance
+            .as_ref()
+            .expect("runtime-derived objective provenance");
+        assert_eq!(
+            objective_provenance.source_decision_id,
+            decision.decision_id
+        );
+        assert_eq!(
+            objective_provenance.decision_fingerprint,
+            decision.decision_fingerprint
+        );
+        assert_eq!(
+            objective_provenance.target_capability,
+            "headless_autonomous_development"
+        );
+        assert_eq!(
+            objective_provenance.concrete_capability_transition,
+            "headless_run_drive_product_continuation_route_step"
+        );
+        assert!(is_sha256_fingerprint(
+            &objective_provenance.derived_objective_fingerprint
+        ));
+        assert!(is_sha256_fingerprint(
+            &objective_provenance.derived_goal_fingerprint
+        ));
         assert_eq!(
             sequence_drive_result["advances"][1]["status"],
             "task_executed"
@@ -86461,6 +86596,19 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::TaskRunning)
                 .count(),
             1
+        );
+        let task_started_payload = admitted_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::TaskStarted)
+            .and_then(|event| event.payload.as_ref())
+            .expect("task started payload");
+        assert_eq!(
+            task_started_payload["product_objective_continuation_provenance"]["source_decision_id"],
+            decision.decision_id
+        );
+        assert_eq!(
+            task_started_payload["derived_objective_fingerprint"],
+            objective_provenance.derived_objective_fingerprint
         );
 
         let sequence_replay = parse_line(&sequence_drive_request.to_string());

@@ -19,9 +19,10 @@ use brownie_protocol::{
     ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
     ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
-    ProductContinuationProvenance, ProductLoopStopRecoveryProvenance, ProposalApplyResult,
-    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
-    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
+    ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
+    ProductObjectiveContinuationProvenance, ProposalApplyResult, RecoveryCycleChildProvenance,
+    TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
+    VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -2957,6 +2958,7 @@ pub struct ProductContinuationTaskStartParams {
     pub goal: String,
     pub mode_id: Option<String>,
     pub provenance: ProductContinuationProvenance,
+    pub objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3023,6 +3025,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3059,6 +3062,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3127,6 +3131,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3204,6 +3209,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3288,6 +3294,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: Some(params.provenance),
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3391,6 +3398,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: Some(params.provenance),
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3452,6 +3460,8 @@ impl TaskStore {
             &params.provenance.decision_fingerprint,
         )? {
             if record.product_continuation_provenance.as_ref() == Some(&params.provenance)
+                && record.product_objective_continuation_provenance
+                    == params.objective_continuation_provenance
                 && record.goal == params.goal
                 && record.mode_id == params.mode_id
             {
@@ -3484,6 +3494,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: Some(params.provenance),
+            product_objective_continuation_provenance: params.objective_continuation_provenance,
             product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
@@ -3494,12 +3505,14 @@ impl TaskStore {
             .with_context(|| format!("failed to create {}", run_dir.display()))?;
         self.write_task_state(&record)?;
         let provenance = record.product_continuation_provenance.clone();
+        let objective_provenance = record.product_objective_continuation_provenance.clone();
         self.append_task_event_with_payload(
             &record,
             LedgerEventKind::TaskStarted,
             Some(serde_json::json!({
                 "status": "Created",
                 "product_continuation_provenance": provenance,
+                "product_objective_continuation_provenance": objective_provenance,
                 "source_task_id": record
                     .product_continuation_provenance
                     .as_ref()
@@ -3520,6 +3533,14 @@ impl TaskStore {
                     .product_continuation_provenance
                     .as_ref()
                     .map(|provenance| provenance.product_evidence_fingerprint.clone()),
+                "derived_objective_fingerprint": record
+                    .product_objective_continuation_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.derived_objective_fingerprint.clone()),
+                "derived_goal_fingerprint": record
+                    .product_objective_continuation_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.derived_goal_fingerprint.clone()),
                 "execution_enabled": false,
                 "product_continuation_running_enabled": false,
                 "scheduler_handoff_enabled": false,
@@ -3578,6 +3599,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: Some(params.provenance),
             created_at: now.clone(),
             updated_at: now,
