@@ -1213,6 +1213,7 @@ mod tests {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:01Z".into(),
         }
