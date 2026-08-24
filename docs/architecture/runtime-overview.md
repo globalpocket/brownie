@@ -1024,3 +1024,19 @@ bounded subordinate admission/run evidence before returning persisted drive or
 advance results. The runtime still executes only one derived product-continuation
 route step per advance, adds no JSON-RPC method or report surface, and persists
 only bounded ids, route data, and SHA-256 fingerprints.
+
+M59.1 extends that derived target boundary from one step to a bounded sequence
+inside the existing `headless.run.drive` RPC. When a drive request supplies
+`product_continuation_derived_target` with an explicit `max_advances` budget,
+the first advance behaves as M58.2 did. After a successful derived admission or
+run advance, the runtime re-reads the latest persisted session checkpoint; if
+the next route is still `admit_product_continuation_task_explicitly` or
+`run_product_continuation_task_explicitly`, the same bounded derivation
+authorization is applied to the next advance. If the latest route is missing,
+stale, denied, failed, terminal, or no longer a product-continuation route, the
+drive stops closed with a bounded stop reason before another side effect.
+Exact drive replay returns the persisted sequence result without duplicate
+continuation, task-running, drive-advance, provider/tool, or ledger side
+effects. The sequence remains bounded by the existing drive and continue
+budgets, adds no JSON-RPC method or report surface, and persists only bounded
+ids, route metadata, stop reasons, replay state, and SHA-256 fingerprints.

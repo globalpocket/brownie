@@ -21064,6 +21064,34 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 advance_params["modepack_selected_approved_candidate_replacement_target"] =
                     json!(target);
             }
+        } else if let Some(target) = params.product_continuation_derived_target.clone() {
+            let latest_checkpoint = match store
+                .tasks()
+                .read_headless_run_session_checkpoint(&params.session_id)
+            {
+                Ok(Some(checkpoint)) => checkpoint,
+                Ok(None) => {
+                    stop_reason = "product_continuation_checkpoint_missing".to_string();
+                    next_action = "inspect_progress_overview".to_string();
+                    break;
+                }
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            if matches!(
+                headless_run_checkpoint_next_route_kind(&latest_checkpoint),
+                Some(HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly)
+                    | Some(HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly)
+            ) {
+                advance_params["product_continuation_derived_target"] = json!(target);
+            } else {
+                stop_reason = "no_eligible_product_continuation_route".to_string();
+                next_action = latest_checkpoint.result.next_action;
+                next_route = latest_checkpoint.result.next_route;
+                post_progress = latest_checkpoint.result.post_progress;
+                break;
+            }
         }
         let response = handle_headless_run_advance(id.clone(), Some(advance_params));
         let Some(result_value) = response.result else {
@@ -21082,15 +21110,30 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         next_action = advance.next_action.clone();
         next_route = advance.next_route.clone();
         post_progress = advance.post_progress.clone();
-        let should_continue = advance.status == HeadlessContinueOnceStatus::TaskExecuted
+        let product_continuation_sequence = params.product_continuation_derived_target.is_some();
+        let should_continue_normal = !product_continuation_sequence
+            && advance.status == HeadlessContinueOnceStatus::TaskExecuted
             && advance
                 .next_route
                 .as_ref()
                 .map(|route| route.kind == HeadlessContinueRouteKind::InspectProgressOverview)
                 .unwrap_or(false)
             && advance.post_progress.is_some();
+        let should_continue_product = product_continuation_sequence
+            && advance
+                .next_route
+                .as_ref()
+                .map(|route| {
+                    matches!(
+                        route.kind,
+                        HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly
+                            | HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly
+                    )
+                })
+                .unwrap_or(false)
+            && advance.post_progress.is_some();
         advances.push(advance);
-        if !should_continue {
+        if !(should_continue_normal || should_continue_product) {
             break;
         }
     }
@@ -85569,16 +85612,16 @@ mod tests {
             .write_headless_run_session_checkpoint(&seed_checkpoint)
             .expect("write seed checkpoint");
 
-        let admit_drive_request = json!({
+        let sequence_drive_request = json!({
             "jsonrpc": "2.0",
             "id": 3,
             "method": "headless.run.drive",
             "params": {
                 "authorize": true,
                 "session_id": "m58.product.drive",
-                "drive_id": "m58.product.drive.admit",
+                "drive_id": "m58.product.drive.sequence",
                 "expected_start_session_sequence": 1,
-                "max_advances": 1,
+                "max_advances": 2,
                 "max_steps_per_advance": 1,
                 "product_continuation_derived_target": {
                     "authorize_product_continuation_target_derivation": true,
@@ -85587,16 +85630,17 @@ mod tests {
                 }
             }
         });
-        let admit_drive = parse_line(&admit_drive_request.to_string());
-        assert!(admit_drive.error.is_none(), "{:?}", admit_drive.error);
-        let admit_drive_result = admit_drive.result.expect("admit drive result");
-        assert_eq!(admit_drive_result["advance_count"], 1);
-        assert_eq!(admit_drive_result["advances"][0]["session_sequence"], 2);
+        let sequence_drive = parse_line(&sequence_drive_request.to_string());
+        assert!(sequence_drive.error.is_none(), "{:?}", sequence_drive.error);
+        let sequence_drive_result = sequence_drive.result.expect("sequence drive result");
+        assert_eq!(sequence_drive_result["advance_count"], 2);
+        assert_eq!(sequence_drive_result["advances"][0]["session_sequence"], 2);
+        assert_eq!(sequence_drive_result["advances"][1]["session_sequence"], 3);
         assert_eq!(
-            admit_drive_result["advances"][0]["steps"][0]["next_action"],
+            sequence_drive_result["advances"][0]["steps"][0]["next_action"],
             "run_product_continuation_task_explicitly"
         );
-        let admission = &admit_drive_result["advances"][0]["steps"][0];
+        let admission = &sequence_drive_result["advances"][0]["steps"][0];
         let continuation_task_id = admission["selected_task_id"]
             .as_str()
             .expect("continuation task")
@@ -85606,70 +85650,56 @@ mod tests {
             .expect("continuation run")
             .to_string();
         assert_eq!(
-            admit_drive_result["next_route"]["kind"],
-            "run_product_continuation_task_explicitly"
+            sequence_drive_result["advances"][1]["status"],
+            "task_executed"
         );
+        assert_eq!(
+            sequence_drive_result["advances"][1]["steps"][0]["selected_task_id"],
+            continuation_task_id
+        );
+        assert_eq!(sequence_drive_result["stop_reason"], "budget_exhausted");
         let admitted_events = store
             .tasks()
             .read_ledger_events(&continuation_run_id)
             .expect("admitted events");
-        assert!(admitted_events
-            .iter()
-            .all(|event| event.kind != LedgerEventKind::TaskRunning));
-
-        let admit_replay = parse_line(&admit_drive_request.to_string());
-        assert!(admit_replay.error.is_none(), "{:?}", admit_replay.error);
-        assert_eq!(admit_replay.result.expect("admit replay")["replayed"], true);
-        let events_after_admit_replay = store
-            .tasks()
-            .read_ledger_events(&continuation_run_id)
-            .expect("events after admit replay");
         assert_eq!(
-            events_after_admit_replay
+            admitted_events
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
                 .count(),
-            1
+            2
         );
-
-        let run_drive_request = json!({
-            "jsonrpc": "2.0",
-            "id": 4,
-            "method": "headless.run.drive",
-            "params": {
-                "authorize": true,
-                "session_id": "m58.product.drive",
-                "drive_id": "m58.product.drive.run",
-                "expected_start_session_sequence": 2,
-                "max_advances": 1,
-                "max_steps_per_advance": 1,
-                "product_continuation_derived_target": {
-                    "authorize_product_continuation_target_derivation": true
-                }
-            }
-        });
-        let run_drive = parse_line(&run_drive_request.to_string());
-        assert!(run_drive.error.is_none(), "{:?}", run_drive.error);
-        let run_drive_result = run_drive.result.expect("run drive result");
-        assert_eq!(run_drive_result["advance_count"], 1);
-        assert_eq!(run_drive_result["advances"][0]["status"], "task_executed");
         assert_eq!(
-            run_drive_result["advances"][0]["steps"][0]["selected_task_id"],
-            continuation_task_id
-        );
-        let run_events = store
-            .tasks()
-            .read_ledger_events(&continuation_run_id)
-            .expect("run events");
-        assert_eq!(
-            run_events
+            admitted_events
                 .iter()
                 .filter(|event| event.kind == LedgerEventKind::TaskRunning)
                 .count(),
             1
         );
 
-        let mut mismatched_replay = admit_drive_request.clone();
+        let sequence_replay = parse_line(&sequence_drive_request.to_string());
+        assert!(
+            sequence_replay.error.is_none(),
+            "{:?}",
+            sequence_replay.error
+        );
+        assert_eq!(
+            sequence_replay.result.expect("sequence replay")["replayed"],
+            true
+        );
+        let events_after_replay = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("events after replay");
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::TaskRunning)
+                .count(),
+            1
+        );
+
+        let mut mismatched_replay = sequence_drive_request.clone();
         mismatched_replay["id"] = json!(5);
         mismatched_replay["params"]["product_continuation_derived_target"]["continuation_goal"] =
             json!("conflicting drive replay goal");
