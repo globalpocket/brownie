@@ -1054,3 +1054,17 @@ checkpoint and revalidates drive fingerprint, stop reason, stop class, progress
 fingerprint, end sequence, optional next-route fingerprint, and recovery
 boundary fingerprint before `TaskRunning`; stale or terminal evidence fails
 closed without provider/tool/workspace side effects.
+
+M61.1 removes the caller-authored goal requirement from runtime-derived
+product objective admission. When `headless.run.advance` or `headless.run.drive`
+consumes a persisted `admit_product_continuation_task_explicitly` route through
+`product_continuation_derived_target`, the caller may omit `continuation_goal`.
+Rust then revalidates the current `continue_development` product decision and
+bounded evidence fingerprints, derives a deterministic bounded goal from target
+capability, concrete capability transition, and active technical-debt
+carry-forward fingerprint, and creates or replays one product-continuation task
+with typed `product_objective_continuation_provenance` on `TaskRecord` and
+bounded `TaskStarted` evidence. Existing caller-supplied product-continuation
+admission remains compatible. The derived path adds no JSON-RPC method, no
+report/readiness/inspection surface, and no automatic provider/tool/workspace,
+shell, git, network, or service execution.
