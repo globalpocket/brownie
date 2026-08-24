@@ -2337,6 +2337,16 @@ describe('protocol validation', () => {
       path,
       expected_sha256: `sha256:${String(index).repeat(64)}`,
     }));
+    const selectedRemainingGap = {
+      gap_id: 'm62-selected-gap',
+      capability: 'runtime_product_dod_remaining_gap_selection',
+      transition: 'select remaining product dod gap',
+      status: 'open',
+      required: true,
+      priority: 10,
+      next_action: 'plan_next_phase',
+      selection_fingerprint: `sha256:${'6'.repeat(64)}`,
+    };
     const headlessRunProductEvidenceDerivation = {
       authorize_product_evidence_derivation: true,
       derivation_id: 'm52-product-evidence-matrix',
@@ -2382,6 +2392,7 @@ describe('protocol validation', () => {
       safety_boundary_reviewed: true,
       non_goals_reviewed: true,
       technical_debt_reviewed: true,
+      selected_remaining_gap: selectedRemainingGap,
       next_action: 'record_product_completion_decision_with_runtime_evidence',
       replayed: false,
     };
@@ -2475,6 +2486,7 @@ describe('protocol validation', () => {
         non_goals_reviewed: true,
         technical_debt_reviewed: true,
         remaining_capability: 'milestone_closeout',
+        selected_remaining_gap: selectedRemainingGap,
         milestone_exit_rationale: null,
         technical_debt_carry_forward: technicalDebtCarryForward,
         replayed: false,
@@ -3043,11 +3055,13 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, product_completion_claim: 'false' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, artifact_hashes: headlessRunProductEvidenceMatrix.artifact_hashes.slice(0, 1) } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_remaining_gap: { ...selectedRemainingGap, selection_fingerprint: 'not-a-fingerprint' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, status: 'accepted_complete' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, decision_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, selected_remaining_gap: { ...selectedRemainingGap, status: 'unknown' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, technical_debt_carry_forward: { ...technicalDebtCarryForward, fingerprint: 'not-a-fingerprint' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, raw_product_evidence: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, completion_closure: { ...headlessRunDriveResult.completion_closure, progress_fingerprint: 'not-a-fingerprint' } })).toBe(false);
