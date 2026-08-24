@@ -11250,17 +11250,27 @@ fn headless_continue_product_continuation_admission(
         .map_err(VerificationRecoveryAdmissionError::InvalidParams)?;
     let provenance =
         product_continuation_provenance_for_source(store, &target.product_continuation_source)?;
-    if target.runtime_derived_objective
-        && target.continuation_goal != runtime_derived_product_objective_goal(&provenance)
-    {
-        return Err(VerificationRecoveryAdmissionError::InvalidParams(
-            "invalid params: product_continuation_admission_target.runtime_derived_objective goal does not match runtime derivation"
-                .into(),
-        ));
+    let expected_runtime_goal = if target.runtime_derived_objective {
+        Some(runtime_derived_product_objective_goal(&provenance)?)
+    } else {
+        None
+    };
+    if let Some(expected_runtime_goal) = expected_runtime_goal.as_ref() {
+        if target.continuation_goal != *expected_runtime_goal {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_continuation_admission_target.runtime_derived_objective goal does not match runtime derivation"
+                    .into(),
+            ));
+        }
     }
-    let objective_continuation_provenance = target.runtime_derived_objective.then(|| {
-        product_objective_continuation_provenance_for(&provenance, &target.continuation_goal)
-    });
+    let objective_continuation_provenance = if target.runtime_derived_objective {
+        Some(product_objective_continuation_provenance_for(
+            &provenance,
+            &target.continuation_goal,
+        )?)
+    } else {
+        None
+    };
     let decision_fingerprint = provenance.decision_fingerprint.clone();
     let product_evidence_fingerprint = provenance.product_evidence_fingerprint.clone();
     let admission = store
@@ -15146,7 +15156,15 @@ fn validate_headless_run_product_continuation_derived_replay_target(
             if let Some(goal) = target.continuation_goal.clone() {
                 (goal, false)
             } else {
-                (runtime_derived_product_objective_goal(&provenance), true)
+                (
+                    runtime_derived_product_objective_goal(&provenance).map_err(
+                        |error| match error {
+                            VerificationRecoveryAdmissionError::InvalidParams(message) => message,
+                            VerificationRecoveryAdmissionError::Internal(message) => message,
+                        },
+                    )?,
+                    true,
+                )
             };
         let mut replay_params =
             headless_run_replay_continue_once_params(checkpoint, continuation_id);
@@ -47496,23 +47514,40 @@ fn validate_product_continuation_derived_target(
     Ok(())
 }
 
-fn runtime_derived_product_objective_goal(provenance: &ProductContinuationProvenance) -> String {
-    let debt_fingerprint = provenance
-        .technical_debt_carry_forward
-        .as_ref()
-        .map(|carry_forward| carry_forward.fingerprint.as_str())
-        .unwrap_or("none");
-    format!(
-        "Continue Brownie development for capability {} via transition {} with debt fingerprint {}",
-        provenance.target_capability, provenance.concrete_capability_transition, debt_fingerprint
-    )
+fn product_continuation_remaining_capability(
+    provenance: &ProductContinuationProvenance,
+) -> Result<&str, VerificationRecoveryAdmissionError> {
+    let remaining_capability = provenance
+        .remaining_capability
+        .as_deref()
+        .unwrap_or("")
+        .trim();
+    if !is_bounded_product_completion_text(remaining_capability, 120) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation remaining_capability is required for runtime-derived objective"
+                .into(),
+        ));
+    }
+    Ok(remaining_capability)
+}
+
+fn runtime_derived_product_objective_goal(
+    provenance: &ProductContinuationProvenance,
+) -> Result<String, VerificationRecoveryAdmissionError> {
+    let remaining_capability = product_continuation_remaining_capability(provenance)?;
+    Ok(format!(
+        "Continue development for remaining capability: {remaining_capability}"
+    ))
 }
 
 fn product_objective_continuation_fingerprint_seed(
     provenance: &ProductContinuationProvenance,
     goal: &str,
-) -> Value {
-    json!({
+) -> Result<Value, VerificationRecoveryAdmissionError> {
+    let remaining_capability = product_continuation_remaining_capability(provenance)?;
+    let remaining_capability_fingerprint =
+        format!("sha256:{}", hex_sha256(remaining_capability.as_bytes()));
+    Ok(json!({
         "version": "product_objective_continuation_v1",
         "source_task_id": provenance.source_task_id,
         "source_run_id": provenance.source_run_id,
@@ -47524,20 +47559,25 @@ fn product_objective_continuation_fingerprint_seed(
         "product_evidence_fingerprint": provenance.product_evidence_fingerprint,
         "target_capability": provenance.target_capability,
         "concrete_capability_transition": provenance.concrete_capability_transition,
+        "remaining_capability": remaining_capability,
+        "remaining_capability_fingerprint": remaining_capability_fingerprint,
         "technical_debt_carry_forward_fingerprint": provenance
             .technical_debt_carry_forward
             .as_ref()
             .map(|carry_forward| carry_forward.fingerprint.as_str()),
         "derived_goal_sha256": format!("sha256:{}", hex_sha256(goal.as_bytes())),
-    })
+    }))
 }
 
 fn product_objective_continuation_provenance_for(
     provenance: &ProductContinuationProvenance,
     goal: &str,
-) -> ProductObjectiveContinuationProvenance {
-    let seed = product_objective_continuation_fingerprint_seed(provenance, goal);
-    ProductObjectiveContinuationProvenance {
+) -> Result<ProductObjectiveContinuationProvenance, VerificationRecoveryAdmissionError> {
+    let remaining_capability = product_continuation_remaining_capability(provenance)?;
+    let remaining_capability_fingerprint =
+        format!("sha256:{}", hex_sha256(remaining_capability.as_bytes()));
+    let seed = product_objective_continuation_fingerprint_seed(provenance, goal)?;
+    Ok(ProductObjectiveContinuationProvenance {
         source_task_id: provenance.source_task_id.clone(),
         source_run_id: provenance.source_run_id.clone(),
         source_decision_id: provenance.source_decision_id.clone(),
@@ -47548,6 +47588,8 @@ fn product_objective_continuation_provenance_for(
         product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
         target_capability: provenance.target_capability.clone(),
         concrete_capability_transition: provenance.concrete_capability_transition.clone(),
+        remaining_capability: remaining_capability.to_string(),
+        remaining_capability_fingerprint,
         technical_debt_carry_forward_fingerprint: provenance
             .technical_debt_carry_forward
             .as_ref()
@@ -47558,7 +47600,7 @@ fn product_objective_continuation_provenance_for(
         ),
         derived_goal_fingerprint: format!("sha256:{}", hex_sha256(goal.as_bytes())),
         derivation_version: "product_objective_continuation_v1".to_string(),
-    }
+    })
 }
 
 fn product_continuation_source_from_route(
@@ -47655,7 +47697,17 @@ fn product_continuation_derived_targets_from_checkpoint(
                 if let Some(goal) = target.continuation_goal.clone() {
                     (goal, false)
                 } else {
-                    (runtime_derived_product_objective_goal(&provenance), true)
+                    (
+                        runtime_derived_product_objective_goal(&provenance).map_err(
+                            |error| match error {
+                                VerificationRecoveryAdmissionError::InvalidParams(message) => {
+                                    message
+                                }
+                                VerificationRecoveryAdmissionError::Internal(message) => message,
+                            },
+                        )?,
+                        true,
+                    )
                 };
             let admission = ProductContinuationAdmissionTarget {
                 authorize_product_continuation_admission: true,
@@ -86542,8 +86594,12 @@ mod tests {
             .expect("runtime-derived continuation exists");
         assert_eq!(
             continuation_record.goal,
-            "Continue Brownie development for capability headless_autonomous_development via transition headless_run_drive_product_continuation_route_step with debt fingerprint none"
+            "Continue development for remaining capability: run_next_phase"
         );
+        assert!(!continuation_record.goal.contains("Brownie"));
+        assert!(!continuation_record
+            .goal
+            .contains("headless_run_drive_product_continuation_route_step"));
         let objective_provenance = continuation_record
             .product_objective_continuation_provenance
             .as_ref()
@@ -86563,6 +86619,11 @@ mod tests {
         assert_eq!(
             objective_provenance.concrete_capability_transition,
             "headless_run_drive_product_continuation_route_step"
+        );
+        assert_eq!(objective_provenance.remaining_capability, "run_next_phase");
+        assert_eq!(
+            objective_provenance.remaining_capability_fingerprint,
+            format!("sha256:{}", hex_sha256("run_next_phase".as_bytes()))
         );
         assert!(is_sha256_fingerprint(
             &objective_provenance.derived_objective_fingerprint
@@ -86646,6 +86707,98 @@ mod tests {
             .contains("request identity mismatch"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn product_objective_continuation_derives_generic_goal_from_remaining_capability() {
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let mut provenance = ProductContinuationProvenance {
+            source_task_id: "task.remaining.a".to_string(),
+            source_run_id: "run.remaining.a".to_string(),
+            source_decision_id: "decision.remaining.a".to_string(),
+            decision_fingerprint: fp('a'),
+            accepted_completion_fingerprint: fp('b'),
+            terminal_completion_fingerprint: fp('c'),
+            completion_closure_fingerprint: fp('d'),
+            product_evidence_fingerprint: fp('e'),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "completed_transition_label".to_string(),
+            decision_status: "continue_development".to_string(),
+            decision_next_action: "plan_next_phase".to_string(),
+            remaining_capability: Some("first_remaining_capability".to_string()),
+            technical_debt_carry_forward: None,
+        };
+
+        let first_goal = runtime_derived_product_objective_goal(&provenance).expect("first goal");
+        assert_eq!(
+            first_goal,
+            "Continue development for remaining capability: first_remaining_capability"
+        );
+        assert!(!first_goal.contains("Brownie"));
+        assert!(!first_goal.contains("completed_transition_label"));
+        let first_provenance =
+            product_objective_continuation_provenance_for(&provenance, &first_goal)
+                .expect("first objective provenance");
+        assert_eq!(
+            first_provenance.remaining_capability,
+            "first_remaining_capability"
+        );
+        assert_eq!(
+            first_provenance.remaining_capability_fingerprint,
+            format!(
+                "sha256:{}",
+                hex_sha256("first_remaining_capability".as_bytes())
+            )
+        );
+
+        provenance.remaining_capability = Some("second_remaining_capability".to_string());
+        let second_goal = runtime_derived_product_objective_goal(&provenance).expect("second goal");
+        let second_provenance =
+            product_objective_continuation_provenance_for(&provenance, &second_goal)
+                .expect("second objective provenance");
+        assert_ne!(first_goal, second_goal);
+        assert_ne!(
+            first_provenance.derived_objective_fingerprint,
+            second_provenance.derived_objective_fingerprint
+        );
+        assert_ne!(
+            first_provenance.derived_goal_fingerprint,
+            second_provenance.derived_goal_fingerprint
+        );
+    }
+
+    #[test]
+    fn product_objective_continuation_rejects_missing_remaining_capability() {
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let provenance = ProductContinuationProvenance {
+            source_task_id: "task.remaining.missing".to_string(),
+            source_run_id: "run.remaining.missing".to_string(),
+            source_decision_id: "decision.remaining.missing".to_string(),
+            decision_fingerprint: fp('a'),
+            accepted_completion_fingerprint: fp('b'),
+            terminal_completion_fingerprint: fp('c'),
+            completion_closure_fingerprint: fp('d'),
+            product_evidence_fingerprint: fp('e'),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "completed_transition_label".to_string(),
+            decision_status: "continue_development".to_string(),
+            decision_next_action: "plan_next_phase".to_string(),
+            remaining_capability: None,
+            technical_debt_carry_forward: None,
+        };
+
+        let error = runtime_derived_product_objective_goal(&provenance)
+            .expect_err("missing remaining capability must fail");
+        assert!(matches!(
+            error,
+            VerificationRecoveryAdmissionError::InvalidParams(_)
+        ));
     }
 
     #[test]

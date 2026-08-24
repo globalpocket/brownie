@@ -510,6 +510,8 @@ export interface ProductObjectiveContinuationProvenance {
   product_evidence_fingerprint: string;
   target_capability: string;
   concrete_capability_transition: string;
+  remaining_capability?: string;
+  remaining_capability_fingerprint?: string;
   technical_debt_carry_forward_fingerprint?: string | null;
   derived_objective_fingerprint: string;
   derived_goal_fingerprint: string;

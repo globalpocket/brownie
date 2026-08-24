@@ -1059,12 +1059,16 @@ M61.1 removes the caller-authored goal requirement from runtime-derived
 product objective admission. When `headless.run.advance` or `headless.run.drive`
 consumes a persisted `admit_product_continuation_task_explicitly` route through
 `product_continuation_derived_target`, the caller may omit `continuation_goal`.
-Rust then revalidates the current `continue_development` product decision and
-bounded evidence fingerprints, derives a deterministic bounded goal from target
-capability, concrete capability transition, and active technical-debt
-carry-forward fingerprint, and creates or replays one product-continuation task
-with typed `product_objective_continuation_provenance` on `TaskRecord` and
-bounded `TaskStarted` evidence. Existing caller-supplied product-continuation
-admission remains compatible. The derived path adds no JSON-RPC method, no
-report/readiness/inspection surface, and no automatic provider/tool/workspace,
-shell, git, network, or service execution.
+Rust then revalidates the current `continue_development` product decision,
+requires bounded non-empty `remaining_capability`, derives a generic bounded
+goal from that remaining capability, and creates or replays one
+product-continuation task with typed
+`product_objective_continuation_provenance` on `TaskRecord` and bounded
+`TaskStarted` evidence. M61.1.1 tightens the objective identity so the
+remaining capability and its SHA-256 fingerprint are bound into provenance and
+the derived objective fingerprint; changing the remaining capability changes the
+runtime-authored goal and replay identity, while completed transition labels
+remain provenance context rather than the next objective text. Existing
+caller-supplied product-continuation admission remains compatible. The derived
+path adds no JSON-RPC method, no report/readiness/inspection surface, and no
+automatic provider/tool/workspace, shell, git, network, or service execution.
