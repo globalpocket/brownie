@@ -5064,6 +5064,10 @@ pub struct ProductObjectiveContinuationProvenance {
     pub product_evidence_fingerprint: String,
     pub target_capability: String,
     pub concrete_capability_transition: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remaining_capability: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub remaining_capability_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub technical_debt_carry_forward_fingerprint: Option<String>,
     pub derived_objective_fingerprint: String,
