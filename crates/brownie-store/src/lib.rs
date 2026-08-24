@@ -19,9 +19,9 @@ use brownie_protocol::{
     ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
     ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
     ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
-    ProductContinuationProvenance, ProposalApplyResult, RecoveryCycleChildProvenance, TaskRecord,
-    TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
-    VerificationRecoveryRetryProvenance,
+    ProductContinuationProvenance, ProductLoopStopRecoveryProvenance, ProposalApplyResult,
+    RecoveryCycleChildProvenance, TaskRecord, TaskStartParams, TaskStatus,
+    VerificationRecoveryProvenance, VerificationRecoveryRetryProvenance,
 };
 use serde::{Deserialize, Serialize};
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -2966,6 +2966,19 @@ pub struct ProductContinuationTaskStartResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductLoopStopRecoveryTaskStartParams {
+    pub goal: String,
+    pub mode_id: Option<String>,
+    pub provenance: ProductLoopStopRecoveryProvenance,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProductLoopStopRecoveryTaskStartResult {
+    pub record: TaskRecord,
+    pub replayed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParentJoinContinuationRunAdmission {
     pub child_completion_fingerprint: String,
     pub child_completion_child_count: usize,
@@ -3010,6 +3023,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3045,6 +3059,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3112,6 +3127,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3188,6 +3204,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3271,6 +3288,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: Some(params.provenance),
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3373,6 +3391,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: Some(params.provenance),
             product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3465,6 +3484,7 @@ impl TaskStore {
             verification_recovery_retry_provenance: None,
             llm_provider_failure_retry_provenance: None,
             product_continuation_provenance: Some(params.provenance),
+            product_loop_stop_recovery_provenance: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3509,6 +3529,116 @@ impl TaskStore {
         )?;
 
         Ok(ProductContinuationTaskStartResult {
+            record,
+            replayed: false,
+        })
+    }
+
+    pub fn start_product_loop_stop_recovery_task(
+        &self,
+        params: ProductLoopStopRecoveryTaskStartParams,
+    ) -> Result<ProductLoopStopRecoveryTaskStartResult> {
+        let _lock = self.acquire_product_loop_stop_recovery_admission_lock(
+            &params.provenance.source_session_id,
+            &params.provenance.source_drive_id,
+        )?;
+        if let Some(record) = self.find_product_loop_stop_recovery_task_by_boundary_fingerprint(
+            &params.provenance.recovery_boundary_fingerprint,
+        )? {
+            if record.product_loop_stop_recovery_provenance.as_ref() == Some(&params.provenance)
+                && record.goal == params.goal
+                && record.mode_id == params.mode_id
+            {
+                return Ok(ProductLoopStopRecoveryTaskStartResult {
+                    record,
+                    replayed: true,
+                });
+            }
+            bail!("conflicting product loop stop recovery admission for boundary fingerprint");
+        }
+
+        let now = timestamp()?;
+        let task_id = format!("task_{}", Uuid::new_v4());
+        let run_id = format!("run_{}", Uuid::new_v4());
+        let record = TaskRecord {
+            task_id: task_id.clone(),
+            run_id: run_id.clone(),
+            goal: params.goal,
+            mode_id: params.mode_id,
+            status: TaskStatus::Created,
+            parent_task_id: None,
+            parent_run_id: None,
+            source_candidate_id: None,
+            source_handoff_envelope_id: None,
+            source_handoff_envelope_fingerprint: None,
+            source_intent_summary: None,
+            recovery_cycle_provenance: None,
+            verification_recovery_provenance: None,
+            patch_apply_recovery_provenance: None,
+            verification_recovery_retry_provenance: None,
+            llm_provider_failure_retry_provenance: None,
+            product_continuation_provenance: None,
+            product_loop_stop_recovery_provenance: Some(params.provenance),
+            created_at: now.clone(),
+            updated_at: now,
+        };
+
+        let run_dir = self.run_dir(&run_id);
+        fs::create_dir_all(&run_dir)
+            .with_context(|| format!("failed to create {}", run_dir.display()))?;
+        self.write_task_state(&record)?;
+        let provenance = record.product_loop_stop_recovery_provenance.clone();
+        self.append_task_event_with_payload(
+            &record,
+            LedgerEventKind::TaskStarted,
+            Some(serde_json::json!({
+                "status": "Created",
+                "product_loop_stop_recovery_provenance": provenance,
+                "source_session_id": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_session_id.clone()),
+                "source_drive_id": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_drive_id.clone()),
+                "drive_fingerprint": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.drive_fingerprint.clone()),
+                "stop_reason": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.stop_reason.clone()),
+                "stop_class": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.stop_class.clone()),
+                "source_progress_fingerprint": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.source_progress_fingerprint.clone()),
+                "end_session_sequence": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.end_session_sequence),
+                "next_route_fingerprint": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .and_then(|provenance| provenance.next_route_fingerprint.clone()),
+                "recovery_boundary_fingerprint": record
+                    .product_loop_stop_recovery_provenance
+                    .as_ref()
+                    .map(|provenance| provenance.recovery_boundary_fingerprint.clone()),
+                "execution_enabled": false,
+                "product_loop_stop_recovery_running_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "next_action": "run_recovery_task_explicitly",
+                "reason": "Product-loop stop recovery task admitted from bounded recoverable drive-stop evidence; execution remains explicit."
+            })),
+        )?;
+
+        Ok(ProductLoopStopRecoveryTaskStartResult {
             record,
             replayed: false,
         })
@@ -3802,6 +3932,23 @@ impl TaskStore {
                         && provenance.decision_fingerprint.as_str() == decision_fingerprint
                 })
                 .unwrap_or(false)
+            {
+                return Ok(Some(record));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_product_loop_stop_recovery_task_by_boundary_fingerprint(
+        &self,
+        recovery_boundary_fingerprint: &str,
+    ) -> Result<Option<TaskRecord>> {
+        for record in self.list_tasks()? {
+            if record
+                .product_loop_stop_recovery_provenance
+                .as_ref()
+                .map(|provenance| provenance.recovery_boundary_fingerprint.as_str())
+                == Some(recovery_boundary_fingerprint)
             {
                 return Ok(Some(record));
             }
@@ -4201,6 +4348,50 @@ impl TaskStore {
         }
         bail!(
             "run admission lock remained busy after {} attempts: {}",
+            RUN_ADMISSION_LOCK_RETRIES,
+            lock_path.display()
+        )
+    }
+
+    fn acquire_product_loop_stop_recovery_admission_lock(
+        &self,
+        session_id: &str,
+        drive_id: &str,
+    ) -> Result<RunAdmissionLock> {
+        let drive_path = self.headless_run_session_drive_path(session_id, drive_id);
+        let parent = drive_path.parent().with_context(|| {
+            format!(
+                "failed to resolve product loop stop recovery lock parent for {}",
+                drive_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+        let lock_path = parent.join(format!(
+            "{drive_id}.product-loop-stop-recovery-admission.lock"
+        ));
+        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", timestamp()?)
+                        .context("failed to write product loop stop recovery admission lock")?;
+                    return Ok(RunAdmissionLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
+                }
+            }
+        }
+        bail!(
+            "product loop stop recovery admission lock remained busy after {} attempts: {}",
             RUN_ADMISSION_LOCK_RETRIES,
             lock_path.display()
         )

@@ -1040,3 +1040,17 @@ continuation, task-running, drive-advance, provider/tool, or ledger side
 effects. The sequence remains bounded by the existing drive and continue
 budgets, adds no JSON-RPC method or report surface, and persists only bounded
 ids, route metadata, stop reasons, replay state, and SHA-256 fingerprints.
+
+M60.1 admits a product-loop stop recovery task through the existing
+`headless.continue_once` surface with `product_loop_stop_recovery_target`.
+M60.1.1 tightens that boundary: Rust now classifies persisted drive-stop
+evidence before recovery admission, denies terminal product-complete and
+budget-exhausted stops before task creation, and admits only concrete
+recoverable faults such as `product_continuation_checkpoint_missing`. Successful
+admission creates a Created recovery task with typed
+`product_loop_stop_recovery_provenance` on `TaskRecord` and bounded
+`TaskStarted` evidence. Direct `task.run` re-reads the source session/drive
+checkpoint and revalidates drive fingerprint, stop reason, stop class, progress
+fingerprint, end sequence, optional next-route fingerprint, and recovery
+boundary fingerprint before `TaskRunning`; stale or terminal evidence fails
+closed without provider/tool/workspace side effects.

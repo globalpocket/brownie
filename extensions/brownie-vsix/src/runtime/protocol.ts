@@ -499,6 +499,18 @@ export interface ProductContinuationProvenance {
   technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
 }
 
+export interface ProductLoopStopRecoveryProvenance {
+  source_session_id: string;
+  source_drive_id: string;
+  drive_fingerprint: string;
+  stop_reason: string;
+  stop_class: 'recoverable_fault';
+  source_progress_fingerprint: string;
+  end_session_sequence: number;
+  next_route_fingerprint?: string | null;
+  recovery_boundary_fingerprint: string;
+}
+
 export interface TechnicalDebtCarryForwardItem {
   debt_id: string;
   summary: string;
@@ -1898,6 +1910,7 @@ export interface TaskRecord {
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
   product_continuation_provenance?: ProductContinuationProvenance | null;
+  product_loop_stop_recovery_provenance?: ProductLoopStopRecoveryProvenance | null;
   created_at: string;
   updated_at: string;
 }
@@ -2102,6 +2115,7 @@ export interface ChildTaskInspectSummary {
   verification_recovery_retry_provenance?: VerificationRecoveryRetryProvenance | null;
   llm_provider_failure_retry_provenance?: LlmProviderFailureRetryProvenance | null;
   product_continuation_provenance?: ProductContinuationProvenance | null;
+  product_loop_stop_recovery_provenance?: ProductLoopStopRecoveryProvenance | null;
   event_count: number;
   has_agent_loop_completed: boolean;
   completion_final_state?: string | null;
@@ -5001,6 +5015,18 @@ const PRODUCT_CONTINUATION_PROVENANCE_KEYS = new Set([
   'technical_debt_carry_forward',
 ]);
 
+const PRODUCT_LOOP_STOP_RECOVERY_PROVENANCE_KEYS = new Set([
+  'source_session_id',
+  'source_drive_id',
+  'drive_fingerprint',
+  'stop_reason',
+  'stop_class',
+  'source_progress_fingerprint',
+  'end_session_sequence',
+  'next_route_fingerprint',
+  'recovery_boundary_fingerprint',
+]);
+
 const VERIFICATION_RECOVERY_ADMISSION_KEYS = new Set([
   'source_task_id',
   'source_run_id',
@@ -5460,6 +5486,27 @@ export function isProductContinuationProvenance(value: unknown): value is Produc
     (value.technical_debt_carry_forward === undefined ||
       value.technical_debt_carry_forward === null ||
       isTechnicalDebtCarryForward(value.technical_debt_carry_forward))
+  );
+}
+
+export function isProductLoopStopRecoveryProvenance(value: unknown): value is ProductLoopStopRecoveryProvenance {
+  return (
+    isRecord(value) &&
+    hasOnlyKeys(value, PRODUCT_LOOP_STOP_RECOVERY_PROVENANCE_KEYS) &&
+    isHeadlessContinuationId(value.source_session_id) &&
+    isHeadlessContinuationId(value.source_drive_id) &&
+    typeof value.drive_fingerprint === 'string' &&
+    isSha256Fingerprint(value.drive_fingerprint) &&
+    isBoundedAsciiMetadata(value.stop_reason, 96) &&
+    value.stop_class === 'recoverable_fault' &&
+    typeof value.source_progress_fingerprint === 'string' &&
+    isSha256Fingerprint(value.source_progress_fingerprint) &&
+    isNonNegativeInteger(value.end_session_sequence) &&
+    (value.next_route_fingerprint === undefined ||
+      value.next_route_fingerprint === null ||
+      (typeof value.next_route_fingerprint === 'string' && isSha256Fingerprint(value.next_route_fingerprint))) &&
+    typeof value.recovery_boundary_fingerprint === 'string' &&
+    isSha256Fingerprint(value.recovery_boundary_fingerprint)
   );
 }
 
@@ -8622,6 +8669,7 @@ export function isTaskRecord(value: unknown): value is TaskRecord {
     (value.verification_recovery_retry_provenance === undefined || value.verification_recovery_retry_provenance === null || isVerificationRecoveryRetryProvenance(value.verification_recovery_retry_provenance)) &&
     (value.llm_provider_failure_retry_provenance === undefined || value.llm_provider_failure_retry_provenance === null || isLlmProviderFailureRetryProvenance(value.llm_provider_failure_retry_provenance)) &&
     (value.product_continuation_provenance === undefined || value.product_continuation_provenance === null || isProductContinuationProvenance(value.product_continuation_provenance)) &&
+    (value.product_loop_stop_recovery_provenance === undefined || value.product_loop_stop_recovery_provenance === null || isProductLoopStopRecoveryProvenance(value.product_loop_stop_recovery_provenance)) &&
     typeof value.created_at === 'string' &&
     typeof value.updated_at === 'string'
   );
@@ -9192,6 +9240,7 @@ export function isChildTaskInspectSummary(value: unknown): value is ChildTaskIns
     (value.verification_recovery_retry_provenance === undefined || value.verification_recovery_retry_provenance === null || isVerificationRecoveryRetryProvenance(value.verification_recovery_retry_provenance)) &&
     (value.llm_provider_failure_retry_provenance === undefined || value.llm_provider_failure_retry_provenance === null || isLlmProviderFailureRetryProvenance(value.llm_provider_failure_retry_provenance)) &&
     (value.product_continuation_provenance === undefined || value.product_continuation_provenance === null || isProductContinuationProvenance(value.product_continuation_provenance)) &&
+    (value.product_loop_stop_recovery_provenance === undefined || value.product_loop_stop_recovery_provenance === null || isProductLoopStopRecoveryProvenance(value.product_loop_stop_recovery_provenance)) &&
     isNonNegativeInteger(value.event_count) &&
     typeof value.has_agent_loop_completed === 'boolean' &&
     (value.completion_final_state === undefined || value.completion_final_state === null || typeof value.completion_final_state === 'string') &&

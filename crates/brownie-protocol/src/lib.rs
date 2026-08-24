@@ -4946,6 +4946,7 @@ pub struct ChildTaskInspectSummary {
     pub verification_recovery_retry_provenance: Option<VerificationRecoveryRetryProvenance>,
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     pub product_continuation_provenance: Option<ProductContinuationProvenance>,
+    pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
     pub event_count: usize,
     pub has_agent_loop_completed: bool,
     pub completion_final_state: Option<String>,
@@ -5049,6 +5050,20 @@ pub struct ProductContinuationProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProductLoopStopRecoveryProvenance {
+    pub source_session_id: String,
+    pub source_drive_id: String,
+    pub drive_fingerprint: String,
+    pub stop_reason: String,
+    pub stop_class: String,
+    pub source_progress_fingerprint: String,
+    pub end_session_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_route_fingerprint: Option<String>,
+    pub recovery_boundary_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -5083,6 +5098,8 @@ pub struct TaskRecord {
     pub llm_provider_failure_retry_provenance: Option<LlmProviderFailureRetryProvenance>,
     #[serde(default)]
     pub product_continuation_provenance: Option<ProductContinuationProvenance>,
+    #[serde(default)]
+    pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
     pub created_at: String,
     pub updated_at: String,
 }
