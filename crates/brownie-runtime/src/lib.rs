@@ -68,9 +68,9 @@ use brownie_protocol::{
     PatchApplyRecoveryRunTarget, PatchApplyRecoverySource, PermissionCheckParams,
     PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
     ProductContinuationDerivedTarget, ProductContinuationProvenance, ProductContinuationRunTarget,
-    ProductContinuationSource, ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction,
-    ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
+    ProductContinuationSource, ProductLoopStopRecoveryTarget, ProgressCurrentStage,
+    ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot, ProgressVerificationState,
+    ProposalApplyCapabilityParams, ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
     ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
     ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
     ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
@@ -8675,6 +8675,13 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             "invalid params: product_continuation_run_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.product_loop_stop_recovery_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_loop_stop_recovery_target cannot be combined with max_steps greater than 1",
+        );
+    }
     if params.llm_provider_failure_retry_run_target.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -9518,6 +9525,7 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
         && (params.context_budget.is_some()
             || params.selected_index_context.is_some()
             || params.product_continuation_admission_target.is_some()
+            || params.product_loop_stop_recovery_target.is_some()
             || params.verification_recovery_source.is_some()
             || params.verification_recovery_goal.is_some()
             || params.verification_recovery_mode_id.is_some()
@@ -9559,6 +9567,54 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             id,
             -32602,
             "invalid params: product_continuation_run_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective, admission, or index-context fields",
+        );
+    }
+    if params.product_loop_stop_recovery_target.is_some()
+        && (params.context_budget.is_some()
+            || params.selected_index_context.is_some()
+            || params.product_continuation_admission_target.is_some()
+            || params.product_continuation_run_target.is_some()
+            || params.verification_recovery_source.is_some()
+            || params.verification_recovery_goal.is_some()
+            || params.verification_recovery_mode_id.is_some()
+            || params.verification_recovery_retry_source.is_some()
+            || params.verification_recovery_retry_goal.is_some()
+            || params.verification_recovery_retry_mode_id.is_some()
+            || params.llm_provider_failure_retry_source.is_some()
+            || params.llm_provider_failure_retry_goal.is_some()
+            || params.llm_provider_failure_retry_mode_id.is_some()
+            || params.verification_recovery_run_target.is_some()
+            || params.verification_recovery_context_read.is_some()
+            || params.patch_apply_recovery_source.is_some()
+            || params.patch_apply_recovery_goal.is_some()
+            || params.patch_apply_recovery_mode_id.is_some()
+            || params.patch_apply_recovery_run_target.is_some()
+            || params.patch_apply_recovery_apply_target.is_some()
+            || params.verification_recovery_apply_target.is_some()
+            || params.verification_recovery_retry_run_target.is_some()
+            || params.llm_provider_failure_retry_run_target.is_some()
+            || params.parent_join_run_target.is_some()
+            || params
+                .objective_proposal_authorization_preflight_target
+                .is_some()
+            || params.objective_proposal_apply_target.is_some()
+            || params.objective_apply_verification_target.is_some()
+            || params.objective_completion_acceptance_target.is_some()
+            || params.modepack_registry_update_selection_target.is_some()
+            || params.modepack_selected_candidate_fetch_target.is_some()
+            || params
+                .modepack_selected_candidate_provenance_verification_target
+                .is_some()
+            || params.modepack_selected_candidate_approval_target.is_some()
+            || params
+                .modepack_selected_approved_candidate_replacement_target
+                .is_some()
+            || params.modepack_selected_active_rollback_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_loop_stop_recovery_target cannot be combined with task, recovery, retry, provider, context-read, parent-join, modepack, objective, product-continuation, or index-context fields",
         );
     }
     if let Err(message) = validate_headless_context_budget_bounds(params.context_budget.as_ref()) {
@@ -9673,6 +9729,26 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
             ) {
                 Ok(Some(decision)) => {
                     return headless_continue_product_continuation_admission_replay_result(
+                        id,
+                        &progress_overview,
+                        params,
+                        decision,
+                    );
+                }
+                Ok(None) => {}
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+        if params.product_loop_stop_recovery_target.is_some() {
+            match headless_product_loop_stop_recovery_decision_for_replay(
+                &store,
+                &tasks,
+                continuation_id,
+            ) {
+                Ok(Some(decision)) => {
+                    return headless_product_loop_stop_recovery_replay_result(
                         id,
                         &progress_overview,
                         params,
@@ -10024,6 +10100,14 @@ fn handle_headless_continue_once(id: Value, params: Option<Value>) -> JsonRpcRes
     }
     if params.product_continuation_admission_target.is_some() {
         return handle_headless_continue_product_continuation_admission(
+            id,
+            &store,
+            &progress_overview,
+            params,
+        );
+    }
+    if params.product_loop_stop_recovery_target.is_some() {
+        return handle_headless_continue_product_loop_stop_recovery(
             id,
             &store,
             &progress_overview,
@@ -10394,6 +10478,515 @@ struct HeadlessProductContinuationAdmissionReplay {
     admission: ProductContinuationAdmission,
     post_progress_fingerprint: String,
     post_aggregate_sequence: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HeadlessProductLoopStopRecoveryReplay {
+    decision_id: String,
+    continuation_id: String,
+    request_fingerprint: String,
+    selected_task_id: String,
+    selected_run_id: String,
+    stop_reason: String,
+    drive_fingerprint: String,
+    post_progress_fingerprint: String,
+    post_aggregate_sequence: u64,
+}
+
+fn handle_headless_continue_product_loop_stop_recovery(
+    id: Value,
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+) -> JsonRpcResponse<Value> {
+    let result =
+        match headless_continue_product_loop_stop_recovery(store, progress_overview, &params) {
+            Ok(result) => result,
+            Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+                return error_response(id, -32602, &message)
+            }
+            Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
+    result_response(id, json!(result))
+}
+
+fn validate_product_loop_stop_recovery_target(
+    target: &ProductLoopStopRecoveryTarget,
+) -> Result<(), VerificationRecoveryAdmissionError> {
+    if !target.authorize_product_loop_stop_recovery {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target.authorize_product_loop_stop_recovery must be true".into(),
+        ));
+    }
+    if target.session_id.trim().is_empty() || target.drive_id.trim().is_empty() {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target session_id and drive_id must not be empty".into(),
+        ));
+    }
+    if target.expected_drive_fingerprint.trim().is_empty()
+        || target.expected_stop_reason.trim().is_empty()
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target expected evidence fields must not be empty".into(),
+        ));
+    }
+    if !matches!(
+        target.expected_stop_reason.as_str(),
+        "no_eligible_product_continuation_route" | "product_continuation_checkpoint_missing"
+    ) {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target expected_stop_reason is not a recoverable product-loop stop".into(),
+        ));
+    }
+    if target.recovery_goal.trim().is_empty() || target.recovery_goal.len() > 500 {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target.recovery_goal must be bounded"
+                .into(),
+        ));
+    }
+    if let Some(mode_id) = target.recovery_mode_id.as_deref() {
+        if mode_id.trim().is_empty() || mode_id.len() > 96 {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target.recovery_mode_id must be bounded"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn headless_product_loop_stop_recovery_request_fingerprint(
+    params: &HeadlessContinueOnceParams,
+) -> Result<String, VerificationRecoveryAdmissionError> {
+    let target = params
+        .product_loop_stop_recovery_target
+        .as_ref()
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target is required".into(),
+            )
+        })?;
+    let continuation_id = params.continuation_id.as_deref().ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target requires continuation_id".into(),
+        )
+    })?;
+    let seed = json!({
+        "route_kind": "product_loop_stop_recovery_admission",
+        "continuation_id": continuation_id,
+        "authorize": params.authorize,
+        "expected_progress_fingerprint": params.expected_progress_fingerprint,
+        "expected_aggregate_sequence": params.expected_aggregate_sequence,
+        "authorize_product_loop_stop_recovery": target.authorize_product_loop_stop_recovery,
+        "session_id": target.session_id,
+        "drive_id": target.drive_id,
+        "expected_drive_fingerprint": target.expected_drive_fingerprint,
+        "expected_stop_reason": target.expected_stop_reason,
+        "expected_end_session_sequence": target.expected_end_session_sequence,
+        "expected_post_progress_fingerprint": target.expected_post_progress_fingerprint,
+        "expected_next_route_fingerprint": target.expected_next_route_fingerprint,
+        "recovery_goal": target.recovery_goal,
+        "recovery_mode_id": target.recovery_mode_id,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
+}
+
+fn headless_product_loop_stop_recovery_route_fingerprint(route: &HeadlessContinueRoute) -> String {
+    format!(
+        "sha256:{}",
+        hex_sha256(serde_json::to_string(route).unwrap_or_default().as_bytes())
+    )
+}
+
+fn validate_product_loop_stop_recovery_evidence(
+    store: &BrownieStore,
+    target: &ProductLoopStopRecoveryTarget,
+) -> Result<(), VerificationRecoveryAdmissionError> {
+    let checkpoint = store
+        .tasks()
+        .read_headless_run_session_drive_checkpoint(&target.session_id, &target.drive_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target drive checkpoint is missing"
+                    .into(),
+            )
+        })?;
+    let result = &checkpoint.result;
+    if result.drive_fingerprint != target.expected_drive_fingerprint {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target drive fingerprint mismatch".into(),
+        ));
+    }
+    if result.stop_reason != target.expected_stop_reason {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target stop reason mismatch".into(),
+        ));
+    }
+    if result.end_session_sequence != target.expected_end_session_sequence {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target end session sequence mismatch"
+                .into(),
+        ));
+    }
+    if let Some(expected) = target.expected_post_progress_fingerprint.as_deref() {
+        let actual = result
+            .post_progress
+            .as_ref()
+            .map(|progress| progress.progress_fingerprint.as_str());
+        if actual != Some(expected) {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target post progress fingerprint mismatch"
+                    .into(),
+            ));
+        }
+    }
+    if let Some(expected) = target.expected_next_route_fingerprint.as_deref() {
+        let actual = result
+            .next_route
+            .as_ref()
+            .map(headless_product_loop_stop_recovery_route_fingerprint);
+        if actual.as_deref() != Some(expected) {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target next route fingerprint mismatch"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn headless_continue_product_loop_stop_recovery(
+    store: &BrownieStore,
+    progress_overview: &TaskListProgressOverview,
+    params: &HeadlessContinueOnceParams,
+) -> Result<HeadlessContinueOnceResult, VerificationRecoveryAdmissionError> {
+    let target = params
+        .product_loop_stop_recovery_target
+        .as_ref()
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_loop_stop_recovery_target is required".into(),
+            )
+        })?;
+    validate_product_loop_stop_recovery_target(target)?;
+    validate_product_loop_stop_recovery_evidence(store, target)?;
+    let continuation_id = params.continuation_id.clone().ok_or_else(|| {
+        VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_loop_stop_recovery_target requires continuation_id".into(),
+        )
+    })?;
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    if headless_product_loop_stop_recovery_existing_boundary_admission(&store, &tasks, target)?
+        .is_some()
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: conflicting product loop stop recovery admission for drive stop evidence"
+                .into(),
+        ));
+    }
+    let request_fingerprint = headless_product_loop_stop_recovery_request_fingerprint(params)?;
+    let policy = resolve_task_start_policy(target.recovery_mode_id.as_deref(), store)
+        .map_err(VerificationRecoveryAdmissionError::InvalidParams)?;
+    let record = store
+        .tasks()
+        .start_task(TaskStartParams {
+            goal: target.recovery_goal.clone(),
+            mode_id: Some(policy.mode_id.clone()),
+            verification_recovery_source: None,
+            patch_apply_recovery_source: None,
+            verification_recovery_retry_source: None,
+            llm_provider_failure_retry_source: None,
+            product_continuation_source: None,
+        })
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    append_mode_resolved_event(store, &record, &policy)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let decision_id = format!("headless_decision_{}", uuid::Uuid::new_v4().simple());
+    store
+        .tasks()
+        .append_task_event_with_payload(
+            &record,
+            LedgerEventKind::HeadlessContinuationDecisionRecorded,
+            Some(json!({
+                "decision_id": decision_id,
+                "continuation_id": continuation_id,
+                "route_kind": "product_loop_stop_recovery_admission",
+                "request_fingerprint": request_fingerprint,
+                "selected_task_id": record.task_id,
+                "selected_run_id": record.run_id,
+                "source_session_id": target.session_id,
+                "source_drive_id": target.drive_id,
+                "drive_fingerprint": target.expected_drive_fingerprint,
+                "stop_reason": target.expected_stop_reason,
+                "end_session_sequence": target.expected_end_session_sequence,
+                "post_progress_fingerprint": target.expected_post_progress_fingerprint,
+                "next_route_fingerprint": target.expected_next_route_fingerprint,
+                "execution_enabled": false,
+                "scheduler_handoff_enabled": false,
+                "next_action": "run_recovery_task_explicitly",
+                "reason": "Product loop stop recovery task admitted from persisted drive stop evidence; execution remains explicit."
+            })),
+        )
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let post_tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+    let post_progress = task_list_progress_overview(store, &post_tasks)
+        .map_err(VerificationRecoveryAdmissionError::Internal)?;
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+        reason:
+            "Product-loop stop recovery task was admitted; running it remains an explicit next step."
+                .to_string(),
+        task_id: Some(record.task_id.clone()),
+        run_id: Some(record.run_id.clone()),
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: Some(target.expected_drive_fingerprint.clone()),
+        apply_fingerprint: None,
+        progress_fingerprint: Some(post_progress.source_fingerprint.clone()),
+        aggregate_sequence: Some(post_progress.aggregate_sequence),
+        next_action: "run_recovery_task_explicitly".to_string(),
+    };
+    Ok(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: Some(continuation_id),
+        selected_task_id: Some(record.task_id.clone()),
+        selected_run_id: Some(record.run_id.clone()),
+        candidate_count: 1,
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: None,
+        proposal_apply_result: None,
+        objective_proposal_authorization_preflight_result: None,
+        llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action: "run_recovery_task_explicitly".to_string(),
+    })
+}
+
+fn headless_product_loop_stop_recovery_existing_boundary_admission(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    target: &ProductLoopStopRecoveryTarget,
+) -> Result<Option<HeadlessProductLoopStopRecoveryReplay>, VerificationRecoveryAdmissionError> {
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?;
+        for payload in events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .filter_map(|event| event.payload.as_ref())
+        {
+            if payload.get("route_kind").and_then(Value::as_str)
+                != Some("product_loop_stop_recovery_admission")
+                || payload.get("source_session_id").and_then(Value::as_str)
+                    != Some(target.session_id.as_str())
+                || payload.get("source_drive_id").and_then(Value::as_str)
+                    != Some(target.drive_id.as_str())
+                || payload.get("drive_fingerprint").and_then(Value::as_str)
+                    != Some(target.expected_drive_fingerprint.as_str())
+                || payload.get("stop_reason").and_then(Value::as_str)
+                    != Some(target.expected_stop_reason.as_str())
+                || payload.get("end_session_sequence").and_then(Value::as_u64)
+                    != Some(target.expected_end_session_sequence)
+            {
+                continue;
+            }
+            let replay = HeadlessProductLoopStopRecoveryReplay {
+                decision_id: payload_string(payload, "decision_id")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                continuation_id: payload_string(payload, "continuation_id")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                request_fingerprint: payload_string(payload, "request_fingerprint")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                selected_task_id: payload_string(payload, "selected_task_id")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                selected_run_id: payload_string(payload, "selected_run_id")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                stop_reason: payload_string(payload, "stop_reason")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                drive_fingerprint: payload_string(payload, "drive_fingerprint")
+                    .map_err(VerificationRecoveryAdmissionError::Internal)?,
+                post_progress_fingerprint: payload
+                    .get("post_result_progress_fingerprint")
+                    .or_else(|| payload.get("post_progress_fingerprint"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                post_aggregate_sequence: payload
+                    .get("post_aggregate_sequence")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+            };
+            return Ok(Some(replay));
+        }
+    }
+    Ok(None)
+}
+
+fn headless_product_loop_stop_recovery_decision_for_replay(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    continuation_id: &str,
+) -> Result<Option<HeadlessProductLoopStopRecoveryReplay>, String> {
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| error.to_string())?;
+        for payload in events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+            .filter_map(|event| event.payload.as_ref())
+        {
+            if payload.get("route_kind").and_then(Value::as_str)
+                != Some("product_loop_stop_recovery_admission")
+                || payload.get("continuation_id").and_then(Value::as_str) != Some(continuation_id)
+            {
+                continue;
+            }
+            return Ok(Some(HeadlessProductLoopStopRecoveryReplay {
+                decision_id: payload_string(payload, "decision_id")?,
+                continuation_id: continuation_id.to_string(),
+                request_fingerprint: payload_string(payload, "request_fingerprint")?,
+                selected_task_id: payload_string(payload, "selected_task_id")?,
+                selected_run_id: payload_string(payload, "selected_run_id")?,
+                stop_reason: payload_string(payload, "stop_reason")?,
+                drive_fingerprint: payload_string(payload, "drive_fingerprint")?,
+                post_progress_fingerprint: payload
+                    .get("post_result_progress_fingerprint")
+                    .or_else(|| payload.get("post_progress_fingerprint"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                post_aggregate_sequence: payload
+                    .get("post_aggregate_sequence")
+                    .and_then(Value::as_u64)
+                    .unwrap_or_default(),
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn headless_product_loop_stop_recovery_replay_result(
+    id: Value,
+    progress_overview: &TaskListProgressOverview,
+    params: HeadlessContinueOnceParams,
+    replay: HeadlessProductLoopStopRecoveryReplay,
+) -> JsonRpcResponse<Value> {
+    let current = match headless_product_loop_stop_recovery_request_fingerprint(&params) {
+        Ok(fingerprint) => fingerprint,
+        Err(VerificationRecoveryAdmissionError::InvalidParams(message)) => {
+            return error_response(id, -32602, &message)
+        }
+        Err(VerificationRecoveryAdmissionError::Internal(message)) => {
+            return error_response(id, -32603, &format!("internal error: {message}"))
+        }
+    };
+    if replay.request_fingerprint != current {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: product_loop_stop_recovery_target continuation request identity mismatch",
+        );
+    }
+    let post_progress_fingerprint = if replay.post_progress_fingerprint.is_empty() {
+        progress_overview.source_fingerprint.clone()
+    } else {
+        replay.post_progress_fingerprint.clone()
+    };
+    let post_aggregate_sequence = if replay.post_aggregate_sequence == 0 {
+        progress_overview.aggregate_sequence
+    } else {
+        replay.post_aggregate_sequence
+    };
+    let next_route = HeadlessContinueRoute {
+        kind: HeadlessContinueRouteKind::RunProductContinuationTaskExplicitly,
+        reason:
+            "Product-loop stop recovery task was already admitted; replaying bounded admission result."
+                .to_string(),
+        task_id: Some(replay.selected_task_id.clone()),
+        run_id: Some(replay.selected_run_id.clone()),
+        proposal_id: None,
+        apply_id: None,
+        failure_fingerprint: Some(replay.drive_fingerprint.clone()),
+        apply_fingerprint: None,
+        progress_fingerprint: Some(progress_overview.source_fingerprint.clone()),
+        aggregate_sequence: Some(progress_overview.aggregate_sequence),
+        next_action: "run_recovery_task_explicitly".to_string(),
+    };
+    result_response(
+        id,
+        json!(HeadlessContinueOnceResult {
+            status: HeadlessContinueOnceStatus::TaskExecuted,
+            decision_id: Some(replay.decision_id),
+            continuation_id: Some(replay.continuation_id),
+            selected_task_id: Some(replay.selected_task_id),
+            selected_run_id: Some(replay.selected_run_id),
+            candidate_count: 1,
+            expected_progress_fingerprint: params.expected_progress_fingerprint,
+            expected_aggregate_sequence: params.expected_aggregate_sequence,
+            current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+            current_aggregate_sequence: progress_overview.aggregate_sequence,
+            post_progress_fingerprint: Some(post_progress_fingerprint),
+            post_aggregate_sequence: Some(post_aggregate_sequence),
+            stale: false,
+            replayed: true,
+            task_run_result: None,
+            proposal_apply_result: None,
+            objective_proposal_authorization_preflight_result: None,
+            llm_provider_failure_retry_admission: None,
+            product_continuation_admission: None,
+            modepack_select_registry_update_result: None,
+            modepack_fetch_candidate_result: None,
+            modepack_verify_candidate_provenance_result: None,
+            modepack_approve_candidate_result: None,
+            modepack_replace_active_result: None,
+            modepack_rollback_active_result: None,
+            next_route: Some(next_route),
+            max_steps: None,
+            step_count: None,
+            executed_count: None,
+            replayed_count: None,
+            stop_reason: Some(replay.stop_reason),
+            steps: Vec::new(),
+            next_action: "run_recovery_task_explicitly".to_string(),
+        }),
+    )
 }
 
 fn handle_headless_continue_product_continuation_admission(
@@ -14242,6 +14835,7 @@ fn validate_headless_run_selected_candidate_fetch_replay_target(
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
         product_continuation_run_target: None,
+        product_loop_stop_recovery_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -14640,6 +15234,7 @@ fn validate_headless_run_registry_selection_replay_target(
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
         product_continuation_run_target: None,
+        product_loop_stop_recovery_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -14695,6 +15290,7 @@ fn headless_run_replay_continue_once_params(
         llm_provider_failure_retry_mode_id: None,
         product_continuation_admission_target: None,
         product_continuation_run_target: None,
+        product_loop_stop_recovery_target: None,
         verification_recovery_run_target: None,
         verification_recovery_context_read: None,
         patch_apply_recovery_source: None,
@@ -63421,6 +64017,7 @@ mod tests {
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
             product_continuation_run_target: None,
+            product_loop_stop_recovery_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -85715,6 +86312,247 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_admits_product_loop_stop_recovery_from_drive_evidence_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let progress_fingerprint = progress["source_fingerprint"]
+            .as_str()
+            .expect("progress fingerprint")
+            .to_string();
+        let aggregate_sequence = progress["aggregate_sequence"]
+            .as_u64()
+            .expect("aggregate sequence");
+        let drive_id = "m60.product.stop.drive";
+        let drive_fingerprint = fp('6');
+        store
+            .tasks()
+            .write_headless_run_session_drive_checkpoint(&HeadlessRunSessionDriveCheckpoint {
+                session_id: "m60.product.stop".to_string(),
+                drive_id: drive_id.to_string(),
+                start_session_sequence: 4,
+                result: HeadlessRunDriveResult {
+                    status: HeadlessContinueOnceStatus::NoEligibleTask,
+                    session_id: "m60.product.stop".to_string(),
+                    drive_id: drive_id.to_string(),
+                    start_session_sequence: 4,
+                    end_session_sequence: 5,
+                    replayed: false,
+                    max_advances: 1,
+                    max_steps_per_advance: 1,
+                    advance_count: 0,
+                    executed_count: 0,
+                    replayed_count: 0,
+                    stop_reason: "no_eligible_product_continuation_route".to_string(),
+                    drive_fingerprint: drive_fingerprint.clone(),
+                    terminal_completion_evidence: None,
+                    completion_closure: HeadlessRunCompletionClosure {
+                        status: HeadlessRunCompletionClosureStatus::NoEligibleTask,
+                        stop_reason: "no_eligible_product_continuation_route".to_string(),
+                        terminal_task_count: 0,
+                        total_task_count: 0,
+                        runnable_task_count: 0,
+                        blocked_task_count: 0,
+                        route_candidate_count: 0,
+                        progress_fingerprint: progress_fingerprint.clone(),
+                        aggregate_sequence,
+                        route_kind: None,
+                        route_task_id: None,
+                        route_run_id: None,
+                        terminal_completion_fingerprint: None,
+                        next_action: "admit_product_loop_stop_recovery_explicitly".to_string(),
+                        closure_fingerprint: fp('7'),
+                    },
+                    completion_finalization: None,
+                    accepted_completion: None,
+                    product_evidence_matrix: None,
+                    product_completion_decision: None,
+                    start_progress: HeadlessRunProgressCheckpoint {
+                        progress_fingerprint: progress_fingerprint.clone(),
+                        aggregate_sequence,
+                    },
+                    post_progress: Some(HeadlessRunProgressCheckpoint {
+                        progress_fingerprint: progress_fingerprint.clone(),
+                        aggregate_sequence,
+                    }),
+                    next_route: None,
+                    objective_proposal_candidate: None,
+                    advances: Vec::new(),
+                    journey_route_resume: None,
+                    journey_closure: None,
+                    journey: None,
+                    journey_execution: None,
+                    next_action: "admit_product_loop_stop_recovery_explicitly".to_string(),
+                },
+            })
+            .expect("write stop drive checkpoint");
+
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "continuation_id": "m60.product.stop.recovery",
+                "expected_progress_fingerprint": progress_fingerprint,
+                "expected_aggregate_sequence": aggregate_sequence,
+                "product_loop_stop_recovery_target": {
+                    "authorize_product_loop_stop_recovery": true,
+                    "session_id": "m60.product.stop",
+                    "drive_id": drive_id,
+                    "expected_drive_fingerprint": drive_fingerprint,
+                    "expected_stop_reason": "no_eligible_product_continuation_route",
+                    "expected_end_session_sequence": 5,
+                    "expected_post_progress_fingerprint": progress_fingerprint,
+                    "recovery_goal": "Recover the stopped product loop by planning the next phase",
+                    "recovery_mode_id": "implementer"
+                }
+            }
+        });
+        let admitted = parse_line(&request.to_string());
+        assert!(admitted.error.is_none(), "{:?}", admitted.error);
+        let admitted_result = admitted.result.expect("admitted result");
+        assert_eq!(admitted_result["status"], "task_executed");
+        assert_eq!(
+            admitted_result["next_action"],
+            "run_recovery_task_explicitly"
+        );
+        assert!(admitted_result["task_run_result"].is_null());
+        assert_eq!(
+            admitted_result["next_route"]["next_action"],
+            "run_recovery_task_explicitly"
+        );
+        let recovery_task_id = admitted_result["selected_task_id"]
+            .as_str()
+            .expect("recovery task")
+            .to_string();
+        let recovery_run_id = admitted_result["selected_run_id"]
+            .as_str()
+            .expect("recovery run")
+            .to_string();
+        let recovery_task = store
+            .tasks()
+            .get_task(&recovery_task_id)
+            .expect("read recovery task")
+            .expect("recovery task exists");
+        assert_eq!(recovery_task.status, TaskStatus::Created);
+        let recovery_events = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("recovery events");
+        assert!(recovery_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded));
+        assert!(recovery_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::TaskRunning));
+
+        let task_count_after_admission = store.tasks().list_tasks().expect("list tasks").len();
+        let replay = parse_line(&request.to_string());
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(replay_result["replayed"], true);
+        assert_eq!(replay_result["selected_task_id"], recovery_task_id);
+        assert_eq!(
+            store.tasks().list_tasks().expect("list after replay").len(),
+            task_count_after_admission
+        );
+        let events_after_replay = store
+            .tasks()
+            .read_ledger_events(&recovery_run_id)
+            .expect("events after replay");
+        assert_eq!(
+            events_after_replay
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessContinuationDecisionRecorded)
+                .count(),
+            1
+        );
+
+        let mut duplicate_boundary = request.clone();
+        duplicate_boundary["id"] = json!(5);
+        duplicate_boundary["params"]["continuation_id"] =
+            json!("m60.product.stop.recovery.duplicate");
+        duplicate_boundary["params"]["expected_progress_fingerprint"] =
+            admitted_result["post_progress_fingerprint"].clone();
+        duplicate_boundary["params"]["expected_aggregate_sequence"] =
+            admitted_result["post_aggregate_sequence"].clone();
+        let duplicate_boundary_response = parse_line(&duplicate_boundary.to_string());
+        assert!(duplicate_boundary_response.result.is_none());
+        assert!(duplicate_boundary_response
+            .error
+            .expect("duplicate boundary error")
+            .message
+            .contains("conflicting product loop stop recovery admission"));
+        assert_eq!(
+            store
+                .tasks()
+                .list_tasks()
+                .expect("list after duplicate boundary")
+                .len(),
+            task_count_after_admission
+        );
+
+        let mut stale = request.clone();
+        stale["id"] = json!(3);
+        stale["params"]["continuation_id"] = json!("m60.product.stop.recovery.stale");
+        stale["params"]["expected_progress_fingerprint"] =
+            admitted_result["post_progress_fingerprint"].clone();
+        stale["params"]["expected_aggregate_sequence"] =
+            admitted_result["post_aggregate_sequence"].clone();
+        stale["params"]["product_loop_stop_recovery_target"]["expected_drive_fingerprint"] =
+            json!(fp('8'));
+        let stale_response = parse_line(&stale.to_string());
+        assert!(
+            stale_response.result.is_none(),
+            "unexpected stale response: {:?}",
+            stale_response.result
+        );
+        assert!(stale_response
+            .error
+            .expect("stale error")
+            .message
+            .contains("drive fingerprint mismatch"));
+        assert_eq!(
+            store.tasks().list_tasks().expect("list after stale").len(),
+            task_count_after_admission
+        );
+
+        let mut denied = request.clone();
+        denied["id"] = json!(4);
+        denied["params"]["continuation_id"] = json!("m60.product.stop.recovery.denied");
+        denied["params"]["expected_progress_fingerprint"] =
+            admitted_result["post_progress_fingerprint"].clone();
+        denied["params"]["expected_aggregate_sequence"] =
+            admitted_result["post_aggregate_sequence"].clone();
+        denied["params"]["product_loop_stop_recovery_target"]
+            ["authorize_product_loop_stop_recovery"] = json!(false);
+        let denied_response = parse_line(&denied.to_string());
+        assert!(denied_response.result.is_none());
+        assert!(denied_response
+            .error
+            .expect("denied error")
+            .message
+            .contains("authorize_product_loop_stop_recovery must be true"));
+        assert_eq!(
+            store.tasks().list_tasks().expect("list after denial").len(),
+            task_count_after_admission
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn task_run_revalidates_product_continuation_provenance_before_running() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -87212,6 +88050,7 @@ mod tests {
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
             product_continuation_run_target: None,
+            product_loop_stop_recovery_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,
@@ -87358,6 +88197,7 @@ mod tests {
             llm_provider_failure_retry_mode_id: None,
             product_continuation_admission_target: None,
             product_continuation_run_target: None,
+            product_loop_stop_recovery_target: None,
             verification_recovery_run_target: None,
             verification_recovery_context_read: None,
             patch_apply_recovery_source: None,

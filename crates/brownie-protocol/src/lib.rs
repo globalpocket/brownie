@@ -934,6 +934,24 @@ pub struct ProductContinuationDerivedTarget {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductLoopStopRecoveryTarget {
+    pub authorize_product_loop_stop_recovery: bool,
+    pub session_id: String,
+    pub drive_id: String,
+    pub expected_drive_fingerprint: String,
+    pub expected_stop_reason: String,
+    pub expected_end_session_sequence: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_post_progress_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_next_route_fingerprint: Option<String>,
+    pub recovery_goal: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskStartResult {
     pub task_id: String,
     pub run_id: String,
@@ -1214,6 +1232,8 @@ pub struct HeadlessContinueOnceParams {
     pub product_continuation_admission_target: Option<ProductContinuationAdmissionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_continuation_run_target: Option<ProductContinuationRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_loop_stop_recovery_target: Option<ProductLoopStopRecoveryTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub verification_recovery_run_target: Option<VerificationRecoveryRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
