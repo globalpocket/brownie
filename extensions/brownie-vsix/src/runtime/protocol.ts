@@ -843,8 +843,9 @@ export interface HeadlessRunProductEvidenceArtifactSource {
 export interface HeadlessRunJourneyAdmission {
   journey_id: string;
   authorize_journey_start: true;
-  task_start: HeadlessRunJourneyTaskStartEnvelope;
+  task_start?: HeadlessRunJourneyTaskStartEnvelope | null;
   objective_context?: HeadlessRunJourneyObjectiveContext | null;
+  product_objective_continuation_source?: ProductObjectiveContinuationJourneySource | null;
 }
 
 export interface HeadlessRunJourneyRouteResume {
@@ -987,6 +988,23 @@ export interface ProductContinuationSource {
   expected_completion_closure_fingerprint: string;
   expected_product_evidence_fingerprint: string;
   authorize_product_continuation: boolean;
+}
+
+export interface ProductObjectiveContinuationJourneySource {
+  continuation_task_id: string;
+  continuation_run_id: string;
+  source_task_id: string;
+  source_run_id: string;
+  source_decision_id: string;
+  expected_decision_fingerprint: string;
+  expected_accepted_completion_fingerprint: string;
+  expected_terminal_completion_fingerprint: string;
+  expected_completion_closure_fingerprint: string;
+  expected_product_evidence_fingerprint: string;
+  expected_remaining_capability_fingerprint: string;
+  expected_derived_objective_fingerprint: string;
+  expected_derived_goal_fingerprint: string;
+  authorize_product_objective_journey_admission: true;
 }
 
 export interface ProductContinuationAdmissionTarget {
@@ -1472,6 +1490,7 @@ export interface HeadlessRunJourneyMetadata {
   replayed: boolean;
   journey_fingerprint: string;
   objective_context?: HeadlessRunJourneyObjectiveContextMetadata | null;
+  product_objective_continuation_provenance?: ProductObjectiveContinuationProvenance | null;
   proposal_candidate?: HeadlessRunObjectiveProposalCandidate | null;
 }
 
@@ -6836,11 +6855,15 @@ export function isHeadlessRunDriveParams(value: unknown): value is HeadlessRunDr
 export function isHeadlessRunJourneyAdmission(value: unknown): value is HeadlessRunJourneyAdmission {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['journey_id', 'authorize_journey_start', 'task_start', 'objective_context']) &&
+    hasOnlyFields(value, ['journey_id', 'authorize_journey_start', 'task_start', 'objective_context', 'product_objective_continuation_source']) &&
     hasNoForbiddenRawFields(value) &&
     isHeadlessRunId(value.journey_id) &&
     value.authorize_journey_start === true &&
-    isHeadlessRunJourneyTaskStartEnvelope(value.task_start) &&
+    [value.task_start, value.product_objective_continuation_source].filter((source) => source !== undefined && source !== null).length === 1 &&
+    (value.task_start === undefined || value.task_start === null || isHeadlessRunJourneyTaskStartEnvelope(value.task_start)) &&
+    (value.product_objective_continuation_source === undefined ||
+      value.product_objective_continuation_source === null ||
+      isProductObjectiveContinuationJourneySource(value.product_objective_continuation_source)) &&
     (value.objective_context === undefined || value.objective_context === null || isHeadlessRunJourneyObjectiveContext(value.objective_context))
   );
 }
@@ -7057,6 +7080,101 @@ function isProductContinuationSource(value: unknown): value is ProductContinuati
     typeof value.expected_product_evidence_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_product_evidence_fingerprint) &&
     value.authorize_product_continuation === true
+  );
+}
+
+function isProductObjectiveContinuationJourneySource(value: unknown): value is ProductObjectiveContinuationJourneySource {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'continuation_task_id',
+      'continuation_run_id',
+      'source_task_id',
+      'source_run_id',
+      'source_decision_id',
+      'expected_decision_fingerprint',
+      'expected_accepted_completion_fingerprint',
+      'expected_terminal_completion_fingerprint',
+      'expected_completion_closure_fingerprint',
+      'expected_product_evidence_fingerprint',
+      'expected_remaining_capability_fingerprint',
+      'expected_derived_objective_fingerprint',
+      'expected_derived_goal_fingerprint',
+      'authorize_product_objective_journey_admission',
+    ]) &&
+    isBoundedHandle(value.continuation_task_id) &&
+    isBoundedHandle(value.continuation_run_id) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    typeof value.expected_decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_decision_fingerprint) &&
+    typeof value.expected_accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_accepted_completion_fingerprint) &&
+    typeof value.expected_terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_terminal_completion_fingerprint) &&
+    typeof value.expected_completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_completion_closure_fingerprint) &&
+    typeof value.expected_product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_product_evidence_fingerprint) &&
+    typeof value.expected_remaining_capability_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_remaining_capability_fingerprint) &&
+    typeof value.expected_derived_objective_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_derived_objective_fingerprint) &&
+    typeof value.expected_derived_goal_fingerprint === 'string' &&
+    isSha256Fingerprint(value.expected_derived_goal_fingerprint) &&
+    value.authorize_product_objective_journey_admission === true
+  );
+}
+
+function isProductObjectiveContinuationProvenance(value: unknown): value is ProductObjectiveContinuationProvenance {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'source_task_id',
+      'source_run_id',
+      'source_decision_id',
+      'decision_fingerprint',
+      'accepted_completion_fingerprint',
+      'terminal_completion_fingerprint',
+      'completion_closure_fingerprint',
+      'product_evidence_fingerprint',
+      'target_capability',
+      'concrete_capability_transition',
+      'remaining_capability',
+      'remaining_capability_fingerprint',
+      'technical_debt_carry_forward_fingerprint',
+      'derived_objective_fingerprint',
+      'derived_goal_fingerprint',
+      'derivation_version',
+    ]) &&
+    isBoundedHandle(value.source_task_id) &&
+    isBoundedHandle(value.source_run_id) &&
+    isHeadlessRunId(value.source_decision_id) &&
+    typeof value.decision_fingerprint === 'string' &&
+    isSha256Fingerprint(value.decision_fingerprint) &&
+    typeof value.accepted_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.accepted_completion_fingerprint) &&
+    typeof value.terminal_completion_fingerprint === 'string' &&
+    isSha256Fingerprint(value.terminal_completion_fingerprint) &&
+    typeof value.completion_closure_fingerprint === 'string' &&
+    isSha256Fingerprint(value.completion_closure_fingerprint) &&
+    typeof value.product_evidence_fingerprint === 'string' &&
+    isSha256Fingerprint(value.product_evidence_fingerprint) &&
+    typeof value.target_capability === 'string' &&
+    value.target_capability.length > 0 &&
+    value.target_capability.length <= 96 &&
+    typeof value.concrete_capability_transition === 'string' &&
+    value.concrete_capability_transition.length > 0 &&
+    value.concrete_capability_transition.length <= 120 &&
+    (value.remaining_capability === undefined || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
+    (value.remaining_capability_fingerprint === undefined || (typeof value.remaining_capability_fingerprint === 'string' && isSha256Fingerprint(value.remaining_capability_fingerprint))) &&
+    (value.technical_debt_carry_forward_fingerprint === undefined || value.technical_debt_carry_forward_fingerprint === null || (typeof value.technical_debt_carry_forward_fingerprint === 'string' && isSha256Fingerprint(value.technical_debt_carry_forward_fingerprint))) &&
+    typeof value.derived_objective_fingerprint === 'string' &&
+    isSha256Fingerprint(value.derived_objective_fingerprint) &&
+    typeof value.derived_goal_fingerprint === 'string' &&
+    isSha256Fingerprint(value.derived_goal_fingerprint) &&
+    value.derivation_version === 'product_objective_continuation_v1'
   );
 }
 
@@ -7716,7 +7834,7 @@ export function isHeadlessRunDriveResult(value: unknown): value is HeadlessRunDr
 export function isHeadlessRunJourneyMetadata(value: unknown): value is HeadlessRunJourneyMetadata {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'start_progress_fingerprint', 'start_aggregate_sequence', 'post_progress_fingerprint', 'post_aggregate_sequence', 'closure_status', 'next_action', 'replayed', 'journey_fingerprint', 'objective_context', 'proposal_candidate']) &&
+    hasOnlyFields(value, ['journey_id', 'task_id', 'run_id', 'session_id', 'drive_id', 'start_progress_fingerprint', 'start_aggregate_sequence', 'post_progress_fingerprint', 'post_aggregate_sequence', 'closure_status', 'next_action', 'replayed', 'journey_fingerprint', 'objective_context', 'product_objective_continuation_provenance', 'proposal_candidate']) &&
     hasNoForbiddenRawFields(value) &&
     isHeadlessRunId(value.journey_id) &&
     isBoundedHandle(value.task_id) &&
@@ -7736,6 +7854,9 @@ export function isHeadlessRunJourneyMetadata(value: unknown): value is HeadlessR
     typeof value.journey_fingerprint === 'string' &&
     isSha256Fingerprint(value.journey_fingerprint) &&
     (value.objective_context === undefined || value.objective_context === null || isHeadlessRunJourneyObjectiveContextMetadata(value.objective_context)) &&
+    (value.product_objective_continuation_provenance === undefined ||
+      value.product_objective_continuation_provenance === null ||
+      isProductObjectiveContinuationProvenance(value.product_objective_continuation_provenance)) &&
     (value.proposal_candidate === undefined || value.proposal_candidate === null || isHeadlessRunObjectiveProposalCandidate(value.proposal_candidate))
   );
 }

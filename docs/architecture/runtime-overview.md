@@ -1072,3 +1072,19 @@ remain provenance context rather than the next objective text. Existing
 caller-supplied product-continuation admission remains compatible. The derived
 path adds no JSON-RPC method, no report/readiness/inspection surface, and no
 automatic provider/tool/workspace, shell, git, network, or service execution.
+
+M61.2 binds that runtime-derived product objective into the existing
+`headless.run.drive` journey-admission boundary. `journey_admission` may now
+name a `product_objective_continuation_source` instead of caller-authored
+`task_start` text. Rust re-reads the continuation task, requires current typed
+`product_objective_continuation_provenance`, revalidates the source
+`continue_development` product decision and remaining-capability fingerprints,
+and admits the existing Created continuation task as the journey start. The
+journey checkpoint, metadata, and `HeadlessJourneyStarted` event carry only
+bounded ids, route labels, remaining-capability metadata, and SHA-256
+fingerprints. Exact replay revalidates the source and returns the persisted
+journey without duplicating task, checkpoint, or event state; conflicting,
+missing, stale, terminal, or blocked source evidence fails closed before a new
+journey checkpoint is committed. Caller-authored `task_start` journey admission
+remains compatible, and no new RPC, report wrapper, automatic provider/tool
+execution, or workspace mutation is added.

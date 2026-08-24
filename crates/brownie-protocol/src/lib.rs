@@ -1432,9 +1432,12 @@ pub struct HeadlessRunProductEvidenceArtifactSource {
 pub struct HeadlessRunJourneyAdmission {
     pub journey_id: String,
     pub authorize_journey_start: bool,
-    pub task_start: HeadlessRunJourneyTaskStartEnvelope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_start: Option<HeadlessRunJourneyTaskStartEnvelope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_context: Option<HeadlessRunJourneyObjectiveContext>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_objective_continuation_source: Option<ProductObjectiveContinuationJourneySource>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -1476,6 +1479,25 @@ pub struct HeadlessRunJourneyTaskStartEnvelope {
     pub goal: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub mode_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProductObjectiveContinuationJourneySource {
+    pub continuation_task_id: String,
+    pub continuation_run_id: String,
+    pub source_task_id: String,
+    pub source_run_id: String,
+    pub source_decision_id: String,
+    pub expected_decision_fingerprint: String,
+    pub expected_accepted_completion_fingerprint: String,
+    pub expected_terminal_completion_fingerprint: String,
+    pub expected_completion_closure_fingerprint: String,
+    pub expected_product_evidence_fingerprint: String,
+    pub expected_remaining_capability_fingerprint: String,
+    pub expected_derived_objective_fingerprint: String,
+    pub expected_derived_goal_fingerprint: String,
+    pub authorize_product_objective_journey_admission: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2590,6 +2612,8 @@ pub struct HeadlessRunJourneyMetadata {
     pub journey_fingerprint: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub objective_context: Option<HeadlessRunJourneyObjectiveContextMetadata>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub proposal_candidate: Option<HeadlessRunObjectiveProposalCandidate>,
 }

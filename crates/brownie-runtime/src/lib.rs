@@ -69,14 +69,14 @@ use brownie_protocol::{
     PermissionCheckResult, ProductContinuationAdmission, ProductContinuationAdmissionTarget,
     ProductContinuationDerivedTarget, ProductContinuationProvenance, ProductContinuationRunTarget,
     ProductContinuationSource, ProductLoopStopRecoveryProvenance, ProductLoopStopRecoveryTarget,
-    ProductObjectiveContinuationProvenance, ProgressCurrentStage, ProgressLifecyclePhase,
-    ProgressNextAction, ProgressSnapshot, ProgressVerificationState, ProposalApplyCapabilityParams,
-    ProposalApplyCapabilityResult, ProposalApplyDryRunHistoryParams,
-    ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams, ProposalApplyDryRunResult,
-    ProposalApplyParams, ProposalApplyResult, ProposalApproveParams, ProposalApproveResult,
-    ProposalAuditTrailParams, ProposalAuditTrailResult, ProposalInspectParams,
-    ProposalInspectResult, ProposalListParams, ProposalListResult, ProposalPatchHunk,
-    ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
+    ProductObjectiveContinuationJourneySource, ProductObjectiveContinuationProvenance,
+    ProgressCurrentStage, ProgressLifecyclePhase, ProgressNextAction, ProgressSnapshot,
+    ProgressVerificationState, ProposalApplyCapabilityParams, ProposalApplyCapabilityResult,
+    ProposalApplyDryRunHistoryParams, ProposalApplyDryRunHistoryResult, ProposalApplyDryRunParams,
+    ProposalApplyDryRunResult, ProposalApplyParams, ProposalApplyResult, ProposalApproveParams,
+    ProposalApproveResult, ProposalAuditTrailParams, ProposalAuditTrailResult,
+    ProposalInspectParams, ProposalInspectResult, ProposalListParams, ProposalListResult,
+    ProposalPatchHunk, ProposalPreflightParams, ProposalPreflightResult, ProposalReadinessParams,
     ProposalReadinessResult, ProposalRejectParams, ProposalRejectResult,
     ProposalReviewBundleParams, ProposalReviewBundleResult,
     ProposalReviewQueueDiagnosticsDigestHistoryParams,
@@ -15580,6 +15580,7 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
     let seed = json!({
         "journey_id": admission.journey_id,
         "task_start": admission.task_start,
+        "product_objective_continuation_source": admission.product_objective_continuation_source,
         "objective_context_fingerprint": admission
             .objective_context
             .as_ref()
@@ -15685,8 +15686,18 @@ fn validate_headless_journey_admission(
     if !admission.authorize_journey_start {
         return Err("invalid params: authorize_journey_start must be true".to_string());
     }
-    if admission.task_start.goal.trim().is_empty() {
-        return Err("invalid params: journey task_start.goal must not be empty".to_string());
+    let source_count = usize::from(admission.task_start.is_some())
+        + usize::from(admission.product_objective_continuation_source.is_some());
+    if source_count != 1 {
+        return Err("invalid params: journey admission requires exactly one task_start or product_objective_continuation_source".to_string());
+    }
+    if let Some(task_start) = admission.task_start.as_ref() {
+        if task_start.goal.trim().is_empty() {
+            return Err("invalid params: journey task_start.goal must not be empty".to_string());
+        }
+    }
+    if let Some(source) = admission.product_objective_continuation_source.as_ref() {
+        validate_product_objective_continuation_journey_source_shape(source)?;
     }
     if params.expected_start_session_sequence != 0 {
         return Err(
@@ -15717,6 +15728,201 @@ fn validate_headless_journey_admission(
     Ok(())
 }
 
+fn validate_product_objective_continuation_journey_source_shape(
+    source: &ProductObjectiveContinuationJourneySource,
+) -> Result<(), String> {
+    for (field, value) in [
+        ("continuation_task_id", source.continuation_task_id.as_str()),
+        ("continuation_run_id", source.continuation_run_id.as_str()),
+        ("source_task_id", source.source_task_id.as_str()),
+        ("source_run_id", source.source_run_id.as_str()),
+        ("source_decision_id", source.source_decision_id.as_str()),
+    ] {
+        if !is_valid_headless_run_id(value) {
+            return Err(format!(
+                "invalid params: product_objective_continuation_source.{field} must be a bounded id"
+            ));
+        }
+    }
+    if !source.authorize_product_objective_journey_admission {
+        return Err("invalid params: product_objective_continuation_source.authorize_product_objective_journey_admission must be true".to_string());
+    }
+    for (field, value) in [
+        (
+            "expected_decision_fingerprint",
+            source.expected_decision_fingerprint.as_str(),
+        ),
+        (
+            "expected_accepted_completion_fingerprint",
+            source.expected_accepted_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            source.expected_terminal_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            source.expected_completion_closure_fingerprint.as_str(),
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            source.expected_product_evidence_fingerprint.as_str(),
+        ),
+        (
+            "expected_remaining_capability_fingerprint",
+            source.expected_remaining_capability_fingerprint.as_str(),
+        ),
+        (
+            "expected_derived_objective_fingerprint",
+            source.expected_derived_objective_fingerprint.as_str(),
+        ),
+        (
+            "expected_derived_goal_fingerprint",
+            source.expected_derived_goal_fingerprint.as_str(),
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "invalid params: product_objective_continuation_source.{field} must be a sha256 fingerprint"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn product_objective_continuation_for_journey_source(
+    store: &BrownieStore,
+    source: &ProductObjectiveContinuationJourneySource,
+    require_created: bool,
+) -> Result<(TaskRecord, ProductObjectiveContinuationProvenance), VerificationRecoveryAdmissionError>
+{
+    validate_product_objective_continuation_journey_source_shape(source)
+        .map_err(VerificationRecoveryAdmissionError::InvalidParams)?;
+    let record = store
+        .tasks()
+        .get_task(&source.continuation_task_id)
+        .map_err(|error| VerificationRecoveryAdmissionError::Internal(error.to_string()))?
+        .ok_or_else(|| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_objective_continuation_source.continuation_task_id was not found"
+                    .into(),
+            )
+        })?;
+    if record.run_id != source.continuation_run_id {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product_objective_continuation_source.continuation_run_id does not match continuation task"
+                .into(),
+        ));
+    }
+    if require_created && record.status != TaskStatus::Created {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product objective continuation journey source task must be Created"
+                .into(),
+        ));
+    }
+    let Some(provenance) = record.product_objective_continuation_provenance.clone() else {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product objective continuation journey source has no objective provenance"
+                .into(),
+        ));
+    };
+    for (field, actual, expected) in [
+        (
+            "source_task_id",
+            provenance.source_task_id.as_str(),
+            source.source_task_id.as_str(),
+        ),
+        (
+            "source_run_id",
+            provenance.source_run_id.as_str(),
+            source.source_run_id.as_str(),
+        ),
+        (
+            "source_decision_id",
+            provenance.source_decision_id.as_str(),
+            source.source_decision_id.as_str(),
+        ),
+        (
+            "expected_decision_fingerprint",
+            provenance.decision_fingerprint.as_str(),
+            source.expected_decision_fingerprint.as_str(),
+        ),
+        (
+            "expected_accepted_completion_fingerprint",
+            provenance.accepted_completion_fingerprint.as_str(),
+            source.expected_accepted_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            provenance.terminal_completion_fingerprint.as_str(),
+            source.expected_terminal_completion_fingerprint.as_str(),
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            provenance.completion_closure_fingerprint.as_str(),
+            source.expected_completion_closure_fingerprint.as_str(),
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            provenance.product_evidence_fingerprint.as_str(),
+            source.expected_product_evidence_fingerprint.as_str(),
+        ),
+        (
+            "expected_remaining_capability_fingerprint",
+            provenance.remaining_capability_fingerprint.as_str(),
+            source.expected_remaining_capability_fingerprint.as_str(),
+        ),
+        (
+            "expected_derived_objective_fingerprint",
+            provenance.derived_objective_fingerprint.as_str(),
+            source.expected_derived_objective_fingerprint.as_str(),
+        ),
+        (
+            "expected_derived_goal_fingerprint",
+            provenance.derived_goal_fingerprint.as_str(),
+            source.expected_derived_goal_fingerprint.as_str(),
+        ),
+    ] {
+        if actual != expected {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(format!(
+                "invalid params: product_objective_continuation_source.{field} is stale"
+            )));
+        }
+    }
+    let latest_product_source = ProductContinuationSource {
+        source_task_id: provenance.source_task_id.clone(),
+        source_run_id: provenance.source_run_id.clone(),
+        source_decision_id: provenance.source_decision_id.clone(),
+        expected_decision_fingerprint: provenance.decision_fingerprint.clone(),
+        expected_accepted_completion_fingerprint: provenance
+            .accepted_completion_fingerprint
+            .clone(),
+        expected_terminal_completion_fingerprint: provenance
+            .terminal_completion_fingerprint
+            .clone(),
+        expected_completion_closure_fingerprint: provenance.completion_closure_fingerprint.clone(),
+        expected_product_evidence_fingerprint: provenance.product_evidence_fingerprint.clone(),
+        authorize_product_continuation: true,
+    };
+    let latest_product_provenance =
+        product_continuation_provenance_for_source(store, &latest_product_source)?;
+    let expected_goal = runtime_derived_product_objective_goal(&latest_product_provenance)?;
+    if record.goal != expected_goal {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product objective continuation journey source goal is stale".into(),
+        ));
+    }
+    let latest_objective_provenance =
+        product_objective_continuation_provenance_for(&latest_product_provenance, &record.goal)?;
+    if latest_objective_provenance != provenance {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product objective continuation journey source provenance is stale"
+                .into(),
+        ));
+    }
+    Ok((record, provenance))
+}
+
 fn headless_journey_start_checkpoint_for_admission(
     store: &BrownieStore,
     admission: &HeadlessRunJourneyAdmission,
@@ -15740,6 +15946,26 @@ fn headless_journey_start_checkpoint_for_admission(
                 "invalid params: journey_id conflicts with persisted journey start checkpoint",
             ));
         }
+        if let Some(source) = admission.product_objective_continuation_source.as_ref() {
+            let (_, provenance) = product_objective_continuation_for_journey_source(
+                store, source, false,
+            )
+            .map_err(|error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(message) => {
+                    error_response(id.clone(), -32602, &message)
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    error_response(id.clone(), -32603, &format!("internal error: {message}"))
+                }
+            })?;
+            if existing.product_objective_continuation_provenance.as_ref() != Some(&provenance) {
+                return Err(error_response(
+                    id.clone(),
+                    -32602,
+                    "invalid params: product objective continuation source conflicts with persisted journey start checkpoint",
+                ));
+            }
+        }
         return Ok(existing);
     }
     if store
@@ -15754,37 +15980,102 @@ fn headless_journey_start_checkpoint_for_admission(
             "invalid params: journey admission requires no existing session checkpoint",
         ));
     }
-    let policy = resolve_task_start_policy(admission.task_start.mode_id.as_deref(), store)
-        .map_err(|message| error_response(id.clone(), -32602, &message))?;
+    let product_objective_continuation_provenance =
+        if let Some(source) = admission.product_objective_continuation_source.as_ref() {
+            let (_, provenance) = product_objective_continuation_for_journey_source(
+                store, source, true,
+            )
+            .map_err(|error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(message) => {
+                    error_response(id.clone(), -32602, &message)
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    error_response(id.clone(), -32603, &format!("internal error: {message}"))
+                }
+            })?;
+            Some(provenance)
+        } else {
+            None
+        };
+    let (start_task_id, start_run_id, policy, cleanup_started_task) = if let Some(source) =
+        admission.product_objective_continuation_source.as_ref()
+    {
+        let (record, _) = product_objective_continuation_for_journey_source(store, source, true)
+            .map_err(|error| match error {
+                VerificationRecoveryAdmissionError::InvalidParams(message) => {
+                    error_response(id.clone(), -32602, &message)
+                }
+                VerificationRecoveryAdmissionError::Internal(message) => {
+                    error_response(id.clone(), -32603, &format!("internal error: {message}"))
+                }
+            })?;
+        let policy = resolve_task_start_policy(record.mode_id.as_deref(), store)
+            .map_err(|message| error_response(id.clone(), -32602, &message))?;
+        (record.task_id, record.run_id, policy, false)
+    } else {
+        let Some(task_start) = admission.task_start.as_ref() else {
+            return Err(error_response(
+                id.clone(),
+                -32602,
+                "invalid params: journey admission requires task_start",
+            ));
+        };
+        let policy = resolve_task_start_policy(task_start.mode_id.as_deref(), store)
+            .map_err(|message| error_response(id.clone(), -32602, &message))?;
+        let start_response = handle_task_start(
+            id.clone(),
+            Some(json!({
+                "goal": task_start.goal.clone(),
+                "mode_id": task_start.mode_id.clone(),
+            })),
+        );
+        let Some(start_value) = start_response.result else {
+            return Err(JsonRpcResponse {
+                jsonrpc: JSONRPC_VERSION.to_string(),
+                id: id.clone(),
+                result: None,
+                error: start_response.error,
+            });
+        };
+        let start_result: TaskStartResult =
+            serde_json::from_value(start_value).map_err(|error| {
+                error_response(id.clone(), -32603, &format!("internal error: {error}"))
+            })?;
+        (start_result.task_id, start_result.run_id, policy, true)
+    };
     if let Some(context) = admission.objective_context.as_ref() {
         validate_headless_journey_objective_context(store, &policy, context).map_err(
-            |rejection| match rejection {
-                TaskRunAdmissionRejection::InvalidParams(message) => {
-                    error_response(id.clone(), -32602, message)
-                }
-                TaskRunAdmissionRejection::Internal(message) => {
-                    error_response(id.clone(), -32603, &format!("internal error: {message}"))
+            |rejection| {
+                let cleanup = if cleanup_started_task {
+                    store.tasks().remove_task_run(&start_task_id, &start_run_id)
+                } else {
+                    Ok(())
+                };
+                match rejection {
+                    TaskRunAdmissionRejection::InvalidParams(message) => {
+                        let message = match cleanup {
+                            Ok(()) => message.to_string(),
+                            Err(cleanup_error) => {
+                                format!("{message}; cleanup failed: {cleanup_error}")
+                            }
+                        };
+                        error_response(id.clone(), -32602, &message)
+                    }
+                    TaskRunAdmissionRejection::Internal(message) => {
+                        let message = match cleanup {
+                            Ok(()) => format!("internal error: {message}"),
+                            Err(cleanup_error) => {
+                                format!(
+                                    "internal error: {message}; cleanup failed: {cleanup_error}"
+                                )
+                            }
+                        };
+                        error_response(id.clone(), -32603, &message)
+                    }
                 }
             },
         )?;
     }
-    let start_response = handle_task_start(
-        id.clone(),
-        Some(json!({
-            "goal": admission.task_start.goal.clone(),
-            "mode_id": admission.task_start.mode_id.clone(),
-        })),
-    );
-    let Some(start_value) = start_response.result else {
-        return Err(JsonRpcResponse {
-            jsonrpc: JSONRPC_VERSION.to_string(),
-            id: id.clone(),
-            result: None,
-            error: start_response.error,
-        });
-    };
-    let start_result: TaskStartResult = serde_json::from_value(start_value)
-        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?;
     let tasks = store
         .tasks()
         .list_tasks()
@@ -15796,10 +16087,12 @@ fn headless_journey_start_checkpoint_for_admission(
         aggregate_sequence: progress.aggregate_sequence,
     };
     let objective_context_metadata = if let Some(context) = admission.objective_context.as_ref() {
-        let Some(record) = store.tasks().get_task(&start_result.task_id).map_err(|error| {
-            let cleanup = store
-                .tasks()
-                .remove_task_run(&start_result.task_id, &start_result.run_id);
+        let Some(record) = store.tasks().get_task(&start_task_id).map_err(|error| {
+            let cleanup = if cleanup_started_task {
+                store.tasks().remove_task_run(&start_task_id, &start_run_id)
+            } else {
+                Ok(())
+            };
             let message = match cleanup {
                 Ok(()) => format!("internal error: journey admission task lookup failed: {error}"),
                 Err(cleanup_error) => format!(
@@ -15809,9 +16102,11 @@ fn headless_journey_start_checkpoint_for_admission(
             error_response(id.clone(), -32603, &message)
         })?
         else {
-            let cleanup = store
-                .tasks()
-                .remove_task_run(&start_result.task_id, &start_result.run_id);
+            let cleanup = if cleanup_started_task {
+                store.tasks().remove_task_run(&start_task_id, &start_run_id)
+            } else {
+                Ok(())
+            };
             let message = match cleanup {
                 Ok(()) => "internal error: journey admission task lookup failed".to_string(),
                 Err(cleanup_error) => format!(
@@ -15827,9 +16122,11 @@ fn headless_journey_start_checkpoint_for_admission(
             &context.selected_index_context,
         )
         .map_err(|rejection| {
-            let cleanup = store
-                .tasks()
-                .remove_task_run(&start_result.task_id, &start_result.run_id);
+            let cleanup = if cleanup_started_task {
+                store.tasks().remove_task_run(&start_task_id, &start_run_id)
+            } else {
+                Ok(())
+            };
             match rejection {
                 TaskRunAdmissionRejection::InvalidParams(message) => {
                     let message = match cleanup {
@@ -15861,28 +16158,34 @@ fn headless_journey_start_checkpoint_for_admission(
         "journey_id": admission.journey_id,
         "session_id": session_id,
         "drive_id": drive_id,
-        "task_id": start_result.task_id,
-        "run_id": start_result.run_id,
+        "task_id": start_task_id,
+        "run_id": start_run_id,
         "task_start_fingerprint": task_start_fingerprint,
         "start_progress": start_progress,
         "objective_context": objective_context_metadata.clone(),
+        "product_objective_continuation_provenance": product_objective_continuation_provenance.clone(),
     });
     let checkpoint = HeadlessJourneyStartCheckpoint {
         journey_id: admission.journey_id.clone(),
         session_id: session_id.to_string(),
         drive_id: drive_id.to_string(),
-        task_id: start_result.task_id,
-        run_id: start_result.run_id,
+        task_id: start_task_id,
+        run_id: start_run_id,
         task_start_fingerprint,
         start_progress,
         journey_fingerprint: format!("sha256:{}", hex_sha256(journey_seed.to_string().as_bytes())),
         objective_context: objective_context_metadata,
+        product_objective_continuation_provenance,
     };
     #[cfg(test)]
     if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE").is_some() {
-        let cleanup = store
-            .tasks()
-            .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+        let cleanup = if cleanup_started_task {
+            store
+                .tasks()
+                .remove_task_run(&checkpoint.task_id, &checkpoint.run_id)
+        } else {
+            Ok(())
+        };
         let message = match cleanup {
             Ok(()) => {
                 "internal error: simulated journey admission checkpoint commit failure".to_string()
@@ -15897,9 +16200,13 @@ fn headless_journey_start_checkpoint_for_admission(
         .tasks()
         .write_headless_journey_start_checkpoint(&checkpoint)
         .map_err(|error| {
-            let cleanup = store
-                .tasks()
-                .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+            let cleanup = if cleanup_started_task {
+                store
+                    .tasks()
+                    .remove_task_run(&checkpoint.task_id, &checkpoint.run_id)
+            } else {
+                Ok(())
+            };
             let message = match cleanup {
                 Ok(()) => format!("internal error: journey admission checkpoint commit failed: {error}"),
                 Err(cleanup_error) => format!(
@@ -15918,9 +16225,13 @@ fn headless_journey_start_checkpoint_for_admission(
             let checkpoint_cleanup = store
                 .tasks()
                 .remove_headless_journey_start_checkpoint(&checkpoint);
-            let task_cleanup = store
-                .tasks()
-                .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+            let task_cleanup = if cleanup_started_task {
+                store
+                    .tasks()
+                    .remove_task_run(&checkpoint.task_id, &checkpoint.run_id)
+            } else {
+                Ok(())
+            };
             let message = match (checkpoint_cleanup, task_cleanup) {
                 (Ok(()), Ok(())) => {
                     "internal error: simulated HeadlessJourneyStarted append failure".to_string()
@@ -15956,6 +16267,19 @@ fn headless_journey_start_checkpoint_for_admission(
             event_payload["objective_context"] = json!(objective_context);
             event_payload["next_action"] = json!("run_admitted_coding_task");
         }
+        if let Some(provenance) = checkpoint
+            .product_objective_continuation_provenance
+            .as_ref()
+        {
+            event_payload["product_objective_continuation_provenance"] = json!(provenance);
+            event_payload["remaining_capability"] = json!(provenance.remaining_capability);
+            event_payload["remaining_capability_fingerprint"] =
+                json!(provenance.remaining_capability_fingerprint);
+            event_payload["derived_objective_fingerprint"] =
+                json!(provenance.derived_objective_fingerprint);
+            event_payload["derived_goal_fingerprint"] = json!(provenance.derived_goal_fingerprint);
+            event_payload["next_action"] = json!("drive_headless_journey");
+        }
         store
             .tasks()
             .append_task_event_with_payload(
@@ -15967,9 +16291,13 @@ fn headless_journey_start_checkpoint_for_admission(
                 let checkpoint_cleanup = store
                     .tasks()
                     .remove_headless_journey_start_checkpoint(&checkpoint);
-                let task_cleanup = store
-                    .tasks()
-                    .remove_task_run(&checkpoint.task_id, &checkpoint.run_id);
+                let task_cleanup = if cleanup_started_task {
+                    store
+                        .tasks()
+                        .remove_task_run(&checkpoint.task_id, &checkpoint.run_id)
+                } else {
+                    Ok(())
+                };
                 let message = match (checkpoint_cleanup, task_cleanup) {
                     (Ok(()), Ok(())) => {
                         format!("internal error: journey admission event commit failed: {error}")
@@ -16018,6 +16346,9 @@ fn headless_journey_metadata(
         replayed,
         journey_fingerprint: checkpoint.journey_fingerprint.clone(),
         objective_context: checkpoint.objective_context.clone(),
+        product_objective_continuation_provenance: checkpoint
+            .product_objective_continuation_provenance
+            .clone(),
         proposal_candidate: result.objective_proposal_candidate.clone(),
     }
 }
@@ -20766,8 +21097,9 @@ fn handle_headless_journey_execution(
         let admission = HeadlessRunJourneyAdmission {
             journey_id: execution.journey_id.clone(),
             authorize_journey_start: true,
-            task_start: task_start.clone(),
+            task_start: Some(task_start.clone()),
             objective_context: None,
+            product_objective_continuation_source: None,
         };
         if journey.task_start_fingerprint != headless_journey_task_start_fingerprint(&admission) {
             return error_response(
@@ -63333,6 +63665,7 @@ mod tests {
                 hex_sha256(journey_seed.to_string().as_bytes())
             ),
             objective_context: None,
+            product_objective_continuation_provenance: None,
         };
         store
             .tasks()
@@ -86799,6 +87132,299 @@ mod tests {
             error,
             VerificationRecoveryAdmissionError::InvalidParams(_)
         ));
+    }
+
+    #[test]
+    fn headless_run_drive_admits_product_objective_continuation_journey_and_replays() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+
+        fn fp(hex: char) -> String {
+            format!("sha256:{}", hex.to_string().repeat(64))
+        }
+
+        let source_start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"M61.2 source product decision","mode_id":"implementer"}}"#,
+        );
+        assert!(source_start.error.is_none(), "{:?}", source_start.error);
+        let source_task_id = source_start.result.expect("source start result")["task_id"]
+            .as_str()
+            .expect("source task id")
+            .to_string();
+        let source = store
+            .tasks()
+            .update_task_status(
+                &source_task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete source");
+        let decision = HeadlessRunProductCompletionDecision {
+            decision_id: "m61.2.product.decision".to_string(),
+            task_id: source.task_id.clone(),
+            run_id: source.run_id.clone(),
+            acceptance_id: "m61.2.acceptance".to_string(),
+            status: "continue_development".to_string(),
+            next_action: "plan_next_phase".to_string(),
+            target_capability: "headless_autonomous_development".to_string(),
+            concrete_capability_transition: "m61_1_completed_transition".to_string(),
+            accepted_completion_fingerprint: fp('a'),
+            terminal_completion_fingerprint: fp('b'),
+            completion_closure_fingerprint: fp('c'),
+            product_evidence_fingerprint: fp('d'),
+            decision_fingerprint: fp('e'),
+            validated_gate_categories: PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES
+                .iter()
+                .map(|category| category.to_string())
+                .collect(),
+            derived_product_evidence_matrix_fingerprint: None,
+            behavior_evidence_count: 3,
+            rejected_alternatives_count: 2,
+            safety_boundary_reviewed: true,
+            non_goals_reviewed: true,
+            technical_debt_reviewed: true,
+            remaining_capability: Some("admit_runtime_derived_journey".to_string()),
+            milestone_exit_rationale: None,
+            technical_debt_carry_forward: None,
+            replayed: false,
+        };
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &source,
+                LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded,
+                Some(headless_product_completion_decision_payload(&decision)),
+            )
+            .expect("append decision");
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let progress_fingerprint = progress["source_fingerprint"]
+            .as_str()
+            .expect("progress fingerprint")
+            .to_string();
+        let aggregate_sequence = progress["aggregate_sequence"]
+            .as_u64()
+            .expect("aggregate sequence");
+        let seed_checkpoint = HeadlessRunSessionCheckpoint {
+            session_id: "m61.2.product.drive".to_string(),
+            advance_id: "m61.2.product.drive.seed".to_string(),
+            session_sequence: 1,
+            result: HeadlessRunAdvanceResult {
+                status: HeadlessContinueOnceStatus::NoEligibleTask,
+                session_id: "m61.2.product.drive".to_string(),
+                advance_id: "m61.2.product.drive.seed".to_string(),
+                session_sequence: 1,
+                replayed: false,
+                start_progress: HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: progress_fingerprint.clone(),
+                    aggregate_sequence,
+                },
+                post_progress: Some(HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: progress_fingerprint.clone(),
+                    aggregate_sequence,
+                }),
+                max_steps: 1,
+                step_count: 0,
+                executed_count: 0,
+                replayed_count: 0,
+                stop_reason: "seeded_product_continuation_boundary".to_string(),
+                checkpoint_fingerprint: fp('f'),
+                terminal_completion_evidence: None,
+                next_route: Some(HeadlessContinueRoute {
+                    kind: HeadlessContinueRouteKind::AdmitProductContinuationTaskExplicitly,
+                    reason: "Seeded product-continuation boundary".to_string(),
+                    task_id: Some(decision.task_id.clone()),
+                    run_id: Some(decision.run_id.clone()),
+                    proposal_id: None,
+                    apply_id: None,
+                    failure_fingerprint: None,
+                    apply_fingerprint: None,
+                    progress_fingerprint: Some(progress_fingerprint.clone()),
+                    aggregate_sequence: Some(aggregate_sequence),
+                    next_action: "admit_product_continuation_task_explicitly".to_string(),
+                }),
+                steps: Vec::new(),
+                next_action: "admit_product_continuation_task_explicitly".to_string(),
+            },
+        };
+        store
+            .tasks()
+            .write_headless_run_session_checkpoint(&seed_checkpoint)
+            .expect("write seed checkpoint");
+
+        let admission_request = json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m61.2.product.drive",
+                "drive_id": "m61.2.product.drive.admit",
+                "expected_start_session_sequence": 1,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "product_continuation_derived_target": {
+                    "authorize_product_continuation_target_derivation": true,
+                    "continuation_mode_id": "implementer"
+                }
+            }
+        });
+        let admission = parse_line(&admission_request.to_string());
+        assert!(admission.error.is_none(), "{:?}", admission.error);
+        let admission_result = admission.result.expect("admission result");
+        let continuation_task_id = admission_result["advances"][0]["steps"][0]["selected_task_id"]
+            .as_str()
+            .expect("continuation task")
+            .to_string();
+        let continuation_run_id = admission_result["advances"][0]["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("continuation run")
+            .to_string();
+        let continuation = store
+            .tasks()
+            .get_task(&continuation_task_id)
+            .expect("read continuation")
+            .expect("continuation task exists");
+        assert_eq!(continuation.status, TaskStatus::Created);
+        assert_eq!(
+            continuation.goal,
+            "Continue development for remaining capability: admit_runtime_derived_journey"
+        );
+        let objective_provenance = continuation
+            .product_objective_continuation_provenance
+            .as_ref()
+            .expect("objective provenance");
+
+        let journey_source = json!({
+            "continuation_task_id": continuation_task_id.clone(),
+            "continuation_run_id": continuation_run_id.clone(),
+            "source_task_id": objective_provenance.source_task_id.clone(),
+            "source_run_id": objective_provenance.source_run_id.clone(),
+            "source_decision_id": objective_provenance.source_decision_id.clone(),
+            "expected_decision_fingerprint": objective_provenance.decision_fingerprint.clone(),
+            "expected_accepted_completion_fingerprint": objective_provenance.accepted_completion_fingerprint.clone(),
+            "expected_terminal_completion_fingerprint": objective_provenance.terminal_completion_fingerprint.clone(),
+            "expected_completion_closure_fingerprint": objective_provenance.completion_closure_fingerprint.clone(),
+            "expected_product_evidence_fingerprint": objective_provenance.product_evidence_fingerprint.clone(),
+            "expected_remaining_capability_fingerprint": objective_provenance.remaining_capability_fingerprint.clone(),
+            "expected_derived_objective_fingerprint": objective_provenance.derived_objective_fingerprint.clone(),
+            "expected_derived_goal_fingerprint": objective_provenance.derived_goal_fingerprint.clone(),
+            "authorize_product_objective_journey_admission": true
+        });
+        let journey_request = json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m61.2.journey",
+                "drive_id": "m61.2.journey.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "m61.2.journey.1",
+                    "authorize_journey_start": true,
+                    "product_objective_continuation_source": journey_source
+                }
+            }
+        });
+        let journey = parse_line(&journey_request.to_string());
+        assert!(journey.error.is_none(), "{:?}", journey.error);
+        let journey_result = journey.result.expect("journey result");
+        let journey_metadata = &journey_result["journey"];
+        assert_eq!(journey_metadata["task_id"], continuation.task_id);
+        assert_eq!(journey_metadata["run_id"], continuation.run_id);
+        assert_eq!(
+            journey_metadata["product_objective_continuation_provenance"]["remaining_capability"],
+            "admit_runtime_derived_journey"
+        );
+        assert_eq!(
+            journey_metadata["product_objective_continuation_provenance"]
+                ["derived_goal_fingerprint"],
+            objective_provenance.derived_goal_fingerprint
+        );
+        assert_eq!(journey_result["replayed"], false);
+
+        let replay = parse_line(&journey_request.to_string());
+        assert!(replay.error.is_none(), "{:?}", replay.error);
+        assert_eq!(replay.result.expect("journey replay")["replayed"], true);
+
+        let mut conflicting = journey_request.clone();
+        conflicting["id"] = json!(5);
+        conflicting["params"]["journey_admission"]["product_objective_continuation_source"]
+            ["expected_derived_goal_fingerprint"] = json!(fp('9'));
+        let conflict = parse_line(&conflicting.to_string());
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict error")
+            .message
+            .contains("journey_id conflicts"));
+
+        let plain_start = parse_line(
+            r#"{"jsonrpc":"2.0","id":60,"method":"task.start","params":{"goal":"Plain created task without objective provenance","mode_id":"implementer"}}"#,
+        );
+        assert!(plain_start.error.is_none(), "{:?}", plain_start.error);
+        let plain_start_result = plain_start.result.expect("plain start result");
+        let plain_task_id = plain_start_result["task_id"]
+            .as_str()
+            .expect("plain task id")
+            .to_string();
+        let plain_run_id = plain_start_result["run_id"]
+            .as_str()
+            .expect("plain run id")
+            .to_string();
+
+        let denied = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m61.2.denied",
+                    "drive_id": "m61.2.denied.drive",
+                    "expected_start_session_sequence": 0,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "journey_admission": {
+                        "journey_id": "m61.2.denied.1",
+                        "authorize_journey_start": true,
+                        "product_objective_continuation_source": {
+                            "continuation_task_id": plain_task_id,
+                            "continuation_run_id": plain_run_id,
+                            "source_task_id": source.task_id,
+                            "source_run_id": source.run_id,
+                            "source_decision_id": decision.decision_id,
+                            "expected_decision_fingerprint": decision.decision_fingerprint,
+                            "expected_accepted_completion_fingerprint": decision.accepted_completion_fingerprint,
+                            "expected_terminal_completion_fingerprint": decision.terminal_completion_fingerprint,
+                            "expected_completion_closure_fingerprint": decision.completion_closure_fingerprint,
+                            "expected_product_evidence_fingerprint": decision.product_evidence_fingerprint,
+                            "expected_remaining_capability_fingerprint": fp('1'),
+                            "expected_derived_objective_fingerprint": fp('2'),
+                            "expected_derived_goal_fingerprint": fp('3'),
+                            "authorize_product_objective_journey_admission": true
+                        }
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(denied.result.is_none());
+        assert!(denied
+            .error
+            .expect("missing provenance error")
+            .message
+            .contains("no objective provenance"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]

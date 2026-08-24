@@ -2424,6 +2424,8 @@ pub struct HeadlessJourneyStartCheckpoint {
     pub journey_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_context: Option<HeadlessRunJourneyObjectiveContextMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub product_objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -5065,6 +5067,7 @@ mod tests {
             start_progress: progress.clone(),
             journey_fingerprint: format!("sha256:{}", "c".repeat(64)),
             objective_context: None,
+            product_objective_continuation_provenance: None,
         };
         store
             .write_headless_journey_start_checkpoint(&start_checkpoint)
