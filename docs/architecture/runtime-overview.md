@@ -1094,8 +1094,9 @@ project completion policy derivation path. When `product_completion_claim` is
 false, the policy must include bounded `product_dod_remaining_gaps` metadata;
 Rust validates every gap, rejects unsupported status, duplicate ids, missing
 required fields, or missing open required gaps before product evidence matrix
-ledger mutation, then deterministically selects the highest-priority open
-required gap and fingerprints it into the derived matrix. A following
+ledger mutation, then deterministically selects the highest numeric priority
+open required gap with stable `gap_id` tie-breaking and fingerprints it into
+the derived matrix. A following
 `product_completion_decision` that references that derived matrix may omit
 caller-authored `remaining_capability`; Rust derives the effective remaining
 capability from the selected gap, returns bounded selected-gap metadata, and

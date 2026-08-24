@@ -26900,7 +26900,7 @@ fn project_completion_policy_remaining_gap_selection(
         if gap.required && gap.status == "open" {
             match selected.as_ref() {
                 Some(current)
-                    if current.priority < gap.priority
+                    if current.priority > gap.priority
                         || (current.priority == gap.priority && current.gap_id <= gap.gap_id) => {}
                 _ => selected = Some(gap),
             }
@@ -53772,6 +53772,15 @@ mod tests {
                     "richer product charter semantics after M52.2"
                 ],
                 "product_dod_remaining_gaps": [
+                    {
+                        "gap_id": "m52-lower-priority-report-wrapper",
+                        "capability": "m52_lower_priority_report_wrapper",
+                        "transition": "avoid_report_only_followup",
+                        "status": "open",
+                        "required": true,
+                        "priority": 1,
+                        "next_action": "deprioritize_wrapper"
+                    },
                     {
                         "gap_id": "m52-next-runtime-evidence-authority",
                         "capability": "m52_next_runtime_evidence_authority",
@@ -85424,6 +85433,11 @@ mod tests {
             matrix["selected_remaining_gap"]["capability"],
             "m52_next_runtime_evidence_authority"
         );
+        assert_eq!(
+            matrix["selected_remaining_gap"]["gap_id"],
+            "m52-next-runtime-evidence-authority"
+        );
+        assert_eq!(matrix["selected_remaining_gap"]["priority"], 10);
         assert!(matrix["selected_remaining_gap"]["selection_fingerprint"]
             .as_str()
             .expect("gap selection fingerprint")

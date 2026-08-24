@@ -101,7 +101,7 @@
   },
   "exit_criteria": [
     "headless.run.drive product_evidence_derivation accepts a project completion policy with product_dod_remaining_gaps",
-    "runtime validates gap shape, status, required flag, priority, next action, and duplicate IDs before matrix ledger mutation",
+    "runtime validates gap shape, status, required flag, numeric priority, next action, and duplicate IDs before matrix ledger mutation",
     "runtime selects one open required gap deterministically and fingerprints it into the product evidence matrix",
     "product_completion_decision can omit remaining_capability when consuming a derived matrix with a selected gap",
     "decision result exposes the runtime-selected remaining capability and selected gap fingerprint",
@@ -144,7 +144,7 @@
     ],
     "technical_debt": [
       "The selected gap is a bounded policy-declared item; future phases can connect it directly to runtime-derived continuation task creation.",
-      "The initial selection rule is deterministic priority then gap_id rather than a semantic ranking engine."
+      "The initial selection rule is deterministic highest numeric priority then gap_id rather than a semantic ranking engine."
     ],
     "next_capability_rationale": [
       "Next M62 work should bind selected Product DoD gap metadata into runtime-derived continuation task admission, not add another inspection surface."
