@@ -1439,9 +1439,21 @@ export interface HeadlessRunProductCompletionDecision {
   non_goals_reviewed: boolean;
   technical_debt_reviewed: boolean;
   remaining_capability?: string | null;
+  selected_remaining_gap?: HeadlessRunProductRemainingGapSelection | null;
   milestone_exit_rationale?: string | null;
   technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
   replayed: boolean;
+}
+
+export interface HeadlessRunProductRemainingGapSelection {
+  gap_id: string;
+  capability: string;
+  transition: string;
+  status: 'open' | 'deferred' | 'closed';
+  required: boolean;
+  priority: number;
+  next_action: string;
+  selection_fingerprint: string;
 }
 
 export interface HeadlessRunProductEvidenceMatrix {
@@ -1466,6 +1478,7 @@ export interface HeadlessRunProductEvidenceMatrix {
   safety_boundary_reviewed: boolean;
   non_goals_reviewed: boolean;
   technical_debt_reviewed: boolean;
+  selected_remaining_gap?: HeadlessRunProductRemainingGapSelection | null;
   next_action: 'record_product_completion_decision_with_runtime_evidence';
   replayed: boolean;
 }
@@ -8386,6 +8399,7 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
       'safety_boundary_reviewed',
       'non_goals_reviewed',
       'technical_debt_reviewed',
+      'selected_remaining_gap',
       'next_action',
       'replayed',
     ]) &&
@@ -8419,8 +8433,36 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
     typeof value.safety_boundary_reviewed === 'boolean' &&
     typeof value.non_goals_reviewed === 'boolean' &&
     typeof value.technical_debt_reviewed === 'boolean' &&
+    (value.selected_remaining_gap === undefined || value.selected_remaining_gap === null || isHeadlessRunProductRemainingGapSelection(value.selected_remaining_gap)) &&
     value.next_action === 'record_product_completion_decision_with_runtime_evidence' &&
     typeof value.replayed === 'boolean'
+  );
+}
+
+export function isHeadlessRunProductRemainingGapSelection(value: unknown): value is HeadlessRunProductRemainingGapSelection {
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, [
+      'gap_id',
+      'capability',
+      'transition',
+      'status',
+      'required',
+      'priority',
+      'next_action',
+      'selection_fingerprint',
+    ]) &&
+    hasNoForbiddenRawFields(value) &&
+    isHeadlessRunId(value.gap_id) &&
+    isBoundedAsciiMetadata(value.capability, 120) &&
+    isBoundedAsciiMetadata(value.transition, 120) &&
+    (value.status === 'open' || value.status === 'deferred' || value.status === 'closed') &&
+    typeof value.required === 'boolean' &&
+    isNonNegativeInteger(value.priority) &&
+    value.priority <= 65535 &&
+    isBoundedAsciiMetadata(value.next_action, 120) &&
+    typeof value.selection_fingerprint === 'string' &&
+    isSha256Fingerprint(value.selection_fingerprint)
   );
 }
 
@@ -8449,6 +8491,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
       'non_goals_reviewed',
       'technical_debt_reviewed',
       'remaining_capability',
+      'selected_remaining_gap',
       'milestone_exit_rationale',
       'technical_debt_carry_forward',
       'replayed',
@@ -8482,6 +8525,7 @@ export function isHeadlessRunProductCompletionDecision(value: unknown): value is
     typeof value.non_goals_reviewed === 'boolean' &&
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.remaining_capability === undefined || value.remaining_capability === null || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
+    (value.selected_remaining_gap === undefined || value.selected_remaining_gap === null || isHeadlessRunProductRemainingGapSelection(value.selected_remaining_gap)) &&
     (value.milestone_exit_rationale === undefined || value.milestone_exit_rationale === null || isBoundedAsciiMetadata(value.milestone_exit_rationale, 160)) &&
     (value.technical_debt_carry_forward === undefined || value.technical_debt_carry_forward === null || isTechnicalDebtCarryForward(value.technical_debt_carry_forward)) &&
     typeof value.replayed === 'boolean'

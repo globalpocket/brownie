@@ -43,9 +43,9 @@ use brownie_protocol::{
     HeadlessRunObjectiveProposalCandidate, HeadlessRunProductCompletionDecision,
     HeadlessRunProductCompletionDecisionRequest, HeadlessRunProductEvidenceArtifact,
     HeadlessRunProductEvidenceDerivationRequest, HeadlessRunProductEvidenceMatrix,
-    HeadlessRunProgressCheckpoint, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
-    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    HeadlessRunProductRemainingGapSelection, HeadlessRunProgressCheckpoint, JsonRpcError,
+    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
+    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
     LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
     LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
     ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
@@ -26451,6 +26451,7 @@ fn headless_run_product_evidence_matrix(
         policy.safety_boundary_reviewed,
         policy.non_goals_reviewed,
         policy.technical_debt_reviewed,
+        policy.selected_remaining_gap.as_ref(),
         &artifacts,
     );
     let replayed = headless_product_evidence_matrix_was_persisted(
@@ -26477,6 +26478,7 @@ fn headless_run_product_evidence_matrix(
             safety_boundary_reviewed: policy.safety_boundary_reviewed,
             non_goals_reviewed: policy.non_goals_reviewed,
             technical_debt_reviewed: policy.technical_debt_reviewed,
+            selected_remaining_gap: policy.selected_remaining_gap.clone(),
             next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
             replayed: false,
         },
@@ -26504,6 +26506,7 @@ fn headless_run_product_evidence_matrix(
         safety_boundary_reviewed: policy.safety_boundary_reviewed,
         non_goals_reviewed: policy.non_goals_reviewed,
         technical_debt_reviewed: policy.technical_debt_reviewed,
+        selected_remaining_gap: policy.selected_remaining_gap,
         next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
         replayed,
     };
@@ -26523,6 +26526,7 @@ struct ProjectCompletionPolicy {
     safety_boundary_reviewed: bool,
     non_goals_reviewed: bool,
     technical_debt_reviewed: bool,
+    selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     evidence_artifact_paths: Vec<String>,
 }
 
@@ -26754,6 +26758,12 @@ fn parse_project_completion_policy(
             .get("evidence_artifacts")
             .or_else(|| gate.get("evidence_artifacts")),
     )?;
+    let selected_remaining_gap = project_completion_policy_remaining_gap_selection(
+        policy
+            .get("product_dod_remaining_gaps")
+            .or_else(|| gate.get("product_dod_remaining_gaps")),
+        product_completion_claim,
+    )?;
 
     Ok(ProjectCompletionPolicy {
         target_capability,
@@ -26765,6 +26775,7 @@ fn parse_project_completion_policy(
         safety_boundary_reviewed,
         non_goals_reviewed,
         technical_debt_reviewed,
+        selected_remaining_gap,
         evidence_artifact_paths,
     })
 }
@@ -26853,6 +26864,126 @@ fn project_completion_policy_path_array(value: Option<&Value>) -> Result<Vec<Str
     Ok(paths)
 }
 
+fn project_completion_policy_remaining_gap_selection(
+    value: Option<&Value>,
+    product_completion_claim: bool,
+) -> Result<Option<HeadlessRunProductRemainingGapSelection>, String> {
+    let Some(value) = value else {
+        if product_completion_claim {
+            return Ok(None);
+        }
+        return Err(
+            "invalid params: project completion policy incomplete claim requires product_dod_remaining_gaps"
+                .to_string(),
+        );
+    };
+    let items = value.as_array().ok_or_else(|| {
+        "invalid params: project completion policy product_dod_remaining_gaps must be an array"
+            .to_string()
+    })?;
+    if items.is_empty() || items.len() > 32 {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps must contain 1-32 items"
+                .to_string(),
+        );
+    }
+    let mut seen = BTreeSet::new();
+    let mut selected: Option<HeadlessRunProductRemainingGapSelection> = None;
+    for item in items {
+        let gap = parse_project_completion_policy_remaining_gap(item)?;
+        if !seen.insert(gap.gap_id.clone()) {
+            return Err(
+                "invalid params: project completion policy product_dod_remaining_gaps gap_id must be unique"
+                    .to_string(),
+            );
+        }
+        if gap.required && gap.status == "open" {
+            match selected.as_ref() {
+                Some(current)
+                    if current.priority > gap.priority
+                        || (current.priority == gap.priority && current.gap_id <= gap.gap_id) => {}
+                _ => selected = Some(gap),
+            }
+        }
+    }
+    if selected.is_none() && !product_completion_claim {
+        return Err(
+            "invalid params: project completion policy incomplete claim requires one open required product DoD gap"
+                .to_string(),
+        );
+    }
+    Ok(selected)
+}
+
+fn parse_project_completion_policy_remaining_gap(
+    item: &Value,
+) -> Result<HeadlessRunProductRemainingGapSelection, String> {
+    let object = item.as_object().ok_or_else(|| {
+        "invalid params: project completion policy product_dod_remaining_gaps items must be objects"
+            .to_string()
+    })?;
+    if !object.keys().all(|key| {
+        matches!(
+            key.as_str(),
+            "gap_id"
+                | "capability"
+                | "transition"
+                | "status"
+                | "required"
+                | "priority"
+                | "next_action"
+        )
+    }) {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps contains unsupported fields"
+                .to_string(),
+        );
+    }
+    let gap_id = project_completion_policy_string(item, &["gap_id"], 48, "gap_id")?;
+    if !is_valid_headless_run_id(&gap_id) {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps gap_id must be bounded identifier metadata"
+                .to_string(),
+        );
+    }
+    let capability = project_completion_policy_string(item, &["capability"], 120, "capability")?;
+    let transition = project_completion_policy_string(item, &["transition"], 120, "transition")?;
+    let status = project_completion_policy_string(item, &["status"], 48, "status")?;
+    if !matches!(status.as_str(), "open" | "deferred" | "closed") {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps status is unsupported"
+                .to_string(),
+        );
+    }
+    let required = item.get("required").and_then(Value::as_bool).ok_or_else(|| {
+        "invalid params: project completion policy product_dod_remaining_gaps required is required"
+            .to_string()
+    })?;
+    let priority_u64 = item.get("priority").and_then(Value::as_u64).ok_or_else(|| {
+        "invalid params: project completion policy product_dod_remaining_gaps priority is required"
+            .to_string()
+    })?;
+    if priority_u64 > u16::MAX as u64 {
+        return Err(
+            "invalid params: project completion policy product_dod_remaining_gaps priority is too large"
+                .to_string(),
+        );
+    }
+    let next_action = project_completion_policy_string(item, &["next_action"], 120, "next_action")?;
+    let mut gap = HeadlessRunProductRemainingGapSelection {
+        gap_id,
+        capability,
+        transition,
+        status,
+        required,
+        priority: priority_u64 as u16,
+        next_action,
+        selection_fingerprint: String::new(),
+    };
+    gap.selection_fingerprint = headless_product_remaining_gap_selection_fingerprint(&gap);
+    Ok(gap)
+}
+
 fn validate_project_completion_policy_artifacts(
     policy_artifact_paths: &[String],
     request: &HeadlessRunProductEvidenceDerivationRequest,
@@ -26916,9 +27047,26 @@ fn headless_product_evidence_matrix_payload(matrix: &HeadlessRunProductEvidenceM
         "safety_boundary_reviewed": matrix.safety_boundary_reviewed,
         "non_goals_reviewed": matrix.non_goals_reviewed,
         "technical_debt_reviewed": matrix.technical_debt_reviewed,
+        "selected_remaining_gap": matrix.selected_remaining_gap,
         "next_action": matrix.next_action,
         "replayed": false,
     })
+}
+
+fn headless_product_remaining_gap_selection_fingerprint(
+    gap: &HeadlessRunProductRemainingGapSelection,
+) -> String {
+    let canonical = json!({
+        "version": "headless_product_remaining_gap_selection_v1",
+        "gap_id": gap.gap_id,
+        "capability": gap.capability,
+        "transition": gap.transition,
+        "status": gap.status,
+        "required": gap.required,
+        "priority": gap.priority,
+        "next_action": gap.next_action,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
 
 fn headless_product_evidence_matrix_fingerprint(
@@ -26935,6 +27083,7 @@ fn headless_product_evidence_matrix_fingerprint(
     safety_boundary_reviewed: bool,
     non_goals_reviewed: bool,
     technical_debt_reviewed: bool,
+    selected_remaining_gap: Option<&HeadlessRunProductRemainingGapSelection>,
     artifacts: &[HeadlessRunProductEvidenceArtifact],
 ) -> String {
     let canonical = json!({
@@ -26957,6 +27106,7 @@ fn headless_product_evidence_matrix_fingerprint(
         "safety_boundary_reviewed": safety_boundary_reviewed,
         "non_goals_reviewed": non_goals_reviewed,
         "technical_debt_reviewed": technical_debt_reviewed,
+        "selected_remaining_gap": selected_remaining_gap,
         "artifact_hashes": artifacts,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
@@ -26994,6 +27144,35 @@ enum HeadlessProductCompletionDecisionEventStatus {
     Missing,
     ExactReplay,
     ConflictingBoundaryDecision,
+}
+
+fn product_completion_decision_selected_remaining_gap(
+    result: &HeadlessRunDriveResult,
+    request: &HeadlessRunProductCompletionDecisionRequest,
+) -> Result<Option<HeadlessRunProductRemainingGapSelection>, String> {
+    if request
+        .derived_product_evidence_matrix_fingerprint
+        .as_ref()
+        .is_none()
+    {
+        return Ok(None);
+    }
+    let matrix = result.product_evidence_matrix.as_ref().ok_or_else(|| {
+        "invalid params: derived product evidence matrix is required for product decision"
+            .to_string()
+    })?;
+    let Some(gap) = matrix.selected_remaining_gap.as_ref() else {
+        return Ok(None);
+    };
+    if let Some(remaining_capability) = request.remaining_capability.as_deref() {
+        if remaining_capability != gap.capability {
+            return Err(
+                "invalid params: product completion decision remaining_capability conflicts with derived product DoD gap"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(Some(gap.clone()))
 }
 
 fn headless_product_completion_decision_event_status(
@@ -27053,6 +27232,12 @@ fn headless_run_product_completion_decision(
                 store, result, request,
             )
             .map_err(|error| format!("invalid params: product completion decision {error}"))?;
+            let requested_selected_remaining_gap =
+                product_completion_decision_selected_remaining_gap(result, request)?;
+            let requested_remaining_capability = requested_selected_remaining_gap
+                .as_ref()
+                .map(|gap| gap.capability.clone())
+                .or_else(|| request.remaining_capability.clone());
             if existing.decision_id != request.decision_id
                 || existing.accepted_completion_fingerprint
                     != request.expected_accepted_completion_fingerprint
@@ -27063,6 +27248,8 @@ fn headless_run_product_completion_decision(
                 || existing.product_evidence_fingerprint
                     != request.expected_product_evidence_fingerprint
                 || existing.technical_debt_carry_forward != requested_carry_forward
+                || existing.remaining_capability != requested_remaining_capability
+                || existing.selected_remaining_gap != requested_selected_remaining_gap
             {
                 return Err(
                     "invalid params: product completion decision replay target conflicts with persisted decision"
@@ -27115,6 +27302,7 @@ fn headless_run_product_completion_decision(
         );
     }
     let mut evidence_request = request.clone();
+    let mut selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection> = None;
     if let Some(matrix_fingerprint) = request
         .derived_product_evidence_matrix_fingerprint
         .as_deref()
@@ -27150,6 +27338,25 @@ fn headless_run_product_completion_decision(
                 "invalid params: product completion claim is false for derived product evidence matrix"
                     .to_string(),
             );
+        }
+        if request.evidence_status == "product_complete" && matrix.selected_remaining_gap.is_some()
+        {
+            return Err(
+                "invalid params: product completion decision cannot be product_complete while derived product evidence matrix has an open required product DoD gap"
+                    .to_string(),
+            );
+        }
+        if let Some(gap) = matrix.selected_remaining_gap.as_ref() {
+            if let Some(remaining_capability) = request.remaining_capability.as_deref() {
+                if remaining_capability != gap.capability {
+                    return Err(
+                        "invalid params: product completion decision remaining_capability conflicts with derived product DoD gap"
+                            .to_string(),
+                    );
+                }
+            }
+            evidence_request.remaining_capability = Some(gap.capability.clone());
+            selected_remaining_gap = Some(gap.clone());
         }
         evidence_request.target_capability = matrix.target_capability.clone();
         evidence_request.concrete_capability_transition =
@@ -27203,7 +27410,7 @@ fn headless_run_product_completion_decision(
     let (status, next_action) = match request.evidence_status.as_str() {
         "product_complete"
             if !missing_or_invalid_evidence
-                && request.remaining_capability.is_none()
+                && evidence_request.remaining_capability.is_none()
                 && request
                     .milestone_exit_rationale
                     .as_deref()
@@ -27216,7 +27423,7 @@ fn headless_run_product_completion_decision(
         }
         "continue_development"
             if !missing_or_invalid_evidence
-                && request
+                && evidence_request
                     .remaining_capability
                     .as_deref()
                     .unwrap_or("")
@@ -27257,6 +27464,7 @@ fn headless_run_product_completion_decision(
         next_action,
         missing_or_invalid_evidence,
         technical_debt_carry_forward.as_ref(),
+        selected_remaining_gap.as_ref(),
     );
     let mut decision = HeadlessRunProductCompletionDecision {
         decision_id: request.decision_id.clone(),
@@ -27283,7 +27491,8 @@ fn headless_run_product_completion_decision(
         safety_boundary_reviewed: evidence_request.safety_boundary_reviewed,
         non_goals_reviewed: evidence_request.non_goals_reviewed,
         technical_debt_reviewed: evidence_request.technical_debt_reviewed,
-        remaining_capability: request.remaining_capability.clone(),
+        remaining_capability: evidence_request.remaining_capability.clone(),
+        selected_remaining_gap,
         milestone_exit_rationale: request.milestone_exit_rationale.clone(),
         technical_debt_carry_forward,
         replayed: false,
@@ -27631,6 +27840,7 @@ fn headless_product_completion_decision_payload(
         "non_goals_reviewed": decision.non_goals_reviewed,
         "technical_debt_reviewed": decision.technical_debt_reviewed,
         "remaining_capability": decision.remaining_capability,
+        "selected_remaining_gap": decision.selected_remaining_gap,
         "milestone_exit_rationale": decision.milestone_exit_rationale,
         "technical_debt_carry_forward": decision.technical_debt_carry_forward,
         "replayed": false,
@@ -27646,6 +27856,7 @@ fn headless_product_completion_decision_fingerprint(
     next_action: &str,
     missing_or_invalid_evidence: bool,
     technical_debt_carry_forward: Option<&TechnicalDebtCarryForward>,
+    selected_remaining_gap: Option<&HeadlessRunProductRemainingGapSelection>,
 ) -> String {
     let canonical = json!({
         "version": "headless_product_completion_decision_v1",
@@ -27673,6 +27884,7 @@ fn headless_product_completion_decision_fingerprint(
         "milestone_exit_rationale": request.milestone_exit_rationale,
         "missing_or_invalid_evidence": missing_or_invalid_evidence,
         "technical_debt_carry_forward_fingerprint": technical_debt_carry_forward.map(|carry_forward| carry_forward.fingerprint.as_str()),
+        "selected_remaining_gap": selected_remaining_gap,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
 }
@@ -53558,6 +53770,26 @@ mod tests {
                 ],
                 "technical_debt": [
                     "richer product charter semantics after M52.2"
+                ],
+                "product_dod_remaining_gaps": [
+                    {
+                        "gap_id": "m52-lower-priority-report-wrapper",
+                        "capability": "m52_lower_priority_report_wrapper",
+                        "transition": "avoid_report_only_followup",
+                        "status": "open",
+                        "required": true,
+                        "priority": 1,
+                        "next_action": "deprioritize_wrapper"
+                    },
+                    {
+                        "gap_id": "m52-next-runtime-evidence-authority",
+                        "capability": "m52_next_runtime_evidence_authority",
+                        "transition": "continue_product_evidence_authority",
+                        "status": "open",
+                        "required": true,
+                        "priority": 10,
+                        "next_action": "plan_next_phase"
+                    }
                 ],
                 "evidence_artifacts": [
                     evidence_path
@@ -85084,7 +85316,7 @@ mod tests {
     }
 
     #[test]
-    fn headless_run_drive_derives_product_evidence_matrix_and_decides() {
+    fn headless_run_drive_selects_remaining_product_dod_gap_and_decides() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let (project_completion_policy, artifacts) =
@@ -85197,6 +85429,19 @@ mod tests {
         assert_eq!(matrix["product_completion_claim"], false);
         assert_eq!(matrix["behavior_evidence_count"], 3);
         assert_eq!(matrix["rejected_alternatives_count"], 2);
+        assert_eq!(
+            matrix["selected_remaining_gap"]["capability"],
+            "m52_next_runtime_evidence_authority"
+        );
+        assert_eq!(
+            matrix["selected_remaining_gap"]["gap_id"],
+            "m52-next-runtime-evidence-authority"
+        );
+        assert_eq!(matrix["selected_remaining_gap"]["priority"], 10);
+        assert!(matrix["selected_remaining_gap"]["selection_fingerprint"]
+            .as_str()
+            .expect("gap selection fingerprint")
+            .starts_with("sha256:"));
         assert_eq!(matrix["safety_boundary_reviewed"], true);
         assert_eq!(matrix["non_goals_reviewed"], true);
         assert_eq!(matrix["technical_debt_reviewed"], true);
@@ -85281,8 +85526,7 @@ mod tests {
                     "rejected_alternatives_count": 0,
                     "safety_boundary_reviewed": false,
                     "non_goals_reviewed": false,
-                    "technical_debt_reviewed": false,
-                    "remaining_capability": "m52_next_runtime_evidence_authority"
+                    "technical_debt_reviewed": false
                 }
             }
         });
@@ -85313,6 +85557,14 @@ mod tests {
         assert_eq!(
             decided_result["product_completion_decision"]["status"],
             "continue_development"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["remaining_capability"],
+            "m52_next_runtime_evidence_authority"
+        );
+        assert_eq!(
+            decided_result["product_completion_decision"]["selected_remaining_gap"],
+            matrix["selected_remaining_gap"]
         );
         let serialized = serde_json::to_string(&decided_result).expect("serialize decision");
         for forbidden in [
@@ -85366,6 +85618,142 @@ mod tests {
                 })
                 .count(),
             1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_rejects_stale_or_malformed_remaining_gap_selection() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (_project_completion_policy, artifacts) =
+            write_m52_product_evidence_artifacts(temp.path(), false);
+        let policy_path = temp.path().join("docs/product-completion/policy.json");
+        let mut policy: Value =
+            serde_json::from_str(&std::fs::read_to_string(&policy_path).expect("policy read"))
+                .expect("policy json");
+        policy["product_completion_gate"]["product_dod_remaining_gaps"][0]["status"] =
+            json!("unknown");
+        std::fs::write(
+            &policy_path,
+            serde_json::to_string_pretty(&policy).expect("policy json"),
+        )
+        .expect("policy content");
+        let project_completion_policy =
+            product_evidence_artifact_source(temp.path(), "docs/product-completion/policy.json");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Runtime product evidence malformed gap","mode_id":"implementer"}}"#,
+        );
+        let task_id = start.result.expect("start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress result")["progress_overview"]
+            .clone();
+        let seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m62.gap.malformed","advance_id":"m62.gap.malformed.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence"),
+        ));
+        assert!(seed.error.is_none());
+        let seed_result = seed.result.expect("seed result");
+        let run_id = seed_result["steps"][0]["selected_run_id"]
+            .as_str()
+            .expect("selected run id")
+            .to_string();
+        let terminal_fingerprint = seed_result["terminal_completion_evidence"]
+            ["completion_result_fingerprint"]
+            .as_str()
+            .expect("terminal fingerprint")
+            .to_string();
+
+        let accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "task.run",
+                "params": {
+                    "task_id": task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": run_id,
+                        "acceptance_id": "m62-gap-malformed-accepted",
+                        "expected_completion_result_fingerprint": terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(accepted.error.is_none());
+        let acceptance_fingerprint = accepted.result.expect("accepted result")
+            ["completion_acceptance"]["acceptance_fingerprint"]
+            .as_str()
+            .expect("acceptance fingerprint")
+            .to_string();
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m62.gap.malformed","drive_id":"m62.gap.malformed.route","expected_start_session_sequence":1,"max_advances":2,"max_steps_per_advance":1}}"#,
+        );
+        assert!(drive.error.is_none());
+        let drive_result = drive.result.expect("drive result");
+        let closure_fingerprint = drive_result["completion_closure"]["closure_fingerprint"]
+            .as_str()
+            .expect("closure fingerprint")
+            .to_string();
+
+        let malformed = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 6,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m62.gap.malformed",
+                    "drive_id": "m62.gap.malformed.route",
+                    "expected_start_session_sequence": 1,
+                    "max_advances": 2,
+                    "max_steps_per_advance": 1,
+                    "expected_completion_closure_fingerprint": closure_fingerprint,
+                    "product_evidence_derivation": {
+                        "authorize_product_evidence_derivation": true,
+                        "derivation_id": "m62-gap-malformed",
+                        "phase_id": "M52.2",
+                        "milestone": "M52 Runtime Product Evidence Authority",
+                        "expected_accepted_completion_fingerprint": acceptance_fingerprint,
+                        "expected_terminal_completion_fingerprint": terminal_fingerprint,
+                        "expected_completion_closure_fingerprint": closure_fingerprint,
+                        "project_completion_policy": project_completion_policy,
+                        "artifacts": artifacts,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(malformed.result.is_none());
+        assert!(malformed
+            .error
+            .expect("malformed gap error")
+            .message
+            .contains("product_dod_remaining_gaps status"));
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(&run_id)
+            .expect("events after malformed gap");
+        assert_eq!(
+            events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+                )
+                .count(),
+            0
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
@@ -85894,6 +86282,7 @@ mod tests {
                 non_goals_reviewed: true,
                 technical_debt_reviewed: true,
                 remaining_capability: Some("plan_next_phase".to_string()),
+                selected_remaining_gap: None,
                 milestone_exit_rationale: None,
                 technical_debt_carry_forward: Some(carry_forward),
                 replayed: false,
@@ -86569,6 +86958,7 @@ mod tests {
             non_goals_reviewed: true,
             technical_debt_reviewed: true,
             remaining_capability: Some("run_next_phase".to_string()),
+            selected_remaining_gap: None,
             milestone_exit_rationale: None,
             technical_debt_carry_forward: None,
             replayed: false,
@@ -86813,6 +87203,7 @@ mod tests {
             non_goals_reviewed: true,
             technical_debt_reviewed: true,
             remaining_capability: Some("run_next_phase".to_string()),
+            selected_remaining_gap: None,
             milestone_exit_rationale: None,
             technical_debt_carry_forward: None,
             replayed: false,
@@ -87186,6 +87577,7 @@ mod tests {
             non_goals_reviewed: true,
             technical_debt_reviewed: true,
             remaining_capability: Some("admit_runtime_derived_journey".to_string()),
+            selected_remaining_gap: None,
             milestone_exit_rationale: None,
             technical_debt_carry_forward: None,
             replayed: false,
@@ -87862,6 +88254,7 @@ mod tests {
                 non_goals_reviewed: true,
                 technical_debt_reviewed: true,
                 remaining_capability: Some("plan_next_phase".to_string()),
+                selected_remaining_gap: None,
                 milestone_exit_rationale: None,
                 technical_debt_carry_forward: None,
                 replayed: false,

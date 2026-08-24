@@ -2513,6 +2513,8 @@ pub struct HeadlessRunProductCompletionDecision {
     pub technical_debt_reviewed: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remaining_capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub milestone_exit_rationale: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2583,8 +2585,23 @@ pub struct HeadlessRunProductEvidenceMatrix {
     pub safety_boundary_reviewed: bool,
     pub non_goals_reviewed: bool,
     pub technical_debt_reviewed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     pub next_action: String,
     pub replayed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunProductRemainingGapSelection {
+    pub gap_id: String,
+    pub capability: String,
+    pub transition: String,
+    pub status: String,
+    pub required: bool,
+    pub priority: u16,
+    pub next_action: String,
+    pub selection_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
