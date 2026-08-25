@@ -26940,6 +26940,8 @@ fn headless_run_product_evidence_matrix(
         policy.technical_debt_reviewed,
         policy.selected_remaining_gap.as_ref(),
         policy.selected_gap_closure_evidence.as_ref(),
+        &policy.selected_gap_closure_evidence_set,
+        policy.selected_gap_closure_set_fingerprint.as_deref(),
         &artifacts,
     );
     let replayed = headless_product_evidence_matrix_was_persisted(
@@ -26968,6 +26970,10 @@ fn headless_run_product_evidence_matrix(
             technical_debt_reviewed: policy.technical_debt_reviewed,
             selected_remaining_gap: policy.selected_remaining_gap.clone(),
             selected_gap_closure_evidence: policy.selected_gap_closure_evidence.clone(),
+            selected_gap_closure_evidence_set: policy.selected_gap_closure_evidence_set.clone(),
+            selected_gap_closure_set_fingerprint: policy
+                .selected_gap_closure_set_fingerprint
+                .clone(),
             next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
             replayed: false,
         },
@@ -26997,6 +27003,8 @@ fn headless_run_product_evidence_matrix(
         technical_debt_reviewed: policy.technical_debt_reviewed,
         selected_remaining_gap: policy.selected_remaining_gap,
         selected_gap_closure_evidence: policy.selected_gap_closure_evidence,
+        selected_gap_closure_evidence_set: policy.selected_gap_closure_evidence_set,
+        selected_gap_closure_set_fingerprint: policy.selected_gap_closure_set_fingerprint,
         next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
         replayed,
     };
@@ -27018,6 +27026,8 @@ struct ProjectCompletionPolicy {
     technical_debt_reviewed: bool,
     selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     selected_gap_closure_evidence: Option<HeadlessRunSelectedProductGapClosureEvidence>,
+    selected_gap_closure_evidence_set: Vec<HeadlessRunSelectedProductGapClosureEvidence>,
+    selected_gap_closure_set_fingerprint: Option<String>,
     evidence_artifact_paths: Vec<String>,
 }
 
@@ -27250,14 +27260,19 @@ fn parse_project_completion_policy(
             .get("evidence_artifacts")
             .or_else(|| gate.get("evidence_artifacts")),
     )?;
-    let (selected_remaining_gap, selected_gap_closure_evidence, product_completion_claim) =
-        project_completion_policy_remaining_gap_selection(
-            policy
-                .get("product_dod_remaining_gaps")
-                .or_else(|| gate.get("product_dod_remaining_gaps")),
-            requested_product_completion_claim,
-            selected_gap_closures,
-        )?;
+    let (
+        selected_remaining_gap,
+        selected_gap_closure_evidence,
+        selected_gap_closure_evidence_set,
+        selected_gap_closure_set_fingerprint,
+        product_completion_claim,
+    ) = project_completion_policy_remaining_gap_selection(
+        policy
+            .get("product_dod_remaining_gaps")
+            .or_else(|| gate.get("product_dod_remaining_gaps")),
+        requested_product_completion_claim,
+        selected_gap_closures,
+    )?;
 
     Ok(ProjectCompletionPolicy {
         target_capability,
@@ -27271,6 +27286,8 @@ fn parse_project_completion_policy(
         technical_debt_reviewed,
         selected_remaining_gap,
         selected_gap_closure_evidence,
+        selected_gap_closure_evidence_set,
+        selected_gap_closure_set_fingerprint,
         evidence_artifact_paths,
     })
 }
@@ -27367,13 +27384,15 @@ fn project_completion_policy_remaining_gap_selection(
     (
         Option<HeadlessRunProductRemainingGapSelection>,
         Option<HeadlessRunSelectedProductGapClosureEvidence>,
+        Vec<HeadlessRunSelectedProductGapClosureEvidence>,
+        Option<String>,
         bool,
     ),
     String,
 > {
     let Some(value) = value else {
         if product_completion_claim {
-            return Ok((None, None, true));
+            return Ok((None, None, Vec::new(), None, true));
         }
         return Err(
             "invalid params: project completion policy incomplete claim requires product_dod_remaining_gaps"
@@ -27392,7 +27411,7 @@ fn project_completion_policy_remaining_gap_selection(
     }
     let mut seen = BTreeSet::new();
     let mut selected: Option<HeadlessRunProductRemainingGapSelection> = None;
-    let mut consumed_closure: Option<HeadlessRunSelectedProductGapClosureEvidence> = None;
+    let mut consumed_closures: Vec<HeadlessRunSelectedProductGapClosureEvidence> = Vec::new();
     let mut saw_open_required_gap = false;
     for item in items {
         let gap = parse_project_completion_policy_remaining_gap(item)?;
@@ -27411,7 +27430,7 @@ fn project_completion_policy_remaining_gap_selection(
                             .to_string(),
                     );
                 }
-                consumed_closure = Some(closure.clone());
+                consumed_closures.push(closure.clone());
                 continue;
             }
             match selected.as_ref() {
@@ -27423,19 +27442,64 @@ fn project_completion_policy_remaining_gap_selection(
         }
     }
     if selected.is_none() && !product_completion_claim {
-        if !saw_open_required_gap || consumed_closure.is_none() {
+        if !saw_open_required_gap || consumed_closures.is_empty() {
             return Err(
                 "invalid params: project completion policy incomplete claim requires one open required product DoD gap"
                     .to_string(),
             );
         }
     }
+    consumed_closures.sort_by(|left, right| {
+        left.selected_remaining_gap
+            .selection_fingerprint
+            .cmp(&right.selected_remaining_gap.selection_fingerprint)
+            .then_with(|| {
+                left.closure_evidence_fingerprint
+                    .cmp(&right.closure_evidence_fingerprint)
+            })
+    });
+    let consumed_closure = consumed_closures.first().cloned();
+    let consumed_closure_set_fingerprint =
+        headless_selected_gap_closure_set_fingerprint(&consumed_closures);
     let effective_product_completion_claim =
         product_completion_claim || (saw_open_required_gap && selected.is_none());
     Ok((
         selected,
         consumed_closure,
+        consumed_closures,
+        consumed_closure_set_fingerprint,
         effective_product_completion_claim,
+    ))
+}
+
+fn headless_selected_gap_closure_set_fingerprint(
+    closures: &[HeadlessRunSelectedProductGapClosureEvidence],
+) -> Option<String> {
+    if closures.is_empty() {
+        return None;
+    }
+    let canonical_closures: Vec<Value> = closures
+        .iter()
+        .map(|closure| {
+            json!({
+                "selected_remaining_gap_fingerprint": closure.selected_remaining_gap.selection_fingerprint,
+                "closure_evidence_fingerprint": closure.closure_evidence_fingerprint,
+                "source_decision_fingerprint": closure.source_decision_fingerprint,
+                "product_evidence_fingerprint": closure.product_evidence_fingerprint,
+                "product_objective_fingerprint": closure.product_objective_fingerprint,
+                "accepted_completion_fingerprint": closure.accepted_completion_fingerprint,
+                "terminal_completion_fingerprint": closure.terminal_completion_fingerprint,
+                "completion_closure_fingerprint": closure.completion_closure_fingerprint,
+            })
+        })
+        .collect();
+    let canonical = json!({
+        "version": "headless_selected_gap_closure_set_v1",
+        "closures": canonical_closures,
+    });
+    Some(format!(
+        "sha256:{}",
+        hex_sha256(canonical.to_string().as_bytes())
     ))
 }
 
@@ -27573,6 +27637,8 @@ fn headless_product_evidence_matrix_payload(matrix: &HeadlessRunProductEvidenceM
         "technical_debt_reviewed": matrix.technical_debt_reviewed,
         "selected_remaining_gap": matrix.selected_remaining_gap,
         "selected_gap_closure_evidence": matrix.selected_gap_closure_evidence,
+        "selected_gap_closure_evidence_set": matrix.selected_gap_closure_evidence_set,
+        "selected_gap_closure_set_fingerprint": matrix.selected_gap_closure_set_fingerprint,
         "next_action": matrix.next_action,
         "replayed": false,
     })
@@ -27610,6 +27676,8 @@ fn headless_product_evidence_matrix_fingerprint(
     technical_debt_reviewed: bool,
     selected_remaining_gap: Option<&HeadlessRunProductRemainingGapSelection>,
     selected_gap_closure_evidence: Option<&HeadlessRunSelectedProductGapClosureEvidence>,
+    selected_gap_closure_evidence_set: &[HeadlessRunSelectedProductGapClosureEvidence],
+    selected_gap_closure_set_fingerprint: Option<&str>,
     artifacts: &[HeadlessRunProductEvidenceArtifact],
 ) -> String {
     let canonical = json!({
@@ -27634,6 +27702,8 @@ fn headless_product_evidence_matrix_fingerprint(
         "technical_debt_reviewed": technical_debt_reviewed,
         "selected_remaining_gap": selected_remaining_gap,
         "selected_gap_closure_evidence": selected_gap_closure_evidence,
+        "selected_gap_closure_evidence_set": selected_gap_closure_evidence_set,
+        "selected_gap_closure_set_fingerprint": selected_gap_closure_set_fingerprint,
         "artifact_hashes": artifacts,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
@@ -54416,6 +54486,133 @@ mod tests {
             "path": path,
             "expected_sha256": format!("sha256:{}", hex_sha256(&content)),
         })
+    }
+
+    fn product_gap_for_test(
+        gap_id: &str,
+        capability: &str,
+        priority: u16,
+    ) -> HeadlessRunProductRemainingGapSelection {
+        let mut gap = HeadlessRunProductRemainingGapSelection {
+            gap_id: gap_id.to_string(),
+            capability: capability.to_string(),
+            transition: format!("{capability}_transition"),
+            status: "open".to_string(),
+            required: true,
+            priority,
+            next_action: "plan_next_phase".to_string(),
+            selection_fingerprint: String::new(),
+        };
+        gap.selection_fingerprint = headless_product_remaining_gap_selection_fingerprint(&gap);
+        gap
+    }
+
+    fn selected_gap_closure_for_test(
+        closure_id: &str,
+        gap: HeadlessRunProductRemainingGapSelection,
+    ) -> HeadlessRunSelectedProductGapClosureEvidence {
+        HeadlessRunSelectedProductGapClosureEvidence {
+            closure_id: closure_id.to_string(),
+            task_id: format!("{closure_id}-task"),
+            run_id: format!("{closure_id}-run"),
+            acceptance_id: format!("{closure_id}-acceptance"),
+            source_decision_id: "m63-source-decision".to_string(),
+            source_decision_fingerprint: format!("sha256:{}", "1".repeat(64)),
+            product_evidence_fingerprint: format!("sha256:{}", "2".repeat(64)),
+            product_objective_fingerprint: format!("sha256:{}", "3".repeat(64)),
+            selected_remaining_gap: gap,
+            accepted_completion_fingerprint: format!("sha256:{}", "4".repeat(64)),
+            terminal_completion_fingerprint: format!("sha256:{}", "5".repeat(64)),
+            completion_closure_fingerprint: format!("sha256:{}", "6".repeat(64)),
+            closure_evidence_fingerprint: format!("sha256:{}", hex_sha256(closure_id.as_bytes())),
+            status: "closed".to_string(),
+            next_action: "derive_product_evidence_matrix_with_closed_gap".to_string(),
+            replayed: false,
+        }
+    }
+
+    #[test]
+    fn project_completion_policy_commits_all_closed_required_gap_evidence() {
+        let first_gap = product_gap_for_test("m63-gap-a", "m63_gap_a", 10);
+        let second_gap = product_gap_for_test("m63-gap-b", "m63_gap_b", 20);
+        let first_closure = selected_gap_closure_for_test("m63-closure-a", first_gap.clone());
+        let second_closure = selected_gap_closure_for_test("m63-closure-b", second_gap.clone());
+        let mut closures = BTreeMap::new();
+        closures.insert(
+            second_gap.selection_fingerprint.clone(),
+            second_closure.clone(),
+        );
+        closures.insert(
+            first_gap.selection_fingerprint.clone(),
+            first_closure.clone(),
+        );
+        let policy_gaps = json!([
+            {
+                "gap_id": first_gap.gap_id,
+                "capability": first_gap.capability,
+                "transition": first_gap.transition,
+                "status": first_gap.status,
+                "required": first_gap.required,
+                "priority": first_gap.priority,
+                "next_action": first_gap.next_action,
+            },
+            {
+                "gap_id": second_gap.gap_id,
+                "capability": second_gap.capability,
+                "transition": second_gap.transition,
+                "status": second_gap.status,
+                "required": second_gap.required,
+                "priority": second_gap.priority,
+                "next_action": second_gap.next_action,
+            }
+        ]);
+
+        let (
+            selected_remaining_gap,
+            selected_gap_closure_evidence,
+            selected_gap_closure_evidence_set,
+            selected_gap_closure_set_fingerprint,
+            product_completion_claim,
+        ) = project_completion_policy_remaining_gap_selection(Some(&policy_gaps), false, &closures)
+            .expect("closed required gaps are consumed");
+
+        assert!(selected_remaining_gap.is_none());
+        assert_eq!(selected_gap_closure_evidence_set.len(), 2);
+        assert_eq!(
+            selected_gap_closure_evidence
+                .as_ref()
+                .expect("compat selected closure")
+                .closure_evidence_fingerprint,
+            selected_gap_closure_evidence_set[0].closure_evidence_fingerprint
+        );
+        assert!(selected_gap_closure_set_fingerprint
+            .as_deref()
+            .expect("closure set fingerprint")
+            .starts_with("sha256:"));
+        assert!(product_completion_claim);
+
+        let mut partial_closures = BTreeMap::new();
+        partial_closures.insert(first_gap.selection_fingerprint.clone(), first_closure);
+        let (
+            selected_remaining_gap,
+            _selected_gap_closure_evidence,
+            selected_gap_closure_evidence_set,
+            selected_gap_closure_set_fingerprint,
+            product_completion_claim,
+        ) = project_completion_policy_remaining_gap_selection(
+            Some(&policy_gaps),
+            false,
+            &partial_closures,
+        )
+        .expect("remaining open gap is still selected");
+
+        assert_eq!(
+            selected_remaining_gap.expect("second gap selected").gap_id,
+            "m63-gap-b"
+        );
+        assert_eq!(selected_gap_closure_evidence_set.len(), 1);
+        assert!(selected_gap_closure_set_fingerprint.is_some());
+        assert!(!product_completion_claim);
     }
 
     #[test]
@@ -86637,6 +86834,21 @@ mod tests {
             closure_matrix["selected_gap_closure_evidence"]["closure_evidence_fingerprint"],
             selected_gap_closure["closure_evidence_fingerprint"]
         );
+        assert_eq!(
+            closure_matrix["selected_gap_closure_evidence_set"]
+                .as_array()
+                .expect("closure evidence set")
+                .len(),
+            1
+        );
+        assert_eq!(
+            closure_matrix["selected_gap_closure_evidence_set"][0]["closure_evidence_fingerprint"],
+            selected_gap_closure["closure_evidence_fingerprint"]
+        );
+        assert!(closure_matrix["selected_gap_closure_set_fingerprint"]
+            .as_str()
+            .expect("closure set fingerprint")
+            .starts_with("sha256:"));
         let closure_matrix_fingerprint = closure_matrix["product_evidence_matrix_fingerprint"]
             .as_str()
             .expect("closure matrix fingerprint")
