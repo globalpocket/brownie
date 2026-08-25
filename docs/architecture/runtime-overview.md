@@ -819,6 +819,17 @@ Product Charter, manifest, spec, ledger, prompt, provider, file, command,
 output, environment, absolute path, canonical path, and secret data remain
 excluded.
 
+M63.1 adds the selected Product DoD gap closure feedback edge to that same
+drive path. `headless.run.drive` may accept one explicitly authorized
+`selected_product_gap_closure` request on an accepted selected-gap-derived
+objective completion boundary. The runtime checks source decision, product
+evidence, selected-gap, product-objective, accepted-completion,
+terminal-completion, and completion-closure fingerprints before appending one
+bounded `HeadlessRunSelectedProductGapClosureRecorded` event. Later product
+evidence matrix derivation consumes matching closure evidence so the exact
+selected gap is not selected again as open work, while other open required gaps
+continue to block `product_complete`.
+
 M53.1 turns the `continue_development` product decision into a runtime-owned
 next-task admission boundary. Existing `task.start` accepts a bounded
 `product_continuation_source` envelope with explicit authorization and expected

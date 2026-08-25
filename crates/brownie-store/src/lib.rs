@@ -4684,6 +4684,7 @@ pub enum LedgerEventKind {
     HeadlessRunSessionAdvanced,
     HeadlessRunSessionDriveCompleted,
     HeadlessRunProductEvidenceMatrixDerived,
+    HeadlessRunSelectedProductGapClosureRecorded,
     HeadlessRunProductCompletionDecisionRecorded,
     HeadlessJourneyStarted,
     HeadlessJourneyRouteResumed,
