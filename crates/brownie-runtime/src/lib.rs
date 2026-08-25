@@ -11273,6 +11273,10 @@ fn headless_continue_product_continuation_admission(
     };
     let decision_fingerprint = provenance.decision_fingerprint.clone();
     let product_evidence_fingerprint = provenance.product_evidence_fingerprint.clone();
+    let selected_remaining_gap_fingerprint = provenance
+        .selected_remaining_gap
+        .as_ref()
+        .map(|gap| gap.selection_fingerprint.clone());
     let admission = store
         .tasks()
         .start_product_continuation_task(ProductContinuationTaskStartParams {
@@ -11320,6 +11324,7 @@ fn headless_continue_product_continuation_admission(
                 "source_decision_id": result_admission.source_decision_id.clone(),
                 "decision_fingerprint": result_admission.decision_fingerprint.clone(),
                 "product_evidence_fingerprint": result_admission.product_evidence_fingerprint.clone(),
+                "selected_remaining_gap_fingerprint": selected_remaining_gap_fingerprint,
                 "continuation_running_enabled": false,
                 "expected_progress_fingerprint": params.expected_progress_fingerprint,
                 "expected_aggregate_sequence": params.expected_aggregate_sequence,
@@ -15787,6 +15792,17 @@ fn validate_product_objective_continuation_journey_source_shape(
             ));
         }
     }
+    if let Some(value) = source
+        .expected_selected_remaining_gap_fingerprint
+        .as_deref()
+    {
+        if !is_sha256_fingerprint(value) {
+            return Err(
+                "invalid params: product_objective_continuation_source.expected_selected_remaining_gap_fingerprint must be a sha256 fingerprint"
+                    .to_string(),
+            );
+        }
+    }
     Ok(())
 }
 
@@ -15888,6 +15904,33 @@ fn product_objective_continuation_for_journey_source(
                 "invalid params: product_objective_continuation_source.{field} is stale"
             )));
         }
+    }
+    match (
+        provenance.selected_remaining_gap.as_ref(),
+        source
+            .expected_selected_remaining_gap_fingerprint
+            .as_deref(),
+    ) {
+        (Some(gap), Some(expected)) if gap.selection_fingerprint == expected => {}
+        (Some(_), Some(_)) => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_objective_continuation_source.expected_selected_remaining_gap_fingerprint is stale"
+                    .into(),
+            ));
+        }
+        (Some(_), None) => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_objective_continuation_source.expected_selected_remaining_gap_fingerprint is required"
+                    .into(),
+            ));
+        }
+        (None, Some(_)) => {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product_objective_continuation_source.expected_selected_remaining_gap_fingerprint has no source gap"
+                    .into(),
+            ));
+        }
+        (None, None) => {}
     }
     let latest_product_source = ProductContinuationSource {
         source_task_id: provenance.source_task_id.clone(),
@@ -47951,6 +47994,22 @@ fn product_continuation_provenance_for_source(
         product_continuation_payload_string(latest_payload, "concrete_capability_transition")?;
     let remaining_capability =
         product_continuation_payload_optional_string(latest_payload, "remaining_capability")?;
+    let selected_remaining_gap =
+        product_continuation_payload_selected_remaining_gap(latest_payload)?;
+    if let Some(gap) = selected_remaining_gap.as_ref() {
+        if remaining_capability.as_deref() != Some(gap.capability.as_str()) {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation selected_remaining_gap conflicts with remaining_capability"
+                    .into(),
+            ));
+        }
+        if gap.status != "open" || !gap.required {
+            return Err(VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation selected_remaining_gap is not an open required gap"
+                    .into(),
+            ));
+        }
+    }
     let technical_debt_carry_forward =
         product_continuation_payload_technical_debt_carry_forward(latest_payload)?;
     if !is_bounded_product_completion_text(&target_capability, 96)
@@ -47975,6 +48034,7 @@ fn product_continuation_provenance_for_source(
         decision_status: status,
         decision_next_action: next_action,
         remaining_capability,
+        selected_remaining_gap,
         technical_debt_carry_forward,
     })
 }
@@ -48105,6 +48165,11 @@ fn product_objective_continuation_fingerprint_seed(
         "concrete_capability_transition": provenance.concrete_capability_transition,
         "remaining_capability": remaining_capability,
         "remaining_capability_fingerprint": remaining_capability_fingerprint,
+        "selected_remaining_gap": provenance.selected_remaining_gap,
+        "selected_remaining_gap_fingerprint": provenance
+            .selected_remaining_gap
+            .as_ref()
+            .map(|gap| gap.selection_fingerprint.as_str()),
         "technical_debt_carry_forward_fingerprint": provenance
             .technical_debt_carry_forward
             .as_ref()
@@ -48134,6 +48199,7 @@ fn product_objective_continuation_provenance_for(
         concrete_capability_transition: provenance.concrete_capability_transition.clone(),
         remaining_capability: remaining_capability.to_string(),
         remaining_capability_fingerprint,
+        selected_remaining_gap: provenance.selected_remaining_gap.clone(),
         technical_debt_carry_forward_fingerprint: provenance
             .technical_debt_carry_forward
             .as_ref()
@@ -48361,6 +48427,44 @@ fn product_continuation_payload_optional_string(
             "invalid params: product continuation decision {field} is malformed"
         ))),
     }
+}
+
+fn product_continuation_payload_selected_remaining_gap(
+    payload: &Value,
+) -> Result<Option<HeadlessRunProductRemainingGapSelection>, VerificationRecoveryAdmissionError> {
+    let Some(value) = payload.get("selected_remaining_gap") else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    let gap: HeadlessRunProductRemainingGapSelection = serde_json::from_value(value.clone())
+        .map_err(|_| {
+            VerificationRecoveryAdmissionError::InvalidParams(
+                "invalid params: product continuation decision selected_remaining_gap is malformed"
+                    .into(),
+            )
+        })?;
+    if !is_valid_headless_run_id(&gap.gap_id)
+        || !is_bounded_product_completion_text(&gap.capability, 120)
+        || !is_bounded_product_completion_text(&gap.transition, 120)
+        || !matches!(gap.status.as_str(), "open" | "deferred" | "closed")
+        || !is_bounded_product_completion_text(&gap.next_action, 120)
+        || !is_sha256_fingerprint(&gap.selection_fingerprint)
+    {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation decision selected_remaining_gap is malformed"
+                .into(),
+        ));
+    }
+    let expected = headless_product_remaining_gap_selection_fingerprint(&gap);
+    if gap.selection_fingerprint != expected {
+        return Err(VerificationRecoveryAdmissionError::InvalidParams(
+            "invalid params: product continuation decision selected_remaining_gap fingerprint is stale"
+                .into(),
+        ));
+    }
+    Ok(Some(gap))
 }
 
 fn product_continuation_payload_technical_debt_carry_forward(
@@ -85566,6 +85670,173 @@ mod tests {
             decided_result["product_completion_decision"]["selected_remaining_gap"],
             matrix["selected_remaining_gap"]
         );
+        let continuation_progress = parse_line(r#"{"jsonrpc":"2.0","id":9,"method":"task.list"}"#)
+            .result
+            .expect("continuation progress")["progress_overview"]
+            .clone();
+        let continuation_request = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "headless.continue_once",
+            "params": {
+                "authorize": true,
+                "expected_progress_fingerprint": continuation_progress["source_fingerprint"],
+                "expected_aggregate_sequence": continuation_progress["aggregate_sequence"],
+                "continuation_id": "m62.selected.gap.continuation",
+                "max_steps": 1,
+                "product_continuation_admission_target": {
+                    "authorize_product_continuation_admission": true,
+                    "continuation_goal": "Continue development for remaining capability: m52_next_runtime_evidence_authority",
+                    "continuation_mode_id": "implementer",
+                    "runtime_derived_objective": true,
+                    "product_continuation_source": {
+                        "source_task_id": decided_result["product_completion_decision"]["task_id"],
+                        "source_run_id": decided_result["product_completion_decision"]["run_id"],
+                        "source_decision_id": decided_result["product_completion_decision"]["decision_id"],
+                        "expected_decision_fingerprint": decided_result["product_completion_decision"]["decision_fingerprint"],
+                        "expected_accepted_completion_fingerprint": decided_result["product_completion_decision"]["accepted_completion_fingerprint"],
+                        "expected_terminal_completion_fingerprint": decided_result["product_completion_decision"]["terminal_completion_fingerprint"],
+                        "expected_completion_closure_fingerprint": decided_result["product_completion_decision"]["completion_closure_fingerprint"],
+                        "expected_product_evidence_fingerprint": decided_result["product_completion_decision"]["product_evidence_fingerprint"],
+                        "authorize_product_continuation": true
+                    }
+                }
+            }
+        });
+        let continuation = parse_line(&continuation_request.to_string());
+        assert!(continuation.error.is_none(), "{:?}", continuation.error);
+        let continuation_result = continuation.result.expect("continuation result");
+        let continuation_task_id = continuation_result["selected_task_id"]
+            .as_str()
+            .expect("continuation task")
+            .to_string();
+        let continuation_run_id = continuation_result["selected_run_id"]
+            .as_str()
+            .expect("continuation run")
+            .to_string();
+        let continuation_record = store
+            .tasks()
+            .get_task(&continuation_task_id)
+            .expect("read selected-gap continuation task")
+            .expect("selected-gap continuation task");
+        let product_provenance = continuation_record
+            .product_continuation_provenance
+            .as_ref()
+            .expect("product continuation provenance");
+        assert_eq!(
+            product_provenance
+                .selected_remaining_gap
+                .as_ref()
+                .expect("product selected gap provenance")
+                .selection_fingerprint,
+            matrix["selected_remaining_gap"]["selection_fingerprint"]
+                .as_str()
+                .expect("matrix selected gap fingerprint")
+        );
+        let objective_provenance = continuation_record
+            .product_objective_continuation_provenance
+            .as_ref()
+            .expect("objective continuation provenance");
+        let selected_gap = objective_provenance
+            .selected_remaining_gap
+            .as_ref()
+            .expect("selected gap provenance");
+        assert_eq!(
+            selected_gap.selection_fingerprint,
+            matrix["selected_remaining_gap"]["selection_fingerprint"]
+                .as_str()
+                .expect("matrix selected gap fingerprint")
+        );
+        assert_eq!(
+            objective_provenance.remaining_capability,
+            "m52_next_runtime_evidence_authority"
+        );
+        assert_eq!(
+            objective_provenance.remaining_capability,
+            selected_gap.capability
+        );
+        let continuation_replay = parse_line(&continuation_request.to_string());
+        assert!(continuation_replay.error.is_none());
+        assert_eq!(
+            continuation_replay.result.expect("continuation replay")["replayed"],
+            true
+        );
+        let journey_source = json!({
+            "continuation_task_id": continuation_task_id,
+            "continuation_run_id": continuation_run_id,
+            "source_task_id": objective_provenance.source_task_id.clone(),
+            "source_run_id": objective_provenance.source_run_id.clone(),
+            "source_decision_id": objective_provenance.source_decision_id.clone(),
+            "expected_decision_fingerprint": objective_provenance.decision_fingerprint.clone(),
+            "expected_accepted_completion_fingerprint": objective_provenance.accepted_completion_fingerprint.clone(),
+            "expected_terminal_completion_fingerprint": objective_provenance.terminal_completion_fingerprint.clone(),
+            "expected_completion_closure_fingerprint": objective_provenance.completion_closure_fingerprint.clone(),
+            "expected_product_evidence_fingerprint": objective_provenance.product_evidence_fingerprint.clone(),
+            "expected_remaining_capability_fingerprint": objective_provenance.remaining_capability_fingerprint.clone(),
+            "expected_selected_remaining_gap_fingerprint": selected_gap.selection_fingerprint.clone(),
+            "expected_derived_objective_fingerprint": objective_provenance.derived_objective_fingerprint.clone(),
+            "expected_derived_goal_fingerprint": objective_provenance.derived_goal_fingerprint.clone(),
+            "authorize_product_objective_journey_admission": true
+        });
+        let mut missing_journey_source = journey_source.clone();
+        missing_journey_source
+            .as_object_mut()
+            .expect("source object")
+            .remove("expected_selected_remaining_gap_fingerprint");
+        let missing_gap_source = json!({
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m62.selected.gap.journey.missing",
+                "drive_id": "m62.selected.gap.journey.missing.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "m62.selected.gap.journey.missing",
+                    "authorize_journey_start": true,
+                    "product_objective_continuation_source": missing_journey_source
+                }
+            }
+        });
+        let missing_gap = parse_line(&missing_gap_source.to_string());
+        assert!(missing_gap.result.is_none());
+        let missing_gap_error = missing_gap
+            .error
+            .expect("missing selected gap fingerprint error")
+            .message;
+        assert!(
+            missing_gap_error.contains("expected_selected_remaining_gap_fingerprint is required"),
+            "{missing_gap_error}"
+        );
+        let journey_request = json!({
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "m62.selected.gap.journey",
+                "drive_id": "m62.selected.gap.journey.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "m62.selected.gap.journey.1",
+                    "authorize_journey_start": true,
+                    "product_objective_continuation_source": journey_source
+                }
+            }
+        });
+        let journey = parse_line(&journey_request.to_string());
+        assert!(journey.error.is_none(), "{:?}", journey.error);
+        assert_eq!(
+            journey.result.expect("journey result")["journey"]
+                ["product_objective_continuation_provenance"]["selected_remaining_gap"]
+                ["selection_fingerprint"],
+            selected_gap.selection_fingerprint
+        );
         let serialized = serde_json::to_string(&decided_result).expect("serialize decision");
         for forbidden in [
             "raw_prompt",
@@ -87453,6 +87724,7 @@ mod tests {
             decision_status: "continue_development".to_string(),
             decision_next_action: "plan_next_phase".to_string(),
             remaining_capability: Some("first_remaining_capability".to_string()),
+            selected_remaining_gap: None,
             technical_debt_carry_forward: None,
         };
 
@@ -87514,6 +87786,7 @@ mod tests {
             decision_status: "continue_development".to_string(),
             decision_next_action: "plan_next_phase".to_string(),
             remaining_capability: None,
+            selected_remaining_gap: None,
             technical_debt_carry_forward: None,
         };
 

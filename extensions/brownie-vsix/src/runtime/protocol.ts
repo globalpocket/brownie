@@ -496,6 +496,7 @@ export interface ProductContinuationProvenance {
   decision_status: 'continue_development';
   decision_next_action: 'plan_next_phase';
   remaining_capability?: string | null;
+  selected_remaining_gap?: HeadlessRunProductRemainingGapSelection | null;
   technical_debt_carry_forward?: TechnicalDebtCarryForward | null;
 }
 
@@ -512,6 +513,7 @@ export interface ProductObjectiveContinuationProvenance {
   concrete_capability_transition: string;
   remaining_capability?: string;
   remaining_capability_fingerprint?: string;
+  selected_remaining_gap?: HeadlessRunProductRemainingGapSelection | null;
   technical_debt_carry_forward_fingerprint?: string | null;
   derived_objective_fingerprint: string;
   derived_goal_fingerprint: string;
@@ -1002,6 +1004,7 @@ export interface ProductObjectiveContinuationJourneySource {
   expected_completion_closure_fingerprint: string;
   expected_product_evidence_fingerprint: string;
   expected_remaining_capability_fingerprint: string;
+  expected_selected_remaining_gap_fingerprint?: string | null;
   expected_derived_objective_fingerprint: string;
   expected_derived_goal_fingerprint: string;
   authorize_product_objective_journey_admission: true;
@@ -5066,6 +5069,7 @@ const PRODUCT_CONTINUATION_PROVENANCE_KEYS = new Set([
   'decision_status',
   'decision_next_action',
   'remaining_capability',
+  'selected_remaining_gap',
   'technical_debt_carry_forward',
 ]);
 
@@ -5537,6 +5541,9 @@ export function isProductContinuationProvenance(value: unknown): value is Produc
     (value.remaining_capability === undefined ||
       value.remaining_capability === null ||
       isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
+    (value.selected_remaining_gap === undefined ||
+      value.selected_remaining_gap === null ||
+      isHeadlessRunProductRemainingGapSelection(value.selected_remaining_gap)) &&
     (value.technical_debt_carry_forward === undefined ||
       value.technical_debt_carry_forward === null ||
       isTechnicalDebtCarryForward(value.technical_debt_carry_forward))
@@ -7111,6 +7118,7 @@ function isProductObjectiveContinuationJourneySource(value: unknown): value is P
       'expected_completion_closure_fingerprint',
       'expected_product_evidence_fingerprint',
       'expected_remaining_capability_fingerprint',
+      'expected_selected_remaining_gap_fingerprint',
       'expected_derived_objective_fingerprint',
       'expected_derived_goal_fingerprint',
       'authorize_product_objective_journey_admission',
@@ -7132,6 +7140,10 @@ function isProductObjectiveContinuationJourneySource(value: unknown): value is P
     isSha256Fingerprint(value.expected_product_evidence_fingerprint) &&
     typeof value.expected_remaining_capability_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_remaining_capability_fingerprint) &&
+    (value.expected_selected_remaining_gap_fingerprint === undefined ||
+      value.expected_selected_remaining_gap_fingerprint === null ||
+      (typeof value.expected_selected_remaining_gap_fingerprint === 'string' &&
+        isSha256Fingerprint(value.expected_selected_remaining_gap_fingerprint))) &&
     typeof value.expected_derived_objective_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_derived_objective_fingerprint) &&
     typeof value.expected_derived_goal_fingerprint === 'string' &&
@@ -7156,6 +7168,7 @@ function isProductObjectiveContinuationProvenance(value: unknown): value is Prod
       'concrete_capability_transition',
       'remaining_capability',
       'remaining_capability_fingerprint',
+      'selected_remaining_gap',
       'technical_debt_carry_forward_fingerprint',
       'derived_objective_fingerprint',
       'derived_goal_fingerprint',
@@ -7182,6 +7195,7 @@ function isProductObjectiveContinuationProvenance(value: unknown): value is Prod
     value.concrete_capability_transition.length <= 120 &&
     (value.remaining_capability === undefined || isBoundedAsciiMetadata(value.remaining_capability, 120)) &&
     (value.remaining_capability_fingerprint === undefined || (typeof value.remaining_capability_fingerprint === 'string' && isSha256Fingerprint(value.remaining_capability_fingerprint))) &&
+    (value.selected_remaining_gap === undefined || value.selected_remaining_gap === null || isHeadlessRunProductRemainingGapSelection(value.selected_remaining_gap)) &&
     (value.technical_debt_carry_forward_fingerprint === undefined || value.technical_debt_carry_forward_fingerprint === null || (typeof value.technical_debt_carry_forward_fingerprint === 'string' && isSha256Fingerprint(value.technical_debt_carry_forward_fingerprint))) &&
     typeof value.derived_objective_fingerprint === 'string' &&
     isSha256Fingerprint(value.derived_objective_fingerprint) &&

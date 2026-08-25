@@ -4681,6 +4681,16 @@ describe('RuntimeClient', () => {
     const terminalFingerprint = `sha256:${'3'.repeat(64)}`;
     const closureFingerprint = `sha256:${'4'.repeat(64)}`;
     const productEvidenceFingerprint = `sha256:${'5'.repeat(64)}`;
+    const selectedGap = {
+      gap_id: 'm62-selected-gap',
+      capability: 'bind_selected_gap_provenance',
+      transition: 'runtime_selected_product_gap_continuation_provenance_binding',
+      status: 'open',
+      required: true,
+      priority: 10,
+      next_action: 'admit_selected_gap_continuation',
+      selection_fingerprint: `sha256:${'6'.repeat(64)}`,
+    };
     const productContinuationSource = {
       source_task_id: 'task_source',
       source_run_id: 'run_source',
@@ -4754,6 +4764,7 @@ describe('RuntimeClient', () => {
       decision_status: 'continue_development',
       decision_next_action: 'plan_next_phase',
       remaining_capability: 'plan_next_phase',
+      selected_remaining_gap: selectedGap,
       technical_debt_carry_forward: {
         fingerprint: `sha256:${'7'.repeat(64)}`,
         items: [{
@@ -4768,6 +4779,25 @@ describe('RuntimeClient', () => {
         }],
       },
     })).toBe(true);
+    expect(isProductContinuationProvenance({
+      source_task_id: 'task_source',
+      source_run_id: 'run_source',
+      source_decision_id: 'product_decision_1',
+      decision_fingerprint: decisionFingerprint,
+      accepted_completion_fingerprint: acceptedFingerprint,
+      terminal_completion_fingerprint: terminalFingerprint,
+      completion_closure_fingerprint: closureFingerprint,
+      product_evidence_fingerprint: productEvidenceFingerprint,
+      target_capability: 'headless_autonomous_development',
+      concrete_capability_transition: 'product_continuation_admission_request_identity_binding',
+      decision_status: 'continue_development',
+      decision_next_action: 'plan_next_phase',
+      remaining_capability: 'plan_next_phase',
+      selected_remaining_gap: {
+        ...selectedGap,
+        selection_fingerprint: 'not-a-fingerprint',
+      },
+    })).toBe(false);
     expect(isProductContinuationProvenance({
       source_task_id: 'task_source',
       source_run_id: 'run_source',

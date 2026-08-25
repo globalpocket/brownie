@@ -1106,3 +1106,17 @@ report/readiness/inspection surface, provider/tool execution, shell, git,
 network, service, or workspace mutation is added, and raw policy, artifact,
 prompt, provider, stdout/stderr, command, environment, path, and secret content
 remain excluded.
+
+M62.2 binds that runtime-selected Product DoD gap into downstream continuation
+authority. Product continuation provenance now carries the bounded
+`selected_remaining_gap` from the latest `continue_development` product
+decision when present, and runtime-derived objective provenance includes that
+same selected gap plus its SHA-256 selection fingerprint in the derived
+objective identity. Journey admission through
+`product_objective_continuation_source` must provide the expected selected-gap
+fingerprint whenever the continuation task was derived from a selected gap; a
+missing, mismatched, stale, malformed, terminal, or blocked source is rejected
+before checkpoint or ledger mutation. Older product-continuation paths without a
+selected gap remain compatible. The boundary adds no RPC, report/readiness
+wrapper, provider/tool execution, shell, git, network, service, or workspace
+mutation.

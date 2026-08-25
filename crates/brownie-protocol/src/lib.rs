@@ -1495,6 +1495,8 @@ pub struct ProductObjectiveContinuationJourneySource {
     pub expected_completion_closure_fingerprint: String,
     pub expected_product_evidence_fingerprint: String,
     pub expected_remaining_capability_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_selected_remaining_gap_fingerprint: Option<String>,
     pub expected_derived_objective_fingerprint: String,
     pub expected_derived_goal_fingerprint: String,
     pub authorize_product_objective_journey_admission: bool,
@@ -5090,6 +5092,8 @@ pub struct ProductContinuationProvenance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub remaining_capability: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub technical_debt_carry_forward: Option<TechnicalDebtCarryForward>,
 }
 
@@ -5109,6 +5113,8 @@ pub struct ProductObjectiveContinuationProvenance {
     pub remaining_capability: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub remaining_capability_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub technical_debt_carry_forward_fingerprint: Option<String>,
     pub derived_objective_fingerprint: String,
