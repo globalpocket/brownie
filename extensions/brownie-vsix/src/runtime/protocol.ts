@@ -1498,6 +1498,8 @@ export interface HeadlessRunProductEvidenceMatrix {
   technical_debt_reviewed: boolean;
   selected_remaining_gap?: HeadlessRunProductRemainingGapSelection | null;
   selected_gap_closure_evidence?: HeadlessRunSelectedProductGapClosureEvidence | null;
+  selected_gap_closure_evidence_set?: HeadlessRunSelectedProductGapClosureEvidence[];
+  selected_gap_closure_set_fingerprint?: string | null;
   next_action: 'record_product_completion_decision_with_runtime_evidence';
   replayed: boolean;
 }
@@ -8489,6 +8491,8 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
       'technical_debt_reviewed',
       'selected_remaining_gap',
       'selected_gap_closure_evidence',
+      'selected_gap_closure_evidence_set',
+      'selected_gap_closure_set_fingerprint',
       'next_action',
       'replayed',
     ]) &&
@@ -8524,6 +8528,8 @@ export function isHeadlessRunProductEvidenceMatrix(value: unknown): value is Hea
     typeof value.technical_debt_reviewed === 'boolean' &&
     (value.selected_remaining_gap === undefined || value.selected_remaining_gap === null || isHeadlessRunProductRemainingGapSelection(value.selected_remaining_gap)) &&
     (value.selected_gap_closure_evidence === undefined || value.selected_gap_closure_evidence === null || isHeadlessRunSelectedProductGapClosureEvidence(value.selected_gap_closure_evidence)) &&
+    (value.selected_gap_closure_evidence_set === undefined || (Array.isArray(value.selected_gap_closure_evidence_set) && value.selected_gap_closure_evidence_set.length <= 32 && value.selected_gap_closure_evidence_set.every(isHeadlessRunSelectedProductGapClosureEvidence))) &&
+    (value.selected_gap_closure_set_fingerprint === undefined || value.selected_gap_closure_set_fingerprint === null || (typeof value.selected_gap_closure_set_fingerprint === 'string' && isSha256Fingerprint(value.selected_gap_closure_set_fingerprint))) &&
     value.next_action === 'record_product_completion_decision_with_runtime_evidence' &&
     typeof value.replayed === 'boolean'
   );

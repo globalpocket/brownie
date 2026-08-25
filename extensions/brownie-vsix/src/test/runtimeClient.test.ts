@@ -2424,6 +2424,8 @@ describe('protocol validation', () => {
       technical_debt_reviewed: true,
       selected_remaining_gap: selectedRemainingGap,
       selected_gap_closure_evidence: selectedProductGapClosureEvidence,
+      selected_gap_closure_evidence_set: [selectedProductGapClosureEvidence],
+      selected_gap_closure_set_fingerprint: `sha256:${'7'.repeat(64)}`,
       next_action: 'record_product_completion_decision_with_runtime_evidence',
       replayed: false,
     };
@@ -3095,6 +3097,8 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, selected_product_gap_closure: { ...selectedProductGapClosureEvidence, closure_evidence_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, selected_product_gap_closure: { ...selectedProductGapClosureEvidence, raw_product_evidence: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_gap_closure_evidence: { ...selectedProductGapClosureEvidence, next_action: 'inspect_report' } } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_gap_closure_evidence_set: [{ ...selectedProductGapClosureEvidence, next_action: 'inspect_report' }] } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_gap_closure_set_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, status: 'accepted_complete' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);

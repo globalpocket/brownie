@@ -2630,6 +2630,10 @@ pub struct HeadlessRunProductEvidenceMatrix {
     pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_gap_closure_evidence: Option<HeadlessRunSelectedProductGapClosureEvidence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub selected_gap_closure_evidence_set: Vec<HeadlessRunSelectedProductGapClosureEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_gap_closure_set_fingerprint: Option<String>,
     pub next_action: String,
     pub replayed: bool,
 }
