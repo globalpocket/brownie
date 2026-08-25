@@ -2347,6 +2347,36 @@ describe('protocol validation', () => {
       next_action: 'plan_next_phase',
       selection_fingerprint: `sha256:${'6'.repeat(64)}`,
     };
+    const selectedProductGapClosureRequest = {
+      authorize_selected_product_gap_closure: true,
+      closure_id: 'm63.selected-gap-closure',
+      source_decision_id: 'm51-product-decision',
+      expected_source_decision_fingerprint: `sha256:${'9'.repeat(64)}`,
+      expected_product_evidence_fingerprint: `sha256:${'a'.repeat(64)}`,
+      expected_selected_remaining_gap_fingerprint: selectedRemainingGap.selection_fingerprint,
+      expected_product_objective_fingerprint: `sha256:${'5'.repeat(64)}`,
+      expected_accepted_completion_fingerprint: `sha256:${'d'.repeat(64)}`,
+      expected_terminal_completion_fingerprint: terminalCompletionEvidence.completion_result_fingerprint,
+      expected_completion_closure_fingerprint: `sha256:${'b'.repeat(64)}`,
+    };
+    const selectedProductGapClosureEvidence = {
+      closure_id: selectedProductGapClosureRequest.closure_id,
+      source_decision_id: selectedProductGapClosureRequest.source_decision_id,
+      task_id: 'task_1',
+      run_id: 'run_1',
+      acceptance_id: 'm51-accepted-route',
+      source_decision_fingerprint: selectedProductGapClosureRequest.expected_source_decision_fingerprint,
+      product_evidence_fingerprint: selectedProductGapClosureRequest.expected_product_evidence_fingerprint,
+      product_objective_fingerprint: selectedProductGapClosureRequest.expected_product_objective_fingerprint,
+      selected_remaining_gap: selectedRemainingGap,
+      accepted_completion_fingerprint: selectedProductGapClosureRequest.expected_accepted_completion_fingerprint,
+      terminal_completion_fingerprint: selectedProductGapClosureRequest.expected_terminal_completion_fingerprint,
+      completion_closure_fingerprint: selectedProductGapClosureRequest.expected_completion_closure_fingerprint,
+      closure_evidence_fingerprint: `sha256:${'4'.repeat(64)}`,
+      status: 'closed',
+      next_action: 'derive_product_evidence_matrix_with_closed_gap',
+      replayed: false,
+    };
     const headlessRunProductEvidenceDerivation = {
       authorize_product_evidence_derivation: true,
       derivation_id: 'm52-product-evidence-matrix',
@@ -2393,6 +2423,7 @@ describe('protocol validation', () => {
       non_goals_reviewed: true,
       technical_debt_reviewed: true,
       selected_remaining_gap: selectedRemainingGap,
+      selected_gap_closure_evidence: selectedProductGapClosureEvidence,
       next_action: 'record_product_completion_decision_with_runtime_evidence',
       replayed: false,
     };
@@ -2455,6 +2486,7 @@ describe('protocol validation', () => {
         next_action: 'close_headless_run',
       },
       product_evidence_matrix: headlessRunProductEvidenceMatrix,
+      selected_product_gap_closure: selectedProductGapClosureEvidence,
       product_completion_decision: {
         decision_id: 'm51-product-decision',
         task_id: 'task_1',
@@ -2984,6 +3016,10 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: [] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, artifacts: [{ ...productEvidenceArtifacts[0], path: '../outside.md' }, ...productEvidenceArtifacts.slice(1)] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_evidence_derivation: { ...headlessRunProductEvidenceDerivation, project_completion_policy: { ...productEvidencePolicy, path: 'docs/product-completion/policy.md' } } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, selected_product_gap_closure: selectedProductGapClosureRequest })).toBe(true);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, selected_product_gap_closure: { ...selectedProductGapClosureRequest, authorize_selected_product_gap_closure: false } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, selected_product_gap_closure: { ...selectedProductGapClosureRequest, expected_selected_remaining_gap_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, selected_product_gap_closure: { ...selectedProductGapClosureRequest, raw_product_gap: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, derived_product_evidence_matrix_fingerprint: 'not-a-fingerprint' } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [{ ...technicalDebtCarryForwardItems[0], raw_file_content: 'secret' }] } })).toBe(false);
     expect(isHeadlessRunDriveParams({ ...headlessRunDriveParams, product_completion_decision: { ...headlessRunDriveParams.product_completion_decision, technical_debt_carry_forward: [technicalDebtCarryForwardItems[0], technicalDebtCarryForwardItems[0]] } })).toBe(false);
@@ -3056,6 +3092,9 @@ describe('protocol validation', () => {
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, product_completion_claim: 'false' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, artifact_hashes: headlessRunProductEvidenceMatrix.artifact_hashes.slice(0, 1) } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_remaining_gap: { ...selectedRemainingGap, selection_fingerprint: 'not-a-fingerprint' } } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, selected_product_gap_closure: { ...selectedProductGapClosureEvidence, closure_evidence_fingerprint: 'not-a-fingerprint' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, selected_product_gap_closure: { ...selectedProductGapClosureEvidence, raw_product_evidence: 'secret' } })).toBe(false);
+    expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, selected_gap_closure_evidence: { ...selectedProductGapClosureEvidence, next_action: 'inspect_report' } } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_evidence_matrix: { ...headlessRunProductEvidenceMatrix, raw_manifest_text: 'secret' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, status: 'accepted_complete' } })).toBe(false);
     expect(isHeadlessRunDriveResult({ ...headlessRunDriveResult, product_completion_decision: { ...headlessRunDriveResult.product_completion_decision, next_action: 'inspect_report' } })).toBe(false);

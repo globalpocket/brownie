@@ -1350,6 +1350,8 @@ pub struct HeadlessRunDriveParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_evidence_derivation: Option<HeadlessRunProductEvidenceDerivationRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_product_gap_closure: Option<HeadlessRunSelectedProductGapClosureRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_completion_decision: Option<HeadlessRunProductCompletionDecisionRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
@@ -1418,6 +1420,41 @@ pub struct HeadlessRunProductEvidenceDerivationRequest {
     pub project_completion_policy: HeadlessRunProductEvidenceArtifactSource,
     #[serde(default)]
     pub artifacts: Vec<HeadlessRunProductEvidenceArtifactSource>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessRunSelectedProductGapClosureRequest {
+    pub authorize_selected_product_gap_closure: bool,
+    pub closure_id: String,
+    pub source_decision_id: String,
+    pub expected_source_decision_fingerprint: String,
+    pub expected_product_evidence_fingerprint: String,
+    pub expected_selected_remaining_gap_fingerprint: String,
+    pub expected_product_objective_fingerprint: String,
+    pub expected_accepted_completion_fingerprint: String,
+    pub expected_terminal_completion_fingerprint: String,
+    pub expected_completion_closure_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunSelectedProductGapClosureEvidence {
+    pub closure_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub acceptance_id: String,
+    pub source_decision_id: String,
+    pub source_decision_fingerprint: String,
+    pub product_evidence_fingerprint: String,
+    pub product_objective_fingerprint: String,
+    pub selected_remaining_gap: HeadlessRunProductRemainingGapSelection,
+    pub accepted_completion_fingerprint: String,
+    pub terminal_completion_fingerprint: String,
+    pub completion_closure_fingerprint: String,
+    pub closure_evidence_fingerprint: String,
+    pub status: String,
+    pub next_action: String,
+    pub replayed: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -2469,6 +2506,8 @@ pub struct HeadlessRunDriveResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub product_evidence_matrix: Option<HeadlessRunProductEvidenceMatrix>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_product_gap_closure: Option<HeadlessRunSelectedProductGapClosureEvidence>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub product_completion_decision: Option<HeadlessRunProductCompletionDecision>,
     pub start_progress: HeadlessRunProgressCheckpoint,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2589,6 +2628,8 @@ pub struct HeadlessRunProductEvidenceMatrix {
     pub technical_debt_reviewed: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_gap_closure_evidence: Option<HeadlessRunSelectedProductGapClosureEvidence>,
     pub next_action: String,
     pub replayed: bool,
 }

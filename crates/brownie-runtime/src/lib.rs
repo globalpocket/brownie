@@ -43,12 +43,14 @@ use brownie_protocol::{
     HeadlessRunObjectiveProposalCandidate, HeadlessRunProductCompletionDecision,
     HeadlessRunProductCompletionDecisionRequest, HeadlessRunProductEvidenceArtifact,
     HeadlessRunProductEvidenceDerivationRequest, HeadlessRunProductEvidenceMatrix,
-    HeadlessRunProductRemainingGapSelection, HeadlessRunProgressCheckpoint, JsonRpcError,
-    JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams, LlmHealthResult,
-    LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
-    LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
-    ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
+    HeadlessRunProductRemainingGapSelection, HeadlessRunProgressCheckpoint,
+    HeadlessRunSelectedProductGapClosureEvidence, HeadlessRunSelectedProductGapClosureRequest,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
+    LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
+    LlmProviderFailureRetryProvenance, LlmProviderFailureRetryRunTarget,
+    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePackActivateParams, ModePackActivateResult, ModePackActiveSnapshotSummary,
+    ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackRegistryUpdateSelectionTarget,
@@ -14847,6 +14849,9 @@ fn handle_headless_run_advance(id: Value, params: Option<Value>) -> JsonRpcRespo
                 aggregate_sequence,
             })
         }
+        _ if continue_result.status == HeadlessContinueOnceStatus::NoEligibleTask => {
+            Some(start_progress.clone())
+        }
         _ => None,
     };
     let advance_steps = if continue_result.steps.is_empty() {
@@ -21761,6 +21766,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
                 Err(message) => return error_response(id, -32602, &message),
             }
         }
+        match headless_run_selected_product_gap_closure(
+            &store,
+            &result,
+            params.selected_product_gap_closure.as_ref(),
+        ) {
+            Ok(Some(closure)) => result.selected_product_gap_closure = Some(closure),
+            Ok(None) => {}
+            Err(message) => return error_response(id, -32602, &message),
+        }
         match headless_run_product_evidence_matrix(
             &store,
             &result,
@@ -22027,6 +22041,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_finalization: None,
             accepted_completion: None,
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress: start_progress.clone(),
             post_progress: post_progress.clone(),
@@ -22103,6 +22118,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
             completion_finalization,
             accepted_completion: None,
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress,
             post_progress,
@@ -22394,6 +22410,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_finalization: None,
         accepted_completion: accepted_completion.clone(),
         product_evidence_matrix: None,
+        selected_product_gap_closure: None,
         product_completion_decision: None,
         start_progress: start_progress.clone(),
         post_progress: post_progress.clone(),
@@ -22417,6 +22434,15 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
     };
     let mut result_for_decision = result_without_fingerprint.clone();
     result_for_decision.completion_finalization = completion_finalization.clone();
+    let selected_product_gap_closure = match headless_run_selected_product_gap_closure(
+        &store,
+        &result_for_decision,
+        params.selected_product_gap_closure.as_ref(),
+    ) {
+        Ok(closure) => closure,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    result_for_decision.selected_product_gap_closure = selected_product_gap_closure.clone();
     let product_evidence_matrix = match headless_run_product_evidence_matrix(
         &store,
         &result_for_decision,
@@ -22450,6 +22476,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         "completion_finalization": completion_finalization,
         "accepted_completion": accepted_completion,
         "product_evidence_matrix": product_evidence_matrix,
+        "selected_product_gap_closure": selected_product_gap_closure,
         "product_completion_decision": product_completion_decision,
         "objective_proposal_candidate": objective_proposal_candidate,
         "journey_route_resume": journey_route_resume_metadata,
@@ -22476,6 +22503,7 @@ fn handle_headless_run_drive(id: Value, params: Option<Value>) -> JsonRpcRespons
         completion_finalization,
         accepted_completion,
         product_evidence_matrix,
+        selected_product_gap_closure,
         product_completion_decision,
         start_progress,
         post_progress,
@@ -26348,6 +26376,9 @@ fn append_headless_run_session_drive_completed_events(
     if let Some(matrix) = result.product_evidence_matrix.as_ref() {
         append_headless_product_evidence_matrix_event_if_missing(store, matrix)?;
     }
+    if let Some(closure) = result.selected_product_gap_closure.as_ref() {
+        append_headless_selected_product_gap_closure_event_if_missing(store, closure)?;
+    }
     if let Some(decision) = result.product_completion_decision.as_ref() {
         append_headless_product_completion_decision_event_if_missing(store, decision)?;
     }
@@ -26408,6 +26439,418 @@ fn append_headless_product_evidence_matrix_event_if_missing(
         Some(headless_product_evidence_matrix_payload(matrix)),
     )?;
     Ok(())
+}
+
+fn append_headless_selected_product_gap_closure_event_if_missing(
+    store: &BrownieStore,
+    closure: &HeadlessRunSelectedProductGapClosureEvidence,
+) -> anyhow::Result<()> {
+    let Some(record) = store.tasks().get_task(&closure.task_id)? else {
+        return Ok(());
+    };
+    if record.run_id != closure.run_id {
+        return Ok(());
+    }
+    match headless_selected_product_gap_closure_event_status(store, closure)? {
+        HeadlessSelectedProductGapClosureEventStatus::ExactReplay => return Ok(()),
+        HeadlessSelectedProductGapClosureEventStatus::ConflictingBoundaryClosure => {
+            anyhow::bail!("selected product gap closure conflicts with persisted closure boundary");
+        }
+        HeadlessSelectedProductGapClosureEventStatus::Missing => {}
+    }
+    store.tasks().append_task_event_with_payload(
+        &record,
+        LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded,
+        Some(headless_selected_product_gap_closure_payload(closure)),
+    )?;
+    Ok(())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HeadlessSelectedProductGapClosureEventStatus {
+    Missing,
+    ExactReplay,
+    ConflictingBoundaryClosure,
+}
+
+fn headless_selected_product_gap_closure_event_status(
+    store: &BrownieStore,
+    closure: &HeadlessRunSelectedProductGapClosureEvidence,
+) -> anyhow::Result<HeadlessSelectedProductGapClosureEventStatus> {
+    let events = store.tasks().read_ledger_events(&closure.run_id)?;
+    let mut has_conflict = false;
+    for event in events {
+        if event.kind != LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded {
+            continue;
+        }
+        let Some(payload) = event.payload.as_ref() else {
+            continue;
+        };
+        let same_boundary = payload.get("closure_id").and_then(Value::as_str)
+            == Some(closure.closure_id.as_str())
+            || (payload
+                .get("selected_remaining_gap")
+                .and_then(|gap| gap.get("selection_fingerprint"))
+                .and_then(Value::as_str)
+                == Some(
+                    closure
+                        .selected_remaining_gap
+                        .selection_fingerprint
+                        .as_str(),
+                )
+                && payload
+                    .get("accepted_completion_fingerprint")
+                    .and_then(Value::as_str)
+                    == Some(closure.accepted_completion_fingerprint.as_str())
+                && payload
+                    .get("completion_closure_fingerprint")
+                    .and_then(Value::as_str)
+                    == Some(closure.completion_closure_fingerprint.as_str()));
+        if !same_boundary {
+            continue;
+        }
+        if payload
+            .get("closure_evidence_fingerprint")
+            .and_then(Value::as_str)
+            == Some(closure.closure_evidence_fingerprint.as_str())
+        {
+            return Ok(HeadlessSelectedProductGapClosureEventStatus::ExactReplay);
+        }
+        has_conflict = true;
+    }
+    if has_conflict {
+        Ok(HeadlessSelectedProductGapClosureEventStatus::ConflictingBoundaryClosure)
+    } else {
+        Ok(HeadlessSelectedProductGapClosureEventStatus::Missing)
+    }
+}
+
+fn headless_run_selected_product_gap_closure(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+    request: Option<&HeadlessRunSelectedProductGapClosureRequest>,
+) -> Result<Option<HeadlessRunSelectedProductGapClosureEvidence>, String> {
+    if let Some(existing) = result.selected_product_gap_closure.as_ref() {
+        if let Some(request) = request {
+            validate_selected_product_gap_closure_request(request)?;
+            if existing.closure_id != request.closure_id
+                || existing.source_decision_id != request.source_decision_id
+                || existing.source_decision_fingerprint
+                    != request.expected_source_decision_fingerprint
+                || existing.product_evidence_fingerprint
+                    != request.expected_product_evidence_fingerprint
+                || existing.selected_remaining_gap.selection_fingerprint
+                    != request.expected_selected_remaining_gap_fingerprint
+                || existing.product_objective_fingerprint
+                    != request.expected_product_objective_fingerprint
+                || existing.accepted_completion_fingerprint
+                    != request.expected_accepted_completion_fingerprint
+                || existing.terminal_completion_fingerprint
+                    != request.expected_terminal_completion_fingerprint
+                || existing.completion_closure_fingerprint
+                    != request.expected_completion_closure_fingerprint
+            {
+                return Err(
+                    "invalid params: selected product gap closure replay target conflicts with persisted closure"
+                        .to_string(),
+                );
+            }
+        }
+        return Ok(Some(HeadlessRunSelectedProductGapClosureEvidence {
+            replayed: true,
+            ..existing.clone()
+        }));
+    }
+    let Some(request) = request else {
+        return Ok(None);
+    };
+    validate_selected_product_gap_closure_request(request)?;
+    let accepted = result.accepted_completion.as_ref().ok_or_else(|| {
+        "invalid params: selected product gap closure requires accepted_completion evidence"
+            .to_string()
+    })?;
+    let terminal = result
+        .terminal_completion_evidence
+        .as_ref()
+        .ok_or_else(|| {
+            "invalid params: selected product gap closure requires terminal completion evidence"
+                .to_string()
+        })?;
+    if accepted.acceptance_fingerprint != request.expected_accepted_completion_fingerprint {
+        return Err(
+            "invalid params: selected product gap closure accepted-completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if accepted.terminal_completion_fingerprint != request.expected_terminal_completion_fingerprint
+        || terminal.completion_result_fingerprint
+            != request.expected_terminal_completion_fingerprint
+    {
+        return Err(
+            "invalid params: selected product gap closure terminal completion fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if result.completion_closure.closure_fingerprint
+        != request.expected_completion_closure_fingerprint
+    {
+        return Err(
+            "invalid params: selected product gap closure completion-closure fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    let record = store
+        .tasks()
+        .get_task(&accepted.task_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            "invalid params: selected product gap closure task is missing".to_string()
+        })?;
+    if record.run_id != accepted.run_id {
+        return Err(
+            "invalid params: selected product gap closure run identity mismatch".to_string(),
+        );
+    }
+    let provenance = record.product_objective_continuation_provenance.ok_or_else(|| {
+        "invalid params: selected product gap closure requires product objective continuation provenance"
+            .to_string()
+    })?;
+    if provenance.source_decision_id != request.source_decision_id {
+        return Err(
+            "invalid params: selected product gap closure source decision id mismatch".to_string(),
+        );
+    }
+    if provenance.decision_fingerprint != request.expected_source_decision_fingerprint {
+        return Err(
+            "invalid params: selected product gap closure source decision fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if provenance.product_evidence_fingerprint != request.expected_product_evidence_fingerprint {
+        return Err(
+            "invalid params: selected product gap closure product evidence fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if provenance.derived_objective_fingerprint != request.expected_product_objective_fingerprint {
+        return Err(
+            "invalid params: selected product gap closure product objective fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    let selected_remaining_gap = provenance.selected_remaining_gap.ok_or_else(|| {
+        "invalid params: selected product gap closure source has no selected remaining gap"
+            .to_string()
+    })?;
+    if selected_remaining_gap.selection_fingerprint
+        != request.expected_selected_remaining_gap_fingerprint
+    {
+        return Err(
+            "invalid params: selected product gap closure selected gap fingerprint mismatch"
+                .to_string(),
+        );
+    }
+    if selected_remaining_gap.status != "open" || !selected_remaining_gap.required {
+        return Err(
+            "invalid params: selected product gap closure source gap is not open and required"
+                .to_string(),
+        );
+    }
+    let closure_evidence_fingerprint = headless_selected_product_gap_closure_fingerprint(
+        request,
+        accepted,
+        terminal,
+        &result.completion_closure,
+        &selected_remaining_gap,
+    );
+    let mut closure = HeadlessRunSelectedProductGapClosureEvidence {
+        closure_id: request.closure_id.clone(),
+        task_id: accepted.task_id.clone(),
+        run_id: accepted.run_id.clone(),
+        acceptance_id: accepted.acceptance_id.clone(),
+        source_decision_id: request.source_decision_id.clone(),
+        source_decision_fingerprint: provenance.decision_fingerprint,
+        product_evidence_fingerprint: provenance.product_evidence_fingerprint,
+        product_objective_fingerprint: provenance.derived_objective_fingerprint,
+        selected_remaining_gap,
+        accepted_completion_fingerprint: accepted.acceptance_fingerprint.clone(),
+        terminal_completion_fingerprint: terminal.completion_result_fingerprint.clone(),
+        completion_closure_fingerprint: result.completion_closure.closure_fingerprint.clone(),
+        closure_evidence_fingerprint,
+        status: "closed".to_string(),
+        next_action: "derive_product_evidence_matrix_with_closed_gap".to_string(),
+        replayed: false,
+    };
+    closure.replayed = match headless_selected_product_gap_closure_event_status(store, &closure)
+        .map_err(|error| error.to_string())?
+    {
+        HeadlessSelectedProductGapClosureEventStatus::ExactReplay => true,
+        HeadlessSelectedProductGapClosureEventStatus::ConflictingBoundaryClosure => {
+            return Err(
+                "invalid params: selected product gap closure conflicts with persisted closure boundary"
+                    .to_string(),
+            );
+        }
+        HeadlessSelectedProductGapClosureEventStatus::Missing => false,
+    };
+    append_headless_selected_product_gap_closure_event_if_missing(store, &closure)
+        .map_err(|error| error.to_string())?;
+    Ok(Some(closure))
+}
+
+fn validate_selected_product_gap_closure_request(
+    request: &HeadlessRunSelectedProductGapClosureRequest,
+) -> Result<(), String> {
+    if !request.authorize_selected_product_gap_closure {
+        return Err(
+            "invalid params: selected product gap closure requires explicit authorization"
+                .to_string(),
+        );
+    }
+    if !is_valid_headless_run_id(&request.closure_id)
+        || !is_valid_headless_run_id(&request.source_decision_id)
+    {
+        return Err(
+            "invalid params: selected product gap closure ids must be bounded identifiers"
+                .to_string(),
+        );
+    }
+    for (field, value) in [
+        (
+            "expected_source_decision_fingerprint",
+            &request.expected_source_decision_fingerprint,
+        ),
+        (
+            "expected_product_evidence_fingerprint",
+            &request.expected_product_evidence_fingerprint,
+        ),
+        (
+            "expected_selected_remaining_gap_fingerprint",
+            &request.expected_selected_remaining_gap_fingerprint,
+        ),
+        (
+            "expected_product_objective_fingerprint",
+            &request.expected_product_objective_fingerprint,
+        ),
+        (
+            "expected_accepted_completion_fingerprint",
+            &request.expected_accepted_completion_fingerprint,
+        ),
+        (
+            "expected_terminal_completion_fingerprint",
+            &request.expected_terminal_completion_fingerprint,
+        ),
+        (
+            "expected_completion_closure_fingerprint",
+            &request.expected_completion_closure_fingerprint,
+        ),
+    ] {
+        if !is_sha256_fingerprint(value) {
+            return Err(format!(
+                "invalid params: selected product gap closure {field} must be sha256"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn headless_selected_product_gap_closure_payload(
+    closure: &HeadlessRunSelectedProductGapClosureEvidence,
+) -> Value {
+    json!({
+        "closure_id": closure.closure_id,
+        "task_id": closure.task_id,
+        "run_id": closure.run_id,
+        "acceptance_id": closure.acceptance_id,
+        "source_decision_id": closure.source_decision_id,
+        "source_decision_fingerprint": closure.source_decision_fingerprint,
+        "product_evidence_fingerprint": closure.product_evidence_fingerprint,
+        "product_objective_fingerprint": closure.product_objective_fingerprint,
+        "selected_remaining_gap": closure.selected_remaining_gap,
+        "accepted_completion_fingerprint": closure.accepted_completion_fingerprint,
+        "terminal_completion_fingerprint": closure.terminal_completion_fingerprint,
+        "completion_closure_fingerprint": closure.completion_closure_fingerprint,
+        "closure_evidence_fingerprint": closure.closure_evidence_fingerprint,
+        "status": closure.status,
+        "next_action": closure.next_action,
+        "replayed": false,
+    })
+}
+
+fn headless_selected_product_gap_closure_fingerprint(
+    request: &HeadlessRunSelectedProductGapClosureRequest,
+    accepted: &HeadlessRunAcceptedCompletion,
+    terminal: &brownie_protocol::TaskRunCompletionEvidence,
+    closure: &HeadlessRunCompletionClosure,
+    selected_remaining_gap: &HeadlessRunProductRemainingGapSelection,
+) -> String {
+    let canonical = json!({
+        "version": "headless_selected_product_gap_closure_v1",
+        "closure_id": request.closure_id,
+        "task_id": accepted.task_id,
+        "run_id": accepted.run_id,
+        "acceptance_id": accepted.acceptance_id,
+        "source_decision_id": request.source_decision_id,
+        "source_decision_fingerprint": request.expected_source_decision_fingerprint,
+        "product_evidence_fingerprint": request.expected_product_evidence_fingerprint,
+        "product_objective_fingerprint": request.expected_product_objective_fingerprint,
+        "selected_remaining_gap": selected_remaining_gap,
+        "accepted_completion_fingerprint": accepted.acceptance_fingerprint,
+        "terminal_completion_fingerprint": terminal.completion_result_fingerprint,
+        "completion_closure_fingerprint": closure.closure_fingerprint,
+        "status": "closed",
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn selected_product_gap_closure_evidence_by_gap(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+) -> Result<BTreeMap<String, HeadlessRunSelectedProductGapClosureEvidence>, String> {
+    let mut closures = BTreeMap::new();
+    if let Some(closure) = result.selected_product_gap_closure.as_ref() {
+        closures.insert(
+            closure.selected_remaining_gap.selection_fingerprint.clone(),
+            closure.clone(),
+        );
+    }
+    let tasks = store
+        .tasks()
+        .list_tasks()
+        .map_err(|error| error.to_string())?;
+    for task in tasks {
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .map_err(|error| error.to_string())?;
+        for event in events {
+            if event.kind != LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded {
+                continue;
+            }
+            let Some(payload) = event.payload else {
+                continue;
+            };
+            let closure: HeadlessRunSelectedProductGapClosureEvidence =
+                serde_json::from_value(payload).map_err(|_| {
+                    "invalid params: selected product gap closure event payload is malformed"
+                        .to_string()
+                })?;
+            if closure.status != "closed"
+                || !is_sha256_fingerprint(&closure.closure_evidence_fingerprint)
+                || !is_sha256_fingerprint(&closure.selected_remaining_gap.selection_fingerprint)
+            {
+                return Err(
+                    "invalid params: selected product gap closure event payload is malformed"
+                        .to_string(),
+                );
+            }
+            closures.insert(
+                closure.selected_remaining_gap.selection_fingerprint.clone(),
+                closure,
+            );
+        }
+    }
+    Ok(closures)
 }
 
 fn headless_run_product_evidence_matrix(
@@ -26478,7 +26921,8 @@ fn headless_run_product_evidence_matrix(
     let (policy_text, artifacts) = read_product_evidence_artifacts(store, request)?;
     let policy_json: Value = serde_json::from_str(&policy_text)
         .map_err(|_| "invalid params: project completion policy must be JSON".to_string())?;
-    let policy = parse_project_completion_policy(&policy_json, request)?;
+    let selected_gap_closures = selected_product_gap_closure_evidence_by_gap(store, result)?;
+    let policy = parse_project_completion_policy(&policy_json, request, &selected_gap_closures)?;
     validate_project_completion_policy_artifacts(&policy.evidence_artifact_paths, request)?;
     let matrix_fingerprint = headless_product_evidence_matrix_fingerprint(
         request,
@@ -26495,6 +26939,7 @@ fn headless_run_product_evidence_matrix(
         policy.non_goals_reviewed,
         policy.technical_debt_reviewed,
         policy.selected_remaining_gap.as_ref(),
+        policy.selected_gap_closure_evidence.as_ref(),
         &artifacts,
     );
     let replayed = headless_product_evidence_matrix_was_persisted(
@@ -26522,6 +26967,7 @@ fn headless_run_product_evidence_matrix(
             non_goals_reviewed: policy.non_goals_reviewed,
             technical_debt_reviewed: policy.technical_debt_reviewed,
             selected_remaining_gap: policy.selected_remaining_gap.clone(),
+            selected_gap_closure_evidence: policy.selected_gap_closure_evidence.clone(),
             next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
             replayed: false,
         },
@@ -26550,6 +26996,7 @@ fn headless_run_product_evidence_matrix(
         non_goals_reviewed: policy.non_goals_reviewed,
         technical_debt_reviewed: policy.technical_debt_reviewed,
         selected_remaining_gap: policy.selected_remaining_gap,
+        selected_gap_closure_evidence: policy.selected_gap_closure_evidence,
         next_action: "record_product_completion_decision_with_runtime_evidence".to_string(),
         replayed,
     };
@@ -26570,6 +27017,7 @@ struct ProjectCompletionPolicy {
     non_goals_reviewed: bool,
     technical_debt_reviewed: bool,
     selected_remaining_gap: Option<HeadlessRunProductRemainingGapSelection>,
+    selected_gap_closure_evidence: Option<HeadlessRunSelectedProductGapClosureEvidence>,
     evidence_artifact_paths: Vec<String>,
 }
 
@@ -26711,6 +27159,7 @@ fn read_product_evidence_artifact_source(
 fn parse_project_completion_policy(
     policy: &Value,
     request: &HeadlessRunProductEvidenceDerivationRequest,
+    selected_gap_closures: &BTreeMap<String, HeadlessRunSelectedProductGapClosureEvidence>,
 ) -> Result<ProjectCompletionPolicy, String> {
     if !policy.is_object() {
         return Err("invalid params: project completion policy must be a JSON object".to_string());
@@ -26744,7 +27193,7 @@ fn parse_project_completion_policy(
             "invalid params: project completion policy gate must not be disabled".to_string(),
         );
     }
-    let product_completion_claim = policy
+    let requested_product_completion_claim = policy
         .get("product_completion_claim")
         .or_else(|| gate.get("product_completion_claim"))
         .and_then(Value::as_bool)
@@ -26801,12 +27250,14 @@ fn parse_project_completion_policy(
             .get("evidence_artifacts")
             .or_else(|| gate.get("evidence_artifacts")),
     )?;
-    let selected_remaining_gap = project_completion_policy_remaining_gap_selection(
-        policy
-            .get("product_dod_remaining_gaps")
-            .or_else(|| gate.get("product_dod_remaining_gaps")),
-        product_completion_claim,
-    )?;
+    let (selected_remaining_gap, selected_gap_closure_evidence, product_completion_claim) =
+        project_completion_policy_remaining_gap_selection(
+            policy
+                .get("product_dod_remaining_gaps")
+                .or_else(|| gate.get("product_dod_remaining_gaps")),
+            requested_product_completion_claim,
+            selected_gap_closures,
+        )?;
 
     Ok(ProjectCompletionPolicy {
         target_capability,
@@ -26819,6 +27270,7 @@ fn parse_project_completion_policy(
         non_goals_reviewed,
         technical_debt_reviewed,
         selected_remaining_gap,
+        selected_gap_closure_evidence,
         evidence_artifact_paths,
     })
 }
@@ -26910,10 +27362,18 @@ fn project_completion_policy_path_array(value: Option<&Value>) -> Result<Vec<Str
 fn project_completion_policy_remaining_gap_selection(
     value: Option<&Value>,
     product_completion_claim: bool,
-) -> Result<Option<HeadlessRunProductRemainingGapSelection>, String> {
+    selected_gap_closures: &BTreeMap<String, HeadlessRunSelectedProductGapClosureEvidence>,
+) -> Result<
+    (
+        Option<HeadlessRunProductRemainingGapSelection>,
+        Option<HeadlessRunSelectedProductGapClosureEvidence>,
+        bool,
+    ),
+    String,
+> {
     let Some(value) = value else {
         if product_completion_claim {
-            return Ok(None);
+            return Ok((None, None, true));
         }
         return Err(
             "invalid params: project completion policy incomplete claim requires product_dod_remaining_gaps"
@@ -26932,6 +27392,8 @@ fn project_completion_policy_remaining_gap_selection(
     }
     let mut seen = BTreeSet::new();
     let mut selected: Option<HeadlessRunProductRemainingGapSelection> = None;
+    let mut consumed_closure: Option<HeadlessRunSelectedProductGapClosureEvidence> = None;
+    let mut saw_open_required_gap = false;
     for item in items {
         let gap = parse_project_completion_policy_remaining_gap(item)?;
         if !seen.insert(gap.gap_id.clone()) {
@@ -26941,6 +27403,17 @@ fn project_completion_policy_remaining_gap_selection(
             );
         }
         if gap.required && gap.status == "open" {
+            saw_open_required_gap = true;
+            if let Some(closure) = selected_gap_closures.get(&gap.selection_fingerprint) {
+                if closure.selected_remaining_gap != gap {
+                    return Err(
+                        "invalid params: selected product gap closure conflicts with project completion policy gap"
+                            .to_string(),
+                    );
+                }
+                consumed_closure = Some(closure.clone());
+                continue;
+            }
             match selected.as_ref() {
                 Some(current)
                     if current.priority > gap.priority
@@ -26950,12 +27423,20 @@ fn project_completion_policy_remaining_gap_selection(
         }
     }
     if selected.is_none() && !product_completion_claim {
-        return Err(
-            "invalid params: project completion policy incomplete claim requires one open required product DoD gap"
-                .to_string(),
-        );
+        if !saw_open_required_gap || consumed_closure.is_none() {
+            return Err(
+                "invalid params: project completion policy incomplete claim requires one open required product DoD gap"
+                    .to_string(),
+            );
+        }
     }
-    Ok(selected)
+    let effective_product_completion_claim =
+        product_completion_claim || (saw_open_required_gap && selected.is_none());
+    Ok((
+        selected,
+        consumed_closure,
+        effective_product_completion_claim,
+    ))
 }
 
 fn parse_project_completion_policy_remaining_gap(
@@ -27091,6 +27572,7 @@ fn headless_product_evidence_matrix_payload(matrix: &HeadlessRunProductEvidenceM
         "non_goals_reviewed": matrix.non_goals_reviewed,
         "technical_debt_reviewed": matrix.technical_debt_reviewed,
         "selected_remaining_gap": matrix.selected_remaining_gap,
+        "selected_gap_closure_evidence": matrix.selected_gap_closure_evidence,
         "next_action": matrix.next_action,
         "replayed": false,
     })
@@ -27127,6 +27609,7 @@ fn headless_product_evidence_matrix_fingerprint(
     non_goals_reviewed: bool,
     technical_debt_reviewed: bool,
     selected_remaining_gap: Option<&HeadlessRunProductRemainingGapSelection>,
+    selected_gap_closure_evidence: Option<&HeadlessRunSelectedProductGapClosureEvidence>,
     artifacts: &[HeadlessRunProductEvidenceArtifact],
 ) -> String {
     let canonical = json!({
@@ -27150,6 +27633,7 @@ fn headless_product_evidence_matrix_fingerprint(
         "non_goals_reviewed": non_goals_reviewed,
         "technical_debt_reviewed": technical_debt_reviewed,
         "selected_remaining_gap": selected_remaining_gap,
+        "selected_gap_closure_evidence": selected_gap_closure_evidence,
         "artifact_hashes": artifacts,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
@@ -61050,6 +61534,7 @@ mod tests {
             completion_finalization: None,
             accepted_completion: None,
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -61321,6 +61806,7 @@ mod tests {
             completion_finalization: None,
             accepted_completion: None,
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -61468,6 +61954,7 @@ mod tests {
             completion_finalization: None,
             accepted_completion: None,
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
@@ -85891,6 +86378,358 @@ mod tests {
             1
         );
 
+        let continuation_completion_summary = "selected Product DoD gap implementation completed";
+        let continuation_terminal_fingerprint = completion_result_fingerprint(
+            AgentLoopState::Completed,
+            continuation_completion_summary,
+            "",
+        );
+        let continuation_completion_evidence = task_run_completion_evidence(
+            AgentLoopState::Completed,
+            TaskStatus::Completed,
+            continuation_terminal_fingerprint.clone(),
+            continuation_completion_summary,
+            "",
+            false,
+        );
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &continuation_task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({ "completion_evidence": continuation_completion_evidence })),
+            )
+            .expect("complete selected-gap continuation task");
+        let continuation_accepted = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 12,
+                "method": "task.run",
+                "params": {
+                    "task_id": continuation_task_id,
+                    "completion_acceptance": {
+                        "authorize_completion_acceptance": true,
+                        "source_run_id": continuation_run_id,
+                        "acceptance_id": "m63-selected-gap-closure-accepted",
+                        "expected_completion_result_fingerprint": continuation_terminal_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            continuation_accepted.error.is_none(),
+            "{:?}",
+            continuation_accepted.error
+        );
+        let continuation_acceptance_fingerprint = continuation_accepted
+            .result
+            .expect("continuation accepted result")["completion_acceptance"]
+            ["acceptance_fingerprint"]
+            .as_str()
+            .expect("continuation acceptance fingerprint")
+            .to_string();
+        let closure_progress = parse_line(r#"{"jsonrpc":"2.0","id":13,"method":"task.list"}"#)
+            .result
+            .expect("closure progress result")["progress_overview"]
+            .clone();
+        let closure_seed = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":14,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"m63.selected.gap.closure","advance_id":"m63.selected.gap.closure.seed","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1}}}}"#,
+            closure_progress["source_fingerprint"]
+                .as_str()
+                .expect("closure progress fingerprint"),
+            closure_progress["aggregate_sequence"]
+                .as_u64()
+                .expect("closure progress sequence"),
+        ));
+        assert!(closure_seed.error.is_none(), "{:?}", closure_seed.error);
+        let closure_start_session_sequence = 1_u64;
+        let closure_route = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 15,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m63.selected.gap.closure",
+                    "drive_id": "m63.selected.gap.closure.route",
+                    "expected_start_session_sequence": closure_start_session_sequence,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1
+                }
+            })
+            .to_string(),
+        );
+        assert!(closure_route.error.is_none(), "{:?}", closure_route.error);
+        let closure_route_result = closure_route.result.expect("closure route result");
+        assert_eq!(
+            closure_route_result["accepted_completion"]["acceptance_fingerprint"],
+            continuation_acceptance_fingerprint
+        );
+        let continuation_closure_fingerprint = closure_route_result["completion_closure"]
+            ["closure_fingerprint"]
+            .as_str()
+            .expect("continuation closure fingerprint")
+            .to_string();
+        let selected_gap_closure_request = json!({
+            "authorize_selected_product_gap_closure": true,
+            "closure_id": "m63-selected-gap-closure",
+            "source_decision_id": decided_result["product_completion_decision"]["decision_id"],
+            "expected_source_decision_fingerprint": decided_result["product_completion_decision"]["decision_fingerprint"],
+            "expected_product_evidence_fingerprint": decided_result["product_completion_decision"]["product_evidence_fingerprint"],
+            "expected_selected_remaining_gap_fingerprint": selected_gap.selection_fingerprint,
+            "expected_product_objective_fingerprint": objective_provenance.derived_objective_fingerprint,
+            "expected_accepted_completion_fingerprint": continuation_acceptance_fingerprint,
+            "expected_terminal_completion_fingerprint": continuation_terminal_fingerprint,
+            "expected_completion_closure_fingerprint": continuation_closure_fingerprint,
+        });
+        let closure_response = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 16,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m63.selected.gap.closure",
+                    "drive_id": "m63.selected.gap.closure.route",
+                    "expected_start_session_sequence": closure_start_session_sequence,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "selected_product_gap_closure": selected_gap_closure_request
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            closure_response.error.is_none(),
+            "{:?}",
+            closure_response.error
+        );
+        let closure_result = closure_response.result.expect("closure result");
+        let selected_gap_closure = closure_result["selected_product_gap_closure"]
+            .as_object()
+            .expect("selected gap closure evidence");
+        assert_eq!(selected_gap_closure["status"], "closed");
+        assert_eq!(
+            selected_gap_closure["selected_remaining_gap"]["selection_fingerprint"],
+            selected_gap.selection_fingerprint
+        );
+        assert_eq!(
+            selected_gap_closure["product_objective_fingerprint"],
+            objective_provenance.derived_objective_fingerprint
+        );
+        assert_eq!(
+            selected_gap_closure["next_action"],
+            "derive_product_evidence_matrix_with_closed_gap"
+        );
+        assert!(selected_gap_closure["closure_evidence_fingerprint"]
+            .as_str()
+            .expect("closure evidence fingerprint")
+            .starts_with("sha256:"));
+        let stale_closure = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 17,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m63.selected.gap.closure",
+                    "drive_id": "m63.selected.gap.closure.route",
+                    "expected_start_session_sequence": closure_start_session_sequence,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "selected_product_gap_closure": {
+                        "authorize_selected_product_gap_closure": true,
+                        "closure_id": "m63-selected-gap-closure-stale",
+                        "source_decision_id": decided_result["product_completion_decision"]["decision_id"],
+                        "expected_source_decision_fingerprint": decided_result["product_completion_decision"]["decision_fingerprint"],
+                        "expected_product_evidence_fingerprint": decided_result["product_completion_decision"]["product_evidence_fingerprint"],
+                        "expected_selected_remaining_gap_fingerprint": format!("sha256:{}", "0".repeat(64)),
+                        "expected_product_objective_fingerprint": objective_provenance.derived_objective_fingerprint,
+                        "expected_accepted_completion_fingerprint": continuation_acceptance_fingerprint,
+                        "expected_terminal_completion_fingerprint": continuation_terminal_fingerprint,
+                        "expected_completion_closure_fingerprint": continuation_closure_fingerprint,
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(stale_closure.result.is_none());
+        let stale_closure_error = stale_closure
+            .error
+            .expect("stale selected gap closure error")
+            .message;
+        assert!(
+            stale_closure_error.contains("selected product gap closure")
+                && stale_closure_error.contains("fingerprint"),
+            "{stale_closure_error}"
+        );
+
+        let policy_path = temp.path().join("docs/product-completion/policy.json");
+        let mut closure_policy: Value =
+            serde_json::from_str(&std::fs::read_to_string(&policy_path).expect("policy read"))
+                .expect("policy json");
+        closure_policy["phase_id"] = json!("M63.1");
+        closure_policy["milestone"] = json!("M63 Runtime Product Gap Closure Evidence");
+        closure_policy["product_completion_gate"]["product_dod_remaining_gaps"] = json!([{
+            "gap_id": selected_gap.gap_id,
+            "capability": selected_gap.capability,
+            "transition": selected_gap.transition,
+            "status": selected_gap.status,
+            "required": selected_gap.required,
+            "priority": selected_gap.priority,
+            "next_action": selected_gap.next_action,
+        }]);
+        std::fs::write(
+            &policy_path,
+            serde_json::to_string_pretty(&closure_policy).expect("closure policy json"),
+        )
+        .expect("closure policy content");
+        let closure_policy_source =
+            product_evidence_artifact_source(temp.path(), "docs/product-completion/policy.json");
+        let closure_derivation = json!({
+            "authorize_product_evidence_derivation": true,
+            "derivation_id": "m63-selected-gap-closed-matrix",
+            "phase_id": "M63.1",
+            "milestone": "M63 Runtime Product Gap Closure Evidence",
+            "expected_accepted_completion_fingerprint": continuation_acceptance_fingerprint,
+            "expected_terminal_completion_fingerprint": continuation_terminal_fingerprint,
+            "expected_completion_closure_fingerprint": continuation_closure_fingerprint,
+            "project_completion_policy": closure_policy_source,
+            "artifacts": artifacts,
+        });
+        let closure_matrix_response = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 18,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m63.selected.gap.closure",
+                    "drive_id": "m63.selected.gap.closure.route",
+                    "expected_start_session_sequence": closure_start_session_sequence,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "selected_product_gap_closure": selected_gap_closure_request,
+                    "product_evidence_derivation": closure_derivation
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            closure_matrix_response.error.is_none(),
+            "{:?}",
+            closure_matrix_response.error
+        );
+        let closure_matrix_result = closure_matrix_response
+            .result
+            .expect("closure matrix result");
+        let closure_matrix = closure_matrix_result["product_evidence_matrix"]
+            .as_object()
+            .expect("closure matrix");
+        assert_eq!(closure_matrix["product_completion_claim"], true);
+        assert!(closure_matrix
+            .get("selected_remaining_gap")
+            .map(Value::is_null)
+            .unwrap_or(true));
+        assert_eq!(
+            closure_matrix["selected_gap_closure_evidence"]["closure_evidence_fingerprint"],
+            selected_gap_closure["closure_evidence_fingerprint"]
+        );
+        let closure_matrix_fingerprint = closure_matrix["product_evidence_matrix_fingerprint"]
+            .as_str()
+            .expect("closure matrix fingerprint")
+            .to_string();
+        let complete_after_closure = parse_line(
+            &json!({
+                "jsonrpc": "2.0",
+                "id": 19,
+                "method": "headless.run.drive",
+                "params": {
+                    "authorize": true,
+                    "session_id": "m63.selected.gap.closure",
+                    "drive_id": "m63.selected.gap.closure.route",
+                    "expected_start_session_sequence": closure_start_session_sequence,
+                    "max_advances": 1,
+                    "max_steps_per_advance": 1,
+                    "selected_product_gap_closure": selected_gap_closure_request,
+                    "product_evidence_derivation": closure_derivation,
+                    "product_completion_decision": {
+                        "authorize_product_completion_decision": true,
+                        "decision_id": "m63-selected-gap-complete",
+                        "expected_accepted_completion_fingerprint": closure_matrix["accepted_completion_fingerprint"],
+                        "expected_terminal_completion_fingerprint": closure_matrix["terminal_completion_fingerprint"],
+                        "expected_completion_closure_fingerprint": closure_matrix["completion_closure_fingerprint"],
+                        "expected_product_evidence_fingerprint": closure_matrix_fingerprint,
+                        "derived_product_evidence_matrix_fingerprint": closure_matrix_fingerprint,
+                        "evidence_status": "product_complete",
+                        "target_capability": "placeholder",
+                        "concrete_capability_transition": "placeholder",
+                        "validated_gate_categories": [],
+                        "behavior_evidence_count": 0,
+                        "rejected_alternatives_count": 0,
+                        "safety_boundary_reviewed": false,
+                        "non_goals_reviewed": false,
+                        "technical_debt_reviewed": false,
+                        "milestone_exit_rationale": "m63_selected_gap_closed"
+                    }
+                }
+            })
+            .to_string(),
+        );
+        assert!(
+            complete_after_closure.error.is_none(),
+            "{:?}",
+            complete_after_closure.error
+        );
+        let complete_after_closure_result = complete_after_closure
+            .result
+            .expect("complete after closure result");
+        assert_eq!(
+            complete_after_closure_result["product_completion_decision"]["status"],
+            "product_complete"
+        );
+        assert_eq!(
+            complete_after_closure_result["product_completion_decision"]["next_action"],
+            "stop_autonomous_development"
+        );
+        assert!(complete_after_closure_result["product_completion_decision"]
+            .get("selected_remaining_gap")
+            .map(Value::is_null)
+            .unwrap_or(true));
+        let closure_events = store
+            .tasks()
+            .read_ledger_events(&continuation_run_id)
+            .expect("closure run events");
+        assert_eq!(
+            closure_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessRunSelectedProductGapClosureRecorded
+                })
+                .count(),
+            1
+        );
+        assert_eq!(
+            closure_events
+                .iter()
+                .filter(
+                    |event| event.kind == LedgerEventKind::HeadlessRunProductEvidenceMatrixDerived
+                )
+                .count(),
+            1
+        );
+        assert_eq!(
+            closure_events
+                .iter()
+                .filter(|event| {
+                    event.kind == LedgerEventKind::HeadlessRunProductCompletionDecisionRecorded
+                })
+                .count(),
+            1
+        );
+
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
@@ -86709,6 +87548,7 @@ mod tests {
                 next_action: "drive_product_completion".to_string(),
             }),
             product_evidence_matrix: None,
+            selected_product_gap_closure: None,
             product_completion_decision: None,
             start_progress: HeadlessRunProgressCheckpoint {
                 progress_fingerprint: fp('b'),
@@ -88155,6 +88995,7 @@ mod tests {
                 completion_finalization: None,
                 accepted_completion: None,
                 product_evidence_matrix: None,
+                selected_product_gap_closure: None,
                 product_completion_decision: None,
                 start_progress: HeadlessRunProgressCheckpoint {
                     progress_fingerprint: progress_fingerprint.clone(),
