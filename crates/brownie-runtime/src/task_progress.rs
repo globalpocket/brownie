@@ -973,3 +973,1092 @@ pub(super) fn task_list_timestamp_sequence(timestamp: &str) -> u64 {
         .collect::<String>();
     digits.parse::<u64>().unwrap_or(0)
 }
+
+// Run/task inspection progress helpers live here to keep read-only progress projection out of lib.rs.
+pub(super) fn progress_snapshot_for_run(
+    task: Option<&TaskRecord>,
+    events: &[LedgerEvent],
+    child_tasks: &[TaskRecord],
+    parent_join_readiness_summary: Option<&RunInspectParentJoinReadinessSummary>,
+) -> ProgressSnapshot {
+    let created_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Created)
+        .count();
+    let queued_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Queued)
+        .count();
+    let running_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Running)
+        .count();
+    let completed_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Completed)
+        .count();
+    let failed_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Failed)
+        .count();
+    let cancelled_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| child.status == TaskStatus::Cancelled)
+        .count();
+    let pending_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+        .count();
+    let terminal_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let non_runnable_controlled_child_count = child_tasks
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .count();
+    let agent_loop_terminal_evidence_present = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::AgentLoopCompleted);
+    let task_terminal_event_present = events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::TaskCompleted
+                | LedgerEventKind::TaskFailed
+                | LedgerEventKind::TaskCancelled
+        )
+    });
+    let latest_task_terminal_event_kind = latest_task_terminal_event_kind(events);
+    let verification_state = progress_verification_state(events);
+    let verifier_required = progress_verifier_required(events)
+        || matches!(
+            verification_state,
+            ProgressVerificationState::Pending
+                | ProgressVerificationState::Passed
+                | ProgressVerificationState::Failed
+                | ProgressVerificationState::Unknown
+        );
+    let verifier_failed = verification_state == ProgressVerificationState::Failed;
+    let verifier_passed = verification_state == ProgressVerificationState::Passed;
+    let recovery_signal_present = task.is_some_and(|task| {
+        task.recovery_cycle_provenance.is_some()
+            || task.verification_recovery_provenance.is_some()
+            || task.verification_recovery_retry_provenance.is_some()
+            || task.llm_provider_failure_retry_provenance.is_some()
+    }) || events.iter().any(|event| {
+        event.payload.as_ref().is_some_and(|payload| {
+            payload.get("verification_recovery").is_some()
+                || payload.get("verification_recovery_retry").is_some()
+                || payload.get("verification_recovery_repair").is_some()
+                || payload.get("recovery_cycle_budget_outcome").is_some()
+        })
+    });
+    let apply_signal_present = events
+        .iter()
+        .any(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded);
+    let selected_index_context_count = events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::CodebaseIndexPromptContextMaterialized)
+        .count();
+    let selected_index_context_present = selected_index_context_count > 0;
+    let parent_join_ready = parent_join_readiness_summary.is_some_and(|summary| {
+        summary.parent_join_ready && summary.next_action == "run_parent_task_explicitly"
+    });
+    let has_running_evidence = events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::TaskRunning | LedgerEventKind::AgentLoopStarted
+        )
+    });
+
+    let task_status = task.map(|task| &task.status);
+    let (lifecycle_phase, current_stage, next_action) = match task_status {
+        Some(TaskStatus::Failed) => {
+            let action = if verification_state == ProgressVerificationState::Failed {
+                ProgressNextAction::StartVerificationRecoveryExplicitly
+            } else {
+                ProgressNextAction::InspectTerminalResult
+            };
+            (
+                ProgressLifecyclePhase::Terminal,
+                ProgressCurrentStage::Failed,
+                action,
+            )
+        }
+        Some(TaskStatus::Cancelled) => (
+            ProgressLifecyclePhase::Terminal,
+            ProgressCurrentStage::Cancelled,
+            ProgressNextAction::InspectTerminalResult,
+        ),
+        Some(TaskStatus::Completed) if non_runnable_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::InspectNonRunnableChildTasks,
+            ProgressNextAction::InspectNonRunnableChildTasks,
+        ),
+        Some(TaskStatus::Completed) if pending_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::CompletedWithPendingChildren,
+            ProgressNextAction::RunRemainingChildTasksExplicitly,
+        ),
+        Some(TaskStatus::Completed) if parent_join_ready => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::ParentJoinReady,
+            ProgressNextAction::RunParentTaskExplicitly,
+        ),
+        Some(TaskStatus::Completed) => (
+            ProgressLifecyclePhase::Terminal,
+            ProgressCurrentStage::Completed,
+            ProgressNextAction::InspectTerminalResult,
+        ),
+        Some(TaskStatus::Running) => (
+            ProgressLifecyclePhase::Running,
+            ProgressCurrentStage::RunningAgentLoop,
+            ProgressNextAction::InspectTask,
+        ),
+        Some(TaskStatus::Queued) => (
+            ProgressLifecyclePhase::Queued,
+            ProgressCurrentStage::Queued,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        Some(TaskStatus::Created) => (
+            ProgressLifecyclePhase::Created,
+            ProgressCurrentStage::Created,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        None if has_running_evidence => (
+            ProgressLifecyclePhase::Running,
+            ProgressCurrentStage::RunningAgentLoop,
+            ProgressNextAction::InspectTask,
+        ),
+        _ if non_runnable_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::InspectNonRunnableChildTasks,
+            ProgressNextAction::InspectNonRunnableChildTasks,
+        ),
+        _ if pending_controlled_child_count > 0 => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::CompletedWithPendingChildren,
+            ProgressNextAction::RunRemainingChildTasksExplicitly,
+        ),
+        _ if verification_state == ProgressVerificationState::Failed => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::Failed,
+            ProgressNextAction::StartVerificationRecoveryExplicitly,
+        ),
+        _ if recovery_signal_present => (
+            ProgressLifecyclePhase::BlockedForExplicitAction,
+            ProgressCurrentStage::Unknown,
+            ProgressNextAction::RunTaskExplicitly,
+        ),
+        None if selected_index_context_present => (
+            ProgressLifecyclePhase::Unknown,
+            ProgressCurrentStage::Unknown,
+            ProgressNextAction::InspectTask,
+        ),
+        None => (
+            ProgressLifecyclePhase::Unknown,
+            ProgressCurrentStage::Unknown,
+            ProgressNextAction::InspectTask,
+        ),
+    };
+    let source_fingerprint = progress_snapshot_source_fingerprint(&[
+        ("version", "progress_snapshot_v3".to_string()),
+        (
+            "task_status",
+            task_status
+                .map(|status| format!("{status:?}"))
+                .unwrap_or_else(|| "None".to_string()),
+        ),
+        ("lifecycle_phase", format!("{lifecycle_phase:?}")),
+        ("current_stage", format!("{current_stage:?}")),
+        ("next_action", format!("{next_action:?}")),
+        ("event_count", events.len().to_string()),
+        (
+            "agent_loop_terminal_evidence_present",
+            agent_loop_terminal_evidence_present.to_string(),
+        ),
+        (
+            "task_terminal_event_present",
+            task_terminal_event_present.to_string(),
+        ),
+        (
+            "latest_task_terminal_event_kind",
+            latest_task_terminal_event_kind
+                .as_deref()
+                .unwrap_or("none")
+                .to_string(),
+        ),
+        ("controlled_child_count", child_tasks.len().to_string()),
+        (
+            "created_controlled_child_count",
+            created_controlled_child_count.to_string(),
+        ),
+        (
+            "queued_controlled_child_count",
+            queued_controlled_child_count.to_string(),
+        ),
+        (
+            "running_controlled_child_count",
+            running_controlled_child_count.to_string(),
+        ),
+        (
+            "completed_controlled_child_count",
+            completed_controlled_child_count.to_string(),
+        ),
+        (
+            "failed_controlled_child_count",
+            failed_controlled_child_count.to_string(),
+        ),
+        (
+            "cancelled_controlled_child_count",
+            cancelled_controlled_child_count.to_string(),
+        ),
+        (
+            "pending_controlled_child_count",
+            pending_controlled_child_count.to_string(),
+        ),
+        (
+            "terminal_controlled_child_count",
+            terminal_controlled_child_count.to_string(),
+        ),
+        (
+            "non_runnable_controlled_child_count",
+            non_runnable_controlled_child_count.to_string(),
+        ),
+        ("verification_state", format!("{verification_state:?}")),
+        ("verifier_required", verifier_required.to_string()),
+        ("verifier_failed", verifier_failed.to_string()),
+        ("verifier_passed", verifier_passed.to_string()),
+        ("parent_join_ready", parent_join_ready.to_string()),
+        (
+            "recovery_signal_present",
+            recovery_signal_present.to_string(),
+        ),
+        ("apply_signal_present", apply_signal_present.to_string()),
+        (
+            "selected_index_context_present",
+            selected_index_context_present.to_string(),
+        ),
+        (
+            "selected_index_context_count",
+            selected_index_context_count.to_string(),
+        ),
+    ]);
+
+    ProgressSnapshot {
+        lifecycle_phase,
+        current_stage,
+        next_action,
+        source_fingerprint,
+        event_count: events.len(),
+        agent_loop_terminal_evidence_present,
+        task_terminal_event_present,
+        controlled_child_count: child_tasks.len(),
+        pending_controlled_child_count,
+        terminal_controlled_child_count,
+        non_runnable_controlled_child_count,
+        verification_state,
+        verifier_required,
+        verifier_failed,
+        verifier_passed,
+        recovery_signal_present,
+        apply_signal_present,
+        selected_index_context_present,
+        selected_index_context_count,
+    }
+}
+
+pub(super) fn progress_snapshot_source_fingerprint(entries: &[(&str, String)]) -> String {
+    let mut canonical = String::new();
+    for (key, value) in entries {
+        canonical.push_str(key);
+        canonical.push('\0');
+        canonical.push_str(&value.len().to_string());
+        canonical.push('\0');
+        canonical.push_str(value);
+        canonical.push('\n');
+    }
+    format!("sha256:{}", hex_sha256(canonical.as_bytes()))
+}
+
+fn latest_task_terminal_event_kind(events: &[LedgerEvent]) -> Option<String> {
+    events
+        .iter()
+        .rev()
+        .find(|event| {
+            matches!(
+                event.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            )
+        })
+        .map(|event| format!("{:?}", event.kind))
+}
+
+enum ProgressVerificationGateStatus<'a> {
+    Known(&'a str),
+    Malformed,
+}
+
+fn latest_progress_verification_gate_status(
+    events: &[LedgerEvent],
+) -> Option<ProgressVerificationGateStatus<'_>> {
+    events.iter().rev().find_map(|event| {
+        if !is_progress_verification_gate_event_kind(&event.kind) {
+            return None;
+        }
+        let payload = event.payload.as_ref()?;
+        if payload.get("verification_completion_gate_status").is_some() {
+            return Some(
+                payload
+                    .get("verification_completion_gate_status")
+                    .and_then(Value::as_str)
+                    .map(ProgressVerificationGateStatus::Known)
+                    .unwrap_or(ProgressVerificationGateStatus::Malformed),
+            );
+        }
+        if let Some(gate) = payload.get("verification_completion_gate") {
+            return Some(
+                gate.get("status")
+                    .and_then(Value::as_str)
+                    .map(ProgressVerificationGateStatus::Known)
+                    .unwrap_or(ProgressVerificationGateStatus::Malformed),
+            );
+        }
+        None
+    })
+}
+
+fn is_progress_verification_gate_event_kind(kind: &LedgerEventKind) -> bool {
+    matches!(
+        kind,
+        LedgerEventKind::TaskCompleted
+            | LedgerEventKind::TaskFailed
+            | LedgerEventKind::TaskCancelled
+    )
+}
+
+fn progress_verifier_required(events: &[LedgerEvent]) -> bool {
+    !required_verification_intents(events).is_empty()
+        || events.iter().any(|event| {
+            if !is_progress_verification_gate_event_kind(&event.kind) {
+                return false;
+            }
+            event.payload.as_ref().is_some_and(|payload| {
+                payload.get("verification_completion_gate_status").is_some()
+                    || payload.get("verification_completion_gate").is_some()
+                    || payload
+                        .get("required_verifier_count")
+                        .and_then(Value::as_u64)
+                        .is_some_and(|count| count > 0)
+            })
+        })
+}
+
+pub(super) fn progress_verification_state(events: &[LedgerEvent]) -> ProgressVerificationState {
+    match latest_progress_verification_gate_status(events) {
+        Some(ProgressVerificationGateStatus::Known(VERIFICATION_COMPLETION_GATE_STATUS_PASSED)) => {
+            ProgressVerificationState::Passed
+        }
+        Some(ProgressVerificationGateStatus::Known(VERIFICATION_COMPLETION_GATE_STATUS_FAILED)) => {
+            ProgressVerificationState::Failed
+        }
+        Some(_) => ProgressVerificationState::Unknown,
+        None if progress_verifier_required(events) => ProgressVerificationState::Pending,
+        None => ProgressVerificationState::NotRequired,
+    }
+}
+
+pub(super) fn parent_join_readiness_summary_for_parent_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<RunInspectParentJoinReadinessSummary>, String> {
+    if record.parent_run_id.is_some() || record.status != TaskStatus::Completed {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(Some(record.task_id.as_str())) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(Some(record.run_id.as_str())) else {
+        return Ok(None);
+    };
+
+    let controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if controlled_children.is_empty() {
+        return Ok(None);
+    }
+
+    let terminal_controlled_child_count = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let pending_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let pending_controlled_child_count = pending_controlled_child_task_ids.len();
+    let non_runnable_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let parent_join_ready =
+        if pending_controlled_child_count == 0 && non_runnable_controlled_child_count == 0 {
+            if terminal_controlled_child_count == 0 {
+                return Ok(None);
+            }
+            for child in &controlled_children {
+                if !child_has_terminal_parent_join_outcome(store, child)
+                    .map_err(task_run_admission_rejection_message)?
+                {
+                    return Ok(None);
+                }
+            }
+            let child_evidence = controlled_children
+                .iter()
+                .map(|child| {
+                    parent_join_child_completion_evidence(store, child)
+                        .map_err(task_run_admission_rejection_message)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (child_completion_fingerprint, _) =
+                parent_join_child_completion_fingerprint(&child_evidence);
+            !parent_join_child_completion_fingerprint_consumed(
+                store,
+                record,
+                &child_completion_fingerprint,
+            )
+            .map_err(task_run_admission_rejection_message)?
+        } else {
+            false
+        };
+    if pending_controlled_child_count == 0
+        && non_runnable_controlled_child_count == 0
+        && !parent_join_ready
+    {
+        return Ok(None);
+    }
+    let next_action = if non_runnable_controlled_child_count > 0 {
+        "inspect_non_runnable_child_tasks"
+    } else if parent_join_ready {
+        "run_parent_task_explicitly"
+    } else {
+        "run_remaining_child_tasks_explicitly"
+    };
+
+    Ok(Some(RunInspectParentJoinReadinessSummary {
+        parent_task_id,
+        parent_run_id,
+        terminal_controlled_child_count,
+        pending_controlled_child_count,
+        pending_controlled_child_task_ids,
+        non_runnable_controlled_child_count,
+        non_runnable_controlled_child_task_ids,
+        parent_join_ready,
+        parent_running_enabled: false,
+        next_action: next_action.to_string(),
+    }))
+}
+
+pub(super) fn consumed_parent_join_recovery_summary_for_parent_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<RunInspectConsumedParentJoinRecoverySummary>, String> {
+    if record.parent_run_id.is_some() || record.status != TaskStatus::Completed {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(Some(record.task_id.as_str())) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(Some(record.run_id.as_str())) else {
+        return Ok(None);
+    };
+
+    let parent_events = store
+        .tasks()
+        .read_ledger_events(&parent_run_id)
+        .map_err(|error| error.to_string())?;
+    let controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if controlled_children.is_empty() {
+        return Ok(None);
+    }
+
+    for event in parent_events.iter().rev() {
+        let Some(consumption) = consumed_parent_join_fingerprint_from_event(event) else {
+            continue;
+        };
+        if !parent_join_consumption_has_terminal_result(&parent_events, &consumption) {
+            continue;
+        }
+        if consumed_terminal_controlled_child_set_for_consumed_parent_join(
+            store,
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        )?
+        .is_none()
+        {
+            continue;
+        }
+
+        let continuation_children = continuation_controlled_children_for_consumed_parent_join(
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        );
+        let continuation_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_runnable_child_count = continuation_runnable_child_task_ids.len();
+        let continuation_non_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_non_runnable_child_count = continuation_non_runnable_child_task_ids.len();
+        let continuation_terminal_child_count = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_terminal_child_status(&child.status))
+            .count();
+        let next_action = if continuation_non_runnable_child_count > 0 {
+            "inspect_non_runnable_continuation_child_tasks"
+        } else if continuation_runnable_child_count > 0 {
+            "run_continuation_child_tasks_explicitly"
+        } else {
+            "inspect_parent_task"
+        };
+
+        return Ok(Some(RunInspectConsumedParentJoinRecoverySummary {
+            parent_task_id,
+            parent_run_id,
+            parent_join_consumed: true,
+            consumed_terminal_controlled_child_count: consumption.child_completion_child_count,
+            continuation_controlled_child_count: continuation_children.len(),
+            continuation_runnable_child_count,
+            continuation_runnable_child_task_ids,
+            continuation_non_runnable_child_count,
+            continuation_non_runnable_child_task_ids,
+            continuation_terminal_child_count,
+            parent_running_enabled: false,
+            next_action: next_action.to_string(),
+        }));
+    }
+
+    Ok(None)
+}
+
+pub(super) fn parent_join_readiness_summary_for_child_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<ChildInspectParentJoinReadinessSummary>, String> {
+    if !task_has_complete_controlled_child_provenance(record) {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(record.parent_task_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(record.parent_run_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_record) = store
+        .tasks()
+        .get_task(&parent_task_id)
+        .map_err(|error| format!("invalid params: {error}"))?
+    else {
+        return Ok(None);
+    };
+    if parent_record.run_id != parent_run_id
+        || parent_record.parent_run_id.is_some()
+        || parent_record.status != TaskStatus::Completed
+    {
+        return Ok(None);
+    }
+
+    let mut controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if !controlled_children
+        .iter()
+        .any(|child| child.task_id == record.task_id)
+    {
+        controlled_children.push(record.clone());
+        sort_controlled_child_records(&mut controlled_children);
+    }
+    if controlled_children.is_empty() {
+        return Ok(None);
+    }
+
+    let terminal_controlled_child_count = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .count();
+    let pending_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let pending_controlled_child_count = pending_controlled_child_task_ids.len();
+    let non_runnable_controlled_child_task_ids = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+        .map(|child| child.task_id.clone())
+        .collect::<Vec<_>>();
+    let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let parent_join_ready =
+        if pending_controlled_child_count == 0 && non_runnable_controlled_child_count == 0 {
+            if terminal_controlled_child_count == 0 {
+                return Ok(None);
+            }
+            for child in &controlled_children {
+                if !child_has_terminal_parent_join_outcome(store, child)
+                    .map_err(task_run_admission_rejection_message)?
+                {
+                    return Ok(None);
+                }
+            }
+            let child_evidence = controlled_children
+                .iter()
+                .map(|child| {
+                    parent_join_child_completion_evidence(store, child)
+                        .map_err(task_run_admission_rejection_message)
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            let (child_completion_fingerprint, _) =
+                parent_join_child_completion_fingerprint(&child_evidence);
+            !parent_join_child_completion_fingerprint_consumed(
+                store,
+                &parent_record,
+                &child_completion_fingerprint,
+            )
+            .map_err(task_run_admission_rejection_message)?
+        } else {
+            false
+        };
+    if pending_controlled_child_count == 0
+        && non_runnable_controlled_child_count == 0
+        && !parent_join_ready
+    {
+        return Ok(None);
+    }
+    let next_action = if non_runnable_controlled_child_count > 0 {
+        "inspect_non_runnable_child_tasks"
+    } else if parent_join_ready {
+        "run_parent_task_explicitly"
+    } else {
+        "run_remaining_child_tasks_explicitly"
+    };
+
+    Ok(Some(ChildInspectParentJoinReadinessSummary {
+        parent_task_id,
+        parent_run_id,
+        inspected_child_task_id: record.task_id.clone(),
+        inspected_child_run_id: record.run_id.clone(),
+        inspected_child_status: record.status.clone(),
+        terminal_controlled_child_count,
+        pending_controlled_child_count,
+        pending_controlled_child_task_ids,
+        non_runnable_controlled_child_count,
+        non_runnable_controlled_child_task_ids,
+        parent_join_ready,
+        parent_running_enabled: false,
+        next_action: next_action.to_string(),
+    }))
+}
+
+#[derive(Clone)]
+struct ConsumedParentJoinFingerprint {
+    admission_id: String,
+    child_completion_fingerprint: String,
+    child_completion_child_count: usize,
+    child_terminal_completed_count: usize,
+    child_terminal_failed_count: usize,
+    child_recovery_cycle_depth: usize,
+}
+
+pub(super) fn consumed_parent_join_recovery_summary_for_child_inspection(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<Option<ChildInspectConsumedParentJoinRecoverySummary>, String> {
+    if !task_has_complete_controlled_child_provenance(record) {
+        return Ok(None);
+    }
+    let Some(parent_task_id) = non_empty_record_string(record.parent_task_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_run_id) = non_empty_record_string(record.parent_run_id.as_deref()) else {
+        return Ok(None);
+    };
+    let Some(parent_record) = store
+        .tasks()
+        .get_task(&parent_task_id)
+        .map_err(|error| format!("invalid params: {error}"))?
+    else {
+        return Ok(None);
+    };
+    if parent_record.run_id != parent_run_id
+        || parent_record.parent_run_id.is_some()
+        || parent_record.status != TaskStatus::Completed
+    {
+        return Ok(None);
+    }
+
+    let parent_events = store
+        .tasks()
+        .read_ledger_events(&parent_run_id)
+        .map_err(|error| error.to_string())?;
+    let mut controlled_children = controlled_child_records_for_parent_run(
+        store,
+        Some(&parent_task_id),
+        &parent_run_id,
+        None,
+    )?;
+    if !controlled_children
+        .iter()
+        .any(|child| child.task_id == record.task_id)
+    {
+        controlled_children.push(record.clone());
+        sort_controlled_child_records(&mut controlled_children);
+    }
+
+    for event in parent_events.iter().rev() {
+        let Some(consumption) = consumed_parent_join_fingerprint_from_event(event) else {
+            continue;
+        };
+        if !parent_join_consumption_has_terminal_result(&parent_events, &consumption) {
+            continue;
+        }
+        let inspected_is_continuation_child =
+            child_recovery_provenance_matches_consumed_parent_join(record, &consumption)
+                || child_handoff_fingerprint_matches_consumed_parent_join(
+                    &parent_events,
+                    record,
+                    &consumption,
+                );
+        let inspected_is_consumed_terminal_child =
+            consumed_terminal_controlled_child_set_contains_inspected_child(
+                store,
+                &parent_events,
+                &controlled_children,
+                &consumption,
+                &record.task_id,
+            )?;
+        if !inspected_is_continuation_child && !inspected_is_consumed_terminal_child {
+            continue;
+        }
+
+        let continuation_children = continuation_controlled_children_for_consumed_parent_join(
+            &parent_events,
+            &controlled_children,
+            &consumption,
+        );
+        let continuation_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_runnable_pending_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_runnable_child_count = continuation_runnable_child_task_ids.len();
+        let continuation_non_runnable_child_task_ids = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_non_runnable_child_status(&child.status))
+            .map(|child| child.task_id.clone())
+            .collect::<Vec<_>>();
+        let continuation_non_runnable_child_count = continuation_non_runnable_child_task_ids.len();
+        let continuation_terminal_child_count = continuation_children
+            .iter()
+            .filter(|child| is_parent_join_terminal_child_status(&child.status))
+            .count();
+        let next_action = if continuation_non_runnable_child_count > 0 {
+            "inspect_non_runnable_continuation_child_tasks"
+        } else if continuation_runnable_child_count > 0 {
+            "run_continuation_child_tasks_explicitly"
+        } else {
+            "inspect_parent_task"
+        };
+
+        return Ok(Some(ChildInspectConsumedParentJoinRecoverySummary {
+            parent_task_id,
+            parent_run_id,
+            inspected_child_task_id: record.task_id.clone(),
+            inspected_child_run_id: record.run_id.clone(),
+            inspected_child_status: record.status.clone(),
+            parent_join_consumed: true,
+            consumed_terminal_controlled_child_count: consumption.child_completion_child_count,
+            continuation_controlled_child_count: continuation_children.len(),
+            continuation_runnable_child_count,
+            continuation_runnable_child_task_ids,
+            continuation_non_runnable_child_count,
+            continuation_non_runnable_child_task_ids,
+            continuation_terminal_child_count,
+            parent_running_enabled: false,
+            next_action: next_action.to_string(),
+        }));
+    }
+
+    Ok(None)
+}
+
+fn consumed_parent_join_fingerprint_from_event(
+    event: &LedgerEvent,
+) -> Option<ConsumedParentJoinFingerprint> {
+    if event.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed {
+        return None;
+    }
+    let payload = event.payload.as_ref()?;
+    let admission_id = non_empty_payload_string(payload, "admission_id")?;
+    let child_completion_fingerprint =
+        non_empty_payload_string(payload, "child_completion_fingerprint")?;
+    if !is_sha256_fingerprint(&child_completion_fingerprint) {
+        return None;
+    }
+    Some(ConsumedParentJoinFingerprint {
+        admission_id,
+        child_completion_fingerprint,
+        child_completion_child_count: payload_usize(payload, "child_completion_child_count")?,
+        child_terminal_completed_count: payload_usize(payload, "child_terminal_completed_count")?,
+        child_terminal_failed_count: payload_usize(payload, "child_terminal_failed_count")?,
+        child_recovery_cycle_depth: payload_usize(payload, "child_recovery_cycle_depth")?,
+    })
+}
+
+fn parent_join_consumption_has_terminal_result(
+    parent_events: &[LedgerEvent],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(running_index) = parent_events.iter().position(|candidate| {
+        candidate.kind == LedgerEventKind::TaskRunning
+            && candidate
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("admission_id"))
+                .and_then(Value::as_str)
+                == Some(consumption.admission_id.as_str())
+    }) else {
+        return false;
+    };
+    parent_events
+        .iter()
+        .skip(running_index + 1)
+        .take_while(|candidate| {
+            candidate.kind != LedgerEventKind::ParentJoinContinuationFingerprintConsumed
+        })
+        .any(|candidate| {
+            matches!(
+                candidate.kind,
+                LedgerEventKind::TaskCompleted
+                    | LedgerEventKind::TaskFailed
+                    | LedgerEventKind::TaskCancelled
+            )
+        })
+}
+
+fn child_recovery_provenance_matches_consumed_parent_join(
+    child: &TaskRecord,
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(provenance) = child.recovery_cycle_provenance.as_ref() else {
+        return false;
+    };
+    recovery_cycle_child_provenance_is_internally_valid(provenance)
+        && provenance.parent_join_admission_id == consumption.admission_id
+        && provenance.parent_join_child_completion_fingerprint
+            == consumption.child_completion_fingerprint
+        && provenance.parent_join_child_completion_child_count
+            == consumption.child_completion_child_count
+        && provenance.parent_join_terminal_completed_child_count
+            == consumption.child_terminal_completed_count
+        && provenance.parent_join_terminal_failed_child_count
+            == consumption.child_terminal_failed_count
+        && provenance.parent_join_recovery_cycle_depth == consumption.child_recovery_cycle_depth
+}
+
+fn child_handoff_fingerprint_matches_consumed_parent_join(
+    parent_events: &[LedgerEvent],
+    child: &TaskRecord,
+    consumption: &ConsumedParentJoinFingerprint,
+) -> bool {
+    let Some(fingerprint) = child.source_handoff_envelope_fingerprint.as_ref() else {
+        return false;
+    };
+    consumed_parent_join_continuation_handoff_fingerprints(parent_events, consumption)
+        .contains(fingerprint)
+}
+
+fn consumed_terminal_controlled_child_set_contains_inspected_child(
+    store: &BrownieStore,
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+    inspected_child_task_id: &str,
+) -> Result<bool, String> {
+    Ok(
+        consumed_terminal_controlled_child_set_for_consumed_parent_join(
+            store,
+            parent_events,
+            controlled_children,
+            consumption,
+        )?
+        .is_some_and(|consumed_children| {
+            consumed_children
+                .iter()
+                .any(|child| child.task_id == inspected_child_task_id)
+        }),
+    )
+}
+
+fn consumed_terminal_controlled_child_set_for_consumed_parent_join(
+    store: &BrownieStore,
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Result<Option<Vec<TaskRecord>>, String> {
+    let mut consumed_children = controlled_children
+        .iter()
+        .filter(|child| is_parent_join_terminal_child_status(&child.status))
+        .filter(|child| match child.recovery_cycle_provenance.as_ref() {
+            Some(provenance) => {
+                recovery_cycle_child_provenance_is_internally_valid(provenance)
+                    && provenance.parent_join_child_completion_child_count
+                        < consumption.child_completion_child_count
+                    && parent_events.iter().any(|event| {
+                        recovery_cycle_provenance_matches_parent_join(event, provenance)
+                    })
+            }
+            None => true,
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_controlled_child_records(&mut consumed_children);
+    if consumed_children.len() != consumption.child_completion_child_count {
+        return Ok(None);
+    }
+    if consumed_children
+        .iter()
+        .filter(|child| child.status == TaskStatus::Completed)
+        .count()
+        != consumption.child_terminal_completed_count
+        || consumed_children
+            .iter()
+            .filter(|child| child.status == TaskStatus::Failed)
+            .count()
+            != consumption.child_terminal_failed_count
+    {
+        return Ok(None);
+    }
+    for child in &consumed_children {
+        if !child_has_terminal_parent_join_outcome(store, child)
+            .map_err(task_run_admission_rejection_message)?
+        {
+            return Ok(None);
+        }
+    }
+    let child_evidence = consumed_children
+        .iter()
+        .map(|child| {
+            parent_join_child_completion_evidence(store, child)
+                .map_err(task_run_admission_rejection_message)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let (child_completion_fingerprint, _) =
+        parent_join_child_completion_fingerprint(&child_evidence);
+    if child_completion_fingerprint != consumption.child_completion_fingerprint {
+        return Ok(None);
+    }
+    Ok(Some(consumed_children))
+}
+
+fn continuation_controlled_children_for_consumed_parent_join(
+    parent_events: &[LedgerEvent],
+    controlled_children: &[TaskRecord],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Vec<TaskRecord> {
+    let continuation_handoff_fingerprints =
+        consumed_parent_join_continuation_handoff_fingerprints(parent_events, consumption);
+    let mut continuation_children = controlled_children
+        .iter()
+        .filter(|child| {
+            child_recovery_provenance_matches_consumed_parent_join(child, consumption)
+                || child
+                    .source_handoff_envelope_fingerprint
+                    .as_ref()
+                    .is_some_and(|fingerprint| {
+                        continuation_handoff_fingerprints.contains(fingerprint)
+                    })
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_controlled_child_records(&mut continuation_children);
+    continuation_children
+}
+
+fn consumed_parent_join_continuation_handoff_fingerprints(
+    parent_events: &[LedgerEvent],
+    consumption: &ConsumedParentJoinFingerprint,
+) -> Vec<String> {
+    let mut fingerprints = parent_events
+        .iter()
+        .filter(|event| event.kind == LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded)
+        .filter_map(|event| event.payload.as_ref())
+        .filter(|payload| {
+            payload
+                .get("continuation_materialization")
+                .and_then(Value::as_bool)
+                == Some(true)
+                && payload
+                    .get("handoff_envelope_status")
+                    .and_then(Value::as_str)
+                    == Some("Accepted")
+                && payload
+                    .get("parent_join_admission_id")
+                    .and_then(Value::as_str)
+                    == Some(consumption.admission_id.as_str())
+                && payload
+                    .get("parent_join_child_completion_fingerprint")
+                    .and_then(Value::as_str)
+                    == Some(consumption.child_completion_fingerprint.as_str())
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_child_completion_child_count",
+                    consumption.child_completion_child_count,
+                )
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_terminal_completed_child_count",
+                    consumption.child_terminal_completed_count,
+                )
+                && payload_usize_eq(
+                    payload,
+                    "parent_join_terminal_failed_child_count",
+                    consumption.child_terminal_failed_count,
+                )
+        })
+        .filter_map(|payload| {
+            payload
+                .get("handoff_envelope_fingerprint")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|fingerprint| is_sha256_fingerprint(fingerprint))
+                .map(ToString::to_string)
+        })
+        .collect::<Vec<_>>();
+    fingerprints.sort();
+    fingerprints.dedup();
+    fingerprints
+}
