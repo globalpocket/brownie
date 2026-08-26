@@ -13,6 +13,7 @@ use uuid::Uuid;
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_STATUS_METHOD: &str = "runtime.status";
+const TASK_RUN_METHOD: &str = "task.run";
 const TASK_INSPECT_METHOD: &str = "task.inspect";
 const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
@@ -32,8 +33,9 @@ const MAX_TASK_LIST_ROWS: usize = 10;
 const MAX_TASK_LIST_GROUP_ROWS: usize = 5;
 const MAX_HEADLESS_ROUTE_ROWS: usize = 5;
 const MAX_MODE_LIST_ROWS: usize = 12;
-const CLI_RUN_MAX_ADVANCES: u8 = 1;
+const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
+const CLI_RUN_MAX_PARENT_JOIN_ROUTES: u8 = 3;
 const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
 const CLI_RUN_MAX_LEDGER_EVENTS: usize = 16;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
@@ -178,6 +180,8 @@ impl RuntimeClient {
             RuntimeRequestClass::ObjectiveExecution,
         )?;
         validate_headless_run_drive_result(&result)?;
+        let result = self.follow_parent_join_routes_if_available(result)?;
+        let result = self.accept_and_finalize_completed_run_if_available(result)?;
         if json_output {
             return json_result("run", "run", cli_run_payload(&result)?);
         }
@@ -396,6 +400,78 @@ impl RuntimeClient {
             RuntimeRequestClass::ReadOnly => self.config.read_only_timeout,
             RuntimeRequestClass::ObjectiveExecution => self.config.objective_execution_timeout,
         }
+    }
+
+    fn accept_and_finalize_completed_run_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(target) = completion_acceptance_target(&result)? else {
+            return Ok(result);
+        };
+
+        let acceptance_result = self.call_runtime_value(
+            TASK_RUN_METHOD,
+            Some(task_run_completion_acceptance_params(&target)),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_completion_acceptance_result(&acceptance_result)?;
+
+        let accepted_route_params = accepted_completion_route_params(&target, false, None);
+        let accepted_route = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(accepted_route_params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_run_drive_result(&accepted_route)?;
+        validate_accepted_completion_route(&accepted_route)?;
+
+        let closure = object_field(&accepted_route, "completion_closure")?;
+        let closure_fingerprint = display_string(closure, "closure_fingerprint")?;
+        validate_sha256_fingerprint(&closure_fingerprint)?;
+        let mut finalization_target = target;
+        finalization_target.expected_start_session_sequence = required_u64(
+            accepted_route
+                .as_object()
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+            "end_session_sequence",
+        )?;
+        let finalized_route_params = accepted_completion_route_params(
+            &finalization_target,
+            true,
+            Some(&closure_fingerprint),
+        );
+        let finalized_route = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(finalized_route_params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_run_drive_result(&finalized_route)?;
+        validate_accepted_completion_route(&finalized_route)?;
+        validate_completion_finalization(&finalized_route)?;
+
+        Ok(finalized_route)
+    }
+
+    fn follow_parent_join_routes_if_available(
+        &self,
+        mut result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        for route_index in 0..CLI_RUN_MAX_PARENT_JOIN_ROUTES {
+            let Some(target) = parent_join_route_target(&result)? else {
+                return Ok(result);
+            };
+
+            let followup_drive = self.call_runtime_value(
+                HEADLESS_RUN_DRIVE_METHOD,
+                Some(parent_join_followup_drive_params(&target, route_index)),
+                RuntimeRequestClass::ObjectiveExecution,
+            )?;
+            validate_headless_run_drive_result(&followup_drive)?;
+            result = followup_drive;
+        }
+
+        Ok(result)
     }
 }
 
@@ -897,8 +973,79 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     for key in ["status", "session_id", "drive_id", "next_action"] {
         required_display_string(object, key)?;
     }
-    let closure = object_field(result, "completion_closure")?;
-    required_display_string(closure, "status")?;
+    if let Some(closure) = optional_object_field(object, "completion_closure") {
+        required_display_string(closure, "status")?;
+    }
+    Ok(())
+}
+
+fn validate_completion_acceptance_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let acceptance = object_field(result, "completion_acceptance")?;
+    for key in [
+        "acceptance_id",
+        "task_id",
+        "run_id",
+        "status",
+        "terminal_completion_fingerprint",
+        "acceptance_fingerprint",
+        "verifier_gate_status",
+        "next_action",
+    ] {
+        required_display_string(acceptance, key)?;
+    }
+    if display_string(acceptance, "status")? != "AcceptedComplete" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&display_string(
+        acceptance,
+        "terminal_completion_fingerprint",
+    )?)?;
+    validate_sha256_fingerprint(&display_string(acceptance, "acceptance_fingerprint")?)?;
+    Ok(())
+}
+
+fn validate_accepted_completion_route(result: &Value) -> Result<(), RuntimeClientError> {
+    let accepted = object_field(result, "accepted_completion")?;
+    for key in [
+        "task_id",
+        "run_id",
+        "acceptance_id",
+        "status",
+        "terminal_completion_fingerprint",
+        "acceptance_fingerprint",
+        "verifier_gate_status",
+        "next_action",
+    ] {
+        required_display_string(accepted, key)?;
+    }
+    if display_string(accepted, "status")? != "AcceptedComplete" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&display_string(
+        accepted,
+        "terminal_completion_fingerprint",
+    )?)?;
+    validate_sha256_fingerprint(&display_string(accepted, "acceptance_fingerprint")?)?;
+    Ok(())
+}
+
+fn validate_completion_finalization(result: &Value) -> Result<(), RuntimeClientError> {
+    let finalization = object_field(result, "completion_finalization")?;
+    for key in [
+        "finalization_fingerprint",
+        "closure_fingerprint",
+        "progress_fingerprint",
+        "status",
+        "next_action",
+    ] {
+        required_display_string(finalization, key)?;
+    }
+    if display_string(finalization, "status")? != "finalized" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&display_string(finalization, "finalization_fingerprint")?)?;
+    validate_sha256_fingerprint(&display_string(finalization, "closure_fingerprint")?)?;
+    validate_sha256_fingerprint(&display_string(finalization, "progress_fingerprint")?)?;
     Ok(())
 }
 
@@ -942,22 +1089,35 @@ fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
     let status = display_string(object, "status")?;
     let drive_id = display_string(object, "drive_id")?;
     let next_action = display_string(object, "next_action")?;
-    let closure = object_field(result, "completion_closure")?;
-    let closure_status = display_string(closure, "status")?;
+    let closure_status = optional_object_field(object, "completion_closure")
+        .map(|closure| display_string(closure, "status"))
+        .transpose()?
+        .unwrap_or_else(|| "none".to_string());
     let journey = optional_object_field(object, "journey")
         .or_else(|| optional_object_field(object, "journey_execution"));
+    let accepted_completion = object.get("accepted_completion").and_then(Value::as_object);
     let journey_id = display_string_from_optional(journey, "journey_id")?;
-    let task_id = display_string_from_optional(journey, "task_id")?;
-    let run_id = display_string_from_optional(journey, "run_id")?;
+    let task_id = display_string_from_optional(journey.or(accepted_completion), "task_id")?;
+    let run_id = display_string_from_optional(journey.or(accepted_completion), "run_id")?;
     let completion = object
         .get("terminal_completion_evidence")
         .and_then(Value::as_object)
         .map(|evidence| display_string(evidence, "completion_summary_preview"))
         .transpose()?
         .unwrap_or_else(|| "none".to_string());
+    let accepted = accepted_completion
+        .map(|accepted| display_string(accepted, "status"))
+        .transpose()?
+        .unwrap_or_else(|| "none".to_string());
+    let finalization = object
+        .get("completion_finalization")
+        .and_then(Value::as_object)
+        .map(|finalization| display_string(finalization, "finalization_fingerprint"))
+        .transpose()?
+        .unwrap_or_else(|| "none".to_string());
 
     Ok(format!(
-        "run {session_id}\n  status: {status}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  closure: {closure_status}\n  next: {next_action}\n  completion: {completion}\n"
+        "run {session_id}\n  status: {status}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  closure: {closure_status}\n  accepted: {accepted}\n  finalization: {finalization}\n  next: {next_action}\n  completion: {completion}\n"
     ))
 }
 
@@ -965,7 +1125,6 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     let object = result
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
-    let closure = object_field(result, "completion_closure")?;
     let journey = optional_object_field(object, "journey")
         .or_else(|| optional_object_field(object, "journey_execution"));
     let mut payload = serde_json::Map::new();
@@ -980,14 +1139,16 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             payload.insert(key.to_string(), bounded_json_string(value)?);
         }
     }
-    payload.insert(
-        "completion_closure_status".to_string(),
-        bounded_json_string(
-            closure
-                .get("status")
-                .ok_or(RuntimeClientError::InvalidResponse)?,
-        )?,
-    );
+    if let Some(closure) = optional_object_field(object, "completion_closure") {
+        payload.insert(
+            "completion_closure_status".to_string(),
+            bounded_json_string(
+                closure
+                    .get("status")
+                    .ok_or(RuntimeClientError::InvalidResponse)?,
+            )?,
+        );
+    }
     if let Some(journey) = journey {
         for key in ["journey_id", "task_id", "run_id"] {
             if let Some(value) = journey.get(key) {
@@ -1010,6 +1171,43 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
                 "completion_result_fingerprint".to_string(),
                 bounded_json_string(value)?,
             );
+        }
+    }
+    if let Some(accepted) = object.get("accepted_completion").and_then(Value::as_object) {
+        for key in [
+            "task_id",
+            "run_id",
+            "acceptance_id",
+            "status",
+            "terminal_completion_fingerprint",
+            "acceptance_fingerprint",
+            "verifier_gate_status",
+            "next_action",
+        ] {
+            if let Some(value) = accepted.get(key) {
+                payload.insert(
+                    format!("accepted_completion_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
+    }
+    if let Some(finalization) = object
+        .get("completion_finalization")
+        .and_then(Value::as_object)
+    {
+        for key in [
+            "finalization_fingerprint",
+            "closure_fingerprint",
+            "status",
+            "next_action",
+        ] {
+            if let Some(value) = finalization.get(key) {
+                payload.insert(
+                    format!("completion_finalization_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
         }
     }
     Ok(Value::Object(payload))
@@ -1117,6 +1315,188 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
     }))
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompletionAcceptanceTarget {
+    session_id: String,
+    task_id: String,
+    run_id: String,
+    terminal_completion_fingerprint: String,
+    expected_start_session_sequence: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParentJoinRouteTarget {
+    session_id: String,
+    expected_start_session_sequence: u64,
+    expected_progress_fingerprint: String,
+    expected_aggregate_sequence: u64,
+    parent_task_id: String,
+    parent_run_id: String,
+    child_completion_fingerprint: String,
+    child_completion_child_count: u64,
+    child_terminal_completed_count: u64,
+    child_terminal_failed_count: u64,
+}
+
+fn parent_join_route_target(
+    result: &Value,
+) -> Result<Option<ParentJoinRouteTarget>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "run_parent_task_explicitly" {
+        return Ok(None);
+    }
+
+    let Some(parent_join) = latest_parent_join_readiness_outcome(object) else {
+        return Err(RuntimeClientError::InvalidResponse);
+    };
+    if parent_join
+        .get("parent_join_ready")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+
+    let child_completion_fingerprint = display_string(parent_join, "child_completion_fingerprint")?;
+    validate_sha256_fingerprint(&child_completion_fingerprint)?;
+
+    Ok(Some(ParentJoinRouteTarget {
+        session_id: display_string(object, "session_id")?,
+        expected_start_session_sequence: required_u64(object, "end_session_sequence")?,
+        expected_progress_fingerprint: display_string(route, "progress_fingerprint")?,
+        expected_aggregate_sequence: required_u64(route, "aggregate_sequence")?,
+        parent_task_id: display_string(parent_join, "parent_task_id")?,
+        parent_run_id: display_string(parent_join, "parent_run_id")?,
+        child_completion_fingerprint,
+        child_completion_child_count: required_u64(parent_join, "child_completion_child_count")?,
+        child_terminal_completed_count: required_u64(
+            parent_join,
+            "child_terminal_completed_count",
+        )?,
+        child_terminal_failed_count: required_u64(parent_join, "child_terminal_failed_count")?,
+    }))
+}
+
+fn latest_parent_join_readiness_outcome(
+    object: &serde_json::Map<String, Value>,
+) -> Option<&serde_json::Map<String, Value>> {
+    object
+        .get("advances")
+        .and_then(Value::as_array)?
+        .iter()
+        .rev()
+        .filter_map(|advance| advance.get("steps").and_then(Value::as_array))
+        .flat_map(|steps| steps.iter().rev())
+        .find_map(|step| {
+            step.get("parent_join_readiness_outcome")
+                .and_then(Value::as_object)
+        })
+}
+
+fn parent_join_followup_drive_params(target: &ParentJoinRouteTarget, route_index: u8) -> Value {
+    json!({
+        "authorize": true,
+        "session_id": target.session_id.as_str(),
+        "drive_id": format!("{}.parent.{}.drive", target.session_id, route_index + 1),
+        "expected_start_session_sequence": target.expected_start_session_sequence,
+        "max_advances": CLI_RUN_MAX_ADVANCES,
+        "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
+        "parent_join_run_target": {
+            "authorize_parent_join_run": true,
+            "parent_task_id": target.parent_task_id.as_str(),
+            "parent_run_id": target.parent_run_id.as_str(),
+            "expected_child_completion_fingerprint": target.child_completion_fingerprint.as_str(),
+            "expected_child_completion_child_count": target.child_completion_child_count,
+            "expected_terminal_completed_child_count": target.child_terminal_completed_count,
+            "expected_terminal_failed_child_count": target.child_terminal_failed_count
+        }
+    })
+}
+
+fn completion_acceptance_target(
+    result: &Value,
+) -> Result<Option<CompletionAcceptanceTarget>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(closure) = optional_object_field(object, "completion_closure") else {
+        return Ok(None);
+    };
+    let closure_status = display_string(closure, "status")?;
+    if closure_status != "complete" || object.get("accepted_completion").is_some() {
+        return Ok(None);
+    }
+
+    let terminal = object
+        .get("terminal_completion_evidence")
+        .and_then(Value::as_object)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let terminal_completion_fingerprint =
+        display_string(terminal, "completion_result_fingerprint")?;
+    validate_sha256_fingerprint(&terminal_completion_fingerprint)?;
+
+    let journey = optional_object_field(object, "journey")
+        .or_else(|| optional_object_field(object, "journey_execution"))
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let session_id = display_string(object, "session_id")?;
+    let task_id = display_string(journey, "task_id")?;
+    let run_id = display_string(journey, "run_id")?;
+    let expected_start_session_sequence = required_u64(object, "end_session_sequence")?;
+
+    Ok(Some(CompletionAcceptanceTarget {
+        session_id,
+        task_id,
+        run_id,
+        terminal_completion_fingerprint,
+        expected_start_session_sequence,
+    }))
+}
+
+fn task_run_completion_acceptance_params(target: &CompletionAcceptanceTarget) -> Value {
+    json!({
+        "task_id": target.task_id.as_str(),
+        "completion_acceptance": {
+            "authorize_completion_acceptance": true,
+            "source_run_id": target.run_id.as_str(),
+            "acceptance_id": format!("{}.ok", target.session_id),
+            "expected_completion_result_fingerprint": target.terminal_completion_fingerprint.as_str(),
+        }
+    })
+}
+
+fn accepted_completion_route_params(
+    target: &CompletionAcceptanceTarget,
+    authorize_completion_finalization: bool,
+    expected_completion_closure_fingerprint: Option<&str>,
+) -> Value {
+    let drive_suffix = if authorize_completion_finalization {
+        "finalize"
+    } else {
+        "done"
+    };
+    let mut params = json!({
+        "authorize": true,
+        "session_id": target.session_id.as_str(),
+        "drive_id": format!("{}.{}", target.session_id, drive_suffix),
+        "expected_start_session_sequence": target.expected_start_session_sequence,
+        "max_advances": 1,
+        "max_steps_per_advance": 1
+    });
+
+    if authorize_completion_finalization {
+        params["authorize_completion_finalization"] = Value::Bool(true);
+    }
+    if let Some(fingerprint) = expected_completion_closure_fingerprint {
+        params["expected_completion_closure_fingerprint"] = Value::String(fingerprint.to_string());
+    }
+    params
+}
+
 fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
     if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_PROMPT_CHARS {
         return Err(RuntimeClientError::InvalidResponse);
@@ -1125,7 +1505,12 @@ fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
 }
 
 fn cli_run_invocation_id() -> String {
-    Uuid::new_v4().simple().to_string()
+    Uuid::new_v4()
+        .simple()
+        .to_string()
+        .chars()
+        .take(20)
+        .collect()
 }
 
 fn stable_cli_resume_id(progress_fingerprint: &str, aggregate_sequence: u64) -> String {
@@ -1551,6 +1936,16 @@ fn bounded_string(value: &Value) -> Result<String, RuntimeClientError> {
     Ok(value.to_string())
 }
 
+fn validate_sha256_fingerprint(value: &str) -> Result<(), RuntimeClientError> {
+    let Some(hex) = value.strip_prefix("sha256:") else {
+        return Err(RuntimeClientError::InvalidResponse);
+    };
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
 fn bounded_json_string(value: &Value) -> Result<Value, RuntimeClientError> {
     bounded_string(value).map(Value::String)
 }
@@ -1724,7 +2119,7 @@ mod tests {
         let params = cli_run_drive_params("summarize this repository").unwrap();
         assert_eq!(params["authorize"], true);
         assert_eq!(params["expected_start_session_sequence"], 0);
-        assert_eq!(params["max_advances"], 1);
+        assert_eq!(params["max_advances"], 3);
         assert_eq!(params["max_steps_per_advance"], 1);
         assert_eq!(params["journey_admission"]["authorize_journey_start"], true);
         assert_eq!(

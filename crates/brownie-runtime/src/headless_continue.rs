@@ -2139,6 +2139,13 @@ pub(super) fn handle_headless_run_advance(
             "invalid params: product_continuation_derived_target cannot be combined with max_steps greater than 1",
         );
     }
+    if params.parent_join_run_target.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: parent_join_run_target cannot be combined with max_steps greater than 1",
+        );
+    }
     let product_continuation_target_count = [
         params.product_continuation_admission_target.is_some(),
         params.product_continuation_run_target.is_some(),
@@ -2548,6 +2555,9 @@ pub(super) fn handle_headless_run_advance(
     if let Some(target) = params.product_continuation_run_target.clone() {
         continue_params["product_continuation_run_target"] = json!(target);
     }
+    if let Some(target) = params.parent_join_run_target.clone() {
+        continue_params["parent_join_run_target"] = json!(target);
+    }
     if let Some(target) = derived_admission_target {
         continue_params["product_continuation_admission_target"] = json!(target);
     }
@@ -2634,6 +2644,10 @@ pub(super) fn handle_headless_run_advance(
                 .task_run_result
                 .as_ref()
                 .and_then(|result| result.completion_evidence.clone()),
+            parent_join_readiness_outcome: continue_result
+                .task_run_result
+                .as_ref()
+                .and_then(|result| result.parent_join_readiness_outcome.clone()),
             next_route: continue_result.next_route.clone(),
             next_action: continue_result.next_action.clone(),
         }]
@@ -5075,6 +5089,10 @@ fn handle_headless_continue_budget(
                 .task_run_result
                 .as_ref()
                 .and_then(|task_run_result| task_run_result.completion_evidence.clone()),
+            parent_join_readiness_outcome: result
+                .task_run_result
+                .as_ref()
+                .and_then(|task_run_result| task_run_result.parent_join_readiness_outcome.clone()),
             next_route: result.next_route.clone(),
             next_action: result.next_action.clone(),
         });

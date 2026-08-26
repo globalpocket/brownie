@@ -1324,6 +1324,8 @@ pub struct HeadlessRunAdvanceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_continuation_derived_target: Option<ProductContinuationDerivedTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_join_run_target: Option<ParentJoinRunTarget>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_progress_fingerprint: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_aggregate_sequence: Option<u64>,
@@ -1372,6 +1374,8 @@ pub struct HeadlessRunDriveParams {
     pub selected_product_gap_closure: Option<HeadlessRunSelectedProductGapClosureRequest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub product_completion_decision: Option<HeadlessRunProductCompletionDecisionRequest>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_join_run_target: Option<ParentJoinRunTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_registry_update_selection_target: Option<ModePackRegistryUpdateSelectionTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2334,6 +2338,8 @@ pub struct HeadlessContinueStepResult {
     pub context_budget: Option<TaskRunContextBudgetSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub terminal_completion_evidence: Option<TaskRunCompletionEvidence>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_join_readiness_outcome: Option<TaskRunParentJoinReadinessOutcome>,
     pub next_route: Option<HeadlessContinueRoute>,
     pub next_action: String,
 }
@@ -2999,6 +3005,16 @@ pub struct TaskRunParentJoinReadinessOutcome {
     pub child_task_id: String,
     pub child_run_id: String,
     pub child_terminal_status: TaskStatus,
+    #[serde(default)]
+    pub child_completion_fingerprint: String,
+    #[serde(default, rename = "child_completion_fingerprint_evidence_count")]
+    pub child_completion_fingerprint_input_count: usize,
+    #[serde(default)]
+    pub child_completion_child_count: usize,
+    #[serde(default)]
+    pub child_terminal_completed_count: usize,
+    #[serde(default)]
+    pub child_terminal_failed_count: usize,
     pub terminal_controlled_child_count: usize,
     pub pending_controlled_child_count: usize,
     pub pending_controlled_child_task_ids: Vec<String>,

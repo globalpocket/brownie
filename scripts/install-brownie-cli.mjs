@@ -27,7 +27,7 @@ function usage() {
     'Usage:',
     '  node scripts/install-brownie-cli.mjs --prefix <absolute-prefix> [--profile debug|release] [--dry-run] [--skip-build]',
     '',
-    'Installs the existing brownie CLI binary into <prefix>/bin/brownie.',
+    'Installs the existing brownie CLI and brownie-runtime binaries into <prefix>/bin.',
     'Use --dry-run to validate paths and show the bounded build/install plan without writing.',
     ''
   ].join('\n');
@@ -94,12 +94,26 @@ function validatePrefix(prefix) {
   return normalized;
 }
 
-function binaryPathForProfile(profile) {
-  return path.join(repoRoot, 'target', profile, process.platform === 'win32' ? 'brownie.exe' : 'brownie');
+function executableName(name) {
+  return process.platform === 'win32' ? `${name}.exe` : name;
 }
 
-function buildBinary(profile) {
-  const args = ['build', '-p', 'brownie-cli', '--bin', 'brownie'];
+function binaryPathForProfile(profile, name) {
+  return path.join(repoRoot, 'target', profile, executableName(name));
+}
+
+function buildBinaries(profile) {
+  const args = [
+    'build',
+    '-p',
+    'brownie-cli',
+    '--bin',
+    'brownie',
+    '-p',
+    'brownie-runtime',
+    '--bin',
+    'brownie-runtime'
+  ];
   if (profile === 'release') {
     args.push('--release');
   }
@@ -140,12 +154,14 @@ export function planInstall(options) {
     profile: options.profile,
     prefix,
     binDir,
-    binaryPath: binaryPathForProfile(options.profile),
-    destinationPath: path.join(binDir, process.platform === 'win32' ? 'brownie.exe' : 'brownie'),
+    binaryPath: binaryPathForProfile(options.profile, 'brownie'),
+    runtimeBinaryPath: binaryPathForProfile(options.profile, 'brownie-runtime'),
+    destinationPath: path.join(binDir, executableName('brownie')),
+    runtimeDestinationPath: path.join(binDir, executableName('brownie-runtime')),
     cargoArgs:
       options.profile === 'release'
-        ? ['build', '-p', 'brownie-cli', '--bin', 'brownie', '--release']
-        : ['build', '-p', 'brownie-cli', '--bin', 'brownie']
+        ? ['build', '-p', 'brownie-cli', '--bin', 'brownie', '-p', 'brownie-runtime', '--bin', 'brownie-runtime', '--release']
+        : ['build', '-p', 'brownie-cli', '--bin', 'brownie', '-p', 'brownie-runtime', '--bin', 'brownie-runtime']
   };
 }
 
@@ -163,7 +179,10 @@ export function runInstall(argv = process.argv.slice(2)) {
     prefix: plan.prefix,
     bin_dir: plan.binDir,
     destination: plan.destinationPath,
-    build: options.skipBuild ? 'skipped' : 'cargo build -p brownie-cli --bin brownie'
+    runtime_destination: plan.runtimeDestinationPath,
+    build: options.skipBuild
+      ? 'skipped'
+      : 'cargo build -p brownie-cli --bin brownie -p brownie-runtime --bin brownie-runtime'
   };
 
   if (options.dryRun) {
@@ -171,10 +190,12 @@ export function runInstall(argv = process.argv.slice(2)) {
   }
 
   if (!options.skipBuild) {
-    buildBinary(options.profile);
+    buildBinaries(options.profile);
   }
   ensureInstallableBinary(plan.binaryPath);
+  ensureInstallableBinary(plan.runtimeBinaryPath);
   copyAtomically(plan.binaryPath, plan.destinationPath);
+  copyAtomically(plan.runtimeBinaryPath, plan.runtimeDestinationPath);
   return { exitCode: 0, stdout: `${JSON.stringify(summary)}\n`, stderr: '' };
 }
 

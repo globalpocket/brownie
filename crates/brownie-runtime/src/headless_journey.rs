@@ -33,6 +33,22 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
 }
 
+fn headless_journey_effective_task_start(
+    task_start: &HeadlessRunJourneyTaskStartEnvelope,
+) -> HeadlessRunJourneyTaskStartEnvelope {
+    let mut effective = task_start.clone();
+    if effective
+        .mode_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        effective.mode_id = Some("provider-runner".to_string());
+    }
+    effective
+}
+
 fn headless_journey_selected_index_context_fingerprint(
     context: &TaskRunSelectedIndexContext,
 ) -> String {
@@ -269,6 +285,7 @@ fn headless_journey_start_checkpoint_for_admission(
                 "invalid params: journey admission requires task_start",
             ));
         };
+        let task_start = headless_journey_effective_task_start(task_start);
         let policy = resolve_task_start_policy(task_start.mode_id.as_deref(), store)
             .map_err(|message| error_response(id.clone(), -32602, &message))?;
         let start_response = handle_task_start(
@@ -3862,6 +3879,18 @@ pub(super) fn handle_headless_run_drive(
                 "invalid params: product_continuation_run_target requires persisted session route run_product_continuation_task_explicitly",
             );
         }
+        if params.parent_join_run_target.is_some()
+            && !headless_run_checkpoint_has_next_route(
+                start_checkpoint,
+                HeadlessContinueRouteKind::RunParentTaskExplicitly,
+            )
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: parent_join_run_target requires persisted session route run_parent_task_explicitly",
+            );
+        }
         if let Some(target) = params.product_continuation_derived_target.as_ref() {
             if let Err(message) = validate_product_continuation_derived_target(target) {
                 return error_response(id, -32602, &message);
@@ -4145,6 +4174,9 @@ pub(super) fn handle_headless_run_drive(
             }
             if let Some(target) = params.product_continuation_run_target.clone() {
                 advance_params["product_continuation_run_target"] = json!(target);
+            }
+            if let Some(target) = params.parent_join_run_target.clone() {
+                advance_params["parent_join_run_target"] = json!(target);
             }
             if let Some(target) = params.product_continuation_derived_target.clone() {
                 advance_params["product_continuation_derived_target"] = json!(target);
@@ -4485,7 +4517,20 @@ pub(super) fn headless_run_completion_finalization(
         }
         return Ok(None);
     }
-    if result.next_route.is_some() || result.completion_closure.route_candidate_count > 0 {
+    let remaining_headless_route = result.completion_closure.route_candidate_count > 0
+        || result
+            .next_route
+            .as_ref()
+            .map(|route| {
+                !matches!(
+                    route.kind,
+                    HeadlessContinueRouteKind::InspectProgressOverview
+                        | HeadlessContinueRouteKind::NoEligibleTask
+                        | HeadlessContinueRouteKind::RefreshProgressOverview
+                )
+            })
+            .unwrap_or(false);
+    if remaining_headless_route {
         if authorized {
             return Err(
                 "invalid params: completion finalization requires no remaining headless route"
@@ -4494,12 +4539,12 @@ pub(super) fn headless_run_completion_finalization(
         }
         return Ok(None);
     }
-    let owner = headless_run_completion_finalization_owner(store, result)?;
     let existing = store
         .tasks()
         .read_headless_run_completion_finalization_checkpoint(&result.session_id, &result.drive_id)
         .map_err(|error| format!("failed to read completion finalization checkpoint: {error}"))?;
     if let Some(checkpoint) = existing {
+        let owner = headless_run_completion_finalization_owner(store, result)?;
         if checkpoint.closure_fingerprint != result.completion_closure.closure_fingerprint {
             return Err(
                 "invalid params: persisted completion finalization conflicts with current closure"
@@ -4555,6 +4600,7 @@ pub(super) fn headless_run_completion_finalization(
                 .to_string(),
         );
     }
+    let owner = headless_run_completion_finalization_owner(store, result)?;
     let seed = json!({
         "version": "headless_completion_finalization_v1",
         "session_id": result.session_id,
@@ -4917,7 +4963,17 @@ pub(super) fn headless_run_completion_closure(
             evidence.final_state == "Completed" && evidence.task_status == TaskStatus::Completed
         })
         .unwrap_or(false);
-    let no_remaining_headless_route = next_route.is_none() && route_candidate_count == 0;
+    let no_remaining_headless_route = route_candidate_count == 0
+        && next_route
+            .map(|route| {
+                matches!(
+                    route.kind,
+                    HeadlessContinueRouteKind::InspectProgressOverview
+                        | HeadlessContinueRouteKind::NoEligibleTask
+                        | HeadlessContinueRouteKind::RefreshProgressOverview
+                )
+            })
+            .unwrap_or(true);
     let closure_status = if status == HeadlessContinueOnceStatus::StaleProgress {
         HeadlessRunCompletionClosureStatus::StaleNoProgress
     } else if status == HeadlessContinueOnceStatus::TaskInProgress
