@@ -58,27 +58,53 @@ fn execute(cli: Cli) -> CliOutput {
         },
         command => {
             let client = RuntimeClient::default();
-            match client.invoke(&command) {
+            match client.invoke(&command, cli.json) {
                 Ok(message) => CliOutput {
                     exit_code: ExitCode::Success,
                     stdout: message,
                     stderr: String::new(),
                 },
-                Err(RuntimeClientError::RuntimeUnavailable) => error_output(
-                    ExitCode::RuntimeUnavailable,
-                    "runtime_unavailable",
-                    "runtime connection is not implemented in this CLI slice",
-                    cli.json,
-                ),
-                Err(RuntimeClientError::CommunicationFailed) => error_output(
-                    ExitCode::InternalCommunication,
-                    "runtime_communication_failed",
-                    "runtime communication failed",
-                    cli.json,
-                ),
+                Err(error) => runtime_error_output(error, cli.json),
             }
         }
     }
+}
+
+fn runtime_error_output(error: RuntimeClientError, json: bool) -> CliOutput {
+    let (exit_code, code, message) = match error {
+        RuntimeClientError::RuntimeUnavailable => (
+            ExitCode::RuntimeUnavailable,
+            "runtime_unavailable",
+            "runtime binary is unavailable",
+        ),
+        RuntimeClientError::UnsupportedCommand => (
+            ExitCode::RuntimeUnavailable,
+            "runtime_unavailable",
+            "runtime command is not implemented in this CLI slice",
+        ),
+        RuntimeClientError::CommunicationFailed => (
+            ExitCode::InternalCommunication,
+            "runtime_communication_failed",
+            "runtime communication failed",
+        ),
+        RuntimeClientError::TimedOut => (
+            ExitCode::InternalCommunication,
+            "runtime_timeout",
+            "runtime request timed out",
+        ),
+        RuntimeClientError::InvalidResponse => (
+            ExitCode::InternalCommunication,
+            "runtime_invalid_response",
+            "runtime returned an invalid response",
+        ),
+        RuntimeClientError::RuntimeError => (
+            ExitCode::InternalCommunication,
+            "runtime_error",
+            "runtime returned an error",
+        ),
+    };
+
+    error_output(exit_code, code, message, json)
 }
 
 fn error_output(exit_code: ExitCode, code: &str, message: &str, json: bool) -> CliOutput {
@@ -169,8 +195,8 @@ mod tests {
     }
 
     #[test]
-    fn json_error_uses_same_exit_meaning() {
-        let output = run_cli(["brownie", "--json", "status"]);
+    fn json_unsupported_workflow_uses_same_exit_meaning() {
+        let output = run_cli(["brownie", "--json", "run", "summarize this repository"]);
         assert_eq!(output.exit_code, ExitCode::RuntimeUnavailable);
         assert!(output.stdout.contains("\"code\":\"runtime_unavailable\""));
         assert!(output.stderr.is_empty());
