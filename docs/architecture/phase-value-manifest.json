@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "CLI-5",
+  "phase": "CLI-5.1",
   "current_milestone": "brownie_cli_campaign",
   "milestone": "Brownie CLI Campaign",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "brownie resume changes from parsed-but-unsupported CLI surface to a bounded restart-safe continuation command that reads fresh runtime task.list progress evidence and invokes existing Rust runtime headless.continue_once authority.",
+  "concrete_capability_transition": "CLI run/resume changes from objective-derived run identity and unscoped global continuation to unique per-invocation run identity plus Rust-runtime-owned scoped resume selection for the latest CLI-created objective.",
   "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Lets an interrupted CLI user continue from runtime-owned persisted progress using the official brownie resume command rather than internal JSON-RPC choreography."
+      "relationship": "Ensures repeated brownie run invocations are independent executions and brownie resume continues the latest CLI-created objective rather than an unrelated globally sorted task."
     },
     {
       "capability": "agent_loop",
-      "relationship": "Uses runtime-derived progress fingerprints and aggregate sequence as the replay-safe continuation boundary while keeping continuation selection and execution inside the Rust runtime."
+      "relationship": "Preserves runtime-owned continuation selection, freshness validation, replay lookup, and execution while adding an explicit scoped continuation contract."
     },
     {
-      "capability": "progress_visualization",
-      "relationship": "Surfaces the runtime-owned continuation status and next_action in bounded human and JSON output without exposing raw runtime envelopes."
+      "capability": "context_management",
+      "relationship": "Uses existing persisted journey-start checkpoint evidence through the store API so resume provenance is runtime-owned and replay-safe without CLI ledger inspection."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development, agent_loop, and progress_visualization by adding the official CLI resume path over existing runtime continuation evidence.",
-      "new_capability": "A user can run brownie resume and the CLI will obtain fresh task.list progress evidence, call headless.continue_once with explicit authorization and a deterministic continuation id, then render the bounded runtime-owned result.",
-      "why_existing_functionality_is_insufficient": "CLI-4 added brownie run, while status, inspect, and list remain read-only. They cannot perform the existing runtime-owned continuation mutation, and Resume currently returns unsupported-command.",
-      "product_gap_if_skipped": "Required CLI Product DoD gap CLI-5 remains open: interrupted or lost-response CLI runs cannot be resumed through the official command, blocking the later restart/recovery golden journey.",
-      "non_duplicative": "CLI-2 connected status, CLI-3 added read-only inspection/list, and CLI-4 added run execution. CLI-5 performs the distinct continuation boundary through headless.continue_once.",
-      "no_new_rpc": "Yes. The CLI uses existing task.list and headless.continue_once runtime methods; it does not add a runtime RPC or generic passthrough.",
-      "no_new_summary": "Yes. The phase adds executable resume behavior and bounded CLI projection, not a report, readiness, history, digest, verdict, or summary surface.",
-      "runtime_behavior_change": "Runtime APIs and policy remain unchanged; user-visible CLI behavior changes because brownie resume executes the existing runtime continuation boundary instead of failing unsupported.",
-      "headless_autonomous_contribution": "Headless and terminal users can recover from process interruption or lost response with a replay-safe deterministic continuation id bound to fresh runtime progress.",
-      "milestone_progress": "Closes the CLI-5 Product DoD gap and unlocks CLI-10 restart/recovery golden journey validation after later output/help/golden-journey gaps are addressed."
+      "strategic_capabilities": "Advances headless_autonomous_development, agent_loop, and context_management by making CLI-created objective identity unique per invocation and making resume target selection scoped by runtime-owned journey evidence.",
+      "new_capability": "A user can run the same objective text multiple times and receive distinct runtime session/drive/journey identities; brownie resume asks the runtime to continue only the latest CLI-created objective scope.",
+      "why_existing_functionality_is_insufficient": "CLI-4/CLI-5 made run and resume executable, but run identity was derived from objective text and resume passed only global progress freshness, letting runtime select the first globally eligible task.",
+      "product_gap_if_skipped": "Repeated objective text can collide with prior execution state, and resume can continue older or unrelated work, blocking trustworthy CLI restart/recovery behavior before CLI-6 and CLI-10.",
+      "non_duplicative": "This is not another resume wrapper: it changes the run identity contract and runtime continuation selection boundary, which CLI-1 through CLI-5 did not cover.",
+      "no_new_rpc": "Yes. The phase extends the existing headless.continue_once params with an optional continuation_scope and keeps brownie run on existing headless.run.drive.",
+      "no_new_summary": "Yes. It adds no report, readiness, digest, history, verdict, or inspection surface; tests assert concrete execution and selection behavior.",
+      "runtime_behavior_change": "Runtime behavior changes when continuation_scope is supplied: eligible task selection is filtered by persisted journey-start evidence and fails closed instead of falling back to global task sorting.",
+      "headless_autonomous_contribution": "Headless CLI callers can safely repeat objectives and resume after lost responses while the Rust runtime remains the authority for freshness, replay, provenance, and task execution.",
+      "milestone_progress": "Closes a blocking correctness debt found between CLI-5 and CLI-6, making later progress UX and restart/recovery golden journey validation meaningful."
     },
     "questions": [
       { "id": "strategic_capabilities", "question": "Which strategic capabilities move forward?" },
@@ -52,10 +52,11 @@
     "reject_when": [
       "phase reopens the completed Core Runtime campaign",
       "phase makes develop the primary command",
-      "phase adds CLI-owned agent-loop, permission, replay, recovery, Mode Pack, Product DoD, or workspace mutation policy",
-      "phase adds a new runtime RPC instead of using existing task.list and headless.continue_once",
+      "phase makes the CLI select task ids, sort candidates, read ledger files, or own continuation policy",
+      "phase adds a new runtime RPC instead of extending the existing scoped continuation contract",
       "phase implements a generic JSON-RPC passthrough",
-      "phase mixes mode-list, installation, stable public JSON overhaul, or golden journey closure into CLI-5",
+      "phase changes Mode Pack, Product DoD, permission, provider, or workspace mutation semantics",
+      "phase mixes CLI-6 progress UX, installation, packaging, public JSON overhaul, or golden journey closure into CLI-5.1",
       "phase is report/readiness/history/digest/verdict/summary/documentation-only"
     ]
   },
@@ -63,34 +64,33 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "CLI-5 updates the deterministic current phase manifest and adds an archived CLI-5 manifest. Review must confirm executable resume behavior through existing runtime authority, not a wrapper/report surface or guard weakening.",
+    "review_intent": "CLI-5.1 updates the deterministic current phase manifest. Review must confirm the PR changes executable run identity and runtime-owned scoped resume behavior without weakening the phase-value guard or adding wrapper-only surfaces.",
     "changed_files": [
-      "docs/architecture/phase-value-manifest.json",
       "docs/architecture/phase-value-manifest.cli-5.json",
-      "docs/architecture/phase-value-manifest.cli-4.1.json"
+      "docs/architecture/phase-value-manifest.json"
     ]
   },
   "exit_criteria": [
-    "brownie resume no longer returns unsupported-command",
-    "brownie resume calls task.list with no params before continuation",
-    "brownie resume calls headless.continue_once with authorize true, fresh expected_progress_fingerprint, fresh expected_aggregate_sequence, max_steps 1, and a deterministic cli.resume continuation_id",
-    "brownie resume uses the objective-execution transport timeout class for the side-effecting continuation call",
-    "human resume output includes bounded status, continuation id, selected task/run when present, stale/replayed flags, candidate count, and next_action",
-    "JSON resume output is a bounded CLI projection and not the raw runtime envelope",
-    "no-eligible and stale-progress runtime results are surfaced as bounded runtime-owned decisions",
-    "malformed JSON, JSON-RPC error, mismatched response id, oversized response, timeout, and missing runtime binary fail closed without raw payload or path leakage",
-    "real runtime smoke for brownie resume succeeds with a bounded no-eligible or one-step continuation result",
-    "existing run, status, inspect, and list behavior remains compatible"
+    "Two brownie run invocations with identical objective text send distinct session_id, drive_id, and journey_id values to headless.run.drive.",
+    "brownie run still sends the original objective text only as journey_admission.task_start.goal and does not make develop primary.",
+    "brownie resume calls task.list before continuation and sends headless.continue_once with fresh expected_progress_fingerprint, expected_aggregate_sequence, deterministic cli.resume continuation_id, max_steps 1, and continuation_scope session_id_prefix cli.run. with latest_matching_session true.",
+    "Runtime headless.continue_once filters scoped normal continuation candidates using persisted journey-start checkpoints and task descendants under the selected CLI-created journey.",
+    "Runtime scoped continuation selects the latest matching CLI journey instead of older CLI or unrelated global tasks.",
+    "Runtime scoped continuation returns no_eligible_task when the latest matching CLI journey has no runnable candidate and does not fallback to older/global tasks.",
+    "Scope validation fails closed for missing selectors, invalid selector characters, ambiguous non-latest matches, and unsupported target/scope combinations.",
+    "Existing unscoped headless.continue_once behavior remains compatible for existing callers."
   ],
   "behavior_evidence": [
-    "brownie-cli fake-runtime integration tests capture the task.list then headless.continue_once request sequence.",
-    "brownie-cli tests verify human and JSON resume output remain bounded and exclude raw runtime envelope details.",
-    "brownie-cli tests verify no-eligible and stale-progress continuation results are treated as runtime-owned decisions.",
-    "brownie-cli tests verify resume timeout classification uses BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS for the continuation call.",
-    "brownie-cli real-runtime smoke test verifies brownie resume can invoke existing Rust runtime continuation authority."
+    "brownie-cli tests verify same-objective brownie run requests use distinct invocation identities.",
+    "brownie-cli tests verify brownie resume sends continuation_scope while preserving bounded output and runtime-owned result handling.",
+    "brownie-runtime tests verify scoped continuation selects the latest CLI-created journey and excludes unrelated global tasks.",
+    "brownie-runtime tests verify scoped continuation does not fallback to an older runnable CLI task when the latest CLI journey is terminal.",
+    "cargo check verifies the optional protocol field remains compatible with existing params construction."
   ],
   "product_dod": {
-    "closes": ["CLI-5"],
+    "closes": [
+      "CLI-5.1 blocking correctness debt: run invocation identity and scoped resume correctness"
+    ],
     "leaves_open": ["CLI-6", "CLI-7", "CLI-8", "CLI-9", "CLI-10"],
     "does_not_close": [
       "CLI-6 Progress and Next Action UX",
@@ -104,36 +104,40 @@
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "CLI resume invokes existing Rust runtime continuation authority from fresh progress evidence.",
-      "CLI resume renders bounded human and JSON output while preserving runtime authority over replay, recovery, permissions, and workspace mutation."
+      "CLI run invocation identity is unique per run even when objective text repeats.",
+      "CLI resume delegates scoped latest CLI objective continuation to the Rust runtime through persisted journey evidence."
     ],
     "behavior_evidence": [
-      "Tests capture exact task.list and headless.continue_once calls.",
-      "Tests cover bounded human/JSON output, stale/no-eligible results, fail-closed transport errors, timeout class, and real runtime smoke."
+      "Tests cover distinct same-objective invocation identities.",
+      "Tests cover scoped resume request shape.",
+      "Tests cover runtime latest CLI journey selection and no-fallback terminal latest behavior."
     ],
     "safety_boundary": [
       "No Core Runtime terminal campaign state is reopened or mutated.",
-      "No runtime JSON-RPC method, protocol schema, ledger semantic, runtime permission rule, Mode Pack rule, provider rule, verifier rule, or workspace mutation authority is added.",
-      "The CLI does not inspect raw ledger files or derive recovery policy; it only passes fresh bounded progress evidence to Rust runtime continuation authority.",
-      "CLI output excludes raw prompts, provider responses, ledger payloads, file content, stdout/stderr payloads, commands, environment values, absolute paths, canonical paths, and secrets."
+      "No new runtime JSON-RPC method is added.",
+      "The CLI does not inspect raw ledger files, sort candidates, choose task ids, or duplicate continuation policy.",
+      "The runtime uses existing store checkpoint evidence and existing freshness/replay boundaries.",
+      "CLI output continues excluding raw prompts, provider responses, ledger payloads, file content, stdout/stderr payloads, commands, environment values, absolute paths, canonical paths, and secrets."
     ],
     "non_goals": [
-      "No mode-list implementation, stable complete JSON projection overhaul, installation/package release, arbitrary-repository golden journey, or restart/recovery golden journey closure.",
+      "No CLI-6 progress/next-action UX work.",
+      "No stable full public JSON projection overhaul, installation/package release, arbitrary-repository golden journey, or restart/recovery golden journey closure.",
+      "No Mode Pack, Product DoD, provider, permission, workspace mutation, or fail-closed semantic redesign.",
       "No generic RPC passthrough, report, readiness, history, digest, verdict, preview, or summary surface."
     ],
     "rejected_alternatives": [
-      "Rejected adding a new resume runtime RPC because headless.continue_once already owns the continuation boundary.",
-      "Rejected reading ledger files directly in the CLI because replay and recovery semantics belong to the Rust runtime.",
-      "Rejected automatic multi-step scheduling because CLI-5 is one explicit resume step and later UX/golden-journey phases remain separate.",
-      "Rejected mixing mode-list and full public JSON semantics because CLI-6 and CLI-7 own those gaps."
+      "Rejected storing CLI-owned run registries because persisted journey evidence already belongs to the Rust runtime.",
+      "Rejected CLI-side task sorting or selection because resume target selection is runtime authority.",
+      "Rejected deriving invocation identity from objective text because it aliases distinct executions.",
+      "Rejected a new resume RPC because an optional scope on headless.continue_once preserves the existing execution authority surface."
     ],
     "technical_debt": [
-      "CLI-6 must improve progress and next-action UX and resolve advertised brownie mode list.",
+      "CLI-6 must improve progress and next-action UX after continuation correctness is fixed.",
       "CLI-7 must complete stable bounded public JSON projections and deterministic exit-code semantics.",
-      "CLI-10 must validate a full restart/recovery golden journey after resume exists."
+      "CLI-10 must validate the full restart/recovery golden journey using scoped resume."
     ],
     "next_capability_rationale": [
-      "After CLI-5 lands, proceed to CLI-6 Progress and Next Action UX rather than adding another resume wrapper."
+      "After CLI-5.1 lands, proceed to CLI-6 Progress and Next Action UX rather than adding another resume wrapper."
     ]
   }
 }

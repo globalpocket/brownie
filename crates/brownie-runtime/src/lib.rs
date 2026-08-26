@@ -47,9 +47,9 @@ use brownie_protocol::{
     CodebaseIndexSelectionReadParams, CodebaseIndexSelectionReadResult,
     CodebaseIndexSnapshotManifest, CodebaseIndexSnapshotSummary, DiagnosticSeverity,
     HeadlessContinueOnceParams, HeadlessContinueOnceResult, HeadlessContinueOnceStatus,
-    HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueStepResult,
-    HeadlessRunAcceptedCompletion, HeadlessRunAdvanceParams, HeadlessRunAdvanceResult,
-    HeadlessRunCompletionClosure, HeadlessRunCompletionClosureStatus,
+    HeadlessContinueRoute, HeadlessContinueRouteKind, HeadlessContinueScope,
+    HeadlessContinueStepResult, HeadlessRunAcceptedCompletion, HeadlessRunAdvanceParams,
+    HeadlessRunAdvanceResult, HeadlessRunCompletionClosure, HeadlessRunCompletionClosureStatus,
     HeadlessRunCompletionFinalization, HeadlessRunDriveParams, HeadlessRunDriveResult,
     HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
@@ -20740,6 +20740,247 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_once_scope_selects_latest_cli_journey() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let older = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Older CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start older");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Unrelated runtime task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        let latest = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Latest CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start latest");
+        write_test_cli_journey_start(&store, "cli.run.old", &older);
+        write_test_cli_journey_start(&store, "cli.run.new", &latest);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.scoped.1","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("continue result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["candidate_count"], 1);
+        assert_eq!(result["selected_task_id"], latest.task_id);
+        assert_ne!(result["selected_task_id"], older.task_id);
+        assert_ne!(result["selected_task_id"], unrelated.task_id);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_scope_does_not_fallback_when_latest_cli_journey_is_terminal() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let older = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Older CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start older");
+        let latest = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Completed latest CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start latest");
+        write_test_cli_journey_start(&store, "cli.run.old", &older);
+        write_test_cli_journey_start(&store, "cli.run.new", &latest);
+        store
+            .tasks()
+            .update_task_status(
+                &latest.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete latest");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.scoped.none","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("continue result: {:?}", response.error));
+        assert_eq!(result["status"], "no_eligible_task");
+        assert_eq!(result["candidate_count"], 0);
+        assert_eq!(result["selected_task_id"], serde_json::Value::Null);
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&older.task_id)
+                .expect("older")
+                .unwrap()
+                .status,
+            TaskStatus::Created
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_scope_rejects_missing_ambiguous_and_targeted_inputs() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let older = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Older CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start older");
+        let latest = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Latest CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start latest");
+        write_test_cli_journey_start(&store, "cli.run.old", &older);
+        write_test_cli_journey_start(&store, "cli.run.new", &latest);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let empty_scope = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.empty.scope","continuation_scope":{{}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(empty_scope
+            .error
+            .expect("empty scope error")
+            .message
+            .contains("continuation_scope must include at least one selector"));
+
+        let ambiguous_scope = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.ambiguous.scope","continuation_scope":{{"session_id_prefix":"cli.run."}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(ambiguous_scope
+            .error
+            .expect("ambiguous scope error")
+            .message
+            .contains("matched multiple journey checkpoints"));
+
+        let targeted_scope = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.targeted.scope","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}},"verification_recovery_goal":"recover"}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(targeted_scope
+            .error
+            .expect("targeted scope error")
+            .message
+            .contains(
+                "continuation_scope is supported only for normal headless task continuation"
+            ));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    fn write_test_cli_journey_start(store: &BrownieStore, session_id: &str, task: &TaskRecord) {
+        store
+            .tasks()
+            .write_headless_journey_start_checkpoint(&HeadlessJourneyStartCheckpoint {
+                journey_id: format!("{session_id}.journey"),
+                session_id: session_id.to_string(),
+                drive_id: format!("{session_id}.drive"),
+                task_id: task.task_id.clone(),
+                run_id: task.run_id.clone(),
+                task_start_fingerprint: format!("sha256:{}", "1".repeat(64)),
+                start_progress: HeadlessRunProgressCheckpoint {
+                    progress_fingerprint: format!("sha256:{}", "2".repeat(64)),
+                    aggregate_sequence: 0,
+                },
+                journey_fingerprint: format!("sha256:{}", "3".repeat(64)),
+                objective_context: None,
+                product_objective_continuation_provenance: None,
+            })
+            .expect("write cli journey start");
+    }
+
+    #[test]
     fn headless_run_drive_finalizes_complete_closure_once_and_replays() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -24779,6 +25020,7 @@ mod tests {
             expected_progress_fingerprint: format!("sha256:{}", "a".repeat(64)),
             expected_aggregate_sequence: 1,
             continuation_id: Some("run.session.2".to_string()),
+            continuation_scope: None,
             max_steps: Some(1),
             context_budget: None,
             selected_index_context: None,
@@ -50075,6 +50317,7 @@ mod tests {
             expected_progress_fingerprint: progress.source_fingerprint.clone(),
             expected_aggregate_sequence: progress.aggregate_sequence,
             continuation_id: Some("continue.modepack:registry-selection:1".to_string()),
+            continuation_scope: None,
             max_steps: None,
             context_budget: None,
             selected_index_context: None,
@@ -50222,6 +50465,7 @@ mod tests {
             expected_progress_fingerprint: progress.source_fingerprint.clone(),
             expected_aggregate_sequence: progress.aggregate_sequence,
             continuation_id: Some("continue.modepack:fetch:1".to_string()),
+            continuation_scope: None,
             max_steps: None,
             context_budget: None,
             selected_index_context: None,
