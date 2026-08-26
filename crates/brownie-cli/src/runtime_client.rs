@@ -436,10 +436,10 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
     for key in ["status", "session_id", "drive_id", "next_action"] {
-        display_string(object, key)?;
+        required_display_string(object, key)?;
     }
     let closure = object_field(result, "completion_closure")?;
-    display_string(closure, "status")?;
+    required_display_string(closure, "status")?;
     Ok(())
 }
 
@@ -663,6 +663,16 @@ fn display_string(
 ) -> Result<String, RuntimeClientError> {
     let Some(value) = object.get(key) else {
         return Ok("unknown".to_string());
+    };
+    bounded_string(value)
+}
+
+fn required_display_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    let Some(value) = object.get(key) else {
+        return Err(RuntimeClientError::InvalidResponse);
     };
     bounded_string(value)
 }

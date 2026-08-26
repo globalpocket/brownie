@@ -494,6 +494,24 @@ fn run_rejects_invalid_runtime_shape() {
 }
 
 #[test]
+fn run_rejects_missing_required_run_status() {
+    let runtime = fake_runtime(
+        "run-missing-required-status",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"session_id":"cli.run.invalid","drive_id":"cli.run.invalid.drive","next_action":"inspect_progress_overview","completion_closure":{"status":"incomplete"}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["run", "invalid run status"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime returned an invalid response"));
+}
+
+#[test]
 fn run_rejects_missing_completion_closure_status() {
     let runtime = fake_runtime(
         "run-missing-closure-status",
