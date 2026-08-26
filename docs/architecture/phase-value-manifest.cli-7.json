@@ -1,0 +1,167 @@
+{
+  "schema_version": 1,
+  "phase": "CLI-7",
+  "current_milestone": "brownie_cli_campaign",
+  "milestone": "Brownie CLI Campaign",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "CLI JSON output and implicit exit handling change from mixed raw runtime envelopes and partial projections into stable bounded public JSON projections plus deterministic exit semantics across existing commands.",
+  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Makes every existing JSON-capable Brownie CLI command return a stable bounded success or error contract with explicit exit semantics so a headless caller can branch safely without parsing raw runtime internals."
+    },
+    {
+      "capability": "progress_visualization",
+      "relationship": "Projects task-list progress and route-candidate data into capped JSON structures with truncation metadata while preserving runtime ownership of progress computation and next-action policy."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "Advances headless_autonomous_development and progress_visualization by making CLI output dependable for machine callers and bounded for human/operators without moving runtime authority into the CLI.",
+      "new_capability": "A caller can use brownie --json status, inspect task, inspect run, list tasks, mode list, run, and resume with a common ok/command/exit_code envelope and command-specific bounded projections.",
+      "why_existing_functionality_is_insufficient": "Before CLI-7, run/resume had bounded projections but status, inspect, list tasks, and mode list exposed runtime-shaped envelopes; list tasks JSON could include raw progress_overview and route internals, and exit-code classes were not covered as a public contract.",
+      "product_gap_if_skipped": "CLI-9 and CLI-10 would have to assert ad hoc human output or raw runtime schemas, making headless automation fragile and leaking internal authority details into the public CLI contract.",
+      "non_duplicative": "CLI-5.1 fixed invocation identity and scoped resume correctness, and CLI-6 added human progress/mode UX. CLI-7 changes the machine-facing output and exit contract for existing commands, which those phases deliberately left open.",
+      "no_new_rpc": "Yes. The phase uses existing runtime.status, task.inspect, run.inspect, task.list, mode.list, headless.run.drive, and headless.continue_once calls.",
+      "no_new_summary": "Yes. It adds executable CLI projections and behavior tests, not a readiness, report, digest, verdict, history, or summary surface.",
+      "runtime_behavior_change": "Rust runtime authority and protocol methods remain unchanged; user-visible CLI behavior changes by emitting stable public JSON and deterministic exit classes.",
+      "headless_autonomous_contribution": "Headless callers can branch on stable exit codes and bounded JSON rather than reimplementing runtime policy or depending on raw protocol details.",
+      "milestone_progress": "Closes the CLI-7 Product DoD gap and leaves CLI-8 packaging/help, CLI-9 arbitrary-repository Golden Journey, and CLI-10 restart/recovery Golden Journey as the remaining required gaps."
+    },
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities move forward?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What becomes newly executable or usable?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing behavior not substitute for this?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What remains impossible if skipped?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Why is this not semantically duplicative?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary/report surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "How does runtime or user-visible behavior change?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this contribute to headless autonomous operation?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move milestone completion?"
+      }
+    ]
+  },
+  "review_value_gate": {
+    "reject_when": [
+      "phase reopens the completed Core Runtime campaign",
+      "phase makes develop the primary command",
+      "phase makes the CLI select tasks, rank continuation candidates, read ledgers directly, or own recovery/replay policy",
+      "phase adds a new runtime RPC or generic JSON-RPC passthrough",
+      "phase duplicates Mode Pack compilation, permission policy, Product DoD, replay, recovery, or workspace mutation logic in the CLI",
+      "phase emits raw runtime JSON-RPC result envelopes as the public CLI JSON contract",
+      "phase leaves large task-list JSON output unbounded",
+      "phase is report/readiness/history/digest/verdict/summary/documentation-only"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "CLI-7 updates the deterministic current phase manifest. Review must confirm the PR changes executable CLI JSON and exit behavior without weakening the phase-value guard or adding wrapper-only surfaces.",
+    "changed_files": [
+      "docs/architecture/phase-value-manifest.cli-5.1.json",
+      "docs/architecture/phase-value-manifest.cli-6.json",
+      "docs/architecture/phase-value-manifest.json"
+    ]
+  },
+  "exit_criteria": [
+    "All existing JSON-capable CLI commands return a stable success envelope with ok=true, command, exit_code=0, and one command-specific payload key.",
+    "brownie --json status, inspect task, inspect run, list tasks, and mode list use bounded CLI public projections instead of raw runtime result envelopes.",
+    "brownie --json list tasks caps task rows, progress groups, blocked groups, and headless route candidates and includes deterministic truncation metadata without route reasons.",
+    "brownie --json run and brownie --json resume retain their bounded CLI projections and include the common success envelope.",
+    "Invalid invocation, runtime unavailable, runtime timeout, runtime communication failure, invalid runtime response, and runtime JSON-RPC error use deterministic exit classes and JSON error codes without raw payload or path leakage.",
+    "No new runtime RPC, generic passthrough, report, readiness, history, digest, verdict, summary, CLI-owned policy, or CLI-owned workspace mutation authority is added."
+  ],
+  "behavior_evidence": [
+    "brownie-cli test behavior verifies stable JSON success projections for status, inspect task, inspect run, list tasks, mode list, run, and resume.",
+    "brownie-cli test behavior verifies deterministic exit codes for invalid invocation, runtime unavailable, timeout, invalid response, and runtime JSON-RPC error.",
+    "brownie-cli test behavior verifies large task-list JSON caps and truncation metadata.",
+    "brownie-cli test behavior verifies route reasons, runtime paths, environment values, and raw internal payloads are not exposed.",
+    "real runtime smoke tests continue covering status, list tasks, mode list, run, and resume through the CLI/runtime process boundary."
+  ],
+  "product_dod": {
+    "closes": [
+      "CLI-7 Human / JSON Output and Exit Codes"
+    ],
+    "leaves_open": [
+      "CLI-8",
+      "CLI-9",
+      "CLI-10"
+    ],
+    "does_not_close": [
+      "CLI-8 Installation / Packaging / Help",
+      "CLI-9 General Arbitrary-Repository Golden Journey",
+      "CLI-10 Restart / Recovery Golden Journey"
+    ]
+  },
+  "product_completion_gate": {
+    "required": true,
+    "product_completion_claim": false,
+    "accepted_capability": [
+      "Existing CLI commands now expose stable bounded public JSON projections with a common success envelope.",
+      "CLI errors retain bounded messages and deterministic exit classes suitable for headless callers."
+    ],
+    "behavior_evidence": [
+      "Fake runtime test behavior covers command-specific JSON projections, large progress bounds, truncation metadata, exit codes, and raw-data suppression.",
+      "Existing real runtime smoke tests continue to exercise the CLI/runtime process boundary."
+    ],
+    "safety_boundary": [
+      "No Core Runtime terminal campaign state is reopened or mutated.",
+      "No new runtime JSON-RPC method is added.",
+      "The CLI does not read ledgers, discover Mode Packs from files, evaluate permissions, select tasks, apply patches, or own recovery policy.",
+      "JSON and human output remain bounded and exclude raw prompts, provider responses, file content, stdout/stderr payloads, commands, environment values, paths, and secrets."
+    ],
+    "non_goals": [
+      "No install/package release work.",
+      "No arbitrary-repository golden journey or restart/recovery golden journey closure.",
+      "No Mode Pack, Product DoD, provider, permission, workspace mutation, replay, or fail-closed semantic redesign."
+    ],
+    "rejected_alternatives": [
+      "Rejected a generic JSON-RPC passthrough because it would expose runtime internals as CLI API.",
+      "Rejected unbounded list task JSON because it would make headless output unstable and risk internal leakage.",
+      "Rejected CLI-side task or mode-policy interpretation because the Rust runtime owns that authority.",
+      "Rejected packaging and Golden Journey work because CLI-8 through CLI-10 own those separate Product DoD gaps."
+    ],
+    "technical_debt": [
+      "CLI-8 must define practical installation, packaging, and command help.",
+      "CLI-9 must validate the arbitrary-repository golden journey.",
+      "CLI-10 must validate restart/recovery including scoped resume and runtime-owned recovery provenance."
+    ],
+    "next_capability_rationale": [
+      "After CLI-7 lands, proceed to CLI-8 Installation / Packaging / Help rather than adding another output wrapper."
+    ]
+  }
+}

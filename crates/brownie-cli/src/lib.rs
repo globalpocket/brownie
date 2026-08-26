@@ -46,9 +46,12 @@ where
 
 fn execute(cli: Cli) -> CliOutput {
     match cli.command {
-        CliCommand::Help => CliOutput {
+        CliCommand::Help { topic } => CliOutput {
             exit_code: ExitCode::Success,
-            stdout: Cli::help(),
+            stdout: topic
+                .as_ref()
+                .map(Cli::topic_help)
+                .unwrap_or_else(Cli::help),
             stderr: String::new(),
         },
         CliCommand::Version => CliOutput {
@@ -146,9 +149,49 @@ mod tests {
     fn help_names_run_and_not_develop() {
         let help = Cli::help();
         assert!(help.contains("run <objective>"));
+        assert!(help.contains("help <topic>"));
         assert!(help.contains("resume"));
         assert!(help.contains("status"));
         assert!(!help.contains("develop"));
+    }
+
+    #[test]
+    fn parses_command_specific_help_without_consuming_run_help_tokens() {
+        let help_run = Cli::parse(["brownie", "help", "run"]).unwrap();
+        assert_eq!(
+            help_run.command,
+            CliCommand::Help {
+                topic: Some(crate::cli::HelpTopic::Run)
+            }
+        );
+
+        let run_help_objective = Cli::parse(["brownie", "run", "--help"]).unwrap();
+        assert_eq!(
+            run_help_objective.command,
+            CliCommand::Run {
+                objective: "--help".into()
+            }
+        );
+    }
+
+    #[test]
+    fn command_help_is_bounded_and_keeps_runtime_authority_boundary() {
+        let help = Cli::topic_help(&crate::cli::HelpTopic::Run);
+        assert!(help.contains("brownie run <objective>"));
+        assert!(help.contains("Rust runtime"));
+        assert!(help.contains("--help"));
+        assert!(!help.contains("develop"));
+        assert!(!help.contains("JSON-RPC"));
+    }
+
+    #[test]
+    fn unknown_help_topic_uses_invalid_invocation_exit_class() {
+        let output = run_cli(["brownie", "--json", "help", "provider"]);
+        assert_eq!(output.exit_code, ExitCode::InvalidInvocation);
+        assert!(output.stdout.contains("\"code\":\"invalid_invocation\""));
+        assert!(output.stdout.contains("\"exit_code\":64"));
+        assert!(output.stdout.contains("unknown help topic"));
+        assert!(output.stderr.is_empty());
     }
 
     #[test]

@@ -137,6 +137,82 @@ fn version_succeeds() {
 }
 
 #[test]
+fn command_specific_help_succeeds_without_runtime_startup() {
+    for topic in ["run", "resume", "status", "inspect", "list", "mode"] {
+        let output = Command::new(brownie())
+            .args(["help", topic])
+            .env(
+                "BROWNIE_RUNTIME_PATH",
+                "/tmp/brownie-runtime-must-not-be-started-for-help",
+            )
+            .output()
+            .unwrap();
+
+        assert!(output.status.success(), "help topic failed: {topic}");
+        assert!(output.stderr.is_empty());
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains("Usage:"), "missing usage for {topic}");
+        assert!(
+            stdout.contains("Boundary:"),
+            "missing runtime boundary for {topic}"
+        );
+        assert!(!stdout.contains("develop"));
+        assert!(!stdout.contains("JSON-RPC"));
+        assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    }
+}
+
+#[test]
+fn help_run_is_the_command_help_surface_and_run_help_token_remains_objective() {
+    let help = Command::new(brownie())
+        .args(["help", "run"])
+        .output()
+        .unwrap();
+    assert!(help.status.success());
+    let help_stdout = String::from_utf8(help.stdout).unwrap();
+    assert!(help_stdout.contains("brownie run <objective>"));
+    assert!(help_stdout.contains("Tokens after run"));
+
+    let runtime = fake_runtime(
+        "run-help-objective",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"session-1","drive_id":"drive-1","next_action":"inspect_progress_overview","completion_closure":{"status":"budget_exhausted"},"journey":{"journey_id":"journey-1","task_id":"task-1","run_id":"run-1"}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+    let run = Command::new(brownie())
+        .args(["run", "--help"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(run.status.success());
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "headless.run.drive");
+    assert_eq!(
+        request["params"]["journey_admission"]["task_start"]["goal"],
+        "--help"
+    );
+}
+
+#[test]
+fn unknown_help_topic_exits_with_invalid_invocation() {
+    let output = Command::new(brownie())
+        .args(["help", "provider"])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("unknown help topic: provider"));
+}
+
+#[test]
 fn invalid_invocation_exits_non_zero() {
     let output = Command::new(brownie())
         .args(["inspect", "task"])
