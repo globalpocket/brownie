@@ -4,6 +4,7 @@ members = [
   "crates/brownie-config",
   "crates/brownie-protocol",
   "crates/brownie-runtime",
+  "crates/brownie-cli",
   "crates/brownie-agent-loop",
   "crates/brownie-agentmodes",
   "crates/brownie-modepack",
