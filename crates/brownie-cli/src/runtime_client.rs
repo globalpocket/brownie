@@ -1,4 +1,4 @@
-use crate::cli::CliCommand;
+use crate::cli::{CliCommand, InspectTarget, ListTarget};
 use brownie_protocol::{JsonRpcResponse, RuntimeStatus};
 use serde_json::{json, Value};
 use std::env;
@@ -11,11 +11,17 @@ use std::time::Duration;
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_STATUS_METHOD: &str = "runtime.status";
+const TASK_INSPECT_METHOD: &str = "task.inspect";
+const RUN_INSPECT_METHOD: &str = "run.inspect";
+const TASK_LIST_METHOD: &str = "task.list";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
 const DEFAULT_TIMEOUT_MS: u64 = 2_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_STATUS_FIELD_CHARS: usize = 128;
+const MAX_RENDERED_OUTPUT_CHARS: usize = 4 * 1024;
+const MAX_TEXT_FIELD_CHARS: usize = 256;
+const MAX_TASK_LIST_ROWS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClient {
@@ -113,6 +119,15 @@ impl RuntimeClient {
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
         match command {
             CliCommand::Status => self.runtime_status(json),
+            CliCommand::Inspect {
+                target: InspectTarget::Task { task_id },
+            } => self.runtime_task_inspect(task_id, json),
+            CliCommand::Inspect {
+                target: InspectTarget::Run { run_id },
+            } => self.runtime_run_inspect(run_id, json),
+            CliCommand::List {
+                target: ListTarget::Tasks,
+            } => self.runtime_task_list(json),
             _ => Err(RuntimeClientError::UnsupportedCommand),
         }
     }
@@ -130,16 +145,68 @@ impl RuntimeClient {
     }
 
     fn call_runtime_status(&self) -> Result<RuntimeStatus, RuntimeClientError> {
+        let result = self.call_runtime_value(RUNTIME_STATUS_METHOD, None)?;
+        parse_runtime_status_result(result)
+    }
+
+    fn runtime_task_inspect(
+        &self,
+        task_id: &str,
+        json_output: bool,
+    ) -> Result<String, RuntimeClientError> {
+        let result =
+            self.call_runtime_value(TASK_INSPECT_METHOD, Some(json!({ "task_id": task_id })))?;
+        validate_task_inspect_result(&result)?;
+        if json_output {
+            return json_result("task_inspect", result);
+        }
+
+        bounded_output(render_task_inspect(&result)?)
+    }
+
+    fn runtime_run_inspect(
+        &self,
+        run_id: &str,
+        json_output: bool,
+    ) -> Result<String, RuntimeClientError> {
+        let result =
+            self.call_runtime_value(RUN_INSPECT_METHOD, Some(json!({ "run_id": run_id })))?;
+        validate_run_inspect_result(&result)?;
+        if json_output {
+            return json_result("run_inspect", result);
+        }
+
+        bounded_output(render_run_inspect(&result)?)
+    }
+
+    fn runtime_task_list(&self, json_output: bool) -> Result<String, RuntimeClientError> {
+        let result = self.call_runtime_value(TASK_LIST_METHOD, None)?;
+        validate_task_list_result(&result)?;
+        if json_output {
+            return json_result("task_list", result);
+        }
+
+        bounded_output(render_task_list(&result)?)
+    }
+
+    fn call_runtime_value(
+        &self,
+        method: &str,
+        params: Option<Value>,
+    ) -> Result<Value, RuntimeClientError> {
         let request_id = json!(1);
-        let request = json!({
+        let mut request = json!({
             "jsonrpc": JSONRPC_VERSION,
             "id": request_id.clone(),
-            "method": RUNTIME_STATUS_METHOD
+            "method": method
         });
+        if let Some(params) = params {
+            request["params"] = params;
+        }
         let request_line =
             serde_json::to_string(&request).map_err(|_| RuntimeClientError::CommunicationFailed)?;
         let response_line = self.send_one_request(&request_line)?;
-        parse_runtime_status_response(&response_line, &request_id)
+        parse_runtime_value_response(&response_line, &request_id)
     }
 
     fn send_one_request(&self, request_line: &str) -> Result<String, RuntimeClientError> {
@@ -243,10 +310,18 @@ fn read_bounded_response_line(stdout: &mut impl Read) -> std::io::Result<Vec<u8>
     Ok(buffer)
 }
 
+#[cfg(test)]
 fn parse_runtime_status_response(
     line: &str,
     expected_id: &Value,
 ) -> Result<RuntimeStatus, RuntimeClientError> {
+    parse_runtime_status_result(parse_runtime_value_response(line, expected_id)?)
+}
+
+fn parse_runtime_value_response(
+    line: &str,
+    expected_id: &Value,
+) -> Result<Value, RuntimeClientError> {
     let raw: Value = serde_json::from_str(line).map_err(|_| RuntimeClientError::InvalidResponse)?;
     let response: JsonRpcResponse<Value> =
         serde_json::from_value(raw).map_err(|_| RuntimeClientError::InvalidResponse)?;
@@ -256,7 +331,7 @@ fn parse_runtime_status_response(
     }
 
     match (response.result, response.error) {
-        (Some(result), None) => parse_runtime_status_result(result),
+        (Some(result), None) => Ok(result),
         (None, Some(_)) => Err(RuntimeClientError::RuntimeError),
         _ => Err(RuntimeClientError::InvalidResponse),
     }
@@ -291,6 +366,205 @@ fn parse_runtime_status_result(result: Value) -> Result<RuntimeStatus, RuntimeCl
 
     serde_json::from_value::<RuntimeStatus>(Value::Object(object.clone()))
         .map_err(|_| RuntimeClientError::InvalidResponse)
+}
+
+fn json_result(key: &str, result: Value) -> Result<String, RuntimeClientError> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("ok".to_string(), Value::Bool(true));
+    payload.insert(key.to_string(), result);
+    bounded_output(format!("{}\n", Value::Object(payload)))
+}
+
+fn bounded_output(output: String) -> Result<String, RuntimeClientError> {
+    if output.chars().count() > MAX_RENDERED_OUTPUT_CHARS {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(output)
+}
+
+fn validate_task_inspect_result(result: &Value) -> Result<(), RuntimeClientError> {
+    object_field(result, "task")?;
+    object_field(result, "run")?;
+    Ok(())
+}
+
+fn validate_run_inspect_result(result: &Value) -> Result<(), RuntimeClientError> {
+    object_field(result, "run")?;
+    Ok(())
+}
+
+fn validate_task_list_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let tasks = result
+        .as_object()
+        .and_then(|object| object.get("tasks"))
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for task in tasks {
+        task.as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+    }
+    object_field(result, "progress_overview")?;
+    Ok(())
+}
+
+fn render_task_inspect(result: &Value) -> Result<String, RuntimeClientError> {
+    let task = object_field(result, "task")?;
+    let run = object_field(result, "run")?;
+    let progress = optional_object_field(run, "progress_snapshot");
+
+    let task_id = display_string(task, "task_id")?;
+    let run_id = display_string(task, "run_id")?;
+    let status = display_string(task, "status")?;
+    let stage = display_string_from_optional(progress, "current_stage")?;
+    let next_action = display_string_from_optional(progress, "next_action")?;
+
+    Ok(format!(
+        "task {task_id}\n  status: {status}\n  run: {run_id}\n  stage: {stage}\n  next: {next_action}\n"
+    ))
+}
+
+fn render_run_inspect(result: &Value) -> Result<String, RuntimeClientError> {
+    let run = object_field(result, "run")?;
+    let progress = optional_object_field(run, "progress_snapshot");
+
+    let run_id = display_string(run, "run_id")?;
+    let task_id = display_optional_string(run, "task_id")?;
+    let status = display_optional_string(run, "status")?;
+    let stage = display_string_from_optional(progress, "current_stage")?;
+    let next_action = display_string_from_optional(progress, "next_action")?;
+    let event_count = display_usize(run, "event_count")?;
+
+    Ok(format!(
+        "run {run_id}\n  task: {task_id}\n  status: {status}\n  stage: {stage}\n  next: {next_action}\n  events: {event_count}\n"
+    ))
+}
+
+fn render_task_list(result: &Value) -> Result<String, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let tasks = object
+        .get("tasks")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let progress = object_field(result, "progress_overview")?;
+
+    let task_count = display_usize_or(progress, "task_count", tasks.len())?;
+    let runnable_count = array_len(progress, "runnable_task_ids")?;
+    let blocked_count = array_len(progress, "blocked_task_ids")?;
+    let terminal_count = array_len(progress, "terminal_task_ids")?;
+
+    let mut output = format!(
+        "tasks {task_count}\n  runnable: {runnable_count}\n  blocked: {blocked_count}\n  terminal: {terminal_count}\n"
+    );
+    for task in tasks.iter().take(MAX_TASK_LIST_ROWS) {
+        let task = task
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let task_id = display_string(task, "task_id")?;
+        let run_id = display_string(task, "run_id")?;
+        let status = display_string(task, "status")?;
+        output.push_str(&format!("  {task_id} {status} {run_id}\n"));
+    }
+    if tasks.len() > MAX_TASK_LIST_ROWS {
+        output.push_str(&format!(
+            "  ... {} more\n",
+            tasks.len() - MAX_TASK_LIST_ROWS
+        ));
+    }
+    Ok(output)
+}
+
+fn object_field<'a>(
+    value: &'a Value,
+    key: &str,
+) -> Result<&'a serde_json::Map<String, Value>, RuntimeClientError> {
+    value
+        .as_object()
+        .and_then(|object| object.get(key))
+        .and_then(Value::as_object)
+        .ok_or(RuntimeClientError::InvalidResponse)
+}
+
+fn optional_object_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<&'a serde_json::Map<String, Value>> {
+    object.get(key).and_then(Value::as_object)
+}
+
+fn display_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    let Some(value) = object.get(key) else {
+        return Ok("unknown".to_string());
+    };
+    bounded_string(value)
+}
+
+fn display_optional_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok("none".to_string()),
+        Some(value) => bounded_string(value),
+    }
+}
+
+fn display_string_from_optional(
+    object: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    match object {
+        Some(object) => display_string(object, key),
+        None => Ok("unknown".to_string()),
+    }
+}
+
+fn bounded_string(value: &Value) -> Result<String, RuntimeClientError> {
+    let value = value.as_str().ok_or(RuntimeClientError::InvalidResponse)?;
+    if value.is_empty()
+        || value.chars().count() > MAX_TEXT_FIELD_CHARS
+        || value.contains('\n')
+        || value.contains('\r')
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(value.to_string())
+}
+
+fn display_usize(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<usize, RuntimeClientError> {
+    display_usize_or(object, key, 0)
+}
+
+fn display_usize_or(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+    default: usize,
+) -> Result<usize, RuntimeClientError> {
+    match object.get(key) {
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(RuntimeClientError::InvalidResponse),
+        None => Ok(default),
+    }
+}
+
+fn array_len(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<usize, RuntimeClientError> {
+    object
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .ok_or(RuntimeClientError::InvalidResponse)
 }
 
 #[cfg(test)]

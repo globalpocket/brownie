@@ -1,9 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+
+static RUNTIME_BUILD_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn brownie() -> &'static str {
     env!("CARGO_BIN_EXE_brownie")
@@ -220,6 +223,136 @@ fn status_timeout_fails_closed() {
 }
 
 #[test]
+fn inspect_task_invokes_fixed_runtime_method_and_prints_bounded_human_output() {
+    let runtime = fake_runtime(
+        "inspect-task",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"task":{"task_id":"task-1","run_id":"run-1","status":"Created"},"run":{"run_id":"run-1","task_id":"task-1","status":"Created","progress_snapshot":{"current_stage":"created","next_action":"run_task_explicitly"},"event_count":1}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(["inspect", "task", "task-1"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("task task-1"));
+    assert!(stdout.contains("status: Created"));
+    assert!(stdout.contains("stage: created"));
+    assert!(stdout.contains("next: run_task_explicitly"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["jsonrpc"], "2.0");
+    assert_eq!(request["id"], 1);
+    assert_eq!(request["method"], "task.inspect");
+    assert_eq!(
+        request["params"],
+        serde_json::json!({ "task_id": "task-1" })
+    );
+}
+
+#[test]
+fn inspect_run_invokes_fixed_runtime_method_and_prints_json_result() {
+    let runtime = fake_runtime(
+        "inspect-run-json",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"run":{"run_id":"run-1","task_id":"task-1","status":"Created","progress_snapshot":{"current_stage":"created","next_action":"run_task_explicitly"},"event_count":1}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(["--json", "inspect", "run", "run-1"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"run_inspect\""));
+    assert!(stdout.contains("\"run_id\":\"run-1\""));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "run.inspect");
+    assert_eq!(request["params"], serde_json::json!({ "run_id": "run-1" }));
+}
+
+#[test]
+fn list_tasks_invokes_fixed_runtime_method_and_prints_progress_counts() {
+    let runtime = fake_runtime(
+        "list-tasks",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"task_count":1,"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[]}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("tasks 1"));
+    assert!(stdout.contains("runnable: 1"));
+    assert!(stdout.contains("task-1 Created run-1"));
+
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "task.list");
+    assert!(request.get("params").is_none());
+}
+
+#[test]
+fn inspect_run_rejects_mismatched_response_id() {
+    let runtime = fake_runtime(
+        "inspect-run-mismatch",
+        r#"{"jsonrpc":"2.0","id":2,"result":{"run":{"run_id":"run-1","task_id":"task-1","status":"Created","progress_snapshot":{"current_stage":"created","next_action":"run_task_explicitly"},"event_count":1}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["inspect", "run", "run-1"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime returned an invalid response"));
+}
+
+#[test]
+fn inspect_task_runtime_error_does_not_expose_runtime_payload() {
+    let runtime = fake_runtime(
+        "inspect-task-error",
+        r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"task not found with internal store detail"}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "inspect", "task", "missing-task"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"code\":\"runtime_error\""));
+    assert!(!stdout.contains("internal store detail"));
+}
+
+#[test]
 fn run_does_not_start_agent_loop_in_cli_2() {
     let output = Command::new(brownie())
         .args(["run", "summarize this repository"])
@@ -251,26 +384,27 @@ fn status_can_invoke_real_runtime_binary_when_available() {
     assert!(stdout.contains("Ready"));
 }
 
+#[test]
+fn list_tasks_can_invoke_real_runtime_binary_when_available() {
+    let runtime = build_real_runtime_binary();
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", runtime)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("tasks "));
+}
+
 fn build_real_runtime_binary() -> PathBuf {
     if let Some(path) = option_env!("CARGO_BIN_EXE_brownie-runtime").map(PathBuf::from) {
         if path.exists() {
             return path;
         }
     }
-
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let repo_root = manifest_dir
-        .parent()
-        .and_then(Path::parent)
-        .expect("brownie-cli crate should live under crates/");
-    let status = Command::new(env!("CARGO"))
-        .args(["build", "-p", "brownie-runtime", "--bin", "brownie-runtime"])
-        .current_dir(repo_root)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .expect("cargo should build brownie-runtime");
-    assert!(status.success());
 
     let brownie_path = Path::new(brownie());
     let sibling = brownie_path
@@ -286,6 +420,33 @@ fn build_real_runtime_binary() -> PathBuf {
         .and_then(Path::parent)
         .expect("brownie binary should live under target debug dirs");
     let candidate = target_debug.join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
+    if candidate.exists() {
+        return candidate;
+    }
+
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = manifest_dir
+        .parent()
+        .and_then(Path::parent)
+        .expect("brownie-cli crate should live under crates/");
+    let build_id = RUNTIME_BUILD_COUNTER.fetch_add(1, Ordering::Relaxed);
+    let isolated_target_dir = std::env::temp_dir().join(format!(
+        "brownie-cli-runtime-build-{}-{build_id}",
+        std::process::id()
+    ));
+    let status = Command::new(env!("CARGO"))
+        .args(["build", "-p", "brownie-runtime", "--bin", "brownie-runtime"])
+        .current_dir(repo_root)
+        .env("CARGO_TARGET_DIR", &isolated_target_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("cargo should build brownie-runtime");
+    assert!(status.success());
+
+    let candidate = isolated_target_dir
+        .join("debug")
+        .join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
     assert!(
         candidate.exists(),
         "brownie-runtime binary should exist after cargo build"
