@@ -1,6 +1,13 @@
 # Brownie Product Charter
 
-Brownie exists to build an independent Rust-owned autonomous runtime with thin human-facing frontends, including the Code-OSS VSIX and CLI, supporting agent loop execution, external Mode Packs, runtime-enforced permissions, controlled tools, persistent state, and headless long-running workflows.
+Brownie exists to build an independent Rust-owned autonomous development runtime with thin human-facing frontends, including the Code-OSS VSIX and CLI, supporting agent loop execution, external Mode Packs, runtime-enforced permissions, controlled tools, persistent state, and headless long-running workflows.
+
+The CLI uses general objective wording such as `brownie run "<objective>"` so the
+interface is future-compatible and not hard-coded to a `develop` command name.
+That naming does not expand the Core product mission into a generic personal
+assistant platform; actual executable capabilities remain bounded by the Rust
+runtime, active Mode Packs, runtime permissions, controlled tools, and the
+Product DoD accepted for Brownie.
 
 This repository copy mirrors the automation-owned charter used by the phase loop. The external automation state remains the scheduled task source of truth, but project planning and review artifacts in this repository must stay consistent with this charter.
 

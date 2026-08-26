@@ -53,12 +53,12 @@ impl Cli {
         }
 
         let mut json = false;
-        let mut index = 0;
-        while index < args.len() {
-            match args[index].as_str() {
+        let mut command_index = 0;
+        while command_index < args.len() {
+            match args[command_index].as_str() {
                 "--json" => {
                     json = true;
-                    args.remove(index);
+                    command_index += 1;
                 }
                 "-h" | "--help" => {
                     return Ok(Self {
@@ -72,10 +72,11 @@ impl Cli {
                         command: CliCommand::Version,
                     });
                 }
-                _ => index += 1,
+                _ => break,
             }
         }
 
+        let args = &args[command_index..];
         let Some(command) = args.first().map(String::as_str) else {
             return Ok(Self {
                 json,
