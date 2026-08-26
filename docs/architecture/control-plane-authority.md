@@ -1,12 +1,12 @@
 # Brownie Control-plane Authority
 
-Brownie's scheduled autonomous development controller is driven by the external automation root:
+Brownie's scheduled CLI autonomous development controller is driven by the external automation root:
 
 ```text
-~/.codex/automations/brownie-phase-loop/
+~/.codex/automations/brownie-cli-phase-loop/
 ```
 
-The external root owns live phase-loop state, active prompts, review memory, stop reasons, lock ownership, and controller instructions. Repository files under `.brownie-control/` and `.codex/tasks/` are compatibility pointers only. They must not claim to be the sole source of truth and must not contain live phase state such as `current_phase`, `status`, `latest_pr`, `work_branch`, or `last_reviewed_pr` for the scheduled controller.
+The external CLI root owns live phase-loop state, active prompts, review memory, stop reasons, lock ownership, and controller instructions. Repository files under `.brownie-control/` and `.codex/tasks/` are compatibility pointers only. They must not claim to be the sole source of truth, must not point the CLI campaign back to the completed Core Runtime campaign, and must not contain live phase state such as `current_phase`, `status`, `latest_pr`, `work_branch`, or `last_reviewed_pr` for the scheduled controller.
 
 ## Required External Files
 

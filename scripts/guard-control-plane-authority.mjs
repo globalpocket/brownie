@@ -5,6 +5,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const defaultRepoRoot = path.resolve(__dirname, '..');
+const cliAutomationRoot = '~/.codex/automations/brownie-cli-phase-loop/';
+const completedCoreAutomationRoot = '~/.codex/automations/brownie-phase-loop/';
 
 const requiredPointerFiles = [
   '.brownie-control/phase-state.json',
@@ -99,8 +101,11 @@ function validatePointerText(repoRoot, relativePath, errors) {
   if (!text) {
     return;
   }
-  if (!text.includes('~/.codex/automations/brownie-phase-loop/')) {
-    errors.push(`${normalized} must point to ~/.codex/automations/brownie-phase-loop/.`);
+  if (!text.includes(cliAutomationRoot)) {
+    errors.push(`${normalized} must point to ${cliAutomationRoot}.`);
+  }
+  if (text.includes(completedCoreAutomationRoot)) {
+    errors.push(`${normalized} must not point the CLI control plane to completed Core Runtime campaign root ${completedCoreAutomationRoot}.`);
   }
   if (!/not\s+the\s+live|not\s+the\s+scheduled\s+controller\s+authority|compatibility\s+pointer|pointer\s+only/i.test(text)) {
     errors.push(`${normalized} must explicitly state that it is pointer-only or non-authoritative.`);
@@ -128,8 +133,11 @@ function validatePhaseStatePointer(repoRoot, errors) {
   if (state.source_of_truth !== 'external_automation_root') {
     errors.push(`${relativePath} must set source_of_truth to external_automation_root.`);
   }
-  if (state.external_automation_root !== '~/.codex/automations/brownie-phase-loop/') {
-    errors.push(`${relativePath} must point to ~/.codex/automations/brownie-phase-loop/.`);
+  if (state.external_automation_root !== cliAutomationRoot) {
+    errors.push(`${relativePath} must point to ${cliAutomationRoot}.`);
+  }
+  if (state.external_automation_root === completedCoreAutomationRoot) {
+    errors.push(`${relativePath} must not point the CLI control plane to completed Core Runtime campaign root ${completedCoreAutomationRoot}.`);
   }
   for (const key of forbiddenLiveStateKeys) {
     if (Object.hasOwn(state, key)) {

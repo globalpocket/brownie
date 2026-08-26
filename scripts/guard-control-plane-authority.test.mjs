@@ -6,6 +6,9 @@ import test from 'node:test';
 
 import { validateControlPlaneAuthority } from './guard-control-plane-authority.mjs';
 
+const cliAutomationRoot = '~/.codex/automations/brownie-cli-phase-loop/';
+const completedCoreAutomationRoot = '~/.codex/automations/brownie-phase-loop/';
+
 const pointerFiles = [
   '.brownie-control/phase-state.json',
   '.brownie-control/current-phase-prompt.md',
@@ -37,18 +40,18 @@ function writePointerRepo(repoRoot, overrides = {}) {
         schema_version: 2,
         authoritative: false,
         source_of_truth: 'external_automation_root',
-        external_automation_root: '~/.codex/automations/brownie-phase-loop/'
+        external_automation_root: cliAutomationRoot
       },
       null,
       2
     ),
-    '.brownie-control/current-phase-prompt.md': 'Pointer only. This is not the live prompt. Use ~/.codex/automations/brownie-phase-loop/.',
-    '.brownie-control/next-phase-prompt.md': 'Pointer only. This is not the live next prompt. Use ~/.codex/automations/brownie-phase-loop/.',
-    '.brownie-control/latest-review.md': 'Pointer only. This is not the live latest review. Use ~/.codex/automations/brownie-phase-loop/.',
-    '.brownie-control/stop-reason.md': 'Pointer only. This is not the live stop reason. Use ~/.codex/automations/brownie-phase-loop/.',
-    '.codex/tasks/implement-current-phase.md': 'Compatibility pointer. This is not the scheduled controller authority. Use ~/.codex/automations/brownie-phase-loop/.',
-    '.codex/tasks/review-and-plan-next-phase.md': 'Compatibility pointer. This is not the scheduled controller authority. Use ~/.codex/automations/brownie-phase-loop/.',
-    'docs/architecture/control-plane-authority.md': 'Compatibility pointer contract. Repository files are pointer only. Use ~/.codex/automations/brownie-phase-loop/.',
+    '.brownie-control/current-phase-prompt.md': `Pointer only. This is not the live prompt. Use ${cliAutomationRoot}.`,
+    '.brownie-control/next-phase-prompt.md': `Pointer only. This is not the live next prompt. Use ${cliAutomationRoot}.`,
+    '.brownie-control/latest-review.md': `Pointer only. This is not the live latest review. Use ${cliAutomationRoot}.`,
+    '.brownie-control/stop-reason.md': `Pointer only. This is not the live stop reason. Use ${cliAutomationRoot}.`,
+    '.codex/tasks/implement-current-phase.md': `Compatibility pointer. This is not the scheduled controller authority. Use ${cliAutomationRoot}.`,
+    '.codex/tasks/review-and-plan-next-phase.md': `Compatibility pointer. This is not the scheduled controller authority. Use ${cliAutomationRoot}.`,
+    'docs/architecture/control-plane-authority.md': `Compatibility pointer contract. Repository files are pointer only. Use ${cliAutomationRoot}.`,
     ...overrides
   };
 
@@ -84,7 +87,7 @@ test('rejects legacy live phase state keys', () => {
           project: 'brownie',
           authoritative: false,
           source_of_truth: 'external_automation_root',
-          external_automation_root: '~/.codex/automations/brownie-phase-loop/',
+          external_automation_root: cliAutomationRoot,
           current_phase: '3.4.1',
           status: 'ready_to_implement',
           last_reviewed_pr: 35
@@ -104,9 +107,35 @@ test('rejects stale hard-stop status rules', () => {
   withTempRepo((repoRoot) => {
     writePointerRepo(repoRoot, {
       '.codex/tasks/implement-current-phase.md':
-        'Pointer only. Use ~/.codex/automations/brownie-phase-loop/. Run only when `phase-state.json.status` is exactly `ready_to_implement`.'
+        `Pointer only. Use ${cliAutomationRoot}. Run only when \`phase-state.json.status\` is exactly \`ready_to_implement\`.`
     });
     const result = validateControlPlaneAuthority({ repoRoot, pointerFiles });
     assert(result.errors.some((error) => error.includes('hard-stops on repo-local phase-state status')));
+  });
+});
+
+test('rejects completed Core Runtime campaign as the CLI control-plane root', () => {
+  withTempRepo((repoRoot) => {
+    writePointerRepo(repoRoot, {
+      '.brownie-control/phase-state.json': JSON.stringify(
+        {
+          project: 'brownie',
+          authoritative: false,
+          source_of_truth: 'external_automation_root',
+          external_automation_root: completedCoreAutomationRoot
+        },
+        null,
+        2
+      ),
+      '.brownie-control/current-phase-prompt.md': `Pointer only. This is not the live prompt. Use ${completedCoreAutomationRoot}.`,
+      '.brownie-control/next-phase-prompt.md': `Pointer only. This is not the live next prompt. Use ${completedCoreAutomationRoot}.`,
+      '.brownie-control/latest-review.md': `Pointer only. This is not the live latest review. Use ${completedCoreAutomationRoot}.`,
+      '.brownie-control/stop-reason.md': `Pointer only. This is not the live stop reason. Use ${completedCoreAutomationRoot}.`,
+      '.codex/tasks/implement-current-phase.md': `Compatibility pointer. This is not the scheduled controller authority. Use ${completedCoreAutomationRoot}.`,
+      '.codex/tasks/review-and-plan-next-phase.md': `Compatibility pointer. This is not the scheduled controller authority. Use ${completedCoreAutomationRoot}.`,
+      'docs/architecture/control-plane-authority.md': `Compatibility pointer contract. Repository files are pointer only. Use ${completedCoreAutomationRoot}.`
+    });
+    const result = validateControlPlaneAuthority({ repoRoot, pointerFiles });
+    assert(result.errors.some((error) => error.includes('completed Core Runtime campaign root')));
   });
 });

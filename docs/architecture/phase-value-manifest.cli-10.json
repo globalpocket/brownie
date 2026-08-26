@@ -1,0 +1,165 @@
+{
+  "schema_version": 1,
+  "phase": "CLI-10",
+  "current_milestone": "brownie_cli_campaign",
+  "milestone": "Brownie CLI Campaign",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "Brownie CLI moves from clean installed arbitrary-repository execution to restart-safe and recovery-safe installed execution: brownie resume can continue the intended persisted runtime-owned objective scope after interruption, response loss, or transport timeout without duplicate admission, unrelated task selection, or CLI-owned replay/recovery policy.",
+  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path_goal_text_heuristic_timestamp_heuristic_id_similarity_heuristic_same_workspace_heuristic",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Proves the installed CLI can recover long-running objective execution across restart and lost response by delegating scoped continuation to Rust runtime-owned persisted journey, progress, and recovery provenance."
+    },
+    {
+      "capability": "agent_loop",
+      "relationship": "Keeps resume and recovery execution on the existing runtime-owned task.run/headless.continue_once state machine rather than adding a CLI agent loop or CLI task-selection policy."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "Advances headless_autonomous_development by making installed brownie run workflows restart-safe and recovery-safe, while preserving Rust runtime authority over replay, continuation, and recovery provenance.",
+      "new_capability": "A caller can interrupt or lose the response from brownie run, start a later CLI process, and use brownie resume to continue the intended persisted runtime-owned objective scope without duplicate admission or unrelated task selection.",
+      "why_existing_functionality_is_insufficient": "CLI-7 stabilized output, CLI-8 added install/help, and CLI-9 proved clean arbitrary-repository completion. They do not prove restart/lost-response recovery, same-objective independent invocations, terminal-latest no-fallback behavior, or typed recovery/retry scoped resume.",
+      "product_gap_if_skipped": "CLI product completion would lack evidence that long-running autonomous objectives can survive process loss or transport timeout without duplicate side effects or broad global resume selection.",
+      "non_duplicative": "CLI-10 is not output, install, or clean-run coverage. It validates restart/resume and recovery/retry scope semantics across process boundaries after CLI-7 through CLI-9.",
+      "no_new_rpc": "Yes. The implementation uses existing task.list, headless.continue_once, headless.run.drive, and existing runtime-owned recovery/progress evidence. No new runtime RPC or passthrough is introduced.",
+      "no_new_summary": "Yes. No report, readiness, digest, verdict, history, inspection, or summary surface is added.",
+      "runtime_behavior_change": "Runtime scope derivation now treats typed recovery/retry provenance as part of the originating journey scope only when source and recovery handles match runtime-owned evidence, and fails closed on conflicts. CLI behavior remains thin and uses existing resume requests.",
+      "headless_autonomous_contribution": "External schedulers can safely resume CLI-driven objective execution after process loss or timeout, and runtime-created recovery/retry tasks stay in objective scope without CLI heuristics.",
+      "milestone_progress": "Closes CLI-10, the final open required CLI Product DoD gap before product completion evaluation, subject to passing PR review and zero blocking or required-before-release debt."
+    },
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities move forward?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What becomes newly executable or usable?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing behavior not substitute for this?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What remains impossible if skipped?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Why is this not semantically duplicative?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary/report surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "How does runtime or user-visible behavior change?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this contribute to headless autonomous operation?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move milestone completion?"
+      }
+    ]
+  },
+  "review_value_gate": {
+    "reject_when": [
+      "phase reopens the completed Core Runtime campaign",
+      "phase makes develop the primary command",
+      "phase makes the CLI select tasks, rank continuation candidates, read ledgers directly, or own recovery/replay policy",
+      "phase selects scoped resume by goal text, mode id, timestamp proximity, id similarity, objective text, or same workspace alone",
+      "phase adds a new runtime RPC or generic JSON-RPC passthrough",
+      "phase duplicates Mode Pack compilation, permission policy, Product DoD, replay, recovery, or workspace mutation logic in the CLI",
+      "phase accepts fake-runtime request shape without real restart/resume or recovery/retry evidence",
+      "phase is report/readiness/history/digest/verdict/summary/documentation-only"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "CLI-10 updates the deterministic current phase manifest and runtime scoped resume behavior. Review must confirm typed recovery scope remains Rust-runtime-owned, fail-closed, and backed by behavior tests rather than wrapper-only evidence.",
+    "changed_files": [
+      "crates/brownie-runtime/src/headless_continue.rs",
+      "crates/brownie-runtime/src/lib.rs",
+      "crates/brownie-cli/tests/cli_behavior.rs",
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.cli-9.json",
+      "docs/architecture/phase-value-manifest.cli-8.json"
+    ]
+  },
+  "exit_criteria": [
+    "After interrupted or response-lost brownie run, a later brownie resume continues the intended persisted runtime-owned CLI objective scope.",
+    "Same objective text can be run as multiple independent invocations without identity collision.",
+    "The same explicit persisted runtime invocation remains replay-safe without duplicate admission or side effects.",
+    "Terminal latest CLI objective does not cause resume to fall back to unrelated global eligible tasks.",
+    "Unrelated frontend/runtime tasks do not enter CLI resume scope.",
+    "Runtime-created recovery/retry tasks with typed provenance remain inside the original CLI objective scope even when parent_task_id and parent_run_id are absent.",
+    "Malformed, stale, conflicting, or ambiguous recovery provenance fails closed and never broadens by goal text, mode id, timestamp proximity, id similarity, objective text, or same workspace alone.",
+    "Real actual brownie and brownie-runtime binaries pass restart/resume and recovery/retry E2E tests from temporary ordinary repositories outside the Brownie source tree.",
+    "Objective transport timeout or CLI process loss is treated as transport/liveness only, not objective/task/product failure.",
+    "No new runtime RPC, generic passthrough, report, readiness, history, digest, verdict, summary, CLI-owned policy engine, or workspace mutation authority is introduced."
+  ],
+  "behavior_evidence": [
+    "brownie-runtime scoped continuation tests prove latest CLI journey selection and terminal-latest no-fallback behavior remain runtime-owned.",
+    "brownie-runtime typed recovery scope tests prove parentless verification recovery and retry tasks are admitted to the originating CLI journey scope only through matching source/recovery provenance.",
+    "brownie-runtime negative tests prove conflicting recovery provenance remains no-eligible instead of broadening scoped resume.",
+    "brownie-cli installed real-binary restart/resume test proves a persisted CLI journey can survive lost response and later resume through the sibling runtime from an ordinary repository.",
+    "brownie-cli installed real-binary recovery test proves a runtime-created verification recovery task stays inside the original CLI objective scope and is selected by brownie resume."
+  ],
+  "product_dod": {
+    "closes": [
+      "CLI-10 Restart / Recovery Golden Journey"
+    ],
+    "leaves_open": [],
+    "does_not_close": []
+  },
+  "product_completion_gate": {
+    "required": true,
+    "product_completion_claim": false,
+    "accepted_capability": [
+      "The Brownie CLI will resume interrupted or lost-response installed run workflows through runtime-owned persisted scope evidence.",
+      "Typed runtime-created recovery/retry tasks stay in the original CLI objective scope without CLI-owned recovery heuristics."
+    ],
+    "behavior_evidence": [
+      "Focused runtime scoped continuation tests pass for typed recovery, typed retry, terminal latest no-fallback, and conflict fail-closed behavior.",
+      "Focused installed CLI binary/runtime tests pass for persisted restart-resume and runtime-created verification recovery scoped resume from ordinary repositories."
+    ],
+    "safety_boundary": [
+      "No Core Runtime terminal campaign state is reopened or mutated.",
+      "No new runtime JSON-RPC method is added.",
+      "The CLI does not read ledgers, discover Mode Packs from files, evaluate permissions, select tasks, apply patches, or own recovery/replay policy.",
+      "Scoped recovery expansion is derived only from matching runtime-owned typed provenance and fails closed on conflicts."
+    ],
+    "non_goals": [
+      "No new primary command, develop alias, generic RPC passthrough, report, readiness, history, digest, verdict, or inspection surface.",
+      "No Mode Pack, Product DoD, provider, permission, workspace mutation, replay, or fail-closed semantic redesign beyond bounded scope derivation.",
+      "No package publication, signing, notarization, Homebrew formula, or npm publication."
+    ],
+    "rejected_alternatives": [
+      "Rejected CLI-owned recovery ancestry or task sorting because scoped resume must be runtime-owned.",
+      "Rejected goal-text, timestamp proximity, id similarity, and same-workspace matching because those would broaden scope heuristically.",
+      "Rejected fake-runtime-only acceptance because CLI-10 requires actual restart/resume and recovery/retry process evidence.",
+      "Rejected adding a new RPC because existing task.list and headless.continue_once already carry the continuation contract."
+    ],
+    "technical_debt": [
+      "No new blocking or required_before_release debt is accepted by this phase.",
+      "CLI product completion remains blocked until CLI-10 is merged, full validation passes, and required gaps/debts are zero."
+    ],
+    "next_capability_rationale": [
+      "After CLI-10 lands, evaluate CLI product completion instead of inventing additional CLI phases unless concrete blocking debt is discovered."
+    ]
+  }
+}
