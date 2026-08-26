@@ -123,6 +123,7 @@ fn help_succeeds_and_names_general_run_command() {
     assert!(stdout.contains("run <objective>"));
     assert!(stdout.contains("resume"));
     assert!(stdout.contains("status"));
+    assert!(stdout.contains("mode list"));
     assert!(!stdout.contains("develop"));
 }
 
@@ -426,6 +427,198 @@ fn list_tasks_invokes_fixed_runtime_method_and_prints_progress_counts() {
     let request = fs::read_to_string(capture).unwrap();
     let request: serde_json::Value = serde_json::from_str(&request).unwrap();
     assert_eq!(request["method"], "task.list");
+    assert!(request.get("params").is_none());
+}
+
+#[test]
+fn list_tasks_renders_runtime_owned_progress_next_actions_and_bounds_rows() {
+    let runtime = fake_runtime(
+        "list-tasks-rich-progress",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"},{"task_id":"task-2","run_id":"run-2","status":"Completed"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":2,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":["task-2"],"terminal_task_ids":["task-2"],"parent_join_ready_task_ids":["task-2"],"status_counts":{"created":1,"queued":0,"running":0,"completed":1,"failed":0,"cancelled":0},"stage_counts":[{"current_stage":"created","task_count":1},{"current_stage":"parent_join_ready","task_count":1}],"next_action_sets":[{"next_action":"run_task_explicitly","task_count":1,"task_ids":["task-1"]},{"next_action":"run_parent_task_explicitly","task_count":1,"task_ids":["task-2"]}],"blocked_sets":[{"current_stage":"parent_join_ready","next_action":"run_parent_task_explicitly","task_count":1,"task_ids":["task-2"]}],"headless_route_candidates":[{"kind":"headless_continue_once","reason":"internal reason should not render","task_id":"task-1","run_id":"run-1","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","priority":1,"next_action":"run_task_explicitly"}],"nodes":[],"edges":[]}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("parent_join_ready: 1"));
+    assert!(stdout
+        .contains("status_counts: created:1 queued:0 running:0 completed:1 failed:0 cancelled:0"));
+    assert!(stdout.contains("stages:"));
+    assert!(stdout.contains("created: 1"));
+    assert!(stdout.contains("next actions:"));
+    assert!(stdout.contains("run_task_explicitly: 1"));
+    assert!(stdout.contains("blocked groups:"));
+    assert!(stdout.contains("parent_join_ready -> run_parent_task_explicitly: 1"));
+    assert!(stdout.contains("headless routes:"));
+    assert!(stdout.contains("p1 headless_continue_once run_task_explicitly task:task-1"));
+    assert!(!stdout.contains("internal reason"));
+}
+
+#[test]
+fn list_tasks_human_output_is_bounded_for_large_runtime_progress() {
+    let mut tasks = Vec::new();
+    for index in 0..14 {
+        tasks.push(serde_json::json!({
+            "task_id": format!("task-{index}"),
+            "run_id": format!("run-{index}"),
+            "status": "Created"
+        }));
+    }
+    let mut next_action_sets = Vec::new();
+    let mut route_candidates = Vec::new();
+    for index in 0..8 {
+        next_action_sets.push(serde_json::json!({
+            "next_action": format!("action-{index}"),
+            "task_count": 1,
+            "task_ids": [format!("task-{index}")]
+        }));
+        route_candidates.push(serde_json::json!({
+            "kind": "headless_continue_once",
+            "reason": format!("reason-{index}"),
+            "task_id": format!("task-{index}"),
+            "run_id": format!("run-{index}"),
+            "progress_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "aggregate_sequence": 7,
+            "route_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "priority": index,
+            "next_action": format!("action-{index}")
+        }));
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "tasks": tasks,
+            "progress_overview": {
+                "source_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aggregate_sequence": 7,
+                "task_count": 14,
+                "root_task_ids": [],
+                "runnable_task_ids": [],
+                "blocked_task_ids": [],
+                "terminal_task_ids": [],
+                "parent_join_ready_task_ids": [],
+                "status_counts": {"created":14,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},
+                "stage_counts": [],
+                "next_action_sets": next_action_sets,
+                "blocked_sets": [],
+                "headless_route_candidates": route_candidates,
+                "nodes": [],
+                "edges": []
+            }
+        }
+    })
+    .to_string();
+    let runtime = fake_runtime("list-tasks-large-progress", &body);
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("... 3 more next action groups"));
+    assert!(stdout.contains("... 3 more headless route candidates"));
+    assert!(stdout.contains("... 4 more"));
+    assert!(!stdout.contains("task-13 Created run-13"));
+    assert!(!stdout.contains("reason-0"));
+}
+
+#[test]
+fn list_tasks_json_preserves_runtime_result_for_cli7_projection_work() {
+    let runtime = fake_runtime(
+        "list-tasks-json-compat",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"ok\":true"));
+    assert!(stdout.contains("\"task_list\""));
+    assert!(stdout.contains("\"progress_overview\""));
+    assert!(stdout.contains("\"source_fingerprint\""));
+}
+
+#[test]
+fn list_tasks_rejects_malformed_runtime_progress_groups() {
+    let runtime = fake_runtime(
+        "list-tasks-malformed-progress-groups",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"task_count":0,"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"stage_counts":"not-an-array"}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime returned an invalid response"));
+}
+
+#[test]
+fn mode_list_invokes_runtime_mode_list_and_prints_bounded_human_output() {
+    let runtime = fake_runtime(
+        "mode-list",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(["mode", "list"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("modes 1"));
+    assert!(stdout.contains("orchestrator Orchestrator"));
+    assert!(stdout.contains("role: Break down and coordinate bounded work"));
+    assert!(stdout.contains("workspace_write=false"));
+    assert!(stdout.contains("can_spawn_subtasks=true"));
+
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "mode.list");
     assert!(request.get("params").is_none());
 }
 
@@ -962,6 +1155,25 @@ fn list_tasks_can_invoke_real_runtime_binary_when_available() {
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("tasks "));
+    assert!(stdout.contains("parent_join_ready:"));
+    assert!(stdout.contains("task rows:"));
+}
+
+#[test]
+fn mode_list_can_invoke_real_runtime_binary_when_available() {
+    let runtime = build_real_runtime_binary();
+
+    let output = Command::new(brownie())
+        .args(["mode", "list"])
+        .env("BROWNIE_RUNTIME_PATH", runtime)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("modes "));
+    assert!(stdout.contains("orchestrator"));
+    assert!(stdout.contains("permissions:"));
 }
 
 #[test]

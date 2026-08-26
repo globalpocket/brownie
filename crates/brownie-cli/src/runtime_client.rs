@@ -1,4 +1,4 @@
-use crate::cli::{CliCommand, InspectTarget, ListTarget};
+use crate::cli::{CliCommand, InspectTarget, ListTarget, ModeTarget};
 use brownie_protocol::{JsonRpcResponse, RuntimeStatus};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -16,6 +16,7 @@ const RUNTIME_STATUS_METHOD: &str = "runtime.status";
 const TASK_INSPECT_METHOD: &str = "task.inspect";
 const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
+const MODE_LIST_METHOD: &str = "mode.list";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
@@ -28,6 +29,9 @@ const MAX_STATUS_FIELD_CHARS: usize = 128;
 const MAX_RENDERED_OUTPUT_CHARS: usize = 4 * 1024;
 const MAX_TEXT_FIELD_CHARS: usize = 256;
 const MAX_TASK_LIST_ROWS: usize = 10;
+const MAX_TASK_LIST_GROUP_ROWS: usize = 5;
+const MAX_HEADLESS_ROUTE_ROWS: usize = 5;
+const MAX_MODE_LIST_ROWS: usize = 12;
 const CLI_RUN_MAX_ADVANCES: u8 = 1;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
@@ -156,6 +160,9 @@ impl RuntimeClient {
             CliCommand::List {
                 target: ListTarget::Tasks,
             } => self.runtime_task_list(json),
+            CliCommand::Mode {
+                target: ModeTarget::List,
+            } => self.runtime_mode_list(json),
             _ => Err(RuntimeClientError::UnsupportedCommand),
         }
     }
@@ -259,6 +266,17 @@ impl RuntimeClient {
         }
 
         bounded_output(render_task_list(&result)?)
+    }
+
+    fn runtime_mode_list(&self, json_output: bool) -> Result<String, RuntimeClientError> {
+        let result =
+            self.call_runtime_value(MODE_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
+        validate_mode_list_result(&result)?;
+        if json_output {
+            return json_result("mode_list", result);
+        }
+
+        bounded_output(render_mode_list(&result)?)
     }
 
     fn call_runtime_value(
@@ -502,7 +520,55 @@ fn validate_task_list_result(result: &Value) -> Result<(), RuntimeClientError> {
         task.as_object()
             .ok_or(RuntimeClientError::InvalidResponse)?;
     }
-    object_field(result, "progress_overview")?;
+    let progress = object_field(result, "progress_overview")?;
+    array_len(progress, "runnable_task_ids")?;
+    array_len(progress, "blocked_task_ids")?;
+    array_len(progress, "terminal_task_ids")?;
+    if let Some(ids) = optional_array_field_checked(progress, "parent_join_ready_task_ids")? {
+        validate_string_array(ids)?;
+    }
+    if let Some(counts) = optional_object_field_checked(progress, "status_counts")? {
+        validate_usize_values(counts)?;
+    }
+    validate_progress_group_array(progress, "stage_counts")?;
+    validate_progress_group_array(progress, "next_action_sets")?;
+    validate_progress_group_array(progress, "blocked_sets")?;
+    validate_progress_group_array(progress, "headless_route_candidates")?;
+    Ok(())
+}
+
+fn validate_mode_list_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let modes = object
+        .get("modes")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for mode in modes.iter().take(MAX_MODE_LIST_ROWS) {
+        let mode = mode
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        required_display_string(mode, "mode_id")?;
+        required_display_string(mode, "display_name")?;
+        required_display_string(mode, "role_definition")?;
+        let permissions = mode
+            .get("permissions")
+            .and_then(Value::as_object)
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        for key in [
+            "read_only",
+            "workspace_write",
+            "process_exec",
+            "network_access",
+            "service_control",
+            "destructive",
+            "can_spawn_subtasks",
+            "codebase_index",
+        ] {
+            required_bool(permissions, key)?;
+        }
+    }
     Ok(())
 }
 
@@ -810,10 +876,20 @@ fn render_task_list(result: &Value) -> Result<String, RuntimeClientError> {
     let runnable_count = array_len(progress, "runnable_task_ids")?;
     let blocked_count = array_len(progress, "blocked_task_ids")?;
     let terminal_count = array_len(progress, "terminal_task_ids")?;
+    let parent_join_ready_count =
+        optional_array_field_checked(progress, "parent_join_ready_task_ids")?
+            .map(Vec::len)
+            .unwrap_or(0);
 
     let mut output = format!(
-        "tasks {task_count}\n  runnable: {runnable_count}\n  blocked: {blocked_count}\n  terminal: {terminal_count}\n"
+        "tasks {task_count}\n  runnable: {runnable_count}\n  blocked: {blocked_count}\n  terminal: {terminal_count}\n  parent_join_ready: {parent_join_ready_count}\n"
     );
+    render_status_counts(&mut output, progress)?;
+    render_stage_counts(&mut output, progress)?;
+    render_next_action_sets(&mut output, progress)?;
+    render_blocked_sets(&mut output, progress)?;
+    render_headless_route_candidates(&mut output, progress)?;
+    output.push_str("  task rows:\n");
     for task in tasks.iter().take(MAX_TASK_LIST_ROWS) {
         let task = task
             .as_object()
@@ -829,6 +905,187 @@ fn render_task_list(result: &Value) -> Result<String, RuntimeClientError> {
             tasks.len() - MAX_TASK_LIST_ROWS
         ));
     }
+    Ok(output)
+}
+
+fn render_status_counts(
+    output: &mut String,
+    progress: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    let Some(counts) = optional_object_field_checked(progress, "status_counts")? else {
+        return Ok(());
+    };
+    let keys = [
+        "created",
+        "queued",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+    ];
+    let mut parts = Vec::new();
+    for key in keys {
+        if counts.contains_key(key) {
+            parts.push(format!("{key}:{}", display_usize(counts, key)?));
+        }
+    }
+    if !parts.is_empty() {
+        output.push_str(&format!("  status_counts: {}\n", parts.join(" ")));
+    }
+    Ok(())
+}
+
+fn render_stage_counts(
+    output: &mut String,
+    progress: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    let Some(stages) = optional_array_field_checked(progress, "stage_counts")? else {
+        return Ok(());
+    };
+    if stages.is_empty() {
+        return Ok(());
+    }
+    output.push_str("  stages:\n");
+    for stage in stages.iter().take(MAX_TASK_LIST_GROUP_ROWS) {
+        let stage = stage
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let current_stage = display_string(stage, "current_stage")?;
+        let task_count = display_usize_or(stage, "task_count", 0)?;
+        output.push_str(&format!("    {current_stage}: {task_count}\n"));
+    }
+    render_truncation(
+        output,
+        "stage groups",
+        stages.len(),
+        MAX_TASK_LIST_GROUP_ROWS,
+    );
+    Ok(())
+}
+
+fn render_next_action_sets(
+    output: &mut String,
+    progress: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    let Some(sets) = optional_array_field_checked(progress, "next_action_sets")? else {
+        return Ok(());
+    };
+    if sets.is_empty() {
+        return Ok(());
+    }
+    output.push_str("  next actions:\n");
+    for set in sets.iter().take(MAX_TASK_LIST_GROUP_ROWS) {
+        let set = set.as_object().ok_or(RuntimeClientError::InvalidResponse)?;
+        let next_action = display_string(set, "next_action")?;
+        let task_count = display_count(set, "task_count", "task_ids")?;
+        output.push_str(&format!("    {next_action}: {task_count}\n"));
+    }
+    render_truncation(
+        output,
+        "next action groups",
+        sets.len(),
+        MAX_TASK_LIST_GROUP_ROWS,
+    );
+    Ok(())
+}
+
+fn render_blocked_sets(
+    output: &mut String,
+    progress: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    let Some(sets) = optional_array_field_checked(progress, "blocked_sets")? else {
+        return Ok(());
+    };
+    if sets.is_empty() {
+        return Ok(());
+    }
+    output.push_str("  blocked groups:\n");
+    for set in sets.iter().take(MAX_TASK_LIST_GROUP_ROWS) {
+        let set = set.as_object().ok_or(RuntimeClientError::InvalidResponse)?;
+        let current_stage = display_string(set, "current_stage")?;
+        let next_action = display_string(set, "next_action")?;
+        let task_count = display_count(set, "task_count", "task_ids")?;
+        output.push_str(&format!(
+            "    {current_stage} -> {next_action}: {task_count}\n"
+        ));
+    }
+    render_truncation(
+        output,
+        "blocked groups",
+        sets.len(),
+        MAX_TASK_LIST_GROUP_ROWS,
+    );
+    Ok(())
+}
+
+fn render_headless_route_candidates(
+    output: &mut String,
+    progress: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    let Some(candidates) = optional_array_field_checked(progress, "headless_route_candidates")?
+    else {
+        return Ok(());
+    };
+    if candidates.is_empty() {
+        return Ok(());
+    }
+    output.push_str("  headless routes:\n");
+    for candidate in candidates.iter().take(MAX_HEADLESS_ROUTE_ROWS) {
+        let candidate = candidate
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let priority = display_usize(candidate, "priority")?;
+        let kind = display_string(candidate, "kind")?;
+        let next_action = display_string(candidate, "next_action")?;
+        let task_id = display_optional_string(candidate, "task_id")?;
+        output.push_str(&format!(
+            "    p{priority} {kind} {next_action} task:{task_id}\n"
+        ));
+    }
+    render_truncation(
+        output,
+        "headless route candidates",
+        candidates.len(),
+        MAX_HEADLESS_ROUTE_ROWS,
+    );
+    Ok(())
+}
+
+fn render_mode_list(result: &Value) -> Result<String, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let modes = object
+        .get("modes")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut output = format!("modes {}\n", modes.len());
+    for mode in modes.iter().take(MAX_MODE_LIST_ROWS) {
+        let mode = mode
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let mode_id = display_string(mode, "mode_id")?;
+        let display_name = display_string(mode, "display_name")?;
+        let role = display_string(mode, "role_definition")?;
+        let permissions = mode
+            .get("permissions")
+            .and_then(Value::as_object)
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        output.push_str(&format!("  {mode_id} {display_name}\n"));
+        output.push_str(&format!("    role: {role}\n"));
+        output.push_str(&format!(
+            "    permissions: read_only={} workspace_write={} process_exec={} network_access={} service_control={} destructive={} can_spawn_subtasks={} codebase_index={}\n",
+            display_bool(permissions, "read_only")?,
+            display_bool(permissions, "workspace_write")?,
+            display_bool(permissions, "process_exec")?,
+            display_bool(permissions, "network_access")?,
+            display_bool(permissions, "service_control")?,
+            display_bool(permissions, "destructive")?,
+            display_bool(permissions, "can_spawn_subtasks")?,
+            display_bool(permissions, "codebase_index")?
+        ));
+    }
+    render_truncation(&mut output, "modes", modes.len(), MAX_MODE_LIST_ROWS);
     Ok(output)
 }
 
@@ -848,6 +1105,70 @@ fn optional_object_field<'a>(
     key: &str,
 ) -> Option<&'a serde_json::Map<String, Value>> {
     object.get(key).and_then(Value::as_object)
+}
+
+fn optional_array_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Option<&'a Vec<Value>> {
+    object.get(key).and_then(Value::as_array)
+}
+
+fn optional_object_field_checked<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a serde_json::Map<String, Value>>, RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_object()
+            .map(Some)
+            .ok_or(RuntimeClientError::InvalidResponse),
+    }
+}
+
+fn optional_array_field_checked<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a Vec<Value>>, RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_array()
+            .map(Some)
+            .ok_or(RuntimeClientError::InvalidResponse),
+    }
+}
+
+fn validate_string_array(values: &[Value]) -> Result<(), RuntimeClientError> {
+    for value in values {
+        bounded_string(value)?;
+    }
+    Ok(())
+}
+
+fn validate_usize_values(
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    for value in object.values() {
+        required_number(value)?;
+    }
+    Ok(())
+}
+
+fn validate_progress_group_array(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), RuntimeClientError> {
+    let Some(groups) = optional_array_field_checked(object, key)? else {
+        return Ok(());
+    };
+    for group in groups {
+        group
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+    }
+    Ok(())
 }
 
 fn display_string(
@@ -1000,6 +1321,19 @@ fn display_usize_or(
     }
 }
 
+fn display_count(
+    object: &serde_json::Map<String, Value>,
+    count_key: &str,
+    ids_key: &str,
+) -> Result<usize, RuntimeClientError> {
+    match object.get(count_key) {
+        Some(_) => display_usize(object, count_key),
+        None => optional_array_field(object, ids_key)
+            .map(Vec::len)
+            .ok_or(RuntimeClientError::InvalidResponse),
+    }
+}
+
 fn array_len(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -1009,6 +1343,12 @@ fn array_len(
         .and_then(Value::as_array)
         .map(Vec::len)
         .ok_or(RuntimeClientError::InvalidResponse)
+}
+
+fn render_truncation(output: &mut String, label: &str, len: usize, limit: usize) {
+    if len > limit {
+        output.push_str(&format!("    ... {} more {label}\n", len - limit));
+    }
 }
 
 #[cfg(test)]
