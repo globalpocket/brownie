@@ -179,7 +179,7 @@ impl RuntimeClient {
         )?;
         validate_headless_run_drive_result(&result)?;
         if json_output {
-            return json_result("run", cli_run_payload(&result)?);
+            return json_result("run", "run", cli_run_payload(&result)?);
         }
 
         bounded_output(render_run_result(&result)?)
@@ -197,7 +197,7 @@ impl RuntimeClient {
         )?;
         validate_headless_continue_once_result(&result)?;
         if json_output {
-            return json_result("resume", cli_resume_payload(&result)?);
+            return json_result("resume", "resume", cli_resume_payload(&result)?);
         }
 
         bounded_output(render_resume_result(&result)?)
@@ -206,7 +206,7 @@ impl RuntimeClient {
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
         let status = self.call_runtime_status()?;
         if json_output {
-            return Ok(format!("{}\n", json!({ "ok": true, "status": status })));
+            return json_result("status", "status", status_payload(&status)?);
         }
 
         Ok(format!(
@@ -233,7 +233,11 @@ impl RuntimeClient {
         )?;
         validate_task_inspect_result(&result)?;
         if json_output {
-            return json_result("task_inspect", result);
+            return json_result(
+                "inspect task",
+                "task_inspect",
+                task_inspect_payload(&result)?,
+            );
         }
 
         bounded_output(render_task_inspect(&result)?)
@@ -251,7 +255,7 @@ impl RuntimeClient {
         )?;
         validate_run_inspect_result(&result)?;
         if json_output {
-            return json_result("run_inspect", result);
+            return json_result("inspect run", "run_inspect", run_inspect_payload(&result)?);
         }
 
         bounded_output(render_run_inspect(&result)?)
@@ -262,7 +266,7 @@ impl RuntimeClient {
             self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
         validate_task_list_result(&result)?;
         if json_output {
-            return json_result("task_list", result);
+            return json_result("list tasks", "task_list", task_list_payload(&result)?);
         }
 
         bounded_output(render_task_list(&result)?)
@@ -273,7 +277,7 @@ impl RuntimeClient {
             self.call_runtime_value(MODE_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
         validate_mode_list_result(&result)?;
         if json_output {
-            return json_result("mode_list", result);
+            return json_result("mode list", "mode_list", mode_list_payload(&result)?);
         }
 
         bounded_output(render_mode_list(&result)?)
@@ -485,9 +489,14 @@ fn parse_runtime_status_result(result: Value) -> Result<RuntimeStatus, RuntimeCl
         .map_err(|_| RuntimeClientError::InvalidResponse)
 }
 
-fn json_result(key: &str, result: Value) -> Result<String, RuntimeClientError> {
+fn json_result(command: &str, key: &str, result: Value) -> Result<String, RuntimeClientError> {
     let mut payload = serde_json::Map::new();
     payload.insert("ok".to_string(), Value::Bool(true));
+    payload.insert("command".to_string(), Value::String(command.to_string()));
+    payload.insert(
+        "exit_code".to_string(),
+        Value::Number(serde_json::Number::from(0_u8)),
+    );
     payload.insert(key.to_string(), result);
     bounded_output(format!("{}\n", Value::Object(payload)))
 }
@@ -497,6 +506,315 @@ fn bounded_output(output: String) -> Result<String, RuntimeClientError> {
         return Err(RuntimeClientError::InvalidResponse);
     }
     Ok(output)
+}
+
+fn status_payload(status: &RuntimeStatus) -> Result<Value, RuntimeClientError> {
+    let value = serde_json::to_value(status).map_err(|_| RuntimeClientError::InvalidResponse)?;
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut payload = serde_json::Map::new();
+    for key in ["name", "version", "status"] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), bounded_json_string(value)?);
+        }
+    }
+    Ok(Value::Object(payload))
+}
+
+fn task_inspect_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let task = object_field(result, "task")?;
+    let run = object_field(result, "run")?;
+    let progress = optional_object_field(run, "progress_snapshot");
+
+    let mut payload = serde_json::Map::new();
+    payload.insert("task".to_string(), project_task_row(task)?);
+    payload.insert("run".to_string(), project_run_summary(run, progress)?);
+    Ok(Value::Object(payload))
+}
+
+fn run_inspect_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let run = object_field(result, "run")?;
+    let progress = optional_object_field(run, "progress_snapshot");
+    Ok(project_run_summary(run, progress)?)
+}
+
+fn task_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let tasks = object
+        .get("tasks")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let progress = object_field(result, "progress_overview")?;
+
+    let mut payload = serde_json::Map::new();
+    payload.insert(
+        "task_count".to_string(),
+        Value::Number(serde_json::Number::from(display_usize_or(
+            progress,
+            "task_count",
+            tasks.len(),
+        )?)),
+    );
+    payload.insert(
+        "runnable_count".to_string(),
+        Value::Number(serde_json::Number::from(array_len(
+            progress,
+            "runnable_task_ids",
+        )?)),
+    );
+    payload.insert(
+        "blocked_count".to_string(),
+        Value::Number(serde_json::Number::from(array_len(
+            progress,
+            "blocked_task_ids",
+        )?)),
+    );
+    payload.insert(
+        "terminal_count".to_string(),
+        Value::Number(serde_json::Number::from(array_len(
+            progress,
+            "terminal_task_ids",
+        )?)),
+    );
+    let parent_join_ready_count =
+        optional_array_field_checked(progress, "parent_join_ready_task_ids")?
+            .map(Vec::len)
+            .unwrap_or(0);
+    payload.insert(
+        "parent_join_ready_count".to_string(),
+        Value::Number(serde_json::Number::from(parent_join_ready_count)),
+    );
+    if let Some(value) = progress.get("source_fingerprint") {
+        payload.insert(
+            "source_fingerprint".to_string(),
+            bounded_json_string(value)?,
+        );
+    }
+    if let Some(value) = progress.get("aggregate_sequence") {
+        payload.insert(
+            "aggregate_sequence".to_string(),
+            Value::Number(required_number(value)?),
+        );
+    }
+    if let Some(counts) = optional_object_field_checked(progress, "status_counts")? {
+        payload.insert("status_counts".to_string(), project_usize_object(counts)?);
+    }
+    payload.insert(
+        "stage_counts".to_string(),
+        project_progress_groups(progress, "stage_counts", &["current_stage"])?,
+    );
+    payload.insert(
+        "next_action_sets".to_string(),
+        project_progress_groups(progress, "next_action_sets", &["next_action"])?,
+    );
+    payload.insert(
+        "blocked_sets".to_string(),
+        project_progress_groups(progress, "blocked_sets", &["current_stage", "next_action"])?,
+    );
+    payload.insert(
+        "headless_route_candidates".to_string(),
+        project_route_candidates(progress)?,
+    );
+    payload.insert("tasks".to_string(), project_task_rows(tasks)?);
+    payload.insert(
+        "truncated".to_string(),
+        json!({
+            "tasks": tasks.len() > MAX_TASK_LIST_ROWS,
+            "stage_counts": capped_array_len(progress, "stage_counts")? > MAX_TASK_LIST_GROUP_ROWS,
+            "next_action_sets": capped_array_len(progress, "next_action_sets")? > MAX_TASK_LIST_GROUP_ROWS,
+            "blocked_sets": capped_array_len(progress, "blocked_sets")? > MAX_TASK_LIST_GROUP_ROWS,
+            "headless_route_candidates": capped_array_len(progress, "headless_route_candidates")? > MAX_HEADLESS_ROUTE_ROWS
+        }),
+    );
+    Ok(Value::Object(payload))
+}
+
+fn mode_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let modes = object
+        .get("modes")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut projected = Vec::new();
+    for mode in modes.iter().take(MAX_MODE_LIST_ROWS) {
+        let mode = mode
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let permissions = mode
+            .get("permissions")
+            .and_then(Value::as_object)
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let mut projected_mode = serde_json::Map::new();
+        for key in ["mode_id", "display_name", "role_definition"] {
+            let value = mode.get(key).ok_or(RuntimeClientError::InvalidResponse)?;
+            projected_mode.insert(key.to_string(), bounded_json_string(value)?);
+        }
+        let mut projected_permissions = serde_json::Map::new();
+        for key in [
+            "read_only",
+            "workspace_write",
+            "process_exec",
+            "network_access",
+            "service_control",
+            "destructive",
+            "can_spawn_subtasks",
+            "codebase_index",
+        ] {
+            projected_permissions.insert(
+                key.to_string(),
+                Value::Bool(display_bool(permissions, key)?),
+            );
+        }
+        projected_mode.insert(
+            "permissions".to_string(),
+            Value::Object(projected_permissions),
+        );
+        projected.push(Value::Object(projected_mode));
+    }
+    Ok(json!({
+        "mode_count": modes.len(),
+        "modes": projected,
+        "truncated": modes.len() > MAX_MODE_LIST_ROWS
+    }))
+}
+
+fn project_task_rows(tasks: &[Value]) -> Result<Value, RuntimeClientError> {
+    let mut rows = Vec::new();
+    for task in tasks.iter().take(MAX_TASK_LIST_ROWS) {
+        rows.push(project_task_row(
+            task.as_object()
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?);
+    }
+    Ok(Value::Array(rows))
+}
+
+fn project_task_row(task: &serde_json::Map<String, Value>) -> Result<Value, RuntimeClientError> {
+    let mut row = serde_json::Map::new();
+    for key in ["task_id", "run_id", "status"] {
+        let value = task.get(key).ok_or(RuntimeClientError::InvalidResponse)?;
+        row.insert(key.to_string(), bounded_json_string(value)?);
+    }
+    Ok(Value::Object(row))
+}
+
+fn project_run_summary(
+    run: &serde_json::Map<String, Value>,
+    progress: Option<&serde_json::Map<String, Value>>,
+) -> Result<Value, RuntimeClientError> {
+    let mut payload = serde_json::Map::new();
+    for key in ["run_id", "task_id", "status"] {
+        if let Some(value) = run.get(key) {
+            payload.insert(key.to_string(), bounded_json_optional_string(value)?);
+        }
+    }
+    if let Some(progress) = progress {
+        for (source_key, target_key) in [
+            ("current_stage", "current_stage"),
+            ("next_action", "next_action"),
+        ] {
+            if let Some(value) = progress.get(source_key) {
+                payload.insert(target_key.to_string(), bounded_json_string(value)?);
+            }
+        }
+    }
+    if let Some(value) = run.get("event_count") {
+        payload.insert(
+            "event_count".to_string(),
+            Value::Number(required_number(value)?),
+        );
+    }
+    Ok(Value::Object(payload))
+}
+
+fn project_usize_object(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Value, RuntimeClientError> {
+    let mut payload = serde_json::Map::new();
+    for (key, value) in object {
+        payload.insert(key.clone(), Value::Number(required_number(value)?));
+    }
+    Ok(Value::Object(payload))
+}
+
+fn project_progress_groups(
+    progress: &serde_json::Map<String, Value>,
+    key: &str,
+    string_keys: &[&str],
+) -> Result<Value, RuntimeClientError> {
+    let Some(groups) = optional_array_field_checked(progress, key)? else {
+        return Ok(Value::Array(Vec::new()));
+    };
+    let mut projected = Vec::new();
+    for group in groups.iter().take(MAX_TASK_LIST_GROUP_ROWS) {
+        let group = group
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let mut payload = serde_json::Map::new();
+        for string_key in string_keys {
+            let value = group
+                .get(*string_key)
+                .ok_or(RuntimeClientError::InvalidResponse)?;
+            payload.insert((*string_key).to_string(), bounded_json_string(value)?);
+        }
+        let task_count = display_count(group, "task_count", "task_ids")?;
+        payload.insert(
+            "task_count".to_string(),
+            Value::Number(serde_json::Number::from(task_count)),
+        );
+        projected.push(Value::Object(payload));
+    }
+    Ok(Value::Array(projected))
+}
+
+fn project_route_candidates(
+    progress: &serde_json::Map<String, Value>,
+) -> Result<Value, RuntimeClientError> {
+    let Some(candidates) = optional_array_field_checked(progress, "headless_route_candidates")?
+    else {
+        return Ok(Value::Array(Vec::new()));
+    };
+    let mut projected = Vec::new();
+    for candidate in candidates.iter().take(MAX_HEADLESS_ROUTE_ROWS) {
+        let candidate = candidate
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let mut payload = serde_json::Map::new();
+        for key in ["kind", "next_action"] {
+            let value = candidate
+                .get(key)
+                .ok_or(RuntimeClientError::InvalidResponse)?;
+            payload.insert(key.to_string(), bounded_json_string(value)?);
+        }
+        payload.insert(
+            "priority".to_string(),
+            Value::Number(serde_json::Number::from(display_usize(
+                candidate, "priority",
+            )?)),
+        );
+        if let Some(value) = candidate.get("task_id") {
+            payload.insert("task_id".to_string(), bounded_json_optional_string(value)?);
+        }
+        if let Some(value) = candidate.get("run_id") {
+            payload.insert("run_id".to_string(), bounded_json_optional_string(value)?);
+        }
+        projected.push(Value::Object(payload));
+    }
+    Ok(Value::Array(projected))
+}
+
+fn capped_array_len(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<usize, RuntimeClientError> {
+    Ok(optional_array_field_checked(object, key)?
+        .map(Vec::len)
+        .unwrap_or(0))
 }
 
 fn validate_task_inspect_result(result: &Value) -> Result<(), RuntimeClientError> {

@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "phase": "CLI-6",
+  "current_milestone": "brownie_cli_campaign",
+  "milestone": "Brownie CLI Campaign",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "CLI list tasks and mode list change from sparse skeleton command output to bounded, runtime-owned progress and mode UX that surfaces next actions without the CLI taking policy authority.",
+  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Makes brownie list tasks usable for a headless caller or human operator to see runnable, blocked, terminal, parent-join, and next-action state before choosing run/resume/inspect."
+    },
+    {
+      "capability": "runtime_permission_enforcement",
+      "relationship": "Makes brownie mode list executable through the runtime-owned mode.list method so the CLI displays compiled mode policy without discovering or interpreting Mode Packs itself."
+    },
+    {
+      "capability": "progress_visualization",
+      "relationship": "Projects the existing runtime progress_overview into bounded human text while preserving the runtime result for later stable JSON work."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "Advances headless_autonomous_development, runtime_permission_enforcement, and progress_visualization by exposing runtime-owned progress and mode summaries through usable CLI commands.",
+      "new_capability": "A user can run brownie list tasks to see runnable, blocked, terminal, parent-join, grouped next-action, and route-candidate state, and brownie mode list now calls runtime mode.list instead of returning unsupported.",
+      "why_existing_functionality_is_insufficient": "CLI-1 through CLI-5 made commands parse and run/resume executable, but list tasks only printed sparse counts and mode list was still an unsupported skeleton despite the runtime already owning mode.list.",
+      "product_gap_if_skipped": "Headless operators would still lack a bounded next-action view from the CLI and could not inspect available runtime modes without falling back to non-CLI tooling.",
+      "non_duplicative": "This is not another run/resume or report phase: it changes user-visible CLI behavior for task progress and mode listing while delegating all policy and progress computation to existing runtime RPCs.",
+      "no_new_rpc": "Yes. The phase uses existing task.list and mode.list and adds no JSON-RPC method, passthrough, or mirror surface.",
+      "no_new_summary": "Yes. It consumes existing progress_overview and ModeSummary structures; it does not add readiness, digest, history, verdict, or summary documents as product behavior.",
+      "runtime_behavior_change": "User-visible CLI behavior changes: mode list becomes executable through runtime mode.list, and list tasks renders the runtime progress_overview groups and candidates with bounded deterministic truncation.",
+      "headless_autonomous_contribution": "The CLI can now show a caller what can be resumed, inspected, or acted on next without duplicating runtime selection policy, improving safe autonomous control-plane operation.",
+      "milestone_progress": "Closes the CLI-6 progress and next-action UX gap while leaving stable public JSON, packaging, arbitrary-repository golden journey, and restart/recovery golden journey to later phases."
+    },
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities move forward?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What becomes newly executable or usable?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing behavior not substitute for this?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What remains impossible if skipped?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Why is this not semantically duplicative?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary/report surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "How does runtime or user-visible behavior change?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this contribute to headless autonomous operation?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move milestone completion?"
+      }
+    ]
+  },
+  "review_value_gate": {
+    "reject_when": [
+      "phase reopens the completed Core Runtime campaign",
+      "phase makes develop the primary command",
+      "phase makes the CLI select tasks, sort candidates as policy, read ledgers, or own continuation decisions",
+      "phase adds a new runtime RPC or generic JSON-RPC passthrough",
+      "phase duplicates Mode Pack compilation, permission policy, Product DoD, replay, recovery, or workspace mutation logic in the CLI",
+      "phase rewrites stable public JSON projections reserved for CLI-7",
+      "phase is report/readiness/history/digest/verdict/summary/documentation-only"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "CLI-6 updates the deterministic current phase manifest. Review must confirm the PR changes executable CLI progress and mode-list behavior without weakening the phase-value guard or adding wrapper-only surfaces.",
+    "changed_files": [
+      "docs/architecture/phase-value-manifest.cli-5.1.json",
+      "docs/architecture/phase-value-manifest.json"
+    ]
+  },
+  "exit_criteria": [
+    "brownie list tasks calls task.list and renders task total plus runnable, blocked, terminal, and parent-join-ready counts from runtime progress_overview.",
+    "brownie list tasks renders bounded status counts, stage counts, next-action groups, blocked groups, headless route candidates, and capped task rows without exposing route reasons or raw ledger/provider/file/environment data.",
+    "brownie list tasks --json preserves the existing runtime-owned task_list result envelope for CLI-7 stable JSON work.",
+    "brownie mode list calls runtime mode.list with no params and renders bounded mode id, display name, role preview, and permission booleans without CLI-owned Mode Pack discovery or policy evaluation.",
+    "Existing run/resume/status/inspect/list parser behavior remains compatible and develop is not introduced as a primary command.",
+    "Real runtime smoke tests cover list tasks and mode list through the CLI/runtime process boundary."
+  ],
+  "behavior_evidence": [
+    "brownie-cli tests verify rich task.list progress rendering and deterministic truncation.",
+    "brownie-cli tests verify list tasks JSON compatibility for CLI-7.",
+    "brownie-cli tests verify mode list invokes mode.list and renders runtime-owned mode summaries.",
+    "brownie-cli real runtime smoke tests cover task.list and mode.list through BROWNIE_RUNTIME_PATH."
+  ],
+  "product_dod": {
+    "closes": [
+      "CLI-6 Progress and Next Action UX"
+    ],
+    "leaves_open": [
+      "CLI-7",
+      "CLI-8",
+      "CLI-9",
+      "CLI-10"
+    ],
+    "does_not_close": [
+      "CLI-7 Human / JSON Output and Exit Codes",
+      "CLI-8 Installation / Packaging / Help",
+      "CLI-9 General Arbitrary-Repository Golden Journey",
+      "CLI-10 Restart / Recovery Golden Journey"
+    ]
+  },
+  "product_completion_gate": {
+    "required": true,
+    "product_completion_claim": false,
+    "accepted_capability": [
+      "CLI task progress output surfaces runtime-owned next-action and route state in bounded human text.",
+      "CLI mode list is executable through Rust runtime mode.list while keeping Mode Pack and permission authority in the runtime."
+    ],
+    "behavior_evidence": [
+      "Fake runtime tests cover rich progress, bounds, JSON compatibility, and sensitive route reason suppression.",
+      "Fake and real runtime tests cover mode.list invocation and output.",
+      "Existing command tests preserve run/resume/status/inspect behavior."
+    ],
+    "safety_boundary": [
+      "No Core Runtime terminal campaign state is reopened or mutated.",
+      "No new runtime JSON-RPC method is added.",
+      "The CLI does not read ledgers, discover Mode Packs from files, evaluate permissions, select tasks, apply patches, or own recovery policy.",
+      "Human output remains bounded and excludes raw prompts, provider responses, file content, stdout/stderr payloads, commands, environment values, paths, and secrets."
+    ],
+    "non_goals": [
+      "No stable full public JSON projection overhaul or exit-code redesign.",
+      "No install/package release work.",
+      "No arbitrary-repository golden journey or restart/recovery golden journey closure.",
+      "No Mode Pack, Product DoD, provider, permission, workspace mutation, replay, or fail-closed semantic redesign."
+    ],
+    "rejected_alternatives": [
+      "Rejected CLI-side task eligibility selection because next execution policy belongs to the Rust runtime.",
+      "Rejected CLI-owned Mode Pack file discovery because mode policy is runtime authority.",
+      "Rejected adding a new progress RPC because task.list already returns runtime-owned progress_overview.",
+      "Rejected rewriting --json output in this phase because CLI-7 owns stable bounded public JSON semantics."
+    ],
+    "technical_debt": [
+      "CLI-7 must define stable public JSON projections and exit code semantics.",
+      "CLI-9 must validate the arbitrary-repository golden journey.",
+      "CLI-10 must validate restart/recovery including scoped resume."
+    ],
+    "next_capability_rationale": [
+      "After CLI-6 lands, proceed to CLI-7 Human / JSON Output and Exit Codes rather than adding another progress wrapper."
+    ]
+  }
+}

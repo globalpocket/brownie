@@ -143,6 +143,7 @@ fn invalid_invocation_exits_non_zero() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("missing task-id"));
 }
@@ -154,6 +155,7 @@ fn develop_is_not_a_primary_command() {
         .output()
         .unwrap();
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(64));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("unknown command: develop"));
 }
@@ -208,8 +210,13 @@ fn json_status_invokes_runtime_status_and_stays_bounded() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"ok\":true"));
-    assert!(stdout.contains("\"name\":\"brownie-runtime\""));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "status");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["status"]["name"], "brownie-runtime");
+    assert_eq!(payload["status"]["version"], "0.1.0");
+    assert_eq!(payload["status"]["status"], "Ready");
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
 }
 
@@ -227,6 +234,7 @@ fn status_rejects_malformed_json() {
         .unwrap();
 
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(70));
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains("runtime returned an invalid response"));
     assert!(!stderr.contains(runtime.to_string_lossy().as_ref()));
@@ -249,9 +257,11 @@ fn status_rejects_jsonrpc_error_without_exposing_runtime_payload() {
         .unwrap();
 
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(70));
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"code\":\"runtime_error\""));
+    assert!(stdout.contains("\"exit_code\":70"));
     assert!(!stdout.contains("internal detail"));
 }
 
@@ -288,9 +298,11 @@ fn status_missing_binary_fails_closed() {
         .unwrap();
 
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(69));
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"code\":\"runtime_unavailable\""));
+    assert!(stdout.contains("\"exit_code\":69"));
     assert!(!stdout.contains("definitely-missing"));
 }
 
@@ -305,9 +317,11 @@ fn status_timeout_fails_closed() {
         .unwrap();
 
     assert!(!output.status.success());
+    assert_eq!(output.status.code(), Some(70));
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"code\":\"runtime_timeout\""));
+    assert!(stdout.contains("\"exit_code\":70"));
 }
 
 #[test]
@@ -387,15 +401,59 @@ fn inspect_run_invokes_fixed_runtime_method_and_prints_json_result() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"ok\":true"));
-    assert!(stdout.contains("\"run_inspect\""));
-    assert!(stdout.contains("\"run_id\":\"run-1\""));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "inspect run");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["run_inspect"]["run_id"], "run-1");
+    assert_eq!(payload["run_inspect"]["task_id"], "task-1");
+    assert_eq!(payload["run_inspect"]["status"], "Created");
+    assert_eq!(payload["run_inspect"]["current_stage"], "created");
+    assert_eq!(payload["run_inspect"]["next_action"], "run_task_explicitly");
+    assert_eq!(payload["run_inspect"]["event_count"], 1);
+    assert!(payload["run_inspect"].get("progress_snapshot").is_none());
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
 
     let request = fs::read_to_string(capture).unwrap();
     let request: serde_json::Value = serde_json::from_str(&request).unwrap();
     assert_eq!(request["method"], "run.inspect");
     assert_eq!(request["params"], serde_json::json!({ "run_id": "run-1" }));
+}
+
+#[test]
+fn inspect_task_json_uses_stable_public_projection() {
+    let runtime = fake_runtime(
+        "inspect-task-json",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"task":{"task_id":"task-1","run_id":"run-1","status":"Created"},"run":{"run_id":"run-1","task_id":"task-1","status":"Created","progress_snapshot":{"current_stage":"created","next_action":"run_task_explicitly"},"event_count":1}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "inspect", "task", "task-1"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "inspect task");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["task_inspect"]["task"]["task_id"], "task-1");
+    assert_eq!(payload["task_inspect"]["task"]["run_id"], "run-1");
+    assert_eq!(payload["task_inspect"]["task"]["status"], "Created");
+    assert_eq!(payload["task_inspect"]["run"]["run_id"], "run-1");
+    assert_eq!(payload["task_inspect"]["run"]["current_stage"], "created");
+    assert_eq!(
+        payload["task_inspect"]["run"]["next_action"],
+        "run_task_explicitly"
+    );
+    assert!(payload["task_inspect"].get("progress_snapshot").is_none());
 }
 
 #[test]
@@ -541,10 +599,10 @@ fn list_tasks_human_output_is_bounded_for_large_runtime_progress() {
 }
 
 #[test]
-fn list_tasks_json_preserves_runtime_result_for_cli7_projection_work() {
+fn list_tasks_json_uses_stable_bounded_public_projection() {
     let runtime = fake_runtime(
-        "list-tasks-json-compat",
-        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+        "list-tasks-json-projection",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[{"current_stage":"created","task_count":1}],"next_action_sets":[{"next_action":"run_task_explicitly","task_count":1,"task_ids":["task-1"]}],"blocked_sets":[],"headless_route_candidates":[{"kind":"headless_continue_once","reason":"internal reason should not render","task_id":"task-1","run_id":"run-1","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","priority":1,"next_action":"run_task_explicitly"}],"nodes":[],"edges":[]}}}"#,
     );
 
     let output = Command::new(brownie())
@@ -560,10 +618,158 @@ fn list_tasks_json_preserves_runtime_result_for_cli7_projection_work() {
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("\"ok\":true"));
-    assert!(stdout.contains("\"task_list\""));
-    assert!(stdout.contains("\"progress_overview\""));
-    assert!(stdout.contains("\"source_fingerprint\""));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "list tasks");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["task_list"]["task_count"], 1);
+    assert_eq!(payload["task_list"]["runnable_count"], 1);
+    assert_eq!(payload["task_list"]["tasks"][0]["task_id"], "task-1");
+    assert_eq!(
+        payload["task_list"]["stage_counts"][0]["current_stage"],
+        "created"
+    );
+    assert_eq!(
+        payload["task_list"]["next_action_sets"][0]["next_action"],
+        "run_task_explicitly"
+    );
+    assert_eq!(
+        payload["task_list"]["headless_route_candidates"][0]["kind"],
+        "headless_continue_once"
+    );
+    assert_eq!(
+        payload["task_list"]["headless_route_candidates"][0]["task_id"],
+        "task-1"
+    );
+    assert!(payload["task_list"].get("progress_overview").is_none());
+    assert!(payload["task_list"]["headless_route_candidates"][0]
+        .get("reason")
+        .is_none());
+    assert!(!stdout.contains("internal reason"));
+}
+
+#[test]
+fn list_tasks_json_bounds_large_progress_and_reports_truncation() {
+    let mut tasks = Vec::new();
+    let mut stage_counts = Vec::new();
+    let mut next_action_sets = Vec::new();
+    let mut blocked_sets = Vec::new();
+    let mut route_candidates = Vec::new();
+    for index in 0..14 {
+        tasks.push(serde_json::json!({
+            "task_id": format!("task-{index}"),
+            "run_id": format!("run-{index}"),
+            "status": "Created"
+        }));
+    }
+    for index in 0..8 {
+        stage_counts.push(serde_json::json!({
+            "current_stage": format!("stage-{index}"),
+            "task_count": 1
+        }));
+        next_action_sets.push(serde_json::json!({
+            "next_action": format!("action-{index}"),
+            "task_count": 1,
+            "task_ids": [format!("task-{index}")]
+        }));
+        blocked_sets.push(serde_json::json!({
+            "current_stage": format!("blocked-stage-{index}"),
+            "next_action": format!("blocked-action-{index}"),
+            "task_count": 1,
+            "task_ids": [format!("task-{index}")]
+        }));
+        route_candidates.push(serde_json::json!({
+            "kind": "headless_continue_once",
+            "reason": format!("secret-route-reason-{index}"),
+            "task_id": format!("task-{index}"),
+            "run_id": format!("run-{index}"),
+            "progress_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "aggregate_sequence": 7,
+            "route_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "priority": index,
+            "next_action": format!("action-{index}")
+        }));
+    }
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "tasks": tasks,
+            "progress_overview": {
+                "source_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aggregate_sequence": 7,
+                "task_count": 14,
+                "root_task_ids": [],
+                "runnable_task_ids": [],
+                "blocked_task_ids": [],
+                "terminal_task_ids": [],
+                "parent_join_ready_task_ids": [],
+                "status_counts": {"created":14,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},
+                "stage_counts": stage_counts,
+                "next_action_sets": next_action_sets,
+                "blocked_sets": blocked_sets,
+                "headless_route_candidates": route_candidates,
+                "nodes": [],
+                "edges": []
+            }
+        }
+    })
+    .to_string();
+    let runtime = fake_runtime("list-tasks-json-large-progress", &body);
+
+    let output = Command::new(brownie())
+        .args(["--json", "list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["task_list"]["tasks"].as_array().unwrap().len(), 10);
+    assert_eq!(
+        payload["task_list"]["stage_counts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        payload["task_list"]["next_action_sets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        payload["task_list"]["blocked_sets"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(
+        payload["task_list"]["headless_route_candidates"]
+            .as_array()
+            .unwrap()
+            .len(),
+        5
+    );
+    assert_eq!(payload["task_list"]["truncated"]["tasks"], true);
+    assert_eq!(payload["task_list"]["truncated"]["stage_counts"], true);
+    assert_eq!(payload["task_list"]["truncated"]["next_action_sets"], true);
+    assert_eq!(payload["task_list"]["truncated"]["blocked_sets"], true);
+    assert_eq!(
+        payload["task_list"]["truncated"]["headless_route_candidates"],
+        true
+    );
+    assert!(!stdout.contains("task-13"));
+    assert!(!stdout.contains("secret-route-reason"));
 }
 
 #[test]
@@ -620,6 +826,39 @@ fn mode_list_invokes_runtime_mode_list_and_prints_bounded_human_output() {
     let request: serde_json::Value = serde_json::from_str(&request).unwrap();
     assert_eq!(request["method"], "mode.list");
     assert!(request.get("params").is_none());
+}
+
+#[test]
+fn mode_list_json_uses_runtime_owned_bounded_projection() {
+    let runtime = fake_runtime(
+        "mode-list-json",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"modes":[{"mode_id":"orchestrator","display_name":"Orchestrator","role_definition":"Break down and coordinate bounded work","permissions":{"read_only":true,"workspace_write":false,"process_exec":false,"network_access":false,"service_control":false,"destructive":false,"can_spawn_subtasks":true,"codebase_index":true}}]}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "mode", "list"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "mode list");
+    assert_eq!(payload["exit_code"], 0);
+    assert_eq!(payload["mode_list"]["mode_count"], 1);
+    assert_eq!(payload["mode_list"]["modes"][0]["mode_id"], "orchestrator");
+    assert_eq!(
+        payload["mode_list"]["modes"][0]["permissions"]["workspace_write"],
+        false
+    );
+    assert!(payload["mode_list"].get("modepack_path").is_none());
 }
 
 #[test]
@@ -825,6 +1064,8 @@ fn json_run_outputs_bounded_runtime_owned_result() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["exit_code"], 0);
     assert_eq!(payload["run"]["status"], "task_executed");
     assert_eq!(payload["run"]["session_id"], "cli.run.json");
     assert_eq!(payload["run"]["journey_id"], "cli.run.json.journey");
@@ -1013,6 +1254,8 @@ fn json_resume_outputs_bounded_cli_projection() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "resume");
+    assert_eq!(payload["exit_code"], 0);
     assert_eq!(payload["resume"]["status"], "no_eligible_task");
     assert_eq!(payload["resume"]["continuation_id"], "cli.resume.none");
     assert_eq!(
@@ -1050,6 +1293,10 @@ fn resume_surfaces_stale_progress_as_runtime_owned_decision() {
     let output = Command::new(brownie())
         .arg("resume")
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -1074,6 +1321,10 @@ fn resume_runtime_error_does_not_expose_runtime_payload() {
     let output = Command::new(brownie())
         .args(["--json", "resume"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -1097,6 +1348,10 @@ fn resume_rejects_invalid_runtime_shape() {
     let output = Command::new(brownie())
         .arg("resume")
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -1127,53 +1382,72 @@ fn resume_uses_objective_transport_timeout_class_for_continue_call() {
 }
 
 #[test]
-fn status_can_invoke_real_runtime_binary_when_available() {
+fn json_status_can_invoke_real_runtime_binary_when_available() {
     let runtime = build_real_runtime_binary();
 
     let output = Command::new(brownie())
-        .arg("status")
+        .args(["--json", "status"])
         .env("BROWNIE_RUNTIME_PATH", runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("brownie-runtime"));
-    assert!(stdout.contains("Ready"));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "status");
+    assert_eq!(payload["status"]["name"], "brownie-runtime");
+    assert_eq!(payload["status"]["status"], "Ready");
 }
 
 #[test]
-fn list_tasks_can_invoke_real_runtime_binary_when_available() {
+fn json_list_tasks_can_invoke_real_runtime_binary_when_available() {
     let runtime = build_real_runtime_binary();
 
     let output = Command::new(brownie())
-        .args(["list", "tasks"])
+        .args(["--json", "list", "tasks"])
         .env("BROWNIE_RUNTIME_PATH", runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("tasks "));
-    assert!(stdout.contains("parent_join_ready:"));
-    assert!(stdout.contains("task rows:"));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "list tasks");
+    assert!(payload["task_list"]["tasks"].is_array());
+    assert!(payload["task_list"]["truncated"].is_object());
+    assert!(payload["task_list"].get("progress_overview").is_none());
 }
 
 #[test]
-fn mode_list_can_invoke_real_runtime_binary_when_available() {
+fn json_mode_list_can_invoke_real_runtime_binary_when_available() {
     let runtime = build_real_runtime_binary();
 
     let output = Command::new(brownie())
-        .args(["mode", "list"])
+        .args(["--json", "mode", "list"])
         .env("BROWNIE_RUNTIME_PATH", runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
     assert!(output.status.success());
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("modes "));
-    assert!(stdout.contains("orchestrator"));
-    assert!(stdout.contains("permissions:"));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "mode list");
+    assert!(payload["mode_list"]["modes"].is_array());
 }
 
 #[test]
@@ -1190,6 +1464,10 @@ fn run_can_invoke_real_runtime_headless_drive_with_temp_workspace() {
         .args(["run", "Run CLI smoke objective"])
         .env("BROWNIE_RUNTIME_PATH", runtime)
         .env("BROWNIE_WORKSPACE_ROOT", &workspace)
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -1220,6 +1498,14 @@ fn resume_can_invoke_real_runtime_continue_once_with_temp_workspace() {
         .arg("resume")
         .env("BROWNIE_RUNTIME_PATH", runtime)
         .env("BROWNIE_WORKSPACE_ROOT", &workspace)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
