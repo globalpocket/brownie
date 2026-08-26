@@ -196,7 +196,7 @@ mod tests {
 
     #[test]
     fn json_unsupported_workflow_uses_same_exit_meaning() {
-        let output = run_cli(["brownie", "--json", "run", "summarize this repository"]);
+        let output = run_cli(["brownie", "--json", "resume"]);
         assert_eq!(output.exit_code, ExitCode::RuntimeUnavailable);
         assert!(output.stdout.contains("\"code\":\"runtime_unavailable\""));
         assert!(output.stderr.is_empty());
