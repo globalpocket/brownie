@@ -8,7 +8,7 @@ pub struct Cli {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CliCommand {
-    Help,
+    Help { topic: Option<HelpTopic> },
     Version,
     Run { objective: String },
     Resume,
@@ -16,6 +16,16 @@ pub enum CliCommand {
     Inspect { target: InspectTarget },
     List { target: ListTarget },
     Mode { target: ModeTarget },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HelpTopic {
+    Run,
+    Resume,
+    Status,
+    Inspect,
+    List,
+    Mode,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -63,7 +73,7 @@ impl Cli {
                 "-h" | "--help" => {
                     return Ok(Self {
                         json,
-                        command: CliCommand::Help,
+                        command: CliCommand::Help { topic: None },
                     });
                 }
                 "-V" | "--version" => {
@@ -80,11 +90,12 @@ impl Cli {
         let Some(command) = args.first().map(String::as_str) else {
             return Ok(Self {
                 json,
-                command: CliCommand::Help,
+                command: CliCommand::Help { topic: None },
             });
         };
 
         let command = match command {
+            "help" => parse_help(&args[1..])?,
             "run" => {
                 let objective = join_required_tail(&args[1..], "objective")?;
                 CliCommand::Run { objective }
@@ -106,8 +117,10 @@ impl Cli {
             "",
             "Usage:",
             "  brownie [--json] <command>",
+            "  brownie help <topic>",
             "",
             "Commands:",
+            "  help <topic>             Show command-specific help",
             "  run <objective>          Run a general autonomous objective",
             "  resume                   Resume the latest interrupted objective",
             "  status                   Show current runtime status",
@@ -121,8 +134,107 @@ impl Cli {
             "  -h, --help               Show help",
             "  -V, --version            Show version",
             "",
+            "Help topics:",
+            "  run, resume, status, inspect, list, mode",
+            "",
         ]
         .join("\n")
+    }
+
+    pub fn topic_help(topic: &HelpTopic) -> String {
+        match topic {
+            HelpTopic::Run => [
+                "brownie run",
+                "",
+                "Usage:",
+                "  brownie run <objective>",
+                "  brownie --json run <objective>",
+                "",
+                "Runs one general autonomous objective through the Rust runtime.",
+                "The objective is free text. Tokens after run, including --help, -V, --version, and --json, remain part of the objective.",
+                "",
+                "Examples:",
+                "  brownie run \"summarize this repository\"",
+                "  brownie --json run \"inspect the current task state\"",
+                "",
+                "Boundary:",
+                "  The CLI invokes runtime-owned headless execution. It does not select tasks, apply workspace changes, or own runtime policy.",
+                "",
+            ]
+            .join("\n"),
+            HelpTopic::Resume => [
+                "brownie resume",
+                "",
+                "Usage:",
+                "  brownie resume",
+                "  brownie --json resume",
+                "",
+                "Asks the Rust runtime to continue the latest eligible CLI-created objective once.",
+                "",
+                "Boundary:",
+                "  Resume scope, freshness, replay, and next-action decisions remain runtime-owned.",
+                "",
+            ]
+            .join("\n"),
+            HelpTopic::Status => [
+                "brownie status",
+                "",
+                "Usage:",
+                "  brownie status",
+                "  brownie --json status",
+                "",
+                "Shows the current Rust runtime status using a bounded read-only request.",
+                "",
+                "Boundary:",
+                "  The CLI starts no agent loop for status and does not inspect ledgers directly.",
+                "",
+            ]
+            .join("\n"),
+            HelpTopic::Inspect => [
+                "brownie inspect",
+                "",
+                "Usage:",
+                "  brownie inspect task <task-id>",
+                "  brownie inspect run <run-id>",
+                "  brownie --json inspect task <task-id>",
+                "  brownie --json inspect run <run-id>",
+                "",
+                "Inspects bounded task or run state through fixed runtime methods.",
+                "",
+                "Boundary:",
+                "  The CLI renders runtime-provided summaries and does not read raw ledger files.",
+                "",
+            ]
+            .join("\n"),
+            HelpTopic::List => [
+                "brownie list",
+                "",
+                "Usage:",
+                "  brownie list tasks",
+                "  brownie --json list tasks",
+                "",
+                "Lists bounded runtime-owned task progress and next-action summaries.",
+                "",
+                "Boundary:",
+                "  The CLI does not rank or select continuation candidates as policy.",
+                "",
+            ]
+            .join("\n"),
+            HelpTopic::Mode => [
+                "brownie mode",
+                "",
+                "Usage:",
+                "  brownie mode list",
+                "  brownie --json mode list",
+                "",
+                "Lists bounded runtime-owned mode summaries.",
+                "",
+                "Boundary:",
+                "  Mode Pack loading, validation, compilation, and permission policy remain in the Rust runtime.",
+                "",
+            ]
+            .join("\n"),
+        }
     }
 }
 
@@ -142,6 +254,31 @@ fn no_args(args: &[String], command: CliCommand) -> Result<CliCommand, CliError>
             "{} does not accept extra arguments",
             args[0]
         )))
+    }
+}
+
+fn parse_help(args: &[String]) -> Result<CliCommand, CliError> {
+    match args {
+        [] => Ok(CliCommand::Help { topic: None }),
+        [topic] => {
+            let topic = match topic.as_str() {
+                "run" => HelpTopic::Run,
+                "resume" => HelpTopic::Resume,
+                "status" => HelpTopic::Status,
+                "inspect" => HelpTopic::Inspect,
+                "list" => HelpTopic::List,
+                "mode" => HelpTopic::Mode,
+                other => {
+                    return Err(CliError::InvalidCommand(format!(
+                        "unknown help topic: {other}"
+                    )))
+                }
+            };
+            Ok(CliCommand::Help { topic: Some(topic) })
+        }
+        _ => Err(CliError::InvalidCommand(
+            "help expects at most one topic".to_string(),
+        )),
     }
 }
 
