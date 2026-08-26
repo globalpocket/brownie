@@ -494,6 +494,25 @@ fn run_rejects_invalid_runtime_shape() {
 }
 
 #[test]
+fn run_rejects_missing_completion_closure_status() {
+    let runtime = fake_runtime(
+        "run-missing-closure-status",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.invalid","drive_id":"cli.run.invalid.drive","next_action":"inspect_progress_overview","completion_closure":{}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "run", "invalid closure"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"code\":\"runtime_invalid_response\""));
+}
+
+#[test]
 fn resume_remains_nonexecuting_in_cli_4() {
     let output = Command::new(brownie())
         .arg("resume")

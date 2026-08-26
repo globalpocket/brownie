@@ -438,7 +438,8 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     for key in ["status", "session_id", "drive_id", "next_action"] {
         display_string(object, key)?;
     }
-    object_field(result, "completion_closure")?;
+    let closure = object_field(result, "completion_closure")?;
+    display_string(closure, "status")?;
     Ok(())
 }
 
@@ -488,12 +489,14 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             payload.insert(key.to_string(), bounded_json_string(value)?);
         }
     }
-    if let Some(value) = closure.get("status") {
-        payload.insert(
-            "completion_closure_status".to_string(),
-            bounded_json_string(value)?,
-        );
-    }
+    payload.insert(
+        "completion_closure_status".to_string(),
+        bounded_json_string(
+            closure
+                .get("status")
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?,
+    );
     if let Some(journey) = journey {
         for key in ["journey_id", "task_id", "run_id"] {
             if let Some(value) = journey.get(key) {
@@ -522,6 +525,7 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
 }
 
 fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
+    let objective = objective.trim();
     let run_id = stable_cli_run_id(objective)?;
     Ok(json!({
         "authorize": true,
