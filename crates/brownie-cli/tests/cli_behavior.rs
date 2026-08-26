@@ -567,6 +567,28 @@ fn list_tasks_json_preserves_runtime_result_for_cli7_projection_work() {
 }
 
 #[test]
+fn list_tasks_rejects_malformed_runtime_progress_groups() {
+    let runtime = fake_runtime(
+        "list-tasks-malformed-progress-groups",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"task_count":0,"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"stage_counts":"not-an-array"}}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args(["list", "tasks"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("runtime returned an invalid response"));
+}
+
+#[test]
 fn mode_list_invokes_runtime_mode_list_and_prints_bounded_human_output() {
     let runtime = fake_runtime(
         "mode-list",

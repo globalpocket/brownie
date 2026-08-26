@@ -524,10 +524,10 @@ fn validate_task_list_result(result: &Value) -> Result<(), RuntimeClientError> {
     array_len(progress, "runnable_task_ids")?;
     array_len(progress, "blocked_task_ids")?;
     array_len(progress, "terminal_task_ids")?;
-    if let Some(ids) = optional_array_field(progress, "parent_join_ready_task_ids") {
+    if let Some(ids) = optional_array_field_checked(progress, "parent_join_ready_task_ids")? {
         validate_string_array(ids)?;
     }
-    if let Some(counts) = optional_object_field(progress, "status_counts") {
+    if let Some(counts) = optional_object_field_checked(progress, "status_counts")? {
         validate_usize_values(counts)?;
     }
     validate_progress_group_array(progress, "stage_counts")?;
@@ -876,9 +876,10 @@ fn render_task_list(result: &Value) -> Result<String, RuntimeClientError> {
     let runnable_count = array_len(progress, "runnable_task_ids")?;
     let blocked_count = array_len(progress, "blocked_task_ids")?;
     let terminal_count = array_len(progress, "terminal_task_ids")?;
-    let parent_join_ready_count = optional_array_field(progress, "parent_join_ready_task_ids")
-        .map(Vec::len)
-        .unwrap_or(0);
+    let parent_join_ready_count =
+        optional_array_field_checked(progress, "parent_join_ready_task_ids")?
+            .map(Vec::len)
+            .unwrap_or(0);
 
     let mut output = format!(
         "tasks {task_count}\n  runnable: {runnable_count}\n  blocked: {blocked_count}\n  terminal: {terminal_count}\n  parent_join_ready: {parent_join_ready_count}\n"
@@ -911,7 +912,7 @@ fn render_status_counts(
     output: &mut String,
     progress: &serde_json::Map<String, Value>,
 ) -> Result<(), RuntimeClientError> {
-    let Some(counts) = optional_object_field(progress, "status_counts") else {
+    let Some(counts) = optional_object_field_checked(progress, "status_counts")? else {
         return Ok(());
     };
     let keys = [
@@ -938,7 +939,7 @@ fn render_stage_counts(
     output: &mut String,
     progress: &serde_json::Map<String, Value>,
 ) -> Result<(), RuntimeClientError> {
-    let Some(stages) = optional_array_field(progress, "stage_counts") else {
+    let Some(stages) = optional_array_field_checked(progress, "stage_counts")? else {
         return Ok(());
     };
     if stages.is_empty() {
@@ -966,7 +967,7 @@ fn render_next_action_sets(
     output: &mut String,
     progress: &serde_json::Map<String, Value>,
 ) -> Result<(), RuntimeClientError> {
-    let Some(sets) = optional_array_field(progress, "next_action_sets") else {
+    let Some(sets) = optional_array_field_checked(progress, "next_action_sets")? else {
         return Ok(());
     };
     if sets.is_empty() {
@@ -992,7 +993,7 @@ fn render_blocked_sets(
     output: &mut String,
     progress: &serde_json::Map<String, Value>,
 ) -> Result<(), RuntimeClientError> {
-    let Some(sets) = optional_array_field(progress, "blocked_sets") else {
+    let Some(sets) = optional_array_field_checked(progress, "blocked_sets")? else {
         return Ok(());
     };
     if sets.is_empty() {
@@ -1021,7 +1022,8 @@ fn render_headless_route_candidates(
     output: &mut String,
     progress: &serde_json::Map<String, Value>,
 ) -> Result<(), RuntimeClientError> {
-    let Some(candidates) = optional_array_field(progress, "headless_route_candidates") else {
+    let Some(candidates) = optional_array_field_checked(progress, "headless_route_candidates")?
+    else {
         return Ok(());
     };
     if candidates.is_empty() {
@@ -1112,6 +1114,32 @@ fn optional_array_field<'a>(
     object.get(key).and_then(Value::as_array)
 }
 
+fn optional_object_field_checked<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a serde_json::Map<String, Value>>, RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_object()
+            .map(Some)
+            .ok_or(RuntimeClientError::InvalidResponse),
+    }
+}
+
+fn optional_array_field_checked<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<Option<&'a Vec<Value>>, RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(None),
+        Some(value) => value
+            .as_array()
+            .map(Some)
+            .ok_or(RuntimeClientError::InvalidResponse),
+    }
+}
+
 fn validate_string_array(values: &[Value]) -> Result<(), RuntimeClientError> {
     for value in values {
         bounded_string(value)?;
@@ -1132,7 +1160,7 @@ fn validate_progress_group_array(
     object: &serde_json::Map<String, Value>,
     key: &str,
 ) -> Result<(), RuntimeClientError> {
-    let Some(groups) = optional_array_field(object, key) else {
+    let Some(groups) = optional_array_field_checked(object, key)? else {
         return Ok(());
     };
     for group in groups {
