@@ -1,0 +1,187 @@
+pub mod cli;
+pub mod runtime_client;
+
+use cli::{Cli, CliCommand, CliError};
+use runtime_client::{RuntimeClient, RuntimeClientError};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitCode {
+    Success = 0,
+    InvalidInvocation = 64,
+    RuntimeUnavailable = 69,
+    InternalCommunication = 70,
+}
+
+impl ExitCode {
+    pub fn as_i32(self) -> i32 {
+        self as i32
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CliOutput {
+    pub exit_code: ExitCode,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+pub fn run_cli<I, S>(args: I) -> CliOutput
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let args: Vec<String> = args.into_iter().map(Into::into).collect();
+    let json_requested = args.iter().skip(1).any(|arg| arg == "--json");
+
+    match Cli::parse(args) {
+        Ok(cli) => execute(cli),
+        Err(error) => error_output(
+            ExitCode::InvalidInvocation,
+            "invalid_invocation",
+            &error.to_string(),
+            json_requested,
+        ),
+    }
+}
+
+fn execute(cli: Cli) -> CliOutput {
+    match cli.command {
+        CliCommand::Help => CliOutput {
+            exit_code: ExitCode::Success,
+            stdout: Cli::help(),
+            stderr: String::new(),
+        },
+        CliCommand::Version => CliOutput {
+            exit_code: ExitCode::Success,
+            stdout: format!("brownie {}\n", env!("CARGO_PKG_VERSION")),
+            stderr: String::new(),
+        },
+        command => {
+            let client = RuntimeClient::default();
+            match client.invoke(&command) {
+                Ok(message) => CliOutput {
+                    exit_code: ExitCode::Success,
+                    stdout: message,
+                    stderr: String::new(),
+                },
+                Err(RuntimeClientError::RuntimeUnavailable) => error_output(
+                    ExitCode::RuntimeUnavailable,
+                    "runtime_unavailable",
+                    "runtime connection is not implemented in this CLI slice",
+                    cli.json,
+                ),
+                Err(RuntimeClientError::CommunicationFailed) => error_output(
+                    ExitCode::InternalCommunication,
+                    "runtime_communication_failed",
+                    "runtime communication failed",
+                    cli.json,
+                ),
+            }
+        }
+    }
+}
+
+fn error_output(exit_code: ExitCode, code: &str, message: &str, json: bool) -> CliOutput {
+    if json {
+        let payload = serde_json::json!({
+            "ok": false,
+            "error": {
+                "code": code,
+                "message": message
+            },
+            "exit_code": exit_code.as_i32()
+        });
+        return CliOutput {
+            exit_code,
+            stdout: format!("{payload}\n"),
+            stderr: String::new(),
+        };
+    }
+
+    CliOutput {
+        exit_code,
+        stdout: String::new(),
+        stderr: format!("brownie: {message}\n"),
+    }
+}
+
+impl From<CliError> for ExitCode {
+    fn from(_: CliError) -> Self {
+        ExitCode::InvalidInvocation
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::{InspectTarget, ListTarget, ModeTarget};
+
+    #[test]
+    fn help_names_run_and_not_develop() {
+        let help = Cli::help();
+        assert!(help.contains("run <objective>"));
+        assert!(help.contains("resume"));
+        assert!(help.contains("status"));
+        assert!(!help.contains("develop"));
+    }
+
+    #[test]
+    fn parses_workflow_commands_without_exposing_rpc_names() {
+        let run = Cli::parse(["brownie", "run", "summarize this repository"]).unwrap();
+        assert_eq!(
+            run.command,
+            CliCommand::Run {
+                objective: "summarize this repository".into()
+            }
+        );
+
+        let inspect_task = Cli::parse(["brownie", "inspect", "task", "task-1"]).unwrap();
+        assert_eq!(
+            inspect_task.command,
+            CliCommand::Inspect {
+                target: InspectTarget::Task {
+                    task_id: "task-1".into()
+                }
+            }
+        );
+
+        let list_tasks = Cli::parse(["brownie", "list", "tasks"]).unwrap();
+        assert_eq!(
+            list_tasks.command,
+            CliCommand::List {
+                target: ListTarget::Tasks
+            }
+        );
+
+        let mode_list = Cli::parse(["brownie", "mode", "list"]).unwrap();
+        assert_eq!(
+            mode_list.command,
+            CliCommand::Mode {
+                target: ModeTarget::List
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_develop_as_primary_command() {
+        let error = Cli::parse(["brownie", "develop", "change code"]).unwrap_err();
+        assert!(error.to_string().contains("unknown command"));
+    }
+
+    #[test]
+    fn json_error_uses_same_exit_meaning() {
+        let output = run_cli(["brownie", "--json", "status"]);
+        assert_eq!(output.exit_code, ExitCode::RuntimeUnavailable);
+        assert!(output.stdout.contains("\"code\":\"runtime_unavailable\""));
+        assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn json_invalid_invocation_stays_bounded() {
+        let output = run_cli(["brownie", "--json", "inspect", "task"]);
+        assert_eq!(output.exit_code, ExitCode::InvalidInvocation);
+        assert!(output.stdout.contains("\"code\":\"invalid_invocation\""));
+        assert!(output.stdout.contains("\"exit_code\":64"));
+        assert!(output.stderr.is_empty());
+    }
+}

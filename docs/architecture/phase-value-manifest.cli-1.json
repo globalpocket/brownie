@@ -65,7 +65,6 @@
     "review_intent": "The phase-value manifest files change because CLI-1 is the active phase. Review confirms guard semantics are not weakened and the phase is not wrapper-only.",
     "changed_files": [
       "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.m64.15.json",
       "docs/architecture/phase-value-manifest.cli-1.json"
     ]
   },
