@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::os::unix::fs::PermissionsExt;
 
 static RUNTIME_BUILD_COUNTER: AtomicUsize = AtomicUsize::new(0);
+const READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS: &str = "10000";
 
 fn brownie() -> &'static str {
     env!("CARGO_BIN_EXE_brownie")
@@ -101,6 +102,10 @@ fn status_invokes_runtime_status_and_prints_human_status() {
     let output = Command::new(brownie())
         .arg("status")
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
         .output()
         .unwrap();
@@ -126,6 +131,10 @@ fn json_status_invokes_runtime_status_and_stays_bounded() {
     let output = Command::new(brownie())
         .args(["--json", "status"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -143,6 +152,10 @@ fn status_rejects_malformed_json() {
     let output = Command::new(brownie())
         .arg("status")
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -161,6 +174,10 @@ fn status_rejects_jsonrpc_error_without_exposing_runtime_payload() {
     let output = Command::new(brownie())
         .args(["--json", "status"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -180,6 +197,10 @@ fn status_rejects_mismatched_response_id() {
     let output = Command::new(brownie())
         .arg("status")
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -223,6 +244,22 @@ fn status_timeout_fails_closed() {
 }
 
 #[test]
+fn run_uses_objective_transport_timeout_class() {
+    let runtime = hanging_runtime("objective-timeout");
+    let output = Command::new(brownie())
+        .args(["--json", "run", "long running objective"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "50")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"code\":\"runtime_timeout\""));
+}
+
+#[test]
 fn inspect_task_invokes_fixed_runtime_method_and_prints_bounded_human_output() {
     let runtime = fake_runtime(
         "inspect-task",
@@ -233,6 +270,10 @@ fn inspect_task_invokes_fixed_runtime_method_and_prints_bounded_human_output() {
     let output = Command::new(brownie())
         .args(["inspect", "task", "task-1"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
         .output()
         .unwrap();
@@ -268,6 +309,10 @@ fn inspect_run_invokes_fixed_runtime_method_and_prints_json_result() {
     let output = Command::new(brownie())
         .args(["--json", "inspect", "run", "run-1"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
         .output()
         .unwrap();
@@ -297,6 +342,10 @@ fn list_tasks_invokes_fixed_runtime_method_and_prints_progress_counts() {
     let output = Command::new(brownie())
         .args(["list", "tasks"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
         .output()
         .unwrap();
@@ -324,6 +373,10 @@ fn inspect_run_rejects_mismatched_response_id() {
     let output = Command::new(brownie())
         .args(["inspect", "run", "run-1"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -342,6 +395,10 @@ fn inspect_task_runtime_error_does_not_expose_runtime_payload() {
     let output = Command::new(brownie())
         .args(["--json", "inspect", "task", "missing-task"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .output()
         .unwrap();
 
@@ -416,6 +473,34 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
         .as_str()
         .unwrap()
         .ends_with(".journey"));
+}
+
+#[test]
+fn run_preserves_objective_tokens_that_look_like_cli_options() {
+    assert_run_preserves_objective(
+        "run-preserve-json-token",
+        &["run", "analyze", "the", "--json", "output", "format"],
+        "analyze the --json output format",
+    );
+    assert_run_preserves_objective(
+        "run-preserve-help-token",
+        &["run", "explain", "--help", "behavior"],
+        "explain --help behavior",
+    );
+    assert_run_preserves_objective(
+        "run-preserve-version-token",
+        &["run", "compare", "-V", "and", "--version"],
+        "compare -V and --version",
+    );
+}
+
+#[test]
+fn run_leading_json_is_global_and_later_json_is_objective() {
+    assert_run_preserves_objective(
+        "run-leading-json-only",
+        &["--json", "run", "analyze", "--json", "output"],
+        "analyze --json output",
+    );
 }
 
 #[test]
@@ -605,6 +690,31 @@ fn run_can_invoke_real_runtime_headless_drive_with_temp_workspace() {
     assert!(stdout.contains("next: inspect_progress_overview"));
     assert!(!stdout.contains(workspace.to_string_lossy().as_ref()));
     assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+}
+
+fn assert_run_preserves_objective(name: &str, args: &[&str], expected_objective: &str) {
+    let runtime = fake_runtime(
+        name,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.preserve","drive_id":"cli.run.preserve.drive","completion_closure":{"status":"budget_exhausted"},"next_action":"inspect_progress_overview","journey":{"journey_id":"cli.run.preserve.journey","task_id":"task-preserve","run_id":"run-preserve"}}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args(args)
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "headless.run.drive");
+    assert_eq!(
+        request["params"]["journey_admission"]["task_start"]["goal"],
+        expected_objective
+    );
 }
 
 fn build_real_runtime_binary() -> PathBuf {

@@ -18,7 +18,9 @@ const TASK_LIST_METHOD: &str = "task.list";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
-const DEFAULT_TIMEOUT_MS: u64 = 10_000;
+const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS";
+const DEFAULT_READ_ONLY_TIMEOUT_MS: u64 = 2_000;
+const DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS: u64 = 120_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_STATUS_FIELD_CHARS: usize = 128;
 const MAX_RENDERED_OUTPUT_CHARS: usize = 4 * 1024;
@@ -38,7 +40,8 @@ pub struct RuntimeClient {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClientConfig {
     pub runtime_path: Option<PathBuf>,
-    pub timeout: Duration,
+    pub read_only_timeout: Duration,
+    pub objective_execution_timeout: Duration,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -85,24 +88,37 @@ impl RuntimeClientConfig {
             runtime_path: env::var_os(RUNTIME_PATH_ENV)
                 .filter(|value| !value.is_empty())
                 .map(PathBuf::from),
-            timeout: env::var(RUNTIME_TIMEOUT_MS_ENV)
-                .ok()
-                .and_then(|value| value.parse::<u64>().ok())
-                .filter(|value| *value > 0)
-                .map(Duration::from_millis)
-                .unwrap_or_else(|| Duration::from_millis(DEFAULT_TIMEOUT_MS)),
+            read_only_timeout: env_timeout(RUNTIME_TIMEOUT_MS_ENV, DEFAULT_READ_ONLY_TIMEOUT_MS),
+            objective_execution_timeout: env_timeout(
+                RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV,
+                DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS,
+            ),
         }
     }
 
     pub fn with_runtime_path(path: PathBuf) -> Self {
         Self {
             runtime_path: Some(path),
-            timeout: Duration::from_millis(DEFAULT_TIMEOUT_MS),
+            read_only_timeout: Duration::from_millis(DEFAULT_READ_ONLY_TIMEOUT_MS),
+            objective_execution_timeout: Duration::from_millis(
+                DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS,
+            ),
         }
     }
 
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
+        self.read_only_timeout = timeout;
+        self.objective_execution_timeout = timeout;
+        self
+    }
+
+    pub fn with_request_timeouts(
+        mut self,
+        read_only_timeout: Duration,
+        objective_execution_timeout: Duration,
+    ) -> Self {
+        self.read_only_timeout = read_only_timeout;
+        self.objective_execution_timeout = objective_execution_timeout;
         self
     }
 }
@@ -147,6 +163,7 @@ impl RuntimeClient {
         let result = self.call_runtime_value(
             HEADLESS_RUN_DRIVE_METHOD,
             Some(cli_run_drive_params(objective)?),
+            RuntimeRequestClass::ObjectiveExecution,
         )?;
         validate_headless_run_drive_result(&result)?;
         if json_output {
@@ -169,7 +186,8 @@ impl RuntimeClient {
     }
 
     fn call_runtime_status(&self) -> Result<RuntimeStatus, RuntimeClientError> {
-        let result = self.call_runtime_value(RUNTIME_STATUS_METHOD, None)?;
+        let result =
+            self.call_runtime_value(RUNTIME_STATUS_METHOD, None, RuntimeRequestClass::ReadOnly)?;
         parse_runtime_status_result(result)
     }
 
@@ -178,8 +196,11 @@ impl RuntimeClient {
         task_id: &str,
         json_output: bool,
     ) -> Result<String, RuntimeClientError> {
-        let result =
-            self.call_runtime_value(TASK_INSPECT_METHOD, Some(json!({ "task_id": task_id })))?;
+        let result = self.call_runtime_value(
+            TASK_INSPECT_METHOD,
+            Some(json!({ "task_id": task_id })),
+            RuntimeRequestClass::ReadOnly,
+        )?;
         validate_task_inspect_result(&result)?;
         if json_output {
             return json_result("task_inspect", result);
@@ -193,8 +214,11 @@ impl RuntimeClient {
         run_id: &str,
         json_output: bool,
     ) -> Result<String, RuntimeClientError> {
-        let result =
-            self.call_runtime_value(RUN_INSPECT_METHOD, Some(json!({ "run_id": run_id })))?;
+        let result = self.call_runtime_value(
+            RUN_INSPECT_METHOD,
+            Some(json!({ "run_id": run_id })),
+            RuntimeRequestClass::ReadOnly,
+        )?;
         validate_run_inspect_result(&result)?;
         if json_output {
             return json_result("run_inspect", result);
@@ -204,7 +228,8 @@ impl RuntimeClient {
     }
 
     fn runtime_task_list(&self, json_output: bool) -> Result<String, RuntimeClientError> {
-        let result = self.call_runtime_value(TASK_LIST_METHOD, None)?;
+        let result =
+            self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
         validate_task_list_result(&result)?;
         if json_output {
             return json_result("task_list", result);
@@ -217,6 +242,7 @@ impl RuntimeClient {
         &self,
         method: &str,
         params: Option<Value>,
+        request_class: RuntimeRequestClass,
     ) -> Result<Value, RuntimeClientError> {
         let request_id = json!(1);
         let mut request = json!({
@@ -229,11 +255,15 @@ impl RuntimeClient {
         }
         let request_line =
             serde_json::to_string(&request).map_err(|_| RuntimeClientError::CommunicationFailed)?;
-        let response_line = self.send_one_request(&request_line)?;
+        let response_line = self.send_one_request(&request_line, request_class)?;
         parse_runtime_value_response(&response_line, &request_id)
     }
 
-    fn send_one_request(&self, request_line: &str) -> Result<String, RuntimeClientError> {
+    fn send_one_request(
+        &self,
+        request_line: &str,
+        request_class: RuntimeRequestClass,
+    ) -> Result<String, RuntimeClientError> {
         let runtime_path = self.resolve_runtime_path();
         let mut child = Command::new(runtime_path)
             .stdin(Stdio::piped())
@@ -266,7 +296,7 @@ impl RuntimeClient {
             let _ = sender.send(read_bounded_response_line(&mut stdout));
         });
 
-        let response = match receiver.recv_timeout(self.config.timeout) {
+        let response = match receiver.recv_timeout(self.timeout_for(request_class)) {
             Ok(Ok(buffer)) => {
                 if matches!(child.try_wait(), Ok(None)) {
                     let _ = child.kill();
@@ -315,6 +345,28 @@ impl RuntimeClient {
 
         PathBuf::from(format!("brownie-runtime{}", env::consts::EXE_SUFFIX))
     }
+
+    fn timeout_for(&self, request_class: RuntimeRequestClass) -> Duration {
+        match request_class {
+            RuntimeRequestClass::ReadOnly => self.config.read_only_timeout,
+            RuntimeRequestClass::ObjectiveExecution => self.config.objective_execution_timeout,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeRequestClass {
+    ReadOnly,
+    ObjectiveExecution,
+}
+
+fn env_timeout(name: &str, default_ms: u64) -> Duration {
+    env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .map(Duration::from_millis)
+        .unwrap_or_else(|| Duration::from_millis(default_ms))
 }
 
 fn read_bounded_response_line(stdout: &mut impl Read) -> std::io::Result<Vec<u8>> {
@@ -778,6 +830,21 @@ mod tests {
         .unwrap();
         assert_eq!(status.name, "brownie-runtime");
         assert_eq!(status.status, brownie_protocol::RuntimeState::Ready);
+    }
+
+    #[test]
+    fn default_transport_timeouts_separate_read_only_and_objective_execution() {
+        let client = RuntimeClient::new(RuntimeClientConfig::with_runtime_path(PathBuf::from(
+            "brownie-runtime",
+        )));
+        assert_eq!(
+            client.timeout_for(RuntimeRequestClass::ReadOnly),
+            Duration::from_millis(DEFAULT_READ_ONLY_TIMEOUT_MS)
+        );
+        assert_eq!(
+            client.timeout_for(RuntimeRequestClass::ObjectiveExecution),
+            Duration::from_millis(DEFAULT_OBJECTIVE_EXECUTION_TIMEOUT_MS)
+        );
     }
 
     #[test]

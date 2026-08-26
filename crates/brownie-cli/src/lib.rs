@@ -189,6 +189,52 @@ mod tests {
     }
 
     #[test]
+    fn run_preserves_objective_tokens_that_look_like_global_options() {
+        let json_objective = Cli::parse([
+            "brownie", "run", "analyze", "the", "--json", "output", "format",
+        ])
+        .unwrap();
+        assert_eq!(
+            json_objective.command,
+            CliCommand::Run {
+                objective: "analyze the --json output format".into()
+            }
+        );
+        assert!(!json_objective.json);
+
+        let help_objective =
+            Cli::parse(["brownie", "run", "explain", "--help", "behavior"]).unwrap();
+        assert_eq!(
+            help_objective.command,
+            CliCommand::Run {
+                objective: "explain --help behavior".into()
+            }
+        );
+
+        let version_objective =
+            Cli::parse(["brownie", "run", "compare", "-V", "and", "--version"]).unwrap();
+        assert_eq!(
+            version_objective.command,
+            CliCommand::Run {
+                objective: "compare -V and --version".into()
+            }
+        );
+    }
+
+    #[test]
+    fn leading_json_is_global_but_run_tail_json_is_objective() {
+        let parsed =
+            Cli::parse(["brownie", "--json", "run", "analyze", "--json", "output"]).unwrap();
+        assert!(parsed.json);
+        assert_eq!(
+            parsed.command,
+            CliCommand::Run {
+                objective: "analyze --json output".into()
+            }
+        );
+    }
+
+    #[test]
     fn rejects_develop_as_primary_command() {
         let error = Cli::parse(["brownie", "develop", "change code"]).unwrap_err();
         assert!(error.to_string().contains("unknown command"));
