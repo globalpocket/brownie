@@ -15,6 +15,7 @@ const RUNTIME_STATUS_METHOD: &str = "runtime.status";
 const TASK_INSPECT_METHOD: &str = "task.inspect";
 const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
+const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
@@ -30,6 +31,7 @@ const CLI_RUN_MAX_ADVANCES: u8 = 1;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
 const CLI_RUN_MAX_LEDGER_EVENTS: usize = 16;
+const CLI_RESUME_MAX_STEPS: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClient {
@@ -141,6 +143,7 @@ impl RuntimeClient {
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
         match command {
             CliCommand::Run { objective } => self.runtime_run(objective, json),
+            CliCommand::Resume => self.runtime_resume(json),
             CliCommand::Status => self.runtime_status(json),
             CliCommand::Inspect {
                 target: InspectTarget::Task { task_id },
@@ -171,6 +174,24 @@ impl RuntimeClient {
         }
 
         bounded_output(render_run_result(&result)?)
+    }
+
+    fn runtime_resume(&self, json_output: bool) -> Result<String, RuntimeClientError> {
+        let task_list =
+            self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
+        validate_task_list_result(&task_list)?;
+        let resume_params = cli_resume_params(&task_list)?;
+        let result = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(resume_params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&result)?;
+        if json_output {
+            return json_result("resume", cli_resume_payload(&result)?);
+        }
+
+        bounded_output(render_resume_result(&result)?)
     }
 
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -495,6 +516,38 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     Ok(())
 }
 
+fn validate_headless_continue_once_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let status = required_display_string(object, "status")?;
+    if !matches!(
+        status.as_str(),
+        "stale_progress" | "no_eligible_task" | "task_in_progress" | "task_executed"
+    ) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "expected_progress_fingerprint",
+        "current_progress_fingerprint",
+        "next_action",
+    ] {
+        required_display_string(object, key)?;
+    }
+    required_u64(object, "expected_aggregate_sequence")?;
+    required_u64(object, "current_aggregate_sequence")?;
+    display_usize(object, "candidate_count")?;
+    required_bool(object, "stale")?;
+    required_bool(object, "replayed")?;
+    optional_bounded_string(object, "decision_id")?;
+    optional_bounded_string(object, "continuation_id")?;
+    optional_bounded_string(object, "selected_task_id")?;
+    optional_bounded_string(object, "selected_run_id")?;
+    optional_bounded_string(object, "post_progress_fingerprint")?;
+    optional_u64(object, "post_aggregate_sequence")?;
+    Ok(())
+}
+
 fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
     let object = result
         .as_object()
@@ -576,6 +629,77 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     Ok(Value::Object(payload))
 }
 
+fn render_resume_result(result: &Value) -> Result<String, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let status = display_string(object, "status")?;
+    let continuation_id = display_optional_string(object, "continuation_id")?;
+    let task_id = display_optional_string(object, "selected_task_id")?;
+    let run_id = display_optional_string(object, "selected_run_id")?;
+    let candidate_count = display_usize(object, "candidate_count")?;
+    let stale = display_bool(object, "stale")?;
+    let replayed = display_bool(object, "replayed")?;
+    let next_action = display_string(object, "next_action")?;
+
+    Ok(format!(
+        "resume\n  status: {status}\n  continuation: {continuation_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  candidates: {candidate_count}\n  stale: {stale}\n  replayed: {replayed}\n  next: {next_action}\n"
+    ))
+}
+
+fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut payload = serde_json::Map::new();
+    for key in [
+        "status",
+        "decision_id",
+        "continuation_id",
+        "selected_task_id",
+        "selected_run_id",
+        "next_action",
+    ] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), bounded_json_optional_string(value)?);
+        }
+    }
+    for key in [
+        "candidate_count",
+        "current_aggregate_sequence",
+        "post_aggregate_sequence",
+    ] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), bounded_json_optional_u64(value)?);
+        }
+    }
+    for key in ["stale", "replayed"] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), Value::Bool(json_bool(value)?));
+        }
+    }
+    Ok(Value::Object(payload))
+}
+
+fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
+    let progress = object_field(task_list, "progress_overview")?;
+    let progress_fingerprint = required_display_string(progress, "source_fingerprint")?;
+    let aggregate_sequence = required_u64(progress, "aggregate_sequence")?;
+    let continuation_id = stable_cli_resume_id(&progress_fingerprint, aggregate_sequence);
+    Ok(json!({
+        "authorize": true,
+        "expected_progress_fingerprint": progress_fingerprint,
+        "expected_aggregate_sequence": aggregate_sequence,
+        "continuation_id": continuation_id,
+        "max_steps": CLI_RESUME_MAX_STEPS,
+        "context_budget": {
+            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
+            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
+            "max_selected_index_chars": 0
+        }
+    }))
+}
+
 fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
     let objective = objective.trim();
     let run_id = stable_cli_run_id(objective)?;
@@ -611,6 +735,16 @@ fn stable_cli_run_id(objective: &str) -> Result<String, RuntimeClientError> {
     hasher.update(objective.as_bytes());
     let digest = hasher.finalize();
     Ok(hex_prefix(&digest, 16))
+}
+
+fn stable_cli_resume_id(progress_fingerprint: &str, aggregate_sequence: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"brownie-cli-resume-v1\\0");
+    hasher.update(progress_fingerprint.as_bytes());
+    hasher.update(b"\\0");
+    hasher.update(aggregate_sequence.to_string().as_bytes());
+    let digest = hasher.finalize();
+    format!("cli.resume.{}", hex_prefix(&digest, 16))
 }
 
 fn hex_prefix(bytes: &[u8], len: usize) -> String {
@@ -739,6 +873,16 @@ fn display_optional_string(
     }
 }
 
+fn optional_bounded_string(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(()),
+        Some(value) => bounded_string(value).map(|_| ()),
+    }
+}
+
 fn display_string_from_optional(
     object: Option<&serde_json::Map<String, Value>>,
     key: &str,
@@ -763,6 +907,69 @@ fn bounded_string(value: &Value) -> Result<String, RuntimeClientError> {
 
 fn bounded_json_string(value: &Value) -> Result<Value, RuntimeClientError> {
     bounded_string(value).map(Value::String)
+}
+
+fn bounded_json_optional_string(value: &Value) -> Result<Value, RuntimeClientError> {
+    match value {
+        Value::Null => Ok(Value::Null),
+        _ => bounded_json_string(value),
+    }
+}
+
+fn bounded_json_optional_u64(value: &Value) -> Result<Value, RuntimeClientError> {
+    match value {
+        Value::Null => Ok(Value::Null),
+        _ => Ok(Value::Number(required_number(value)?)),
+    }
+}
+
+fn required_number(value: &Value) -> Result<serde_json::Number, RuntimeClientError> {
+    value
+        .as_u64()
+        .map(serde_json::Number::from)
+        .ok_or(RuntimeClientError::InvalidResponse)
+}
+
+fn required_u64(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<u64, RuntimeClientError> {
+    object
+        .get(key)
+        .and_then(Value::as_u64)
+        .ok_or(RuntimeClientError::InvalidResponse)
+}
+
+fn optional_u64(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<(), RuntimeClientError> {
+    match object.get(key) {
+        Some(Value::Null) | None => Ok(()),
+        Some(value) if value.as_u64().is_some() => Ok(()),
+        Some(_) => Err(RuntimeClientError::InvalidResponse),
+    }
+}
+
+fn display_bool(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<bool, RuntimeClientError> {
+    object
+        .get(key)
+        .map(json_bool)
+        .ok_or(RuntimeClientError::InvalidResponse)?
+}
+
+fn required_bool(
+    object: &serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<bool, RuntimeClientError> {
+    display_bool(object, key)
+}
+
+fn json_bool(value: &Value) -> Result<bool, RuntimeClientError> {
+    value.as_bool().ok_or(RuntimeClientError::InvalidResponse)
 }
 
 fn display_usize(
@@ -871,5 +1078,41 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with(".journey"));
+    }
+
+    #[test]
+    fn cli_resume_params_use_fresh_progress_without_policy_copy() {
+        let task_list = json!({
+            "tasks": [],
+            "progress_overview": {
+                "source_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aggregate_sequence": 42,
+                "runnable_task_ids": [],
+                "blocked_task_ids": [],
+                "terminal_task_ids": []
+            }
+        });
+        let params = cli_resume_params(&task_list).unwrap();
+        assert_eq!(params["authorize"], true);
+        assert_eq!(
+            params["expected_progress_fingerprint"],
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(params["expected_aggregate_sequence"], 42);
+        assert_eq!(params["max_steps"], 1);
+        assert_eq!(
+            params["context_budget"],
+            json!({
+                "max_prompt_chars": 4096,
+                "max_ledger_events": 16,
+                "max_selected_index_chars": 0
+            })
+        );
+        assert!(params["continuation_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("cli.resume."));
+        assert!(params.get("verification_recovery_source").is_none());
+        assert!(params.get("objective_proposal_apply_target").is_none());
     }
 }
