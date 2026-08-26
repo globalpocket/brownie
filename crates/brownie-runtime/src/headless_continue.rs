@@ -2069,11 +2069,46 @@ fn scoped_allowed_task_ids(
             {
                 allowed_run_ids.insert(task.run_id.clone());
                 changed = true;
+                continue;
+            }
+            if scoped_recovery_provenance_matches_allowed_scope(
+                task,
+                &allowed_task_ids,
+                &allowed_run_ids,
+            ) && allowed_task_ids.insert(task.task_id.clone())
+            {
+                allowed_run_ids.insert(task.run_id.clone());
+                changed = true;
             }
         }
     }
 
     allowed_task_ids
+}
+
+fn scoped_recovery_provenance_matches_allowed_scope(
+    task: &TaskRecord,
+    allowed_task_ids: &std::collections::BTreeSet<String>,
+    allowed_run_ids: &std::collections::BTreeSet<String>,
+) -> bool {
+    if let Some(provenance) = task.verification_recovery_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    if let Some(provenance) = task.verification_recovery_retry_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id)
+            && allowed_task_ids.contains(&provenance.recovery_task_id)
+            && allowed_run_ids.contains(&provenance.recovery_run_id);
+    }
+    if let Some(provenance) = task.llm_provider_failure_retry_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    task.patch_apply_recovery_provenance
+        .as_ref()
+        .map(|provenance| allowed_run_ids.contains(&provenance.source_run_id))
+        .unwrap_or(false)
 }
 
 pub(super) fn handle_headless_run_advance(
