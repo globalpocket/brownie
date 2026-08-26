@@ -4,10 +4,10 @@ This repository task file is a compatibility pointer for older Codex task setups
 
 ## Source Of Truth
 
-The scheduled Brownie phase loop uses the external automation root:
+The scheduled Brownie CLI phase loop uses the external automation root:
 
 ```text
-~/.codex/automations/brownie-phase-loop/
+~/.codex/automations/brownie-cli-phase-loop/
 ```
 
 Before reviewing or planning, read the external `phase-state.json`, the active prompt path named there, `latest-review.md`, `review-memory.md`, `stop-reason.md`, `automation.toml`, and the active `run.lock`.
