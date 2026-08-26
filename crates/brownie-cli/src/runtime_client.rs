@@ -1,6 +1,7 @@
 use crate::cli::{CliCommand, InspectTarget, ListTarget};
 use brownie_protocol::{JsonRpcResponse, RuntimeStatus};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::env;
 use std::io::{Read, Write};
 use std::path::PathBuf;
@@ -14,14 +15,19 @@ const RUNTIME_STATUS_METHOD: &str = "runtime.status";
 const TASK_INSPECT_METHOD: &str = "task.inspect";
 const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
+const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
-const DEFAULT_TIMEOUT_MS: u64 = 2_000;
+const DEFAULT_TIMEOUT_MS: u64 = 10_000;
 const MAX_RESPONSE_BYTES: usize = 16 * 1024;
 const MAX_STATUS_FIELD_CHARS: usize = 128;
 const MAX_RENDERED_OUTPUT_CHARS: usize = 4 * 1024;
 const MAX_TEXT_FIELD_CHARS: usize = 256;
 const MAX_TASK_LIST_ROWS: usize = 10;
+const CLI_RUN_MAX_ADVANCES: u8 = 1;
+const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
+const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
+const CLI_RUN_MAX_LEDGER_EVENTS: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClient {
@@ -118,6 +124,7 @@ impl RuntimeClient {
 
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
         match command {
+            CliCommand::Run { objective } => self.runtime_run(objective, json),
             CliCommand::Status => self.runtime_status(json),
             CliCommand::Inspect {
                 target: InspectTarget::Task { task_id },
@@ -130,6 +137,23 @@ impl RuntimeClient {
             } => self.runtime_task_list(json),
             _ => Err(RuntimeClientError::UnsupportedCommand),
         }
+    }
+
+    fn runtime_run(
+        &self,
+        objective: &str,
+        json_output: bool,
+    ) -> Result<String, RuntimeClientError> {
+        let result = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(cli_run_drive_params(objective)?),
+        )?;
+        validate_headless_run_drive_result(&result)?;
+        if json_output {
+            return json_result("run", cli_run_payload(&result)?);
+        }
+
+        bounded_output(render_run_result(&result)?)
     }
 
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -407,6 +431,142 @@ fn validate_task_list_result(result: &Value) -> Result<(), RuntimeClientError> {
     Ok(())
 }
 
+fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for key in ["status", "session_id", "drive_id", "next_action"] {
+        display_string(object, key)?;
+    }
+    object_field(result, "completion_closure")?;
+    Ok(())
+}
+
+fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let session_id = display_string(object, "session_id")?;
+    let status = display_string(object, "status")?;
+    let drive_id = display_string(object, "drive_id")?;
+    let next_action = display_string(object, "next_action")?;
+    let closure = object_field(result, "completion_closure")?;
+    let closure_status = display_string(closure, "status")?;
+    let journey = optional_object_field(object, "journey")
+        .or_else(|| optional_object_field(object, "journey_execution"));
+    let journey_id = display_string_from_optional(journey, "journey_id")?;
+    let task_id = display_string_from_optional(journey, "task_id")?;
+    let run_id = display_string_from_optional(journey, "run_id")?;
+    let completion = object
+        .get("terminal_completion_evidence")
+        .and_then(Value::as_object)
+        .map(|evidence| display_string(evidence, "completion_summary_preview"))
+        .transpose()?
+        .unwrap_or_else(|| "none".to_string());
+
+    Ok(format!(
+        "run {session_id}\n  status: {status}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  closure: {closure_status}\n  next: {next_action}\n  completion: {completion}\n"
+    ))
+}
+
+fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let closure = object_field(result, "completion_closure")?;
+    let journey = optional_object_field(object, "journey")
+        .or_else(|| optional_object_field(object, "journey_execution"));
+    let mut payload = serde_json::Map::new();
+    for key in [
+        "status",
+        "session_id",
+        "drive_id",
+        "next_action",
+        "stop_reason",
+    ] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), bounded_json_string(value)?);
+        }
+    }
+    if let Some(value) = closure.get("status") {
+        payload.insert(
+            "completion_closure_status".to_string(),
+            bounded_json_string(value)?,
+        );
+    }
+    if let Some(journey) = journey {
+        for key in ["journey_id", "task_id", "run_id"] {
+            if let Some(value) = journey.get(key) {
+                payload.insert(key.to_string(), bounded_json_string(value)?);
+            }
+        }
+    }
+    if let Some(evidence) = object
+        .get("terminal_completion_evidence")
+        .and_then(Value::as_object)
+    {
+        if let Some(value) = evidence.get("completion_summary_preview") {
+            payload.insert(
+                "completion_summary_preview".to_string(),
+                bounded_json_string(value)?,
+            );
+        }
+        if let Some(value) = evidence.get("completion_result_fingerprint") {
+            payload.insert(
+                "completion_result_fingerprint".to_string(),
+                bounded_json_string(value)?,
+            );
+        }
+    }
+    Ok(Value::Object(payload))
+}
+
+fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
+    let run_id = stable_cli_run_id(objective)?;
+    Ok(json!({
+        "authorize": true,
+        "session_id": format!("cli.run.{run_id}"),
+        "drive_id": format!("cli.run.{run_id}.drive"),
+        "expected_start_session_sequence": 0,
+        "max_advances": CLI_RUN_MAX_ADVANCES,
+        "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
+        "context_budget": {
+            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
+            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
+            "max_selected_index_chars": 0
+        },
+        "journey_admission": {
+            "journey_id": format!("cli.run.{run_id}.journey"),
+            "authorize_journey_start": true,
+            "task_start": {
+                "goal": objective
+            }
+        }
+    }))
+}
+
+fn stable_cli_run_id(objective: &str) -> Result<String, RuntimeClientError> {
+    let objective = objective.trim();
+    if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_PROMPT_CHARS {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let mut hasher = Sha256::new();
+    hasher.update(b"brownie-cli-run-v1\\0");
+    hasher.update(objective.as_bytes());
+    let digest = hasher.finalize();
+    Ok(hex_prefix(&digest, 16))
+}
+
+fn hex_prefix(bytes: &[u8], len: usize) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut output = String::with_capacity(len * 2);
+    for byte in bytes.iter().take(len) {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    output
+}
+
 fn render_task_inspect(result: &Value) -> Result<String, RuntimeClientError> {
     let task = object_field(result, "task")?;
     let run = object_field(result, "run")?;
@@ -535,6 +695,10 @@ fn bounded_string(value: &Value) -> Result<String, RuntimeClientError> {
     Ok(value.to_string())
 }
 
+fn bounded_json_string(value: &Value) -> Result<Value, RuntimeClientError> {
+    bounded_string(value).map(Value::String)
+}
+
 fn display_usize(
     object: &serde_json::Map<String, Value>,
     key: &str,
@@ -600,5 +764,31 @@ mod tests {
         .unwrap();
         assert_eq!(status.name, "brownie-runtime");
         assert_eq!(status.status, brownie_protocol::RuntimeState::Ready);
+    }
+
+    #[test]
+    fn cli_run_params_are_fixed_headless_drive_without_mode_policy() {
+        let params = cli_run_drive_params("summarize this repository").unwrap();
+        assert_eq!(params["authorize"], true);
+        assert_eq!(params["expected_start_session_sequence"], 0);
+        assert_eq!(params["max_advances"], 1);
+        assert_eq!(params["max_steps_per_advance"], 1);
+        assert_eq!(params["journey_admission"]["authorize_journey_start"], true);
+        assert_eq!(
+            params["journey_admission"]["task_start"]["goal"],
+            "summarize this repository"
+        );
+        assert!(params["journey_admission"]["task_start"]
+            .get("mode_id")
+            .is_none());
+        assert!(params["session_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("cli.run."));
+        assert!(params["drive_id"].as_str().unwrap().ends_with(".drive"));
+        assert!(params["journey_admission"]["journey_id"]
+            .as_str()
+            .unwrap()
+            .ends_with(".journey"));
     }
 }
