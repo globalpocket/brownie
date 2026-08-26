@@ -2,11 +2,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
 static RUNTIME_BUILD_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static RUNTIME_BUILD_LOCK: Mutex<()> = Mutex::new(());
 const READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS: &str = "10000";
 
 fn brownie() -> &'static str {
@@ -14,8 +16,7 @@ fn brownie() -> &'static str {
 }
 
 fn fake_runtime(name: &str, body: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("brownie-cli-test-{}-{}", std::process::id(), name));
+    let dir = unique_test_dir(name);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("brownie-runtime");
     fs::write(
@@ -30,14 +31,79 @@ fn fake_runtime(name: &str, body: &str) -> PathBuf {
     path
 }
 
+fn fake_runtime_sequence(name: &str, bodies: &[&str]) -> PathBuf {
+    let dir = unique_test_dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    let _ = fs::remove_file(dir.join("count"));
+    let _ = fs::remove_file(dir.join("requests.ndjson"));
+    for (index, body) in bodies.iter().enumerate() {
+        fs::write(dir.join(format!("response-{index}.json")), body).unwrap();
+    }
+    let path = dir.join("brownie-runtime");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+read line
+count_file="${BROWNIE_FAKE_RUNTIME_COUNT:-$(dirname "$0")/count}"
+count=0
+if [ -f "$count_file" ]; then count=$(cat "$count_file"); fi
+next=$((count + 1))
+printf '%s' "$next" > "$count_file"
+if [ -n "$BROWNIE_FAKE_RUNTIME_CAPTURE" ]; then printf '%s\n' "$line" >> "$BROWNIE_FAKE_RUNTIME_CAPTURE"; fi
+response="$(dirname "$0")/response-${count}.json"
+if [ -f "$response" ]; then
+  cat "$response"
+  printf '\n'
+else
+  printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"unexpected fake runtime call with internal detail"}}'
+fi
+"#,
+    )
+    .unwrap();
+    make_executable(&path);
+    path
+}
+
+fn fake_runtime_resume_hanging_continue(name: &str) -> PathBuf {
+    let dir = unique_test_dir(name);
+    fs::create_dir_all(&dir).unwrap();
+    let _ = fs::remove_file(dir.join("requests.ndjson"));
+    let path = dir.join("brownie-runtime");
+    fs::write(
+        &path,
+        r#"#!/bin/sh
+read line
+if [ -n "$BROWNIE_FAKE_RUNTIME_CAPTURE" ]; then printf '%s\n' "$line" >> "$BROWNIE_FAKE_RUNTIME_CAPTURE"; fi
+case "$line" in
+  *'"method":"task.list"'*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}'
+    ;;
+  *)
+    sleep 5
+    ;;
+esac
+"#,
+    )
+    .unwrap();
+    make_executable(&path);
+    path
+}
+
 fn hanging_runtime(name: &str) -> PathBuf {
-    let dir =
-        std::env::temp_dir().join(format!("brownie-cli-test-{}-{}", std::process::id(), name));
+    let dir = unique_test_dir(name);
     fs::create_dir_all(&dir).unwrap();
     let path = dir.join("brownie-runtime");
     fs::write(&path, "#!/bin/sh\nsleep 5\n").unwrap();
     make_executable(&path);
     path
+}
+
+fn unique_test_dir(name: &str) -> PathBuf {
+    let id = RUNTIME_BUILD_COUNTER.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!(
+        "brownie-cli-test-{}-{name}-{id}",
+        std::process::id()
+    ))
 }
 
 fn make_executable(path: &Path) {
@@ -616,19 +682,204 @@ fn run_rejects_missing_completion_closure_status() {
 }
 
 #[test]
-fn resume_remains_nonexecuting_in_cli_4() {
+fn resume_invokes_task_list_then_headless_continue_once_and_prints_bounded_human_output() {
+    let runtime = fake_runtime_sequence(
+        "resume-continue",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","decision_id":"decision-1","continuation_id":"cli.resume.replayed","selected_task_id":"task-1","selected_run_id":"run-1","candidate_count":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":7,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","post_aggregate_sequence":8,"stale":false,"replayed":false,"task_run_result":null,"proposal_apply_result":null,"next_route":null,"next_action":"inspect_progress_overview"}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+
     let output = Command::new(brownie())
         .arg("resume")
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
         .env(
-            "BROWNIE_RUNTIME_PATH",
-            "/tmp/brownie-runtime-should-not-be-started-for-resume",
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
         )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("resume"));
+    assert!(stdout.contains("status: task_executed"));
+    assert!(stdout.contains("continuation: cli.resume.replayed"));
+    assert!(stdout.contains("task: task-1"));
+    assert!(stdout.contains("runtime_run: run-1"));
+    assert!(stdout.contains("candidates: 1"));
+    assert!(stdout.contains("stale: false"));
+    assert!(stdout.contains("replayed: false"));
+    assert!(stdout.contains("next: inspect_progress_overview"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+
+    let requests = fs::read_to_string(capture).unwrap();
+    let requests: Vec<serde_json::Value> = requests
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["method"], "task.list");
+    assert!(requests[0].get("params").is_none());
+    assert_eq!(requests[1]["method"], "headless.continue_once");
+    assert_eq!(requests[1]["params"]["authorize"], true);
+    assert_eq!(
+        requests[1]["params"]["expected_progress_fingerprint"],
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(requests[1]["params"]["expected_aggregate_sequence"], 7);
+    assert_eq!(requests[1]["params"]["max_steps"], 1);
+    assert!(requests[1]["params"]["continuation_id"]
+        .as_str()
+        .unwrap()
+        .starts_with("cli.resume."));
+    assert_eq!(
+        requests[1]["params"]["context_budget"],
+        serde_json::json!({
+            "max_prompt_chars": 4096,
+            "max_ledger_events": 16,
+            "max_selected_index_chars": 0
+        })
+    );
+}
+
+#[test]
+fn json_resume_outputs_bounded_cli_projection() {
+    let runtime = fake_runtime_sequence(
+        "resume-json",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","aggregate_sequence":3,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"no_eligible_task","decision_id":null,"continuation_id":"cli.resume.none","selected_task_id":null,"selected_run_id":null,"candidate_count":0,"expected_progress_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","expected_aggregate_sequence":3,"current_progress_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","current_aggregate_sequence":3,"post_progress_fingerprint":null,"post_aggregate_sequence":null,"stale":false,"replayed":false,"task_run_result":null,"proposal_apply_result":null,"next_route":{"kind":"inspect_progress_overview","reason":"no tasks","next_action":"inspect_progress_overview"},"next_action":"inspect_progress_overview"}}"#,
+        ],
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_RUNTIME_PATH_SHOULD_NOT_LEAK", "secret-path")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["resume"]["status"], "no_eligible_task");
+    assert_eq!(payload["resume"]["continuation_id"], "cli.resume.none");
+    assert_eq!(
+        payload["resume"]["selected_task_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(payload["resume"]["candidate_count"], 0);
+    assert_eq!(payload["resume"]["current_aggregate_sequence"], 3);
+    assert_eq!(
+        payload["resume"]["post_aggregate_sequence"],
+        serde_json::Value::Null
+    );
+    assert_eq!(payload["resume"]["stale"], false);
+    assert_eq!(payload["resume"]["replayed"], false);
+    assert_eq!(
+        payload["resume"]["next_action"],
+        "inspect_progress_overview"
+    );
+    assert!(payload["resume"].get("next_route").is_none());
+    assert!(payload["resume"].get("task_run_result").is_none());
+    assert!(!stdout.contains("secret-path"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+}
+
+#[test]
+fn resume_surfaces_stale_progress_as_runtime_owned_decision() {
+    let runtime = fake_runtime_sequence(
+        "resume-stale",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","aggregate_sequence":9,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"stale_progress","decision_id":null,"continuation_id":"cli.resume.stale","selected_task_id":null,"selected_run_id":null,"candidate_count":1,"expected_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","expected_aggregate_sequence":9,"current_progress_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","current_aggregate_sequence":10,"post_progress_fingerprint":null,"post_aggregate_sequence":null,"stale":true,"replayed":false,"task_run_result":null,"proposal_apply_result":null,"next_route":{"kind":"inspect_progress_overview","reason":"refresh","next_action":"refresh_progress_overview"},"next_action":"refresh_progress_overview"}}"#,
+        ],
+    );
+
+    let output = Command::new(brownie())
+        .arg("resume")
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("status: stale_progress"));
+    assert!(stdout.contains("stale: true"));
+    assert!(stdout.contains("next: refresh_progress_overview"));
+}
+
+#[test]
+fn resume_runtime_error_does_not_expose_runtime_payload() {
+    let runtime = fake_runtime_sequence(
+        "resume-jsonrpc-error",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","aggregate_sequence":1,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"bad continuation with api_key=secret-internal-detail"}}"#,
+        ],
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"code\":\"runtime_error\""));
+    assert!(!stdout.contains("secret-internal-detail"));
+}
+
+#[test]
+fn resume_rejects_invalid_runtime_shape() {
+    let runtime = fake_runtime_sequence(
+        "resume-invalid-shape",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[],"progress_overview":{"source_fingerprint":"sha256:abababababababababababababababababababababababababababababababab","aggregate_sequence":1,"task_count":0,"root_task_ids":[],"runnable_task_ids":[],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":0,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","next_action":"inspect_progress_overview"}}"#,
+        ],
+    );
+
+    let output = Command::new(brownie())
+        .arg("resume")
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
         .output()
         .unwrap();
 
     assert!(!output.status.success());
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(stderr.contains("runtime command is not implemented in this CLI slice"));
+    assert!(stderr.contains("runtime returned an invalid response"));
+}
+
+#[test]
+fn resume_uses_objective_transport_timeout_class_for_continue_call() {
+    let runtime = fake_runtime_resume_hanging_continue("resume-objective-timeout");
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "50")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("\"code\":\"runtime_timeout\""));
 }
 
 #[test]
@@ -692,6 +943,33 @@ fn run_can_invoke_real_runtime_headless_drive_with_temp_workspace() {
     assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
 }
 
+#[test]
+fn resume_can_invoke_real_runtime_continue_once_with_temp_workspace() {
+    let runtime = build_real_runtime_binary();
+    let workspace = std::env::temp_dir().join(format!(
+        "brownie-cli-real-resume-{}-{}",
+        std::process::id(),
+        RUNTIME_BUILD_COUNTER.fetch_add(1, Ordering::Relaxed)
+    ));
+    fs::create_dir_all(&workspace).unwrap();
+
+    let output = Command::new(brownie())
+        .arg("resume")
+        .env("BROWNIE_RUNTIME_PATH", runtime)
+        .env("BROWNIE_WORKSPACE_ROOT", &workspace)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("resume"));
+    assert!(stdout.contains("status: no_eligible_task"));
+    assert!(stdout.contains("next: inspect_progress_overview"));
+    assert!(!stdout.contains(workspace.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+}
+
 fn assert_run_preserves_objective(name: &str, args: &[&str], expected_objective: &str) {
     let runtime = fake_runtime(
         name,
@@ -718,53 +996,41 @@ fn assert_run_preserves_objective(name: &str, args: &[&str], expected_objective:
 }
 
 fn build_real_runtime_binary() -> PathBuf {
-    if let Some(path) = option_env!("CARGO_BIN_EXE_brownie-runtime").map(PathBuf::from) {
-        if path.exists() {
-            return path;
-        }
-    }
-
+    let _guard = RUNTIME_BUILD_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     let brownie_path = Path::new(brownie());
-    let sibling = brownie_path
+    let binary_dir = brownie_path
         .parent()
-        .expect("brownie binary should have parent")
-        .join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
-    if sibling.exists() {
-        return sibling;
-    }
-
-    let target_debug = brownie_path
+        .expect("brownie binary should have parent");
+    let target_debug_dir = if binary_dir.file_name().and_then(|name| name.to_str()) == Some("deps")
+    {
+        binary_dir
+            .parent()
+            .expect("target deps dir should have debug parent")
+    } else {
+        binary_dir
+    };
+    let target_root = target_debug_dir
         .parent()
-        .and_then(Path::parent)
-        .expect("brownie binary should live under target debug dirs");
-    let candidate = target_debug.join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
-    if candidate.exists() {
-        return candidate;
-    }
-
+        .expect("target debug dir should have target root");
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let repo_root = manifest_dir
         .parent()
         .and_then(Path::parent)
         .expect("brownie-cli crate should live under crates/");
-    let build_id = RUNTIME_BUILD_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let isolated_target_dir = std::env::temp_dir().join(format!(
-        "brownie-cli-runtime-build-{}-{build_id}",
-        std::process::id()
-    ));
     let status = Command::new(env!("CARGO"))
         .args(["build", "-p", "brownie-runtime", "--bin", "brownie-runtime"])
         .current_dir(repo_root)
-        .env("CARGO_TARGET_DIR", &isolated_target_dir)
+        .env("CARGO_TARGET_DIR", target_root)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .expect("cargo should build brownie-runtime");
     assert!(status.success());
 
-    let candidate = isolated_target_dir
-        .join("debug")
-        .join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
+    let candidate =
+        target_debug_dir.join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
     assert!(
         candidate.exists(),
         "brownie-runtime binary should exist after cargo build"
