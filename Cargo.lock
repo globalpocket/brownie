@@ -70,6 +70,8 @@ dependencies = [
 name = "brownie-cli"
 version = "0.1.0"
 dependencies = [
+ "brownie-protocol",
+ "serde",
  "serde_json",
 ]
 
