@@ -542,6 +542,50 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
 }
 
 #[test]
+fn run_same_objective_uses_distinct_invocation_identities() {
+    let runtime = fake_runtime_sequence(
+        "run-distinct-identity",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.fake1","drive_id":"cli.run.fake1.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":1,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","drive_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111","completion_closure":{"status":"budget_exhausted","stop_reason":"bounded","terminal_task_count":0,"accepted_completion_count":0,"last_terminal_task_id":null,"closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"start_progress":{"progress_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333","aggregate_sequence":0},"next_action":"inspect_progress_overview","journey":{"journey_id":"cli.run.fake1.journey","session_id":"cli.run.fake1","drive_id":"cli.run.fake1.drive","task_id":"task-1","run_id":"run-1","post_aggregate_sequence":1,"closure_status":"budget_exhausted","next_action":"inspect_progress_overview","replayed":false,"journey_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.fake2","drive_id":"cli.run.fake2.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":1,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"budget_exhausted","drive_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111","completion_closure":{"status":"budget_exhausted","stop_reason":"bounded","terminal_task_count":0,"accepted_completion_count":0,"last_terminal_task_id":null,"closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"start_progress":{"progress_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333","aggregate_sequence":0},"next_action":"inspect_progress_overview","journey":{"journey_id":"cli.run.fake2.journey","session_id":"cli.run.fake2","drive_id":"cli.run.fake2.drive","task_id":"task-2","run_id":"run-2","post_aggregate_sequence":1,"closure_status":"budget_exhausted","next_action":"inspect_progress_overview","replayed":false,"journey_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444"}}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+    let count = runtime.with_file_name("count");
+
+    for _ in 0..2 {
+        let output = Command::new(brownie())
+            .args(["run", "repeatable objective"])
+            .env("BROWNIE_RUNTIME_PATH", &runtime)
+            .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+            .env("BROWNIE_FAKE_RUNTIME_COUNT", &count)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+
+    let requests = fs::read_to_string(capture).unwrap();
+    let requests: Vec<serde_json::Value> = requests
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    let first_session = requests[0]["params"]["session_id"].as_str().unwrap();
+    let second_session = requests[1]["params"]["session_id"].as_str().unwrap();
+    assert!(first_session.starts_with("cli.run."));
+    assert!(second_session.starts_with("cli.run."));
+    assert_ne!(first_session, second_session);
+    assert_eq!(
+        requests[0]["params"]["journey_admission"]["task_start"]["goal"],
+        "repeatable objective"
+    );
+    assert_eq!(
+        requests[1]["params"]["journey_admission"]["task_start"]["goal"],
+        "repeatable objective"
+    );
+}
+
+#[test]
 fn run_preserves_objective_tokens_that_look_like_cli_options() {
     assert_run_preserves_objective(
         "run-preserve-json-token",
@@ -737,6 +781,13 @@ fn resume_invokes_task_list_then_headless_continue_once_and_prints_bounded_human
         .as_str()
         .unwrap()
         .starts_with("cli.resume."));
+    assert_eq!(
+        requests[1]["params"]["continuation_scope"],
+        serde_json::json!({
+            "session_id_prefix": "cli.run.",
+            "latest_matching_session": true
+        })
+    );
     assert_eq!(
         requests[1]["params"]["context_budget"],
         serde_json::json!({

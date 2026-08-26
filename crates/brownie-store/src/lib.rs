@@ -4182,6 +4182,47 @@ impl TaskStore {
         }
     }
 
+    pub fn list_headless_journey_start_checkpoints(
+        &self,
+    ) -> Result<Vec<HeadlessJourneyStartCheckpoint>> {
+        let dir = self.headless_journeys_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+
+        let mut checkpoints = Vec::new();
+        for entry in
+            fs::read_dir(&dir).with_context(|| format!("failed to read {}", dir.display()))?
+        {
+            let entry = entry.context("failed to read headless journey directory entry")?;
+            if !entry
+                .file_type()
+                .context("failed to read headless journey entry type")?
+                .is_file()
+            {
+                continue;
+            }
+            let path = entry.path();
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            checkpoints.push(
+                serde_json::from_str(&content)
+                    .with_context(|| format!("failed to parse {}", path.display()))?,
+            );
+        }
+        checkpoints.sort_by(
+            |a: &HeadlessJourneyStartCheckpoint, b: &HeadlessJourneyStartCheckpoint| {
+                a.session_id
+                    .cmp(&b.session_id)
+                    .then(a.journey_id.cmp(&b.journey_id))
+            },
+        );
+        Ok(checkpoints)
+    }
+
     pub fn write_headless_journey_start_checkpoint(
         &self,
         checkpoint: &HeadlessJourneyStartCheckpoint,
@@ -4458,10 +4499,14 @@ impl TaskStore {
     }
 
     fn headless_journey_start_path(&self, journey_id: &str) -> PathBuf {
+        self.headless_journeys_dir()
+            .join(format!("{journey_id}.json"))
+    }
+
+    fn headless_journeys_dir(&self) -> PathBuf {
         self.workspace_root
             .join(WORKSPACE_STATE_DIR)
             .join(HEADLESS_JOURNEYS_DIR)
-            .join(format!("{journey_id}.json"))
     }
 
     fn headless_journey_execution_path(&self, journey_id: &str) -> PathBuf {

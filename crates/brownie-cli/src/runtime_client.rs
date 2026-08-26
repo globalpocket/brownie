@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
+use uuid::Uuid;
 
 const JSONRPC_VERSION: &str = "2.0";
 const RUNTIME_STATUS_METHOD: &str = "runtime.status";
@@ -32,6 +33,7 @@ const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
 const CLI_RUN_MAX_LEDGER_EVENTS: usize = 16;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
+const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeClient {
@@ -692,6 +694,10 @@ fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
         "expected_aggregate_sequence": aggregate_sequence,
         "continuation_id": continuation_id,
         "max_steps": CLI_RESUME_MAX_STEPS,
+        "continuation_scope": {
+            "session_id_prefix": CLI_RUN_SESSION_PREFIX,
+            "latest_matching_session": true
+        },
         "context_budget": {
             "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
             "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
@@ -702,11 +708,13 @@ fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
 
 fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
     let objective = objective.trim();
-    let run_id = stable_cli_run_id(objective)?;
+    validate_cli_objective(objective)?;
+    let invocation_id = cli_run_invocation_id();
+    let session_id = format!("{CLI_RUN_SESSION_PREFIX}{invocation_id}");
     Ok(json!({
         "authorize": true,
-        "session_id": format!("cli.run.{run_id}"),
-        "drive_id": format!("cli.run.{run_id}.drive"),
+        "session_id": session_id.clone(),
+        "drive_id": format!("{session_id}.drive"),
         "expected_start_session_sequence": 0,
         "max_advances": CLI_RUN_MAX_ADVANCES,
         "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
@@ -716,7 +724,7 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
             "max_selected_index_chars": 0
         },
         "journey_admission": {
-            "journey_id": format!("cli.run.{run_id}.journey"),
+            "journey_id": format!("{session_id}.journey"),
             "authorize_journey_start": true,
             "task_start": {
                 "goal": objective
@@ -725,16 +733,15 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
     }))
 }
 
-fn stable_cli_run_id(objective: &str) -> Result<String, RuntimeClientError> {
-    let objective = objective.trim();
+fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
     if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_PROMPT_CHARS {
         return Err(RuntimeClientError::InvalidResponse);
     }
-    let mut hasher = Sha256::new();
-    hasher.update(b"brownie-cli-run-v1\\0");
-    hasher.update(objective.as_bytes());
-    let digest = hasher.finalize();
-    Ok(hex_prefix(&digest, 16))
+    Ok(())
+}
+
+fn cli_run_invocation_id() -> String {
+    Uuid::new_v4().simple().to_string()
 }
 
 fn stable_cli_resume_id(progress_fingerprint: &str, aggregate_sequence: u64) -> String {
@@ -1073,6 +1080,10 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("cli.run."));
+        assert_ne!(
+            params["session_id"],
+            cli_run_drive_params("summarize this repository").unwrap()["session_id"]
+        );
         assert!(params["drive_id"].as_str().unwrap().ends_with(".drive"));
         assert!(params["journey_admission"]["journey_id"]
             .as_str()
@@ -1112,6 +1123,13 @@ mod tests {
             .as_str()
             .unwrap()
             .starts_with("cli.resume."));
+        assert_eq!(
+            params["continuation_scope"],
+            json!({
+                "session_id_prefix": "cli.run.",
+                "latest_matching_session": true
+            })
+        );
         assert!(params.get("verification_recovery_source").is_none());
         assert!(params.get("objective_proposal_apply_target").is_none());
     }

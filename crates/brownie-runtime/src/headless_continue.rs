@@ -27,6 +27,18 @@ pub(super) fn handle_headless_continue_once(
             );
         }
     }
+    if let Some(scope) = params.continuation_scope.as_ref() {
+        if let Err(message) = validate_headless_continue_scope(scope) {
+            return error_response(id, -32602, message);
+        }
+        if params.max_steps.unwrap_or(1) > 1 {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: continuation_scope cannot be combined with max_steps greater than 1",
+            );
+        }
+    }
     if params.verification_recovery_retry_source.is_some() && params.max_steps.unwrap_or(1) > 1 {
         return error_response(
             id,
@@ -1055,6 +1067,13 @@ pub(super) fn handle_headless_continue_once(
             "invalid params: context_budget is supported only for normal headless task continuation",
         );
     }
+    if params.continuation_scope.is_some() && headless_continue_once_has_non_task_target(&params) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: continuation_scope is supported only for normal headless task continuation",
+        );
+    }
     if params.selected_index_context.is_some()
         && (params.verification_recovery_source.is_some()
             || params.verification_recovery_retry_source.is_some()
@@ -1607,6 +1626,17 @@ pub(super) fn handle_headless_continue_once(
     }
 
     let mut candidate_task_ids = headless_continue_once_candidate_task_ids(&progress_overview);
+    if let Some(scope) = params.continuation_scope.as_ref() {
+        candidate_task_ids = match scoped_headless_continue_once_candidate_task_ids(
+            &store,
+            &tasks,
+            &candidate_task_ids,
+            scope,
+        ) {
+            Ok(candidate_task_ids) => candidate_task_ids,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    }
     candidate_task_ids.sort();
     let candidate_count = candidate_task_ids.len();
     let Some(selected_task_id) = candidate_task_ids.first().cloned() else {
@@ -1831,6 +1861,219 @@ pub(super) fn handle_headless_continue_once(
             next_action,
         }),
     )
+}
+
+fn validate_headless_continue_scope(scope: &HeadlessContinueScope) -> Result<(), &'static str> {
+    let selector_count = [
+        scope.session_id.as_deref(),
+        scope.session_id_prefix.as_deref(),
+        scope.journey_id.as_deref(),
+        scope.task_id.as_deref(),
+        scope.run_id.as_deref(),
+    ]
+    .into_iter()
+    .filter(|selector| selector.is_some())
+    .count();
+    if selector_count == 0 {
+        return Err("invalid params: continuation_scope must include at least one selector");
+    }
+
+    for (field, value) in [
+        ("session_id", scope.session_id.as_deref()),
+        ("session_id_prefix", scope.session_id_prefix.as_deref()),
+        ("journey_id", scope.journey_id.as_deref()),
+        ("task_id", scope.task_id.as_deref()),
+        ("run_id", scope.run_id.as_deref()),
+    ] {
+        if let Some(value) = value {
+            if !is_valid_headless_continue_scope_value(value) {
+                return match field {
+                    "session_id" => Err("invalid params: continuation_scope.session_id must be 1-96 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+                    "session_id_prefix" => Err("invalid params: continuation_scope.session_id_prefix must be 1-96 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+                    "journey_id" => Err("invalid params: continuation_scope.journey_id must be 1-96 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+                    "task_id" => Err("invalid params: continuation_scope.task_id must be 1-96 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+                    _ => Err("invalid params: continuation_scope.run_id must be 1-96 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+                };
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_valid_headless_continue_scope_value(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 96
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b':' | b'.'))
+}
+
+fn headless_continue_once_has_non_task_target(params: &HeadlessContinueOnceParams) -> bool {
+    params.verification_recovery_source.is_some()
+        || params.verification_recovery_goal.is_some()
+        || params.verification_recovery_mode_id.is_some()
+        || params.verification_recovery_retry_source.is_some()
+        || params.verification_recovery_retry_goal.is_some()
+        || params.verification_recovery_retry_mode_id.is_some()
+        || params.llm_provider_failure_retry_source.is_some()
+        || params.llm_provider_failure_retry_goal.is_some()
+        || params.llm_provider_failure_retry_mode_id.is_some()
+        || params.product_continuation_admission_target.is_some()
+        || params.product_continuation_run_target.is_some()
+        || params.product_loop_stop_recovery_target.is_some()
+        || params.verification_recovery_run_target.is_some()
+        || params.verification_recovery_context_read.is_some()
+        || params.patch_apply_recovery_source.is_some()
+        || params.patch_apply_recovery_goal.is_some()
+        || params.patch_apply_recovery_mode_id.is_some()
+        || params.patch_apply_recovery_run_target.is_some()
+        || params.patch_apply_recovery_apply_target.is_some()
+        || params.verification_recovery_apply_target.is_some()
+        || params.verification_recovery_retry_run_target.is_some()
+        || params.llm_provider_failure_retry_run_target.is_some()
+        || params.parent_join_run_target.is_some()
+        || params
+            .objective_proposal_authorization_preflight_target
+            .is_some()
+        || params.objective_proposal_apply_target.is_some()
+        || params.objective_apply_verification_target.is_some()
+        || params.objective_completion_acceptance_target.is_some()
+        || params.modepack_registry_update_selection_target.is_some()
+        || params.modepack_selected_candidate_fetch_target.is_some()
+        || params
+            .modepack_selected_candidate_provenance_verification_target
+            .is_some()
+        || params.modepack_selected_candidate_approval_target.is_some()
+        || params
+            .modepack_selected_approved_candidate_replacement_target
+            .is_some()
+        || params.modepack_selected_active_rollback_target.is_some()
+}
+
+fn scoped_headless_continue_once_candidate_task_ids(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    candidate_task_ids: &[String],
+    scope: &HeadlessContinueScope,
+) -> Result<Vec<String>, String> {
+    let matching_checkpoints = scoped_matching_journey_start_checkpoints(store, tasks, scope)?;
+    if matching_checkpoints.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let allowed_task_ids = scoped_allowed_task_ids(tasks, &matching_checkpoints);
+    Ok(candidate_task_ids
+        .iter()
+        .filter(|task_id| allowed_task_ids.contains(task_id.as_str()))
+        .cloned()
+        .collect())
+}
+
+fn scoped_matching_journey_start_checkpoints(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    scope: &HeadlessContinueScope,
+) -> Result<Vec<HeadlessJourneyStartCheckpoint>, String> {
+    let mut checkpoints: Vec<_> = store
+        .tasks()
+        .list_headless_journey_start_checkpoints()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|checkpoint| headless_journey_start_matches_scope(checkpoint, scope))
+        .collect();
+    if checkpoints.is_empty() {
+        return Ok(Vec::new());
+    }
+    if scope.latest_matching_session {
+        checkpoints.sort_by(|a, b| {
+            scoped_journey_start_sort_key(a, tasks).cmp(&scoped_journey_start_sort_key(b, tasks))
+        });
+        return Ok(checkpoints.into_iter().rev().take(1).collect());
+    }
+    if checkpoints.len() > 1 {
+        return Err(
+            "invalid params: continuation_scope matched multiple journey checkpoints; use latest_matching_session or an exact selector"
+                .to_string(),
+        );
+    }
+    Ok(checkpoints)
+}
+
+fn headless_journey_start_matches_scope(
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    scope: &HeadlessContinueScope,
+) -> bool {
+    scope
+        .session_id
+        .as_ref()
+        .map(|session_id| checkpoint.session_id == *session_id)
+        .unwrap_or(true)
+        && scope
+            .session_id_prefix
+            .as_ref()
+            .map(|prefix| checkpoint.session_id.starts_with(prefix))
+            .unwrap_or(true)
+        && scope
+            .journey_id
+            .as_ref()
+            .map(|journey_id| checkpoint.journey_id == *journey_id)
+            .unwrap_or(true)
+        && scope
+            .task_id
+            .as_ref()
+            .map(|task_id| checkpoint.task_id == *task_id)
+            .unwrap_or(true)
+        && scope
+            .run_id
+            .as_ref()
+            .map(|run_id| checkpoint.run_id == *run_id)
+            .unwrap_or(true)
+}
+
+fn scoped_journey_start_sort_key(
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+    tasks: &[TaskRecord],
+) -> (String, String, String, String) {
+    let task = tasks
+        .iter()
+        .find(|task| task.task_id == checkpoint.task_id || task.run_id == checkpoint.run_id);
+    (
+        task.map(|task| task.created_at.clone()).unwrap_or_default(),
+        task.map(|task| task.updated_at.clone()).unwrap_or_default(),
+        checkpoint.session_id.clone(),
+        checkpoint.journey_id.clone(),
+    )
+}
+
+fn scoped_allowed_task_ids(
+    tasks: &[TaskRecord],
+    checkpoints: &[HeadlessJourneyStartCheckpoint],
+) -> std::collections::BTreeSet<String> {
+    let mut allowed_task_ids = std::collections::BTreeSet::new();
+    let mut allowed_run_ids = std::collections::BTreeSet::new();
+    for checkpoint in checkpoints {
+        allowed_task_ids.insert(checkpoint.task_id.clone());
+        allowed_run_ids.insert(checkpoint.run_id.clone());
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for task in tasks {
+            if task
+                .parent_run_id
+                .as_ref()
+                .map(|parent_run_id| allowed_run_ids.contains(parent_run_id))
+                .unwrap_or(false)
+                && allowed_task_ids.insert(task.task_id.clone())
+            {
+                allowed_run_ids.insert(task.run_id.clone());
+                changed = true;
+            }
+        }
+    }
+
+    allowed_task_ids
 }
 
 pub(super) fn handle_headless_run_advance(
@@ -2513,6 +2756,7 @@ pub(super) fn validate_headless_run_selected_candidate_fetch_replay_target(
             .clone(),
         expected_aggregate_sequence: checkpoint.result.start_progress.aggregate_sequence,
         continuation_id: Some(continuation_id.to_string()),
+        continuation_scope: None,
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
         selected_index_context: None,
@@ -2724,6 +2968,7 @@ pub(super) fn validate_headless_run_registry_selection_replay_target(
             .clone(),
         expected_aggregate_sequence: checkpoint.result.start_progress.aggregate_sequence,
         continuation_id: Some(continuation_id.to_string()),
+        continuation_scope: None,
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
         selected_index_context: None,
@@ -2780,6 +3025,7 @@ pub(super) fn headless_run_replay_continue_once_params(
             .clone(),
         expected_aggregate_sequence: checkpoint.result.start_progress.aggregate_sequence,
         continuation_id: Some(continuation_id.to_string()),
+        continuation_scope: None,
         max_steps: Some(checkpoint.result.max_steps),
         context_budget: None,
         selected_index_context: None,

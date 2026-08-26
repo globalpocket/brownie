@@ -1207,6 +1207,8 @@ pub struct HeadlessContinueOnceParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub continuation_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_scope: Option<HeadlessContinueScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
@@ -1282,6 +1284,23 @@ pub struct HeadlessContinueOnceParams {
         Option<ModePackSelectedApprovedCandidateReplacementTarget>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub modepack_selected_active_rollback_target: Option<ModePackSelectedActiveRollbackTarget>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HeadlessContinueScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub latest_matching_session: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
