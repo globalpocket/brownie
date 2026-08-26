@@ -20900,6 +20900,279 @@ mod tests {
     }
 
     #[test]
+    fn headless_continue_once_scope_includes_typed_recovery_without_parent_ids() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let source = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "CLI objective with verifier recovery".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start source");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Unrelated runtime task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        write_test_cli_journey_start(&store, "cli.run.recovery", &source);
+        store
+            .tasks()
+            .update_task_status(
+                &source.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+            )
+            .expect("fail source");
+        let recovery = store
+            .tasks()
+            .start_verification_recovery_task(VerificationRecoveryTaskStartParams {
+                goal: "Repair verifier failure".to_string(),
+                mode_id: Some("implementer".to_string()),
+                provenance: VerificationRecoveryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    failure_fingerprint: format!("sha256:{}", "a".repeat(64)),
+                    required_verifier_count: 1,
+                    passed_verifier_count: 0,
+                    failed_verifier_count: 1,
+                    failed_verifier_tool_ids: vec!["verification.cargo_check".to_string()],
+                    failure_reasons: vec!["bounded".to_string()],
+                    bounded_cargo_diagnostics: Vec::new(),
+                },
+            })
+            .expect("start recovery")
+            .record;
+        assert!(recovery.parent_task_id.is_none());
+        assert!(recovery.parent_run_id.is_none());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.recovery.1","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(response
+            .error
+            .expect("recovery run validation error")
+            .message
+            .contains("verification recovery provenance is stale"));
+        assert_ne!(recovery.task_id, unrelated.task_id);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_scope_includes_typed_retry_only_when_recovery_matches_scope() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let source = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "CLI objective with verifier retry".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start source");
+        write_test_cli_journey_start(&store, "cli.run.retry", &source);
+        store
+            .tasks()
+            .update_task_status(
+                &source.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+            )
+            .expect("fail source");
+        let recovery = store
+            .tasks()
+            .start_verification_recovery_task(VerificationRecoveryTaskStartParams {
+                goal: "Repair verifier failure".to_string(),
+                mode_id: Some("implementer".to_string()),
+                provenance: VerificationRecoveryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    failure_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    required_verifier_count: 1,
+                    passed_verifier_count: 0,
+                    failed_verifier_count: 1,
+                    failed_verifier_tool_ids: vec!["verification.cargo_fmt_check".to_string()],
+                    failure_reasons: vec!["bounded".to_string()],
+                    bounded_cargo_diagnostics: Vec::new(),
+                },
+            })
+            .expect("start recovery")
+            .record;
+        store
+            .tasks()
+            .update_task_status(
+                &recovery.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+            )
+            .expect("complete recovery");
+        let retry = store
+            .tasks()
+            .start_verification_recovery_retry_task(VerificationRecoveryRetryTaskStartParams {
+                goal: "Retry verifier".to_string(),
+                mode_id: Some("verifier".to_string()),
+                provenance: VerificationRecoveryRetryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    recovery_task_id: recovery.task_id.clone(),
+                    recovery_run_id: recovery.run_id.clone(),
+                    proposal_id: "proposal_retry".to_string(),
+                    apply_id: "apply_retry".to_string(),
+                    failure_fingerprint: format!("sha256:{}", "b".repeat(64)),
+                    apply_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                    retried_verifier_tool_ids: vec!["verification.cargo_fmt_check".to_string()],
+                },
+            })
+            .expect("start retry")
+            .record;
+        let conflicting_retry = store
+            .tasks()
+            .start_verification_recovery_retry_task(VerificationRecoveryRetryTaskStartParams {
+                goal: "Conflicting retry".to_string(),
+                mode_id: Some("verifier".to_string()),
+                provenance: VerificationRecoveryRetryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: source.run_id.clone(),
+                    recovery_task_id: "task_unrelated".to_string(),
+                    recovery_run_id: "run_unrelated".to_string(),
+                    proposal_id: "proposal_conflict".to_string(),
+                    apply_id: "apply_conflict".to_string(),
+                    failure_fingerprint: format!("sha256:{}", "d".repeat(64)),
+                    apply_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                    retried_verifier_tool_ids: vec!["verification.cargo_fmt_check".to_string()],
+                },
+            })
+            .expect("start conflicting retry")
+            .record;
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.retry.1","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(response
+            .error
+            .expect("retry run validation error")
+            .message
+            .contains("verification recovery retry provenance is stale"));
+        assert_ne!(retry.task_id, conflicting_retry.task_id);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_continue_once_scope_fails_closed_for_conflicting_recovery_provenance() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let source = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "CLI objective with malformed recovery".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start source");
+        write_test_cli_journey_start(&store, "cli.run.conflict", &source);
+        store
+            .tasks()
+            .update_task_status(
+                &source.task_id,
+                TaskStatus::Failed,
+                LedgerEventKind::TaskFailed,
+            )
+            .expect("fail source");
+        let conflicting = store
+            .tasks()
+            .start_verification_recovery_task(VerificationRecoveryTaskStartParams {
+                goal: "Malformed recovery".to_string(),
+                mode_id: Some("implementer".to_string()),
+                provenance: VerificationRecoveryProvenance {
+                    source_task_id: source.task_id.clone(),
+                    source_run_id: "run_unrelated".to_string(),
+                    failure_fingerprint: format!("sha256:{}", "f".repeat(64)),
+                    required_verifier_count: 1,
+                    passed_verifier_count: 0,
+                    failed_verifier_count: 1,
+                    failed_verifier_tool_ids: vec!["verification.cargo_check".to_string()],
+                    failure_reasons: vec!["bounded".to_string()],
+                    bounded_cargo_diagnostics: Vec::new(),
+                },
+            })
+            .expect("start conflicting recovery")
+            .record;
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.conflict.1","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("continue result: {:?}", response.error));
+        assert_eq!(result["status"], "no_eligible_task");
+        assert_eq!(result["candidate_count"], 0);
+        assert_eq!(result["selected_task_id"], serde_json::Value::Null);
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&conflicting.task_id)
+                .expect("conflicting")
+                .unwrap()
+                .status,
+            TaskStatus::Created
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_continue_once_scope_rejects_missing_ambiguous_and_targeted_inputs() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");

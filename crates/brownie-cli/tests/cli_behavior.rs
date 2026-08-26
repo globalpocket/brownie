@@ -1,8 +1,11 @@
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
+
+use sha2::{Digest, Sha256};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -1719,6 +1722,208 @@ fn installed_json_run_projects_completion_from_arbitrary_repository() {
 }
 
 #[test]
+fn installed_resume_continues_persisted_cli_journey_after_lost_response() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-resume-loss");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-resume-loss-repo");
+    let initial_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "headless.run.drive",
+        "params": {
+            "authorize": true,
+            "session_id": "cli.run.restart_loss",
+            "drive_id": "cli.run.restart_loss.drive",
+            "expected_start_session_sequence": 0,
+            "max_advances": 1,
+            "max_steps_per_advance": 1,
+            "context_budget": {
+                "max_prompt_chars": 4096,
+                "max_ledger_events": 16,
+                "max_selected_index_chars": 0
+            },
+            "journey_admission": {
+                "journey_id": "cli.run.restart_loss.journey",
+                "authorize_journey_start": true,
+                "task_start": {
+                    "goal": "Read README and create one follow-up subtask",
+                    "mode_id": "orchestrator"
+                }
+            }
+        }
+    });
+    let first = invoke_runtime_json(&runtime, &repository, &initial_request, &[]);
+    assert_eq!(first["result"]["status"], "task_executed");
+    assert_eq!(first["result"]["replayed"], false);
+    let source_task_id = first["result"]["journey"]["task_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let replay = invoke_runtime_json(&runtime, &repository, &initial_request, &[]);
+    assert_eq!(replay["result"]["status"], "task_executed");
+    assert_eq!(replay["result"]["replayed"], true);
+    assert_eq!(replay["result"]["journey"]["replayed"], true);
+    assert_eq!(replay["result"]["journey"]["task_id"], source_task_id);
+
+    let output = Command::new(&installed)
+        .args(["--json", "resume"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "resume");
+    assert_eq!(payload["resume"]["status"], "task_executed");
+    assert_eq!(payload["resume"]["candidate_count"], 1);
+    assert_ne!(
+        payload["resume"]["selected_task_id"].as_str().unwrap(),
+        source_task_id
+    );
+    assert!(payload["resume"]["selected_run_id"].as_str().is_some());
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
+fn installed_resume_keeps_runtime_created_recovery_inside_cli_scope() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-resume-recovery");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-resume-recovery-repo");
+
+    let run = Command::new(&installed)
+        .args(["--json", "run", "run cargo check for this repository"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+    assert!(run.status.success());
+    assert!(run.stderr.is_empty());
+    let run_stdout = String::from_utf8(run.stdout).unwrap();
+    let run_payload: serde_json::Value = serde_json::from_str(&run_stdout).unwrap();
+    assert_eq!(
+        run_payload["run"]["next_action"],
+        "start_verification_recovery_explicitly"
+    );
+    let source_task_id = run_payload["run"]["task_id"].as_str().unwrap();
+    let source_run_id = run_payload["run"]["run_id"].as_str().unwrap();
+
+    let tasks = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":2,"method":"task.list"}),
+        &[],
+    );
+    let source_task = tasks["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|task| task["task_id"] == source_task_id)
+        .expect("source task");
+    assert_eq!(source_task["status"], "Failed");
+
+    let events = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "run.events",
+            "params": { "run_id": source_run_id }
+        }),
+        &[],
+    );
+    let failed_gate = events["result"]["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|event| event["kind"] == "TaskFailed")
+        .and_then(|event| event.get("payload"))
+        .expect("failed gate");
+    let failure_fingerprint = verification_recovery_failure_fingerprint(source_task, failed_gate);
+
+    let recovery = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 4,
+            "method": "task.start",
+            "params": {
+                "goal": "Repair the failed verifier from CLI recovery E2E",
+                "mode_id": "implementer",
+                "verification_recovery_source": {
+                    "source_task_id": source_task_id,
+                    "source_run_id": source_run_id,
+                    "expected_failure_fingerprint": failure_fingerprint,
+                    "authorize_recovery": true
+                }
+            }
+        }),
+        &[],
+    );
+    assert!(
+        recovery.get("error").is_none(),
+        "recovery admission should succeed: {recovery}"
+    );
+    let recovery_task_id = recovery["result"]["task_id"].as_str().unwrap();
+    let recovery_run_id = recovery["result"]["run_id"].as_str().unwrap();
+    assert_eq!(
+        recovery["result"]["verification_recovery_admission"]["source_task_id"],
+        source_task_id
+    );
+
+    let output = Command::new(&installed)
+        .args(["--json", "resume"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "resume");
+    assert_eq!(payload["resume"]["status"], "task_executed");
+    assert_eq!(payload["resume"]["selected_task_id"], recovery_task_id);
+    assert_eq!(payload["resume"]["selected_run_id"], recovery_run_id);
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
 fn resume_can_invoke_real_runtime_continue_once_with_temp_workspace() {
     let runtime = build_real_runtime_binary();
     let workspace = std::env::temp_dir().join(format!(
@@ -1838,6 +2043,88 @@ fn install_real_cli_with_sibling_runtime(name: &str) -> (PathBuf, PathBuf) {
     make_executable(&installed);
     make_executable(&installed_runtime);
     (installed, prefix)
+}
+
+fn installed_runtime_from_prefix(prefix: &Path) -> PathBuf {
+    prefix
+        .join("bin")
+        .join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX))
+}
+
+fn invoke_runtime_json(
+    runtime: &Path,
+    current_dir: &Path,
+    request: &serde_json::Value,
+    envs: &[(&str, &str)],
+) -> serde_json::Value {
+    let mut child = Command::new(runtime)
+        .current_dir(current_dir)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .envs(envs.iter().copied())
+        .spawn()
+        .expect("runtime should start");
+    {
+        let stdin = child.stdin.as_mut().expect("runtime stdin");
+        writeln!(stdin, "{request}").expect("write runtime request");
+    }
+    let output = child.wait_with_output().expect("runtime output");
+    assert!(
+        output.status.success(),
+        "runtime failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "runtime stderr should stay empty: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("runtime stdout utf8");
+    serde_json::from_str(
+        stdout
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(""),
+    )
+    .expect("runtime json response")
+}
+
+fn verification_recovery_failure_fingerprint(
+    source_task: &serde_json::Value,
+    gate: &serde_json::Value,
+) -> String {
+    let bounded_cargo_diagnostics = gate
+        .get("bounded_cargo_diagnostics")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!([]));
+    let canonical = serde_json::json!({
+        "version": "verification_recovery_failure_fingerprint_v1",
+        "source_task_id": source_task["task_id"],
+        "source_run_id": source_task["run_id"],
+        "source_status": source_task["status"],
+        "verification_completion_gate_status": gate["verification_completion_gate_status"],
+        "required_verifier_count": gate["required_verifier_count"],
+        "passed_verifier_count": gate["passed_verifier_count"],
+        "failed_verifier_count": gate["failed_verifier_count"],
+        "required_verifier_tool_ids": gate["required_verifier_tool_ids"],
+        "passed_verifier_tool_ids": gate["passed_verifier_tool_ids"],
+        "failed_verifier_tool_ids": gate["failed_verifier_tool_ids"],
+        "failure_reasons": gate["failure_reasons"],
+        "bounded_cargo_diagnostics": bounded_cargo_diagnostics,
+        "next_action": gate["next_action"],
+    });
+    let digest = Sha256::digest(canonical.to_string().as_bytes());
+    format!("sha256:{}", hex_lower(&digest))
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()
 }
 
 fn build_real_runtime_binary() -> PathBuf {
