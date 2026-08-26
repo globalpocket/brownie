@@ -1789,6 +1789,22 @@ fn ordinary_git_repository(name: &str) -> PathBuf {
         .status()
         .expect("git init should run");
     assert!(status.success());
+    let status = Command::new("git")
+        .args(["config", "user.email", "brownie-cli-test@example.invalid"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git config user.email should run");
+    assert!(status.success());
+    let status = Command::new("git")
+        .args(["config", "user.name", "Brownie CLI Test"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git config user.name should run");
+    assert!(status.success());
     fs::write(repository.join("README.md"), "# Ordinary repository\n").unwrap();
     let status = Command::new("git")
         .args(["add", "README.md"])
