@@ -54,18 +54,18 @@ use brownie_protocol::{
     HeadlessRunJourneyAdmission, HeadlessRunJourneyClosureMetadata,
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyObjectiveContextMetadata,
-    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunObjectiveProposalAuthorizationPreflight,
-    HeadlessRunObjectiveProposalCandidate, HeadlessRunProductCompletionDecision,
-    HeadlessRunProductCompletionDecisionRequest, HeadlessRunProductEvidenceArtifact,
-    HeadlessRunProductEvidenceDerivationRequest, HeadlessRunProductEvidenceMatrix,
-    HeadlessRunProductRemainingGapSelection, HeadlessRunProgressCheckpoint,
-    HeadlessRunSelectedProductGapClosureEvidence, HeadlessRunSelectedProductGapClosureRequest,
-    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
-    LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
-    LlmProviderFailureRetryProvenance, LlmProviderFailureRetryRunTarget,
-    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
-    ModeListResult, ModePackActivateParams, ModePackActivateResult, ModePackActiveSnapshotSummary,
-    ModePackApproveCandidateParams, ModePackApproveCandidateResult,
+    HeadlessRunJourneyRouteResumeMetadata, HeadlessRunJourneyTaskStartEnvelope,
+    HeadlessRunObjectiveProposalAuthorizationPreflight, HeadlessRunObjectiveProposalCandidate,
+    HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
+    HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
+    HeadlessRunProductEvidenceMatrix, HeadlessRunProductRemainingGapSelection,
+    HeadlessRunProgressCheckpoint, HeadlessRunSelectedProductGapClosureEvidence,
+    HeadlessRunSelectedProductGapClosureRequest, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
+    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
+    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
+    LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
+    LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
+    ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackRegistryUpdateSelectionTarget,
@@ -11314,6 +11314,22 @@ fn parent_join_readiness_outcome_for_terminal_child(
         .map(|child| child.task_id.clone())
         .collect::<Vec<_>>();
     let non_runnable_controlled_child_count = non_runnable_controlled_child_task_ids.len();
+    let child_evidence = controlled_children
+        .iter()
+        .map(|child| parent_join_child_completion_evidence(store, child))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(task_run_admission_rejection_message)?;
+    let child_terminal_completed_count = controlled_children
+        .iter()
+        .filter(|child| child.status == TaskStatus::Completed)
+        .count();
+    let child_terminal_failed_count = controlled_children
+        .iter()
+        .filter(|child| child.status == TaskStatus::Failed)
+        .count();
+    let child_completion_child_count = controlled_children.len();
+    let (child_completion_fingerprint, child_completion_fingerprint_input_count) =
+        parent_join_child_completion_fingerprint(&child_evidence);
     let parent_join_ready = pending_controlled_child_count == 0
         && non_runnable_controlled_child_count == 0
         && terminal_controlled_child_count > 0;
@@ -11331,6 +11347,11 @@ fn parent_join_readiness_outcome_for_terminal_child(
         child_task_id: record.task_id.clone(),
         child_run_id: record.run_id.clone(),
         child_terminal_status: record.status.clone(),
+        child_completion_fingerprint,
+        child_completion_fingerprint_input_count,
+        child_completion_child_count,
+        child_terminal_completed_count,
+        child_terminal_failed_count,
         terminal_controlled_child_count,
         pending_controlled_child_count,
         pending_controlled_child_task_ids,
@@ -21908,6 +21929,50 @@ mod tests {
     }
 
     #[test]
+    fn headless_run_drive_journey_admission_uses_runtime_default_for_omitted_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "# Runtime default journey\n")
+            .expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"m50.journey.default","drive_id":"m50.journey.default.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"m50.journey.default.1","authorize_journey_start":true,"task_start":{"goal":"Run a runtime-owned default-mode journey"}}}}"#;
+        let result = parse_line(request)
+            .result
+            .expect("default-mode journey result");
+
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["completion_closure"]["status"], "complete");
+        assert_eq!(
+            result["completion_closure"]["next_action"],
+            result["next_action"]
+        );
+        let task_id = result["journey"]["task_id"].as_str().expect("task id");
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some("provider-runner"));
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        let mode_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_payload["mode_id"], "provider-runner");
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_run_drive_journey_admission_binds_objective_selected_context_and_replays() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -24042,6 +24107,7 @@ mod tests {
             replayed: false,
             context_budget: None,
             terminal_completion_evidence: None,
+            parent_join_readiness_outcome: None,
             next_route: Some(next_route.clone()),
             next_action: "fetch_selected_modepack_candidate_explicitly".to_string(),
         };
@@ -25180,6 +25246,7 @@ mod tests {
                     replayed: false,
                     context_budget: None,
                     terminal_completion_evidence: None,
+                    parent_join_readiness_outcome: None,
                     next_route: None,
                     next_action: "verify_selected_modepack_candidate_provenance_explicitly"
                         .to_string(),

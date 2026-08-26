@@ -1018,7 +1018,7 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
     assert_eq!(request["method"], "headless.run.drive");
     assert_eq!(request["params"]["authorize"], true);
     assert_eq!(request["params"]["expected_start_session_sequence"], 0);
-    assert_eq!(request["params"]["max_advances"], 1);
+    assert_eq!(request["params"]["max_advances"], 3);
     assert_eq!(request["params"]["max_steps_per_advance"], 1);
     assert_eq!(
         request["params"]["context_budget"],
@@ -1047,6 +1047,71 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
         .as_str()
         .unwrap()
         .ends_with(".journey"));
+}
+
+#[test]
+fn run_accepts_and_finalizes_runtime_owned_complete_closure() {
+    let runtime = fake_runtime_sequence(
+        "run-accepts-complete",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.drive","start_session_sequence":0,"end_session_sequence":1,"replayed":false,"max_advances":3,"max_steps_per_advance":1,"advance_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"complete","drive_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111","completion_closure":{"status":"complete","stop_reason":"complete","terminal_task_count":1,"accepted_completion_count":0,"last_terminal_task_id":"task-accepted","closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222"},"next_action":"complete_headless_run","journey":{"journey_id":"cli.run.accepted.journey","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.drive","task_id":"task-accepted","run_id":"run-accepted","post_aggregate_sequence":1,"closure_status":"complete","next_action":"complete_headless_run","replayed":false,"journey_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333"},"terminal_completion_evidence":{"final_state":"Completed","task_status":"Completed","completion_result_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","completion_summary_preview":"accepted objective completed"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"task_id":"task-accepted","run_id":"run-accepted","status":"Completed","completion_acceptance":{"acceptance_id":"cli.run.accepted.ok","task_id":"task-accepted","run_id":"run-accepted","status":"AcceptedComplete","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","acceptance_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","verifier_gate_status":"NotRequired","replayed":false,"next_action":"inspect_accepted_completion"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"no_eligible_task","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.done","start_session_sequence":1,"end_session_sequence":1,"replayed":false,"max_advances":1,"max_steps_per_advance":1,"advance_count":0,"executed_count":0,"replayed_count":0,"stop_reason":"complete","drive_fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","completion_closure":{"status":"complete","stop_reason":"complete","terminal_task_count":1,"accepted_completion_count":1,"last_terminal_task_id":"task-accepted","closure_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777"},"next_action":"close_headless_run","journey":{"journey_id":"cli.run.accepted.journey","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.done","task_id":"task-accepted","run_id":"run-accepted","post_aggregate_sequence":1,"closure_status":"complete","next_action":"close_headless_run","replayed":true,"journey_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333"},"terminal_completion_evidence":{"final_state":"Completed","task_status":"Completed","completion_result_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","completion_summary_preview":"accepted objective completed"},"accepted_completion":{"task_id":"task-accepted","run_id":"run-accepted","acceptance_id":"cli.run.accepted.ok","status":"AcceptedComplete","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","acceptance_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","verifier_gate_status":"NotRequired","replayed":true,"next_action":"close_headless_run"}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"no_eligible_task","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.done","start_session_sequence":1,"end_session_sequence":1,"replayed":true,"max_advances":1,"max_steps_per_advance":1,"advance_count":0,"executed_count":0,"replayed_count":0,"stop_reason":"complete","drive_fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","completion_closure":{"status":"complete","stop_reason":"complete","terminal_task_count":1,"accepted_completion_count":1,"last_terminal_task_id":"task-accepted","closure_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777"},"next_action":"close_headless_run","journey":{"journey_id":"cli.run.accepted.journey","session_id":"cli.run.accepted","drive_id":"cli.run.accepted.done","task_id":"task-accepted","run_id":"run-accepted","post_aggregate_sequence":1,"closure_status":"complete","next_action":"close_headless_run","replayed":true,"journey_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333"},"terminal_completion_evidence":{"final_state":"Completed","task_status":"Completed","completion_result_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","completion_summary_preview":"accepted objective completed"},"accepted_completion":{"task_id":"task-accepted","run_id":"run-accepted","acceptance_id":"cli.run.accepted.ok","status":"AcceptedComplete","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","acceptance_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","verifier_gate_status":"NotRequired","replayed":true,"next_action":"close_headless_run"},"completion_finalization":{"finalization_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888","closure_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777","progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":1,"status":"finalized","terminal_task_count":1,"total_task_count":1,"owner_task_id":"task-accepted","owner_run_id":"run-accepted","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","replayed":false,"next_action":"close_headless_run"}}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+    let count = runtime.with_file_name("count");
+
+    let output = Command::new(brownie())
+        .args(["run", "finish a small objective"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .env("BROWNIE_FAKE_RUNTIME_COUNT", &count)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("closure: complete"));
+    assert!(stdout.contains("accepted: AcceptedComplete"));
+    assert!(stdout.contains(
+        "finalization: sha256:8888888888888888888888888888888888888888888888888888888888888888"
+    ));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+
+    let requests = fs::read_to_string(capture).unwrap();
+    let requests: Vec<serde_json::Value> = requests
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 4);
+    assert_eq!(requests[0]["method"], "headless.run.drive");
+    assert_eq!(requests[0]["params"]["max_advances"], 3);
+    assert_eq!(requests[1]["method"], "task.run");
+    assert_eq!(
+        requests[1]["params"]["completion_acceptance"]["authorize_completion_acceptance"],
+        true
+    );
+    assert_eq!(
+        requests[1]["params"]["completion_acceptance"]["expected_completion_result_fingerprint"],
+        "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+    );
+    assert_eq!(requests[2]["method"], "headless.run.drive");
+    assert_eq!(requests[2]["params"]["drive_id"], "cli.run.accepted.done");
+    assert!(requests[2]["params"]
+        .get("authorize_completion_finalization")
+        .is_none());
+    assert_eq!(requests[3]["method"], "headless.run.drive");
+    assert_eq!(
+        requests[3]["params"]["authorize_completion_finalization"],
+        true
+    );
+    assert_eq!(
+        requests[3]["params"]["expected_completion_closure_fingerprint"],
+        "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+    );
 }
 
 #[test]
@@ -1184,7 +1249,7 @@ fn run_runtime_error_does_not_expose_runtime_payload() {
 fn run_rejects_invalid_runtime_shape() {
     let runtime = fake_runtime(
         "run-invalid-shape",
-        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.invalid","drive_id":"cli.run.invalid.drive","next_action":"inspect_progress_overview"}}"#,
+        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.invalid","drive_id":"cli.run.invalid.drive"}}"#,
     );
 
     let output = Command::new(brownie())
@@ -1551,13 +1616,106 @@ fn run_can_invoke_real_runtime_headless_drive_with_temp_workspace() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("run cli.run."));
-    assert!(stdout.contains("status: task_executed"));
-    assert!(stdout.contains("journey: cli.run."));
+    assert!(stdout.contains("status: no_eligible_task"));
     assert!(stdout.contains("task: task_"));
     assert!(stdout.contains("runtime_run: run_"));
+    assert!(stdout.contains("closure: complete"));
+    assert!(stdout.contains("accepted: AcceptedComplete"));
+    assert!(stdout.contains("finalization: sha256:"));
     assert!(stdout.contains("next: inspect_progress_overview"));
     assert!(!stdout.contains(workspace.to_string_lossy().as_ref()));
     assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+}
+
+#[test]
+fn installed_run_can_complete_from_arbitrary_repository_with_sibling_runtime() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-run");
+    let repository = ordinary_git_repository("installed-run-repo");
+
+    let output = Command::new(&installed)
+        .args([
+            "run",
+            "Complete a minimal CLI golden journey objective without changing files",
+        ])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert!(stdout.contains("run cli.run."));
+    assert!(stdout.contains("status: no_eligible_task"));
+    assert!(stdout.contains("task: task_"));
+    assert!(stdout.contains("runtime_run: run_"));
+    assert!(stdout.contains("closure: complete"));
+    assert!(stdout.contains("accepted: AcceptedComplete"));
+    assert!(stdout.contains("finalization: sha256:"));
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
+fn installed_json_run_projects_completion_from_arbitrary_repository() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-json-run");
+    let repository = ordinary_git_repository("installed-json-run-repo");
+
+    let output = Command::new(&installed)
+        .args([
+            "--json",
+            "run",
+            "Complete a minimal CLI JSON golden journey objective without changing files",
+        ])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["run"]["status"], "no_eligible_task");
+    assert_eq!(payload["run"]["completion_closure_status"], "complete");
+    assert_eq!(
+        payload["run"]["accepted_completion_status"],
+        "AcceptedComplete"
+    );
+    assert_eq!(
+        payload["run"]["completion_finalization_status"],
+        "finalized"
+    );
+    assert!(
+        payload["run"]["completion_finalization_finalization_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
 }
 
 #[test]
@@ -1618,6 +1776,68 @@ fn assert_run_preserves_objective(name: &str, args: &[&str], expected_objective:
         request["params"]["journey_admission"]["task_start"]["goal"],
         expected_objective
     );
+}
+
+fn ordinary_git_repository(name: &str) -> PathBuf {
+    let repository = unique_test_dir(name);
+    fs::create_dir_all(&repository).unwrap();
+    let status = Command::new("git")
+        .args(["init"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git init should run");
+    assert!(status.success());
+    let status = Command::new("git")
+        .args(["config", "user.email", "brownie-cli-test@example.invalid"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git config user.email should run");
+    assert!(status.success());
+    let status = Command::new("git")
+        .args(["config", "user.name", "Brownie CLI Test"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git config user.name should run");
+    assert!(status.success());
+    fs::write(repository.join("README.md"), "# Ordinary repository\n").unwrap();
+    let status = Command::new("git")
+        .args(["add", "README.md"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git add should run");
+    assert!(status.success());
+    let status = Command::new("git")
+        .args(["commit", "-qm", "init"])
+        .current_dir(&repository)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .expect("git commit should run");
+    assert!(status.success());
+    repository
+}
+
+fn install_real_cli_with_sibling_runtime(name: &str) -> (PathBuf, PathBuf) {
+    let runtime = build_real_runtime_binary();
+    let prefix = unique_test_dir(name);
+    let bin_dir = prefix.join("bin");
+    fs::create_dir_all(&bin_dir).unwrap();
+    let installed = bin_dir.join(format!("brownie{}", std::env::consts::EXE_SUFFIX));
+    let installed_runtime =
+        bin_dir.join(format!("brownie-runtime{}", std::env::consts::EXE_SUFFIX));
+    fs::copy(brownie(), &installed).unwrap();
+    fs::copy(runtime, &installed_runtime).unwrap();
+    make_executable(&installed);
+    make_executable(&installed_runtime);
+    (installed, prefix)
 }
 
 fn build_real_runtime_binary() -> PathBuf {

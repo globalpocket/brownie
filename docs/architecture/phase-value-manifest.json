@@ -1,35 +1,35 @@
 {
   "schema_version": 1,
-  "phase": "CLI-8",
+  "phase": "CLI-9",
   "current_milestone": "brownie_cli_campaign",
   "milestone": "Brownie CLI Campaign",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "Brownie CLI moves from a source-tree-only binary with only global help into a practical standalone CLI surface with command-specific help and a tested local install path for the existing brownie binary.",
-  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret",
+  "concrete_capability_transition": "Brownie CLI moves from source-tree-oriented runtime invocation to a verified installed-CLI Golden Journey: an ordinary git repository can run brownie run \"<objective>\" through the existing Rust brownie-runtime authority and reach terminal accepted and finalized completion without VSIX involvement, raw ledger inspection, or CLI-owned agent-loop policy.",
+  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Makes the Brownie CLI installable into a caller-owned local prefix and discoverable through command-specific help, so headless callers and humans can invoke the existing runtime-backed entrypoint without relying on VSIX or ad hoc source-tree paths."
+      "relationship": "Proves the primary CLI command can be installed with its runtime sibling and complete a general objective from an ordinary repository using runtime-owned journey admission, completion acceptance, and completion finalization."
     },
     {
-      "capability": "progress_visualization",
-      "relationship": "Provides help for progress-oriented commands such as status, inspect, list, mode, run, and resume while preserving runtime ownership of progress and next-action semantics."
+      "capability": "agent_loop",
+      "relationship": "Relies on the existing runtime-owned agent loop to drive completion evidence, acceptance, and finalization while keeping the CLI output bounded and policy-free."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development by making the CLI a practical standalone entrypoint, and supports progress_visualization by making existing runtime-backed progress commands discoverable through bounded command help.",
-      "new_capability": "A caller can run brownie help <topic> without runtime startup and can install the existing brownie binary into a selected local prefix, then verify the installed binary with brownie --version.",
-      "why_existing_functionality_is_insufficient": "Before CLI-8, the binary had only top-level help and no tested local install path; operators had to rely on source-tree cargo artifacts and could not inspect command-specific syntax without external documentation.",
-      "product_gap_if_skipped": "CLI-9 and CLI-10 would depend on ad hoc source-tree invocation rather than a supported installed binary and users would lack command-specific help required for standalone CLI product completion.",
-      "non_duplicative": "CLI-5.1 fixed run identity and scoped resume, CLI-6 added progress and mode UX, and CLI-7 stabilized JSON and exit codes. CLI-8 changes installability and help discoverability, not runtime execution semantics or output projections.",
-      "no_new_rpc": "Yes. Help and installation are CLI-local executable behavior and use no new runtime JSON-RPC method or passthrough.",
-      "no_new_summary": "Yes. The phase adds command behavior, installer tests, and supporting README guidance, not a readiness, report, digest, verdict, history, inspection, or summary surface.",
-      "runtime_behavior_change": "Rust runtime behavior remains unchanged; user-visible CLI behavior changes by adding brownie help <topic> and a tested repository-local install path that preserves runtime authority.",
-      "headless_autonomous_contribution": "Headless callers can resolve an installed brownie binary, inspect bounded command syntax without launching the runtime, and then invoke brownie run <objective> with stable prior CLI contracts.",
-      "milestone_progress": "Closes CLI-8 Installation / Packaging / Help and leaves CLI-9 arbitrary-repository Golden Journey plus CLI-10 restart/recovery Golden Journey as the remaining required gaps."
+      "strategic_capabilities": "Advances headless_autonomous_development by making brownie run executable as an installed CLI in arbitrary repositories while retaining Rust runtime authority.",
+      "new_capability": "A caller can stage or install brownie plus brownie-runtime into a local prefix, enter a normal git repository, run brownie run \"<objective>\", and receive bounded accepted/finalized completion output in human and JSON modes.",
+      "why_existing_functionality_is_insufficient": "CLI-4 through CLI-8 proved parser, transport, resume, progress, JSON, exit code, help, and installer pieces separately, but did not prove installed arbitrary-repository execution reaches runtime-owned accepted completion.",
+      "product_gap_if_skipped": "CLI product completion would still be based on source-tree smoke tests and fake-runtime request-shape tests rather than the standalone primary command working in an ordinary repository.",
+      "non_duplicative": "CLI-6 rendered progress, CLI-7 stabilized public output and exit classes, and CLI-8 added help/install. CLI-9 validates end-to-end installed execution and runtime-owned acceptance/finalization outside the Brownie source tree.",
+      "no_new_rpc": "Yes. The implementation uses existing headless.run.drive and task.run completion acceptance/finalization routes rather than adding a new runtime RPC or passthrough.",
+      "no_new_summary": "Yes. No report, readiness, digest, verdict, history, or inspection surface is added.",
+      "runtime_behavior_change": "Runtime behavior changes narrowly so omitted-mode headless journey admission selects a runtime-owned provider-runner default for general CLI objectives and completion/finalization treats no-eligible terminal routes as closed rather than as pending explicit work.",
+      "headless_autonomous_contribution": "External callers can trust brownie run from non-Brownie repositories before restart/recovery work, including bounded completion projection and fail-closed runtime error behavior.",
+      "milestone_progress": "Closes the CLI-9 arbitrary-repository Golden Journey gap and leaves CLI-10 restart/recovery as the final required CLI Product DoD gap before CLI product completion assessment."
     },
     "questions": [
       {
@@ -81,7 +81,7 @@
       "phase makes the CLI select tasks, rank continuation candidates, read ledgers directly, or own recovery/replay policy",
       "phase adds a new runtime RPC or generic JSON-RPC passthrough",
       "phase duplicates Mode Pack compilation, permission policy, Product DoD, replay, recovery, or workspace mutation logic in the CLI",
-      "phase treats README text alone as product completion evidence",
+      "phase accepts fake-runtime request shape without installed arbitrary-repository execution evidence",
       "phase changes packaging publication, signed release, Homebrew, npm, or global installer scope",
       "phase is report/readiness/history/digest/verdict/summary/documentation-only"
     ]
@@ -90,42 +90,46 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "CLI-8 updates the deterministic current phase manifest and package scripts. Review must confirm the PR changes executable CLI help and local install behavior without weakening the phase-value guard or adding wrapper-only surfaces.",
+    "review_intent": "CLI-9 updates executable CLI/runtime behavior and current phase manifest only; review must confirm no guard weakening or wrapper-only surface is introduced.",
     "changed_files": [
+      "crates/brownie-cli/src/runtime_client.rs",
+      "crates/brownie-cli/tests/cli_behavior.rs",
+      "crates/brownie-protocol/src/lib.rs",
+      "crates/brownie-runtime/src/headless_continue.rs",
+      "crates/brownie-runtime/src/headless_journey.rs",
+      "crates/brownie-runtime/src/lib.rs",
+      "scripts/install-brownie-cli.mjs",
+      "scripts/install-brownie-cli.test.mjs",
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.cli-8.json",
       "package.json",
-      "docs/architecture/phase-value-manifest.cli-6.json",
-      "docs/architecture/phase-value-manifest.cli-7.json",
-      "docs/architecture/phase-value-manifest.json"
+      "docs/architecture/phase-value-manifest.cli-7.json"
     ]
   },
   "exit_criteria": [
-    "brownie help run documents brownie run <objective> as the primary execution entry and does not introduce develop.",
-    "brownie help resume, status, inspect, list, and mode provide bounded command-specific syntax and runtime-boundary notes.",
-    "brownie help <unknown> fails with invalid invocation exit code 64 and bounded human/JSON error semantics.",
-    "Help and version commands succeed without BROWNIE_RUNTIME_PATH and do not launch the runtime.",
-    "brownie run --help treats --help as objective text while brownie help run is the command-help surface.",
-    "The installer supports deterministic dry-run validation for a selected local prefix without creating prefix/bin.",
-    "The installer rejects relative, root, parent-traversal-normalizing, and common system prefixes before mutation.",
-    "A temporary-prefix install can copy the existing brownie binary and the installed binary answers --version without the VSIX.",
-    "README documents the tested install path and basic CLI usage as supporting evidence, not as documentation-only completion.",
-    "No new runtime RPC, generic passthrough, report, readiness, history, digest, verdict, summary, CLI-owned policy engine, or workspace mutation authority is introduced."
+    "A temporary-prefix installed brownie executable resolves a sibling brownie-runtime binary without BROWNIE_RUNTIME_PATH.",
+    "From a temporary ordinary git repository outside the Brownie source tree, brownie run \"<objective>\" reaches runtime-owned complete closure, AcceptedComplete, and finalized completion output.",
+    "--json run \"<objective>\" from an independent ordinary git repository returns the stable public CLI projection with complete closure, AcceptedComplete, finalized status, and bounded fingerprints.",
+    "The CLI follows existing runtime-owned completion acceptance/finalization routes using bounded task/run/fingerprint/session metadata instead of inspecting ledgers or inventing completion policy.",
+    "Omitted-mode headless journey admission remains Rust-runtime-owned and does not make the CLI choose Mode Pack or permission policy.",
+    "No new runtime RPC, generic passthrough, report, readiness, history, digest, verdict, summary, CLI-owned policy engine, or workspace mutation authority is introduced.",
+    "Output does not expose raw prompt, provider response, raw file content, stdout, stderr, command string, environment values, absolute paths, canonical paths, tokens, or secrets."
   ],
   "behavior_evidence": [
-    "brownie-cli parser and process tests cover command-specific help topics and unknown topic failure.",
-    "brownie-cli tests prove help succeeds without runtime path configuration and does not mention develop.",
-    "brownie-cli tests prove brownie run --help remains objective payload while brownie help run renders help.",
-    "installer node tests cover dry-run output, prefix validation, temporary-prefix install, and installed --version execution."
+    "brownie-cli fake-runtime tests prove complete closure is followed by runtime-owned task.run acceptance, accepted route inspection, and authorized finalization with sequence/fingerprint validation.",
+    "brownie-cli installed-run test stages brownie and brownie-runtime into a temporary prefix and completes human output from an ordinary git repository without runtime path environment configuration.",
+    "brownie-cli installed-json-run test stages the same sibling binaries and verifies stable public JSON completion projection from a separate ordinary git repository.",
+    "brownie-runtime test proves omitted-mode journey admission creates a provider-runner task under runtime authority and avoids subtask orchestration.",
+    "brownie-runtime completion/finalization guards treat no-eligible terminal routes consistently as completion-safe when terminal evidence and all-known-task completion hold."
   ],
   "product_dod": {
     "closes": [
-      "CLI-8 Installation / Packaging / Help"
+      "CLI-9 General Arbitrary-Repository Golden Journey"
     ],
     "leaves_open": [
-      "CLI-9",
       "CLI-10"
     ],
     "does_not_close": [
-      "CLI-9 General Arbitrary-Repository Golden Journey",
       "CLI-10 Restart / Recovery Golden Journey"
     ]
   },
@@ -133,36 +137,37 @@
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "The Brownie CLI exposes command-specific help without starting the runtime.",
-      "The Brownie CLI has a tested repository-local install path into a caller-owned prefix."
+      "The installed Brownie CLI can run a general objective from an ordinary repository through the sibling Rust runtime and reach accepted/finalized completion.",
+      "Human and JSON CLI projections expose bounded completion status without raw runtime envelopes or sensitive path/environment leakage."
     ],
     "behavior_evidence": [
-      "Rust CLI tests cover command help, runtime-free help behavior, run objective token preservation, and bounded invalid-help failure.",
-      "Node installer tests cover dry-run, validation, local-prefix install, and installed --version."
+      "Focused real-runtime arbitrary-repository tests pass for human and JSON mode.",
+      "Focused runtime test passes for omitted-mode runtime-owned provider-runner journey admission.",
+      "Focused fake-runtime acceptance/finalization test passes for request choreography and projection."
     ],
     "safety_boundary": [
       "No Core Runtime terminal campaign state is reopened or mutated.",
       "No new runtime JSON-RPC method is added.",
       "The CLI does not read ledgers, discover Mode Packs from files, evaluate permissions, select tasks, apply patches, or own recovery policy.",
-      "Installer mutation is limited to an explicitly selected caller-owned prefix and rejects common system prefixes."
+      "The runtime remains the authority for mode resolution, task execution, completion acceptance, finalization, replay, and persistence."
     ],
     "non_goals": [
+      "No restart/lost-response recovery Golden Journey closure.",
       "No Homebrew formula, npm publication, signed release artifacts, notarization, or global package publication.",
-      "No arbitrary-repository Golden Journey or restart/recovery Golden Journey closure.",
       "No Mode Pack, Product DoD, provider, permission, workspace mutation, replay, or fail-closed semantic redesign."
     ],
     "rejected_alternatives": [
-      "Rejected repurposing brownie run --help because tokens after run must remain objective text.",
-      "Rejected documentation-only completion because installation and help must be executable and tested.",
-      "Rejected global package publication because CLI-8 only needs a practical local install path before Golden Journey validation.",
-      "Rejected a runtime help RPC because command syntax and local installer behavior are CLI concerns while runtime policy stays Rust-owned."
+      "Rejected CLI-owned default mode selection because omitted-mode behavior must remain Rust-runtime-owned.",
+      "Rejected treating routed explicit parent-join recursion as a CLI completion success because that would fake terminal accepted completion.",
+      "Rejected direct ledger inspection by CLI because completion evidence must travel through bounded runtime-owned RPC results.",
+      "Rejected fake-runtime-only completion evidence because CLI-9 specifically requires arbitrary-repository installed execution."
     ],
     "technical_debt": [
-      "CLI-9 must validate the arbitrary-repository Golden Journey using the installed CLI path.",
-      "CLI-10 must validate restart/recovery including scoped resume and runtime-owned recovery provenance."
+      "CLI-10 must validate restart/recovery including scoped resume and runtime-owned recovery provenance.",
+      "A future nonblocking runtime improvement may scope accepted-completion lookup to the active journey owner when multiple completed CLI sessions share a repository."
     ],
     "next_capability_rationale": [
-      "After CLI-8 lands, proceed to CLI-9 General Arbitrary-Repository Golden Journey rather than adding packaging variants."
+      "After CLI-9 lands, proceed to CLI-10 Restart / Recovery Golden Journey rather than adding more installed-run variants."
     ]
   }
 }
