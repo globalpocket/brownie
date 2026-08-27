@@ -20,6 +20,19 @@ fn headless_run_drive_has_explicit_modepack_target(params: &HeadlessRunDrivePara
     headless_run_drive_explicit_modepack_target_count(params) > 0
 }
 
+fn headless_run_drive_should_scope_normal_continuation(params: &HeadlessRunDriveParams) -> bool {
+    !headless_run_drive_has_explicit_modepack_target(params)
+        && params.product_continuation_admission_target.is_none()
+        && params.product_continuation_run_target.is_none()
+        && params.product_continuation_derived_target.is_none()
+        && params.parent_join_run_target.is_none()
+        && params.journey_route_resume.is_none()
+        && params.journey_closure.is_none()
+        && params.product_evidence_derivation.is_none()
+        && params.selected_product_gap_closure.is_none()
+        && params.product_completion_decision.is_none()
+}
+
 fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmission) -> String {
     let seed = json!({
         "journey_id": admission.journey_id,
@@ -31,6 +44,22 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
             .map(headless_journey_objective_context_fingerprint),
     });
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn sleep_after_headless_journey_started_for_test() {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let Ok(raw) = std::env::var("BROWNIE_TEST_SLEEP_AFTER_HEADLESS_JOURNEY_STARTED_MS") else {
+        return;
+    };
+    let Ok(ms) = raw.parse::<u64>() else {
+        return;
+    };
+    let ms = ms.min(5_000);
+    if ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
 }
 
 fn headless_journey_effective_task_start(
@@ -582,6 +611,7 @@ fn headless_journey_start_checkpoint_for_admission(
                 };
                 error_response(id.clone(), -32603, &message)
             })?;
+        sleep_after_headless_journey_started_for_test();
     }
     Ok(checkpoint)
 }
@@ -617,6 +647,26 @@ fn headless_journey_metadata(
             .clone(),
         proposal_candidate: result.objective_proposal_candidate.clone(),
     }
+}
+
+fn headless_journey_start_checkpoint_for_session(
+    store: &BrownieStore,
+    session_id: &str,
+) -> Result<Option<HeadlessJourneyStartCheckpoint>, String> {
+    let mut checkpoints: Vec<_> = store
+        .tasks()
+        .list_headless_journey_start_checkpoints()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .filter(|checkpoint| checkpoint.session_id == session_id)
+        .collect();
+    if checkpoints.len() > 1 {
+        return Err(
+            "invalid params: session_id resolves to multiple headless journey checkpoints"
+                .to_string(),
+        );
+    }
+    Ok(checkpoints.pop())
 }
 
 #[derive(Debug, Clone)]
@@ -3559,6 +3609,14 @@ pub(super) fn handle_headless_run_drive(
     } else {
         None
     };
+    let active_journey_checkpoint = if journey_checkpoint.is_some() {
+        journey_checkpoint.clone()
+    } else {
+        match headless_journey_start_checkpoint_for_session(&store, &params.session_id) {
+            Ok(checkpoint) => checkpoint,
+            Err(message) => return error_response(id, -32602, &message),
+        }
+    };
     let drive_start_session_sequence = if journey_checkpoint.is_some() {
         0
     } else {
@@ -3674,7 +3732,7 @@ pub(super) fn handle_headless_run_drive(
         if let Some(product_completion_decision) = result.product_completion_decision.as_mut() {
             product_completion_decision.replayed = true;
         }
-        if let Some(checkpoint) = journey_checkpoint.as_ref() {
+        if let Some(checkpoint) = active_journey_checkpoint.as_ref() {
             if let Some(persisted) = result.objective_proposal_candidate.as_ref() {
                 match validate_headless_objective_proposal_candidate_replay(
                     &store,
@@ -3712,11 +3770,13 @@ pub(super) fn handle_headless_run_drive(
                     return error_response(id, -32603, &format!("internal error: {error}"))
                 }
             };
-            let completion_scope_tasks =
-                match headless_completion_scope_tasks(&replay_tasks, journey_checkpoint.as_ref()) {
-                    Ok(tasks) => tasks,
-                    Err(message) => return error_response(id, -32602, &message),
-                };
+            let completion_scope_tasks = match headless_completion_scope_tasks(
+                &replay_tasks,
+                active_journey_checkpoint.as_ref(),
+            ) {
+                Ok(tasks) => tasks,
+                Err(message) => return error_response(id, -32602, &message),
+            };
             match headless_run_completion_finalization_with_scope(
                 &store,
                 &result,
@@ -3925,7 +3985,8 @@ pub(super) fn handle_headless_run_drive(
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let preflight_completion_scope_tasks =
-        match headless_completion_scope_tasks(&preflight_tasks, journey_checkpoint.as_ref()) {
+        match headless_completion_scope_tasks(&preflight_tasks, active_journey_checkpoint.as_ref())
+        {
             Ok(tasks) => tasks,
             Err(message) => return error_response(id, -32602, &message),
         };
@@ -4150,6 +4211,19 @@ pub(super) fn handle_headless_run_drive(
     let mut next_action = "inspect_progress_overview".to_string();
     let mut next_route = None;
     let mut post_progress = Some(start_progress.clone());
+    let scoped_normal_continuation = if headless_run_drive_should_scope_normal_continuation(&params)
+    {
+        active_journey_checkpoint.as_ref().map(|checkpoint| {
+            json!({
+                "session_id": checkpoint.session_id.clone(),
+                "journey_id": checkpoint.journey_id.clone(),
+                "task_id": checkpoint.task_id.clone(),
+                "run_id": checkpoint.run_id.clone()
+            })
+        })
+    } else {
+        None
+    };
     for index in 0..max_advances {
         let session_sequence = drive_start_session_sequence + u64::from(index) + 1;
         let advance_id = format!("{}.{}", drive_id, session_sequence);
@@ -4161,6 +4235,9 @@ pub(super) fn handle_headless_run_drive(
             "max_steps": max_steps_per_advance,
             "context_budget": params.context_budget.clone()
         });
+        if let Some(scope) = scoped_normal_continuation.as_ref() {
+            advance_params["continuation_scope"] = scope.clone();
+        }
         if index == 0 {
             if journey_checkpoint.is_some() {
                 advance_params["expected_progress_fingerprint"] =
@@ -4320,7 +4397,7 @@ pub(super) fn handle_headless_run_drive(
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let completion_scope_tasks =
-        match headless_completion_scope_tasks(&post_tasks, journey_checkpoint.as_ref()) {
+        match headless_completion_scope_tasks(&post_tasks, active_journey_checkpoint.as_ref()) {
             Ok(tasks) => tasks,
             Err(message) => return error_response(id, -32602, &message),
         };
@@ -4358,7 +4435,7 @@ pub(super) fn handle_headless_run_drive(
             );
         }
     }
-    let objective_proposal_candidate = match journey_checkpoint.as_ref() {
+    let objective_proposal_candidate = match active_journey_checkpoint.as_ref() {
         Some(checkpoint) => match headless_objective_proposal_candidate_outcome(
             &store,
             checkpoint,
@@ -4526,7 +4603,7 @@ pub(super) fn handle_headless_run_drive(
         journey_execution: None,
         next_action,
     };
-    if let Some(checkpoint) = journey_checkpoint.as_ref() {
+    if let Some(checkpoint) = active_journey_checkpoint.as_ref() {
         result.journey = Some(headless_journey_metadata(checkpoint, &result, false));
     }
     let checkpoint = HeadlessRunSessionDriveCheckpoint {

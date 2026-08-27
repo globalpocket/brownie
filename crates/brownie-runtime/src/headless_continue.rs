@@ -1828,47 +1828,62 @@ pub(super) fn handle_headless_continue_once(
         &post_progress_overview,
     );
     let next_action = next_route.next_action.clone();
+    let selected_headless_journey_context = match params.continuation_scope.as_ref() {
+        Some(scope) => {
+            match selected_headless_journey_context(&store, &tasks, scope, &selected_record) {
+                Ok(context) => context,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            }
+        }
+        None => None,
+    };
 
-    result_response(
-        id,
-        json!(HeadlessContinueOnceResult {
-            status: HeadlessContinueOnceStatus::TaskExecuted,
-            decision_id: Some(decision_id),
-            continuation_id: params.continuation_id,
-            selected_task_id: Some(task_run_result.task_id.clone()),
-            selected_run_id: Some(task_run_result.run_id.clone()),
-            candidate_count,
-            expected_progress_fingerprint: params.expected_progress_fingerprint,
-            expected_aggregate_sequence: params.expected_aggregate_sequence,
-            current_progress_fingerprint: progress_overview.source_fingerprint,
-            current_aggregate_sequence: progress_overview.aggregate_sequence,
-            post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
-            post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
-            stale: false,
-            replayed: false,
-            task_run_result: Some(task_run_result),
-            proposal_apply_result: None,
-            objective_proposal_authorization_preflight_result: None,
-            objective_apply_verification_result: None,
-            objective_completion_acceptance_result: None,
-            llm_provider_failure_retry_admission: None,
-            product_continuation_admission: None,
-            modepack_select_registry_update_result: None,
-            modepack_fetch_candidate_result: None,
-            modepack_verify_candidate_provenance_result: None,
-            modepack_approve_candidate_result: None,
-            modepack_replace_active_result: None,
-            modepack_rollback_active_result: None,
-            next_route: Some(next_route),
-            max_steps: None,
-            step_count: None,
-            executed_count: None,
-            replayed_count: None,
-            stop_reason: None,
-            steps: Vec::new(),
-            next_action,
-        }),
-    )
+    let mut result = json!(HeadlessContinueOnceResult {
+        status: HeadlessContinueOnceStatus::TaskExecuted,
+        decision_id: Some(decision_id),
+        continuation_id: params.continuation_id,
+        selected_task_id: Some(task_run_result.task_id.clone()),
+        selected_run_id: Some(task_run_result.run_id.clone()),
+        candidate_count,
+        expected_progress_fingerprint: params.expected_progress_fingerprint,
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint,
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: Some(post_progress_overview.source_fingerprint),
+        post_aggregate_sequence: Some(post_progress_overview.aggregate_sequence),
+        stale: false,
+        replayed: false,
+        task_run_result: Some(task_run_result),
+        proposal_apply_result: None,
+        objective_proposal_authorization_preflight_result: None,
+        objective_apply_verification_result: None,
+        objective_completion_acceptance_result: None,
+        llm_provider_failure_retry_admission: None,
+        product_continuation_admission: None,
+        modepack_select_registry_update_result: None,
+        modepack_fetch_candidate_result: None,
+        modepack_verify_candidate_provenance_result: None,
+        modepack_approve_candidate_result: None,
+        modepack_replace_active_result: None,
+        modepack_rollback_active_result: None,
+        next_route: Some(next_route),
+        max_steps: None,
+        step_count: None,
+        executed_count: None,
+        replayed_count: None,
+        stop_reason: None,
+        steps: Vec::new(),
+        next_action,
+    });
+    if let Some(context) = selected_headless_journey_context {
+        if let Some(object) = result.as_object_mut() {
+            object.insert("selected_headless_journey_context".to_string(), context);
+        }
+    }
+
+    result_response(id, result)
 }
 
 fn validate_headless_continue_scope(scope: &HeadlessContinueScope) -> Result<(), &'static str> {
@@ -1975,6 +1990,49 @@ fn scoped_headless_continue_once_candidate_task_ids(
         .filter(|task_id| allowed_task_ids.contains(task_id.as_str()))
         .cloned()
         .collect())
+}
+
+fn selected_headless_journey_context(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+    scope: &HeadlessContinueScope,
+    selected_record: &TaskRecord,
+) -> Result<Option<Value>, String> {
+    let matching_checkpoints = scoped_matching_journey_start_checkpoints(store, tasks, scope)?;
+    for checkpoint in matching_checkpoints {
+        let allowed_task_ids = scoped_allowed_task_ids(tasks, std::slice::from_ref(&checkpoint));
+        if !allowed_task_ids.contains(selected_record.task_id.as_str()) {
+            continue;
+        }
+        let session_checkpoint = store
+            .tasks()
+            .read_headless_run_session_checkpoint(&checkpoint.session_id)
+            .map_err(|error| error.to_string())?;
+        let current_session_sequence = session_checkpoint
+            .as_ref()
+            .map(|checkpoint| json!(checkpoint.session_sequence))
+            .unwrap_or(Value::Null);
+        return Ok(Some(json!({
+            "kind": "headless_journey_context",
+            "selection_source": "continuation_scope",
+            "journey_id": checkpoint.journey_id,
+            "session_id": checkpoint.session_id,
+            "drive_id": checkpoint.drive_id,
+            "task_id": checkpoint.task_id,
+            "run_id": checkpoint.run_id,
+            "selected_task_id": selected_record.task_id,
+            "selected_run_id": selected_record.run_id,
+            "task_start_fingerprint": checkpoint.task_start_fingerprint,
+            "start_progress_fingerprint": checkpoint.start_progress.progress_fingerprint,
+            "start_aggregate_sequence": checkpoint.start_progress.aggregate_sequence,
+            "journey_fingerprint": checkpoint.journey_fingerprint,
+            "has_session_checkpoint": session_checkpoint.is_some(),
+            "current_session_sequence": current_session_sequence,
+            "next_action": "drive_headless_journey",
+        })));
+    }
+
+    Ok(None)
 }
 
 fn scoped_matching_journey_start_checkpoints(
@@ -2146,6 +2204,35 @@ pub(super) fn handle_headless_run_advance(
             );
         }
     }
+    if let Some(scope) = params.continuation_scope.as_ref() {
+        if let Err(message) = validate_headless_continue_scope(scope) {
+            return error_response(id, -32602, message);
+        }
+        if scope
+            .session_id
+            .as_ref()
+            .map(|session_id| session_id != &params.session_id)
+            .unwrap_or(false)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: continuation_scope.session_id must match session_id for headless.run.advance",
+            );
+        }
+        if scope
+            .session_id_prefix
+            .as_ref()
+            .map(|prefix| !params.session_id.starts_with(prefix))
+            .unwrap_or(false)
+        {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: continuation_scope.session_id_prefix must match session_id for headless.run.advance",
+            );
+        }
+    }
     let max_steps = params.max_steps.unwrap_or(1);
     if max_steps == 0 || max_steps > HEADLESS_CONTINUE_MAX_BUDGET_STEPS {
         return error_response(
@@ -2288,6 +2375,24 @@ pub(super) fn handle_headless_run_advance(
             "invalid params: selected_index_context cannot be combined with max_steps greater than 1",
         );
     }
+    if params.continuation_scope.is_some() && max_steps > 1 {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: continuation_scope cannot be combined with max_steps greater than 1",
+        );
+    }
+    if params.continuation_scope.is_some()
+        && (headless_run_advance_has_explicit_modepack_target(&params)
+            || product_continuation_target_count > 0
+            || params.parent_join_run_target.is_some())
+    {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: continuation_scope is supported only for normal headless run advance",
+        );
+    }
     if params.expected_session_sequence == 0 {
         return error_response(
             id,
@@ -2300,6 +2405,31 @@ pub(super) fn handle_headless_run_advance(
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    if let Some(scope) = params.continuation_scope.as_ref() {
+        let tasks = match store.tasks().list_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let matching_checkpoints =
+            match scoped_matching_journey_start_checkpoints(&store, &tasks, scope) {
+                Ok(checkpoints) => checkpoints,
+                Err(message) => return error_response(id, -32602, &message),
+            };
+        let Some(matching_checkpoint) = matching_checkpoints.first() else {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: continuation_scope must resolve to session_id for headless.run.advance",
+            );
+        };
+        if matching_checkpoint.session_id != params.session_id {
+            return error_response(
+                id,
+                -32602,
+                "invalid params: continuation_scope must resolve to session_id for headless.run.advance",
+            );
+        }
+    }
     let existing = match store
         .tasks()
         .read_headless_run_session_checkpoint(&params.session_id)
@@ -2589,6 +2719,9 @@ pub(super) fn handle_headless_run_advance(
         "context_budget": params.context_budget.clone(),
         "selected_index_context": params.selected_index_context.clone()
     });
+    if let Some(scope) = params.continuation_scope.clone() {
+        continue_params["continuation_scope"] = json!(scope);
+    }
     if let Some(target) = params.modepack_selected_candidate_fetch_target.clone() {
         continue_params["modepack_selected_candidate_fetch_target"] = json!(target);
     }

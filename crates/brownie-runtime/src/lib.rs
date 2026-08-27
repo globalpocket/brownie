@@ -20810,6 +20810,34 @@ mod tests {
             .result
             .expect("list result")["progress_overview"]
             .clone();
+        let route_candidates = progress["headless_route_candidates"]
+            .as_array()
+            .expect("route candidates");
+        let latest_candidate = route_candidates
+            .iter()
+            .find(|candidate| candidate["task_id"].as_str() == Some(latest.task_id.as_str()))
+            .expect("latest route candidate");
+        assert_eq!(latest_candidate["session_id"], "cli.run.new");
+        assert_eq!(latest_candidate["journey_id"], "cli.run.new.journey");
+        assert_eq!(latest_candidate["next_session_sequence"], 1);
+        assert!(latest_candidate["journey_fingerprint"]
+            .as_str()
+            .expect("journey fingerprint")
+            .starts_with("sha256:"));
+        let older_candidate = route_candidates
+            .iter()
+            .find(|candidate| candidate["task_id"].as_str() == Some(older.task_id.as_str()))
+            .expect("older route candidate");
+        assert_eq!(older_candidate["session_id"], "cli.run.old");
+        assert_ne!(
+            latest_candidate["session_id"],
+            older_candidate["session_id"]
+        );
+        let unrelated_candidate = route_candidates
+            .iter()
+            .find(|candidate| candidate["task_id"].as_str() == Some(unrelated.task_id.as_str()))
+            .expect("unrelated route candidate");
+        assert_eq!(unrelated_candidate["session_id"], Value::Null);
         let response = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":2,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"cli.resume.scoped.1","continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
             progress["source_fingerprint"]
@@ -20825,6 +20853,182 @@ mod tests {
         assert_eq!(result["selected_task_id"], latest.task_id);
         assert_ne!(result["selected_task_id"], older.task_id);
         assert_ne!(result["selected_task_id"], unrelated.task_id);
+        let journey_context = result["selected_headless_journey_context"]
+            .as_object()
+            .expect("selected journey context");
+        assert_eq!(journey_context["kind"], "headless_journey_context");
+        assert_eq!(journey_context["selection_source"], "continuation_scope");
+        assert_eq!(journey_context["session_id"], "cli.run.new");
+        assert_eq!(journey_context["journey_id"], "cli.run.new.journey");
+        assert_eq!(journey_context["task_id"], latest.task_id);
+        assert_eq!(journey_context["run_id"], latest.run_id);
+        assert_eq!(journey_context["selected_task_id"], latest.task_id);
+        assert_eq!(journey_context["selected_run_id"], latest.run_id);
+        assert_eq!(journey_context["has_session_checkpoint"], false);
+        assert_eq!(journey_context["current_session_sequence"], Value::Null);
+        assert!(journey_context["journey_fingerprint"]
+            .as_str()
+            .expect("journey fingerprint")
+            .starts_with("sha256:"));
+        assert!(journey_context.get("raw_prompt").is_none());
+        assert!(journey_context.get("absolute_path").is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_advance_accepts_runtime_scoped_continuation_and_writes_session_checkpoint() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let older = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Older CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start older");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Unrelated runtime task".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        let latest = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "Latest CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start latest");
+        write_test_cli_journey_start(&store, "cli.run.old", &older);
+        write_test_cli_journey_start(&store, "cli.run.new", &latest);
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("list result")["progress_overview"]
+            .clone();
+        let mismatched_scope = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"cli.run.old","advance_id":"cli.run.old.1","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1,"continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        assert!(mismatched_scope
+            .error
+            .expect("mismatched scope error")
+            .message
+            .contains("continuation_scope must resolve to session_id"));
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&latest.task_id)
+                .expect("latest task")
+                .expect("latest present")
+                .status,
+            TaskStatus::Created
+        );
+
+        let response = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.run.advance","params":{{"authorize":true,"session_id":"cli.run.new","advance_id":"cli.run.new.1","expected_session_sequence":1,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"max_steps":1,"continuation_scope":{{"session_id_prefix":"cli.run.","latest_matching_session":true}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("fingerprint"),
+            progress["aggregate_sequence"].as_u64().expect("sequence")
+        ));
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("advance result: {:?}", response.error));
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["session_id"], "cli.run.new");
+        assert_eq!(result["advance_id"], "cli.run.new.1");
+        assert_eq!(result["session_sequence"], 1);
+        assert_eq!(result["executed_count"], 1);
+        assert_eq!(result["replayed_count"], 0);
+        assert_eq!(result["steps"][0]["candidate_count"], 1);
+        assert_eq!(result["steps"][0]["selected_task_id"], latest.task_id);
+        assert_ne!(result["steps"][0]["selected_task_id"], older.task_id);
+        assert_ne!(result["steps"][0]["selected_task_id"], unrelated.task_id);
+        assert!(result["checkpoint_fingerprint"]
+            .as_str()
+            .expect("checkpoint fingerprint")
+            .starts_with("sha256:"));
+
+        let checkpoint = store
+            .tasks()
+            .read_headless_run_session_checkpoint("cli.run.new")
+            .expect("read session checkpoint")
+            .expect("session checkpoint");
+        assert_eq!(checkpoint.session_id, "cli.run.new");
+        assert_eq!(checkpoint.advance_id, "cli.run.new.1");
+        assert_eq!(checkpoint.session_sequence, 1);
+        assert_eq!(
+            checkpoint.result.steps[0].selected_task_id.as_deref(),
+            Some(latest.task_id.as_str())
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&older.task_id)
+                .expect("older task")
+                .expect("older present")
+                .status,
+            TaskStatus::Created
+        );
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&unrelated.task_id)
+                .expect("unrelated task")
+                .expect("unrelated present")
+                .status,
+            TaskStatus::Created
+        );
+
+        let drive = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.run.new","drive_id":"cli.run.new.after","expected_start_session_sequence":1,"max_advances":1,"max_steps_per_advance":1}}"#,
+        )
+        .result
+        .unwrap_or_else(|| panic!("drive result"));
+        assert_eq!(drive["session_id"], "cli.run.new");
+        assert_eq!(drive["start_session_sequence"], 1);
+        assert_eq!(drive["journey"]["journey_id"], "cli.run.new.journey");
+        assert_eq!(drive["journey"]["task_id"], latest.task_id);
+        assert_eq!(drive["journey"]["run_id"], latest.run_id);
+        assert_eq!(drive["journey"]["session_id"], "cli.run.new");
+        assert!(drive["drive_fingerprint"]
+            .as_str()
+            .expect("drive fingerprint")
+            .starts_with("sha256:"));
+        assert!(drive.get("raw_prompt").is_none());
+        assert!(drive.get("absolute_path").is_none());
+        assert_eq!(
+            store
+                .tasks()
+                .get_task(&unrelated.task_id)
+                .expect("unrelated task")
+                .expect("unrelated present")
+                .status,
+            TaskStatus::Created
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
@@ -25850,6 +26054,7 @@ mod tests {
         repair_result.drive_id = repair_drive_id.to_string();
         repair_result.replayed = false;
         repair_result.drive_fingerprint = format!("sha256:{}", "2".repeat(64));
+        repair_result.objective_proposal_candidate = None;
         let repair_resume = repair_result
             .journey_route_resume
             .as_mut()
@@ -25871,9 +26076,10 @@ mod tests {
                 result: repair_result,
             })
             .expect("write repair checkpoint");
-        let repaired = parse_line(&repair_request.to_string())
+        let repaired_response = parse_line(&repair_request.to_string());
+        let repaired = repaired_response
             .result
-            .expect("repair replay result");
+            .unwrap_or_else(|| panic!("repair replay result: {:?}", repaired_response.error));
         assert_eq!(repaired["journey_route_resume"]["replayed"], true);
         let repaired_events = store
             .tasks()

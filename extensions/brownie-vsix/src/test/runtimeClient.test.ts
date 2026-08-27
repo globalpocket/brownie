@@ -95,6 +95,10 @@ const taskListProgressOverview = {
     reason: 'Task is runnable through the normal headless continuation selector.',
     task_id: 'task_1',
     run_id: 'run_1',
+    journey_id: 'cli.run.test.journey',
+    session_id: 'cli.run.test',
+    journey_fingerprint: `sha256:${'3'.repeat(64)}`,
+    next_session_sequence: 2,
     progress_fingerprint: `sha256:${'b'.repeat(64)}`,
     aggregate_sequence: 20260626000000,
     route_fingerprint: `sha256:${'c'.repeat(64)}`,
@@ -896,6 +900,8 @@ describe('protocol validation', () => {
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, percentage: 50 } })).toBe(false);
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], route_fingerprint: 'not-a-fingerprint' }] } })).toBe(false);
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], progress_fingerprint: `sha256:${'d'.repeat(64)}` }] } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], next_session_sequence: 0 }] } })).toBe(false);
+    expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], journey_fingerprint: 'not-a-fingerprint' }] } })).toBe(false);
     expect(isTaskListResult({ ...taskListResult, progress_overview: { ...taskListProgressOverview, headless_route_candidates: [{ ...taskListProgressOverview.headless_route_candidates[0], raw_provider_response: 'nope' }] } })).toBe(false);
     expect(isTaskListResult({
       ...taskListResult,
@@ -999,6 +1005,8 @@ describe('protocol validation', () => {
     expect(isHeadlessContinueOnceParams({ ...headlessParams, max_steps: 2 })).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: contextBudget })).toBe(true);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, selected_index_context: selectedIndexContext })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, continuation_scope: { session_id_prefix: 'cli.run.', latest_matching_session: true } })).toBe(true);
+    expect(isHeadlessContinueOnceParams({ ...headlessParams, continuation_scope: {} })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, selected_index_context: { ...selectedIndexContext, raw_content: 'secret' } })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessContinueOnceParams({ ...headlessParams, authorize: false })).toBe(false);
@@ -2250,6 +2258,8 @@ describe('protocol validation', () => {
     };
     expect(isHeadlessRunAdvanceParams(headlessRunAdvanceParams)).toBe(true);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, selected_index_context: selectedIndexContext })).toBe(true);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, continuation_scope: { session_id_prefix: 'cli.run.', latest_matching_session: true } })).toBe(true);
+    expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, continuation_scope: { raw_prompt: 'secret' } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, context_budget: { ...contextBudget, max_prompt_chars: 127 } })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, authorize: false })).toBe(false);
     expect(isHeadlessRunAdvanceParams({ ...headlessRunAdvanceParams, session_id: 'x'.repeat(49) })).toBe(false);

@@ -579,7 +579,6 @@ fn validate_objective_proposal_authorization_preflight_route(
                 .to_string()
         })?;
     if checkpoint.session_id != target.session_id
-        || checkpoint.drive_id != target.source_drive_id
         || checkpoint.task_id != target.expected_task_id
         || checkpoint.run_id != target.expected_run_id
         || checkpoint.journey_fingerprint != target.expected_journey_fingerprint

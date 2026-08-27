@@ -1312,6 +1312,8 @@ pub struct HeadlessRunAdvanceParams {
     pub advance_id: Option<String>,
     pub expected_session_sequence: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub continuation_scope: Option<HeadlessContinueScope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_steps: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_budget: Option<TaskRunContextBudget>,
@@ -3191,6 +3193,14 @@ pub struct TaskListHeadlessRouteCandidate {
     pub failure_fingerprint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub apply_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub journey_fingerprint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_session_sequence: Option<u64>,
     pub progress_fingerprint: String,
     pub aggregate_sequence: u64,
     pub route_fingerprint: String,

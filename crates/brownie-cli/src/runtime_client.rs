@@ -20,6 +20,7 @@ const TASK_LIST_METHOD: &str = "task.list";
 const MODE_LIST_METHOD: &str = "mode.list";
 const PROPOSAL_INSPECT_METHOD: &str = "proposal.inspect";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
+const HEADLESS_RUN_ADVANCE_METHOD: &str = "headless.run.advance";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
@@ -199,18 +200,53 @@ impl RuntimeClient {
         let task_list =
             self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
         validate_task_list_result(&task_list)?;
-        let resume_params = cli_resume_params(&task_list)?;
-        let result = self.call_runtime_value(
-            HEADLESS_CONTINUE_ONCE_METHOD,
-            Some(resume_params),
-            RuntimeRequestClass::ObjectiveExecution,
-        )?;
-        validate_headless_continue_once_result(&result)?;
+        let result = if let Some(resume_params) = cli_resume_advance_params(&task_list)? {
+            let result = self.call_runtime_value(
+                HEADLESS_RUN_ADVANCE_METHOD,
+                Some(resume_params),
+                RuntimeRequestClass::ObjectiveExecution,
+            )?;
+            validate_headless_run_advance_result(&result)?;
+            self.continue_resumed_headless_journey_if_available(result)?
+        } else {
+            let resume_params = cli_resume_params(&task_list)?;
+            let result = self.call_runtime_value(
+                HEADLESS_CONTINUE_ONCE_METHOD,
+                Some(resume_params),
+                RuntimeRequestClass::ObjectiveExecution,
+            )?;
+            validate_headless_continue_once_result(&result)?;
+            result
+        };
         if json_output {
             return json_result("resume", "resume", cli_resume_payload(&result)?);
         }
 
         bounded_output(render_resume_result(&result)?)
+    }
+
+    fn continue_resumed_headless_journey_if_available(
+        &self,
+        advance_result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(params) = resumed_cli_drive_params(&advance_result)? else {
+            return Ok(advance_result);
+        };
+
+        let result = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_run_drive_result(&result)?;
+        let result = self.follow_parent_join_routes_if_available(result)?;
+        let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
+        let result = self.follow_objective_proposal_apply_route_if_available(result)?;
+        let result = self.follow_objective_apply_verification_route_if_available(result)?;
+        let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+        let result = self.close_and_finalize_objective_completion_if_available(result)?;
+        let result = self.accept_and_finalize_completed_run_if_available(result)?;
+        merge_resume_drive_result(&advance_result, result)
     }
 
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -1107,6 +1143,83 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     Ok(())
 }
 
+fn validate_headless_run_advance_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let status = required_display_string(object, "status")?;
+    if !matches!(
+        status.as_str(),
+        "stale_progress" | "no_eligible_task" | "task_in_progress" | "task_executed"
+    ) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "session_id",
+        "advance_id",
+        "stop_reason",
+        "checkpoint_fingerprint",
+        "next_action",
+    ] {
+        required_display_string(object, key)?;
+    }
+    validate_sha256_fingerprint(&display_string(object, "checkpoint_fingerprint")?)?;
+    required_u64(object, "session_sequence")?;
+    required_bool(object, "replayed")?;
+    display_usize(object, "step_count")?;
+    display_usize(object, "executed_count")?;
+    display_usize(object, "replayed_count")?;
+    let start_progress = object_field(result, "start_progress")?;
+    validate_sha256_fingerprint(&required_display_string(
+        start_progress,
+        "progress_fingerprint",
+    )?)?;
+    required_u64(start_progress, "aggregate_sequence")?;
+    if let Some(post_progress) = optional_object_field(object, "post_progress") {
+        validate_sha256_fingerprint(&required_display_string(
+            post_progress,
+            "progress_fingerprint",
+        )?)?;
+        required_u64(post_progress, "aggregate_sequence")?;
+    }
+    let steps = optional_array_field_checked(object, "steps")?
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if steps.len() != display_usize(object, "step_count")? {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for step in steps {
+        validate_headless_continue_step_result(step)?;
+    }
+    Ok(())
+}
+
+fn validate_headless_continue_step_result(step: &Value) -> Result<(), RuntimeClientError> {
+    let object = step
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let status = required_display_string(object, "status")?;
+    if !matches!(
+        status.as_str(),
+        "stale_progress" | "no_eligible_task" | "task_in_progress" | "task_executed"
+    ) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in ["current_progress_fingerprint", "next_action"] {
+        required_display_string(object, key)?;
+    }
+    validate_sha256_fingerprint(&display_string(object, "current_progress_fingerprint")?)?;
+    required_u64(object, "current_aggregate_sequence")?;
+    optional_bounded_string(object, "decision_id")?;
+    optional_bounded_string(object, "continuation_id")?;
+    optional_bounded_string(object, "selected_task_id")?;
+    optional_bounded_string(object, "selected_run_id")?;
+    optional_bounded_string(object, "post_progress_fingerprint")?;
+    optional_u64(object, "post_aggregate_sequence")?;
+    display_usize(object, "candidate_count")?;
+    required_bool(object, "replayed")?;
+    Ok(())
+}
+
 fn validate_completion_acceptance_result(result: &Value) -> Result<(), RuntimeClientError> {
     let acceptance = object_field(result, "completion_acceptance")?;
     for key in [
@@ -1206,6 +1319,45 @@ fn validate_headless_continue_once_result(result: &Value) -> Result<(), RuntimeC
     optional_bounded_string(object, "selected_run_id")?;
     optional_bounded_string(object, "post_progress_fingerprint")?;
     optional_u64(object, "post_aggregate_sequence")?;
+    if let Some(context) = optional_object_field(object, "selected_headless_journey_context") {
+        validate_selected_headless_journey_context(context)?;
+    }
+    Ok(())
+}
+
+fn validate_selected_headless_journey_context(
+    context: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    if display_string(context, "kind")? != "headless_journey_context"
+        || display_string(context, "selection_source")? != "continuation_scope"
+        || display_string(context, "next_action")? != "drive_headless_journey"
+        || context.contains_key("raw_prompt")
+        || context.contains_key("provider_response")
+        || context.contains_key("absolute_path")
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "journey_id",
+        "session_id",
+        "drive_id",
+        "task_id",
+        "run_id",
+        "selected_task_id",
+        "selected_run_id",
+    ] {
+        required_display_string(context, key)?;
+    }
+    for key in [
+        "task_start_fingerprint",
+        "start_progress_fingerprint",
+        "journey_fingerprint",
+    ] {
+        validate_sha256_fingerprint(&required_display_string(context, key)?)?;
+    }
+    required_u64(context, "start_aggregate_sequence")?;
+    required_bool(context, "has_session_checkpoint")?;
+    optional_u64(context, "current_session_sequence")?;
     Ok(())
 }
 
@@ -1412,16 +1564,27 @@ fn render_resume_result(result: &Value) -> Result<String, RuntimeClientError> {
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
     let status = display_string(object, "status")?;
-    let continuation_id = display_optional_string(object, "continuation_id")?;
-    let task_id = display_optional_string(object, "selected_task_id")?;
-    let run_id = display_optional_string(object, "selected_run_id")?;
-    let candidate_count = display_usize(object, "candidate_count")?;
-    let stale = display_bool(object, "stale")?;
+    let step = resume_result_first_step(object);
+    let continuation_id = display_optional_resume_string(object, step, "continuation_id")?;
+    let task_id = display_optional_resume_string(object, step, "selected_task_id")?;
+    let run_id = display_optional_resume_string(object, step, "selected_run_id")?;
+    let candidate_count = display_resume_usize(object, step, "candidate_count")?;
+    let stale = display_resume_stale(object)?;
     let replayed = display_bool(object, "replayed")?;
     let next_action = display_string(object, "next_action")?;
+    let journey_context = optional_object_field(object, "selected_headless_journey_context");
+    let session_id =
+        display_string_from_optional(journey_context, "session_id").and_then(|value| {
+            if value == "unknown" {
+                display_string(object, "session_id")
+            } else {
+                Ok(value)
+            }
+        })?;
+    let journey_id = display_string_from_optional(journey_context, "journey_id")?;
 
     Ok(format!(
-        "resume\n  status: {status}\n  continuation: {continuation_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  candidates: {candidate_count}\n  stale: {stale}\n  replayed: {replayed}\n  next: {next_action}\n"
+        "resume\n  status: {status}\n  continuation: {continuation_id}\n  session: {session_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  candidates: {candidate_count}\n  stale: {stale}\n  replayed: {replayed}\n  next: {next_action}\n"
     ))
 }
 
@@ -1429,7 +1592,15 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     let object = result
         .as_object()
         .ok_or(RuntimeClientError::InvalidResponse)?;
-    let mut payload = serde_json::Map::new();
+    let mut payload = if object.contains_key("drive_id") {
+        match cli_run_payload(result)? {
+            Value::Object(payload) => payload,
+            _ => return Err(RuntimeClientError::InvalidResponse),
+        }
+    } else {
+        serde_json::Map::new()
+    };
+    let step = resume_result_first_step(object);
     for key in [
         "status",
         "decision_id",
@@ -1438,7 +1609,7 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         "selected_run_id",
         "next_action",
     ] {
-        if let Some(value) = object.get(key) {
+        if let Some(value) = resume_result_field(object, step, key) {
             payload.insert(key.to_string(), bounded_json_optional_string(value)?);
         }
     }
@@ -1447,16 +1618,242 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         "current_aggregate_sequence",
         "post_aggregate_sequence",
     ] {
-        if let Some(value) = object.get(key) {
+        if let Some(value) = resume_result_field(object, step, key) {
             payload.insert(key.to_string(), bounded_json_optional_u64(value)?);
         }
     }
-    for key in ["stale", "replayed"] {
-        if let Some(value) = object.get(key) {
-            payload.insert(key.to_string(), Value::Bool(json_bool(value)?));
+    payload.insert(
+        "stale".to_string(),
+        Value::Bool(display_resume_stale(object)?),
+    );
+    if let Some(value) = object.get("replayed") {
+        payload.insert("replayed".to_string(), Value::Bool(json_bool(value)?));
+    }
+    if let Some(context) = optional_object_field(object, "selected_headless_journey_context") {
+        for (source, target) in [
+            ("journey_id", "headless_journey_id"),
+            ("session_id", "headless_session_id"),
+            ("task_id", "headless_root_task_id"),
+            ("run_id", "headless_root_run_id"),
+            ("selected_task_id", "headless_selected_task_id"),
+            ("selected_run_id", "headless_selected_run_id"),
+            ("journey_fingerprint", "headless_journey_fingerprint"),
+        ] {
+            if let Some(value) = context.get(source) {
+                payload.insert(target.to_string(), bounded_json_string(value)?);
+            }
+        }
+        if let Some(value) = context.get("current_session_sequence") {
+            payload.insert(
+                "headless_current_session_sequence".to_string(),
+                bounded_json_optional_u64(value)?,
+            );
+        }
+    }
+    if !payload.contains_key("headless_session_id") {
+        if let Some(value) = object.get("session_id") {
+            payload.insert(
+                "headless_session_id".to_string(),
+                bounded_json_string(value)?,
+            );
         }
     }
     Ok(Value::Object(payload))
+}
+
+fn resume_result_first_step(
+    object: &serde_json::Map<String, Value>,
+) -> Option<&serde_json::Map<String, Value>> {
+    object
+        .get("steps")
+        .and_then(Value::as_array)
+        .and_then(|steps| steps.first())
+        .and_then(Value::as_object)
+}
+
+fn resume_result_field<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    step: Option<&'a serde_json::Map<String, Value>>,
+    key: &str,
+) -> Option<&'a Value> {
+    object
+        .get(key)
+        .or_else(|| step.and_then(|step| step.get(key)))
+}
+
+fn display_optional_resume_string(
+    object: &serde_json::Map<String, Value>,
+    step: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Result<String, RuntimeClientError> {
+    match resume_result_field(object, step, key) {
+        Some(Value::Null) | None => Ok("none".to_string()),
+        Some(value) => bounded_string(value),
+    }
+}
+
+fn display_resume_usize(
+    object: &serde_json::Map<String, Value>,
+    step: Option<&serde_json::Map<String, Value>>,
+    key: &str,
+) -> Result<usize, RuntimeClientError> {
+    match resume_result_field(object, step, key) {
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or(RuntimeClientError::InvalidResponse),
+        None => Ok(0),
+    }
+}
+
+fn display_resume_stale(
+    object: &serde_json::Map<String, Value>,
+) -> Result<bool, RuntimeClientError> {
+    if object.contains_key("stale") {
+        return display_bool(object, "stale");
+    }
+    Ok(display_string(object, "status")? == "stale_progress")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CliResumeRouteCandidate {
+    session_id: String,
+    journey_id: String,
+    task_id: String,
+    run_id: String,
+    next_session_sequence: u64,
+    progress_fingerprint: String,
+    aggregate_sequence: u64,
+    task_created_at: String,
+    task_updated_at: String,
+}
+
+fn cli_resume_advance_params(task_list: &Value) -> Result<Option<Value>, RuntimeClientError> {
+    let Some(candidate) = cli_resume_route_candidate(task_list)? else {
+        return Ok(None);
+    };
+    let advance_id = stable_cli_resume_id(
+        &candidate.progress_fingerprint,
+        candidate.aggregate_sequence,
+    );
+    Ok(Some(json!({
+        "authorize": true,
+        "session_id": candidate.session_id,
+        "advance_id": advance_id,
+        "expected_session_sequence": candidate.next_session_sequence,
+        "expected_progress_fingerprint": candidate.progress_fingerprint,
+        "expected_aggregate_sequence": candidate.aggregate_sequence,
+        "max_steps": CLI_RESUME_MAX_STEPS,
+        "continuation_scope": {
+            "session_id": candidate.session_id,
+            "journey_id": candidate.journey_id,
+            "task_id": candidate.task_id,
+            "run_id": candidate.run_id
+        },
+        "context_budget": {
+            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
+            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
+            "max_selected_index_chars": 0
+        }
+    })))
+}
+
+fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, RuntimeClientError> {
+    let object = advance_result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if display_string(object, "status")? != "task_executed" {
+        return Ok(None);
+    }
+    let session_id = required_display_string(object, "session_id")?;
+    let session_sequence = required_u64(object, "session_sequence")?;
+
+    Ok(Some(json!({
+        "authorize": true,
+        "session_id": session_id,
+        "drive_id": format!("{session_id}.resume.drive"),
+        "expected_start_session_sequence": session_sequence,
+        "max_advances": CLI_RUN_MAX_ADVANCES,
+        "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
+        "context_budget": {
+            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
+            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
+            "max_selected_index_chars": 0
+        }
+    })))
+}
+
+fn cli_resume_route_candidate(
+    task_list: &Value,
+) -> Result<Option<CliResumeRouteCandidate>, RuntimeClientError> {
+    let object = task_list
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let tasks = object
+        .get("tasks")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let progress = object_field(task_list, "progress_overview")?;
+    let progress_fingerprint = required_display_string(progress, "source_fingerprint")?;
+    validate_sha256_fingerprint(&progress_fingerprint)?;
+    let aggregate_sequence = required_u64(progress, "aggregate_sequence")?;
+    let Some(candidates) = optional_array_field_checked(progress, "headless_route_candidates")?
+    else {
+        return Ok(None);
+    };
+
+    let mut resume_candidates = Vec::new();
+    for candidate in candidates {
+        let candidate = candidate
+            .as_object()
+            .ok_or(RuntimeClientError::InvalidResponse)?;
+        let Some(session_id) = candidate.get("session_id").and_then(Value::as_str) else {
+            continue;
+        };
+        if !session_id.starts_with(CLI_RUN_SESSION_PREFIX) {
+            continue;
+        }
+        let journey_id = required_display_string(candidate, "journey_id")?;
+        let task_id = required_display_string(candidate, "task_id")?;
+        let run_id = required_display_string(candidate, "run_id")?;
+        let journey_fingerprint = required_display_string(candidate, "journey_fingerprint")?;
+        validate_sha256_fingerprint(&journey_fingerprint)?;
+        let next_session_sequence = required_u64(candidate, "next_session_sequence")?;
+        if next_session_sequence == 0
+            || required_display_string(candidate, "progress_fingerprint")? != progress_fingerprint
+            || required_u64(candidate, "aggregate_sequence")? != aggregate_sequence
+        {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+        let Some(task) = tasks.iter().find_map(|task| {
+            let task = task.as_object()?;
+            let matches = task.get("task_id").and_then(Value::as_str) == Some(task_id.as_str())
+                && task.get("run_id").and_then(Value::as_str) == Some(run_id.as_str());
+            matches.then_some(task)
+        }) else {
+            return Err(RuntimeClientError::InvalidResponse);
+        };
+        resume_candidates.push(CliResumeRouteCandidate {
+            session_id: session_id.to_string(),
+            journey_id,
+            task_id,
+            run_id,
+            next_session_sequence,
+            progress_fingerprint: progress_fingerprint.clone(),
+            aggregate_sequence,
+            task_created_at: required_display_string(task, "created_at")?,
+            task_updated_at: required_display_string(task, "updated_at")?,
+        });
+    }
+
+    resume_candidates.sort_by(|left, right| {
+        left.task_created_at
+            .cmp(&right.task_created_at)
+            .then(left.task_updated_at.cmp(&right.task_updated_at))
+            .then(left.session_id.cmp(&right.session_id))
+            .then(left.journey_id.cmp(&right.journey_id))
+    });
+    Ok(resume_candidates.pop())
 }
 
 fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
@@ -2173,6 +2570,45 @@ fn merge_objective_drive_result(
     ] {
         if let Some(value) = previous.get(key) {
             drive.insert(key.to_string(), value.clone());
+        }
+    }
+    Ok(Value::Object(drive))
+}
+
+fn merge_resume_drive_result(advance: &Value, drive: Value) -> Result<Value, RuntimeClientError> {
+    let advance = advance
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut drive = drive
+        .as_object()
+        .cloned()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let step = resume_result_first_step(advance);
+
+    for key in [
+        "decision_id",
+        "continuation_id",
+        "selected_task_id",
+        "selected_run_id",
+        "candidate_count",
+        "current_aggregate_sequence",
+        "post_aggregate_sequence",
+    ] {
+        if drive.get(key).is_none() {
+            if let Some(value) = resume_result_field(advance, step, key) {
+                drive.insert(key.to_string(), value.clone());
+            }
+        }
+    }
+    if drive.get("stale").is_none() {
+        drive.insert("stale".to_string(), Value::Bool(false));
+    }
+    if drive.get("selected_headless_journey_context").is_none() {
+        if let Some(value) = advance.get("selected_headless_journey_context") {
+            drive.insert(
+                "selected_headless_journey_context".to_string(),
+                value.clone(),
+            );
         }
     }
     Ok(Value::Object(drive))
@@ -3513,5 +3949,21 @@ mod tests {
         );
         assert!(params.get("verification_recovery_source").is_none());
         assert!(params.get("objective_proposal_apply_target").is_none());
+    }
+
+    #[test]
+    fn cli_resume_accepts_headless_run_advance_result_projection() {
+        let result: Value = serde_json::from_str(
+            r#"{"status":"task_executed","session_id":"cli.run.new","advance_id":"cli.resume.advance","session_sequence":2,"replayed":false,"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7},"post_progress":{"progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":8},"max_steps":1,"step_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"step executed","checkpoint_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888","terminal_completion_evidence":null,"next_route":null,"steps":[{"step_index":1,"status":"task_executed","decision_id":"decision-new","continuation_id":"run.cli.run.new.2","selected_task_id":"task-new","selected_run_id":"run-new","candidate_count":1,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","post_aggregate_sequence":8,"replayed":false,"next_route":null,"next_action":"inspect_progress_overview"}],"next_action":"inspect_progress_overview"}"#,
+        )
+        .unwrap();
+        let response = format!(r#"{{"jsonrpc":"2.0","id":1,"result":{result}}}"#,);
+        let result = parse_runtime_value_response(&response, &json!(1)).unwrap();
+        validate_headless_run_advance_result(&result).unwrap();
+        let payload = cli_resume_payload(&result).unwrap();
+        assert_eq!(payload["selected_task_id"], "task-new");
+        assert_eq!(payload["headless_session_id"], "cli.run.new");
+        let rendered = json_result("resume", "resume", payload).unwrap();
+        assert!(rendered.len() < MAX_RENDERED_OUTPUT_CHARS);
     }
 }

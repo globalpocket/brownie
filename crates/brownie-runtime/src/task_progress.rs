@@ -126,11 +126,12 @@ pub(super) fn task_list_progress_overview(
         &parent_join_ready_task_ids,
     );
     let headless_route_candidates = task_list_headless_route_candidates(
+        store,
         tasks,
         &classifications,
         &source_fingerprint,
         aggregate_sequence,
-    );
+    )?;
 
     Ok(TaskListProgressOverview {
         source_fingerprint,
@@ -152,11 +153,13 @@ pub(super) fn task_list_progress_overview(
 }
 
 pub(super) fn task_list_headless_route_candidates(
+    store: &BrownieStore,
     tasks: &[TaskRecord],
     classifications: &[(String, TaskListProgressClassification)],
     progress_fingerprint: &str,
     aggregate_sequence: u64,
-) -> Vec<TaskListHeadlessRouteCandidate> {
+) -> Result<Vec<TaskListHeadlessRouteCandidate>, String> {
+    let journey_contexts = task_list_headless_journey_candidate_contexts(store, tasks)?;
     let classification_by_task_id: std::collections::BTreeMap<
         &str,
         &TaskListProgressClassification,
@@ -175,6 +178,7 @@ pub(super) fn task_list_headless_route_candidates(
         ) {
             continue;
         }
+        let journey_context = journey_contexts.get(&task.task_id);
         if matches!(task.status, TaskStatus::Created | TaskStatus::Queued) {
             if let Some(provenance) = task.verification_recovery_retry_provenance.as_ref() {
                 candidates.push(task_list_headless_route_candidate(
@@ -186,6 +190,7 @@ pub(super) fn task_list_headless_route_candidates(
                     Some(provenance.apply_id.clone()),
                     Some(provenance.failure_fingerprint.clone()),
                     Some(provenance.apply_fingerprint.clone()),
+                    journey_context,
                     progress_fingerprint,
                     aggregate_sequence,
                     10,
@@ -203,6 +208,7 @@ pub(super) fn task_list_headless_route_candidates(
                     None,
                     Some(provenance.failure_fingerprint.clone()),
                     None,
+                    journey_context,
                     progress_fingerprint,
                     aggregate_sequence,
                     20,
@@ -220,6 +226,7 @@ pub(super) fn task_list_headless_route_candidates(
                     Some(provenance.source_apply_id.clone()),
                     Some(provenance.failure_fingerprint.clone()),
                     Some(provenance.source_apply_fingerprint.clone()),
+                    journey_context,
                     progress_fingerprint,
                     aggregate_sequence,
                     30,
@@ -237,6 +244,7 @@ pub(super) fn task_list_headless_route_candidates(
                     None,
                     Some(provenance.failure_fingerprint.clone()),
                     None,
+                    journey_context,
                     progress_fingerprint,
                     aggregate_sequence,
                     40,
@@ -254,6 +262,7 @@ pub(super) fn task_list_headless_route_candidates(
                     None,
                     None,
                     None,
+                    journey_context,
                     progress_fingerprint,
                     aggregate_sequence,
                     80,
@@ -272,6 +281,7 @@ pub(super) fn task_list_headless_route_candidates(
                 None,
                 None,
                 None,
+                journey_context,
                 progress_fingerprint,
                 aggregate_sequence,
                 50,
@@ -283,10 +293,69 @@ pub(super) fn task_list_headless_route_candidates(
         left.priority
             .cmp(&right.priority)
             .then(left.kind_string().cmp(&right.kind_string()))
+            .then(left.session_id.cmp(&right.session_id))
+            .then(left.journey_id.cmp(&right.journey_id))
             .then(left.task_id.cmp(&right.task_id))
             .then(left.run_id.cmp(&right.run_id))
     });
-    candidates
+    Ok(candidates)
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct TaskListHeadlessJourneyCandidateContext {
+    journey_id: String,
+    session_id: String,
+    journey_fingerprint: String,
+    next_session_sequence: u64,
+}
+
+fn task_list_headless_journey_candidate_contexts(
+    store: &BrownieStore,
+    tasks: &[TaskRecord],
+) -> Result<std::collections::BTreeMap<String, TaskListHeadlessJourneyCandidateContext>, String> {
+    let task_by_root_identity: std::collections::BTreeMap<(&str, &str), &TaskRecord> = tasks
+        .iter()
+        .filter(|task| task.parent_run_id.is_none())
+        .map(|task| ((task.task_id.as_str(), task.run_id.as_str()), task))
+        .collect();
+    let mut contexts = std::collections::BTreeMap::new();
+    for checkpoint in store
+        .tasks()
+        .list_headless_journey_start_checkpoints()
+        .map_err(|error| error.to_string())?
+    {
+        let Some(task) =
+            task_by_root_identity.get(&(checkpoint.task_id.as_str(), checkpoint.run_id.as_str()))
+        else {
+            continue;
+        };
+        let session_checkpoint = store
+            .tasks()
+            .read_headless_run_session_checkpoint(&checkpoint.session_id)
+            .map_err(|error| error.to_string())?;
+        let next_session_sequence = session_checkpoint
+            .as_ref()
+            .map(|checkpoint| checkpoint.session_sequence + 1)
+            .unwrap_or(1);
+        if contexts
+            .insert(
+                task.task_id.clone(),
+                TaskListHeadlessJourneyCandidateContext {
+                    journey_id: checkpoint.journey_id,
+                    session_id: checkpoint.session_id,
+                    journey_fingerprint: checkpoint.journey_fingerprint,
+                    next_session_sequence,
+                },
+            )
+            .is_some()
+        {
+            return Err(
+                "invalid params: multiple headless journeys resolve to the same root task"
+                    .to_string(),
+            );
+        }
+    }
+    Ok(contexts)
 }
 
 pub(super) fn task_list_headless_route_candidate(
@@ -298,6 +367,7 @@ pub(super) fn task_list_headless_route_candidate(
     apply_id: Option<String>,
     failure_fingerprint: Option<String>,
     apply_fingerprint: Option<String>,
+    journey_context: Option<&TaskListHeadlessJourneyCandidateContext>,
     progress_fingerprint: &str,
     aggregate_sequence: u64,
     priority: u8,
@@ -311,6 +381,10 @@ pub(super) fn task_list_headless_route_candidate(
         apply_id.as_deref(),
         failure_fingerprint.as_deref(),
         apply_fingerprint.as_deref(),
+        journey_context.map(|context| context.journey_id.as_str()),
+        journey_context.map(|context| context.session_id.as_str()),
+        journey_context.map(|context| context.journey_fingerprint.as_str()),
+        journey_context.map(|context| context.next_session_sequence),
         progress_fingerprint,
         aggregate_sequence,
         priority,
@@ -325,6 +399,10 @@ pub(super) fn task_list_headless_route_candidate(
         apply_id,
         failure_fingerprint,
         apply_fingerprint,
+        journey_id: journey_context.map(|context| context.journey_id.clone()),
+        session_id: journey_context.map(|context| context.session_id.clone()),
+        journey_fingerprint: journey_context.map(|context| context.journey_fingerprint.clone()),
+        next_session_sequence: journey_context.map(|context| context.next_session_sequence),
         progress_fingerprint: progress_fingerprint.to_string(),
         aggregate_sequence,
         route_fingerprint,
@@ -351,6 +429,10 @@ pub(super) fn task_list_headless_route_candidate_fingerprint(
     apply_id: Option<&str>,
     failure_fingerprint: Option<&str>,
     apply_fingerprint: Option<&str>,
+    journey_id: Option<&str>,
+    session_id: Option<&str>,
+    journey_fingerprint: Option<&str>,
+    next_session_sequence: Option<u64>,
     progress_fingerprint: &str,
     aggregate_sequence: u64,
     priority: u8,
@@ -376,6 +458,18 @@ pub(super) fn task_list_headless_route_candidate_fingerprint(
         (
             "apply_fingerprint",
             apply_fingerprint.unwrap_or("").to_string(),
+        ),
+        ("journey_id", journey_id.unwrap_or("").to_string()),
+        ("session_id", session_id.unwrap_or("").to_string()),
+        (
+            "journey_fingerprint",
+            journey_fingerprint.unwrap_or("").to_string(),
+        ),
+        (
+            "next_session_sequence",
+            next_session_sequence
+                .map(|sequence| sequence.to_string())
+                .unwrap_or_default(),
         ),
         ("progress_fingerprint", progress_fingerprint.to_string()),
         ("aggregate_sequence", aggregate_sequence.to_string()),
