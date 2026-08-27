@@ -21276,6 +21276,445 @@ mod tests {
     }
 
     #[test]
+    fn headless_completion_scope_tasks_isolates_active_journey_root_from_unrelated_roots() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let active = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "active CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start active");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "unrelated completed objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &active.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "active done".to_string(),
+                        completion_summary_chars: 11,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete active");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &unrelated.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                        completion_summary_preview: "unrelated done".to_string(),
+                        completion_summary_chars: 14,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete unrelated");
+        write_test_cli_journey_start(&store, "cli.scope.active", &active);
+        let checkpoint = store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.scope.active.journey")
+            .expect("read journey checkpoint")
+            .expect("journey checkpoint");
+
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let scoped_tasks = headless_completion_scope_tasks(&tasks, Some(&checkpoint))
+            .expect("scope tasks")
+            .expect("scoped tasks");
+        assert_eq!(scoped_tasks.len(), 1);
+        assert_eq!(scoped_tasks[0].task_id, active.task_id);
+
+        let scoped_progress =
+            task_list_progress_overview(&store, &scoped_tasks).expect("scoped progress");
+        assert_eq!(scoped_progress.task_count, 1);
+        assert_eq!(scoped_progress.root_task_ids, vec![active.task_id.clone()]);
+        let scoped_evidence =
+            headless_latest_completed_task_completion_evidence(&store, &scoped_tasks)
+                .expect("scoped evidence")
+                .expect("active evidence");
+        assert_eq!(
+            scoped_evidence.completion_result_fingerprint,
+            format!("sha256:{}", "c".repeat(64))
+        );
+    }
+
+    #[test]
+    fn headless_latest_accepted_completion_uses_active_journey_scope_before_timestamp_ordering() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let active = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "active CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start active");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "unrelated newer objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        let active_evidence = TaskRunCompletionEvidence {
+            final_state: "Completed".to_string(),
+            task_status: TaskStatus::Completed,
+            completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+            completion_summary_preview: "active done".to_string(),
+            completion_summary_chars: 11,
+            completion_summary_truncated: false,
+            final_response_present: false,
+            final_response_chars: 0,
+            replayed: false,
+        };
+        let unrelated_evidence = TaskRunCompletionEvidence {
+            final_state: "Completed".to_string(),
+            task_status: TaskStatus::Completed,
+            completion_result_fingerprint: format!("sha256:{}", "e".repeat(64)),
+            completion_summary_preview: "unrelated done".to_string(),
+            completion_summary_chars: 14,
+            completion_summary_truncated: false,
+            final_response_present: false,
+            final_response_chars: 0,
+            replayed: false,
+        };
+        let active = store
+            .tasks()
+            .update_task_status_with_payload(
+                &active.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({ "completion_evidence": active_evidence })),
+            )
+            .expect("complete active");
+        let unrelated = store
+            .tasks()
+            .update_task_status_with_payload(
+                &unrelated.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({ "completion_evidence": unrelated_evidence })),
+            )
+            .expect("complete unrelated");
+        let active_evidence = task_run_completion_evidence_for_record(&store, &active, true)
+            .expect("active evidence lookup")
+            .expect("active evidence");
+        let unrelated_evidence = task_run_completion_evidence_for_record(&store, &unrelated, true)
+            .expect("unrelated evidence lookup")
+            .expect("unrelated evidence");
+        let active_acceptance = build_task_run_completion_acceptance(
+            &TaskRunCompletionAcceptanceRequest {
+                authorize_completion_acceptance: true,
+                source_run_id: active.run_id.clone(),
+                acceptance_id: "active-accepted".to_string(),
+                expected_completion_result_fingerprint: active_evidence
+                    .completion_result_fingerprint
+                    .clone(),
+            },
+            &active,
+            &active_evidence,
+            "NotRequired",
+            false,
+        );
+        let unrelated_acceptance = build_task_run_completion_acceptance(
+            &TaskRunCompletionAcceptanceRequest {
+                authorize_completion_acceptance: true,
+                source_run_id: unrelated.run_id.clone(),
+                acceptance_id: "unrelated-accepted".to_string(),
+                expected_completion_result_fingerprint: unrelated_evidence
+                    .completion_result_fingerprint
+                    .clone(),
+            },
+            &unrelated,
+            &unrelated_evidence,
+            "NotRequired",
+            false,
+        );
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &active,
+                LedgerEventKind::TaskCompletionAccepted,
+                Some(task_run_completion_acceptance_payload(&active_acceptance)),
+            )
+            .expect("write active acceptance");
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &unrelated,
+                LedgerEventKind::TaskCompletionAccepted,
+                Some(task_run_completion_acceptance_payload(
+                    &unrelated_acceptance,
+                )),
+            )
+            .expect("write unrelated acceptance");
+        write_test_cli_journey_start(&store, "cli.scope.accepted", &active);
+        let checkpoint = store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.scope.accepted.journey")
+            .expect("read journey checkpoint")
+            .expect("journey checkpoint");
+
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let global = headless_latest_accepted_completed_task(&store, &tasks)
+            .expect("global accepted")
+            .expect("global accepted result");
+        assert_eq!(global.task_id, unrelated.task_id);
+        assert_eq!(global.acceptance_id, "unrelated-accepted");
+
+        let scoped_tasks = headless_completion_scope_tasks(&tasks, Some(&checkpoint))
+            .expect("scope tasks")
+            .expect("scoped tasks");
+        let scoped = headless_latest_accepted_completed_task(&store, &scoped_tasks)
+            .expect("scoped accepted")
+            .expect("scoped accepted result");
+        assert_eq!(scoped.task_id, active.task_id);
+        assert_eq!(scoped.acceptance_id, "active-accepted");
+        assert_eq!(
+            scoped.terminal_completion_fingerprint,
+            active_evidence.completion_result_fingerprint
+        );
+    }
+
+    #[test]
+    fn headless_completion_finalization_uses_active_journey_scope_owner() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        let active = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "active CLI objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start active");
+        let unrelated = store
+            .tasks()
+            .start_task(TaskStartParams {
+                goal: "unrelated completed objective".to_string(),
+                mode_id: Some("orchestrator".to_string()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start unrelated");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &active.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "c".repeat(64)),
+                        completion_summary_preview: "active done".to_string(),
+                        completion_summary_chars: 11,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete active");
+        store
+            .tasks()
+            .update_task_status_with_payload(
+                &unrelated.task_id,
+                TaskStatus::Completed,
+                LedgerEventKind::TaskCompleted,
+                Some(json!({
+                    "completion_evidence": TaskRunCompletionEvidence {
+                        final_state: "Completed".to_string(),
+                        task_status: TaskStatus::Completed,
+                        completion_result_fingerprint: format!("sha256:{}", "e".repeat(64)),
+                        completion_summary_preview: "unrelated done".to_string(),
+                        completion_summary_chars: 14,
+                        completion_summary_truncated: false,
+                        final_response_present: false,
+                        final_response_chars: 0,
+                        replayed: false,
+                    }
+                })),
+            )
+            .expect("complete unrelated");
+        write_test_cli_journey_start(&store, "cli.scope.finalize", &active);
+        let checkpoint = store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.scope.finalize.journey")
+            .expect("read journey checkpoint")
+            .expect("journey checkpoint");
+        let tasks = store.tasks().list_tasks().expect("list tasks");
+        let scoped_tasks = headless_completion_scope_tasks(&tasks, Some(&checkpoint))
+            .expect("scope tasks")
+            .expect("scoped tasks");
+        let scoped_progress =
+            task_list_progress_overview(&store, &scoped_tasks).expect("scoped progress");
+        let terminal_evidence =
+            headless_latest_completed_task_completion_evidence(&store, &scoped_tasks)
+                .expect("scoped evidence")
+                .expect("terminal evidence");
+        let closure = headless_run_completion_closure(
+            HeadlessContinueOnceStatus::NoEligibleTask,
+            "no_eligible_task",
+            None,
+            "inspect_progress_overview",
+            &Some(terminal_evidence.clone()),
+            &scoped_progress,
+            false,
+        );
+        assert_eq!(closure.status, HeadlessRunCompletionClosureStatus::Complete);
+        let drive = HeadlessRunDriveResult {
+            status: HeadlessContinueOnceStatus::NoEligibleTask,
+            session_id: "cli.scope.finalize".to_string(),
+            drive_id: "cli.scope.finalize.1".to_string(),
+            start_session_sequence: 0,
+            end_session_sequence: 1,
+            replayed: false,
+            max_advances: 1,
+            max_steps_per_advance: 1,
+            advance_count: 1,
+            executed_count: 0,
+            replayed_count: 0,
+            stop_reason: "no_eligible_task".to_string(),
+            drive_fingerprint: format!("sha256:{}", "d".repeat(64)),
+            terminal_completion_evidence: Some(terminal_evidence.clone()),
+            completion_closure: closure.clone(),
+            completion_finalization: None,
+            accepted_completion: None,
+            product_evidence_matrix: None,
+            selected_product_gap_closure: None,
+            product_completion_decision: None,
+            start_progress: HeadlessRunProgressCheckpoint {
+                progress_fingerprint: format!("sha256:{}", "0".repeat(64)),
+                aggregate_sequence: 0,
+            },
+            post_progress: Some(HeadlessRunProgressCheckpoint {
+                progress_fingerprint: scoped_progress.source_fingerprint.clone(),
+                aggregate_sequence: scoped_progress.aggregate_sequence,
+            }),
+            next_route: None,
+            objective_proposal_candidate: None,
+            advances: Vec::new(),
+            journey_route_resume: None,
+            journey_closure: None,
+            journey: None,
+            journey_execution: None,
+            next_action: "inspect_progress_overview".to_string(),
+        };
+
+        let global_err = headless_run_completion_finalization(
+            &store,
+            &drive,
+            true,
+            Some(&closure.closure_fingerprint),
+        )
+        .expect_err("global progress mismatch");
+        assert!(global_err.contains("current progress"));
+
+        let finalized = headless_run_completion_finalization_with_scope(
+            &store,
+            &drive,
+            true,
+            Some(&closure.closure_fingerprint),
+            Some(&scoped_tasks),
+        )
+        .expect("scoped finalization")
+        .expect("finalization");
+        assert_eq!(
+            finalized.owner_task_id.as_deref(),
+            Some(active.task_id.as_str())
+        );
+        assert_eq!(
+            finalized.owner_run_id.as_deref(),
+            Some(active.run_id.as_str())
+        );
+        assert_eq!(
+            finalized.terminal_completion_fingerprint.as_deref(),
+            Some(terminal_evidence.completion_result_fingerprint.as_str())
+        );
+
+        let replay = headless_run_completion_finalization_with_scope(
+            &store,
+            &drive,
+            true,
+            Some(&closure.closure_fingerprint),
+            Some(&scoped_tasks),
+        )
+        .expect("scoped finalization replay")
+        .expect("replayed finalization");
+        assert!(replay.replayed);
+        assert_eq!(
+            replay.finalization_fingerprint,
+            finalized.finalization_fingerprint
+        );
+        let events = store
+            .tasks()
+            .read_ledger_events(&active.run_id)
+            .expect("active finalization events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessRunCompletionFinalized)
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn headless_run_drive_finalizes_complete_closure_once_and_replays() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
