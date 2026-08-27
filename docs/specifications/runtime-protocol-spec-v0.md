@@ -591,8 +591,12 @@ Unknown tasks and tasks whose status is not `Created` return `-32602`. Phase 1.1
 
 ## `task.list`
 
-Returns all persisted tasks discovered in `.brownie/runs/*/state.json` plus a
-runtime-owned aggregate progress overview for that bounded task set.
+Returns persisted tasks discovered in `.brownie/runs/*/state.json` plus a
+runtime-owned aggregate progress overview for that bounded task set. A no-param
+request preserves the original full response. Callers that need a transport-safe
+view may pass runtime-owned bounds for returned rows, IDs, groups, route
+candidates, nodes, and edges; aggregate counts and fingerprints are still
+computed from the full persisted task set before truncation.
 
 Request line:
 
@@ -600,10 +604,16 @@ Request line:
 {"jsonrpc":"2.0","id":3,"method":"task.list"}
 ```
 
+Transport-bounded request line:
+
+```json
+{"jsonrpc":"2.0","id":3,"method":"task.list","params":{"bounds":{"max_tasks":10,"max_task_goal_chars":0,"max_task_ids":50,"max_groups":5,"max_group_task_ids":20,"max_headless_route_candidates":5,"max_nodes":0,"max_edges":0}}}
+```
+
 Expected response result shape:
 
 ```json
-{"tasks":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","goal":"Implement something","mode_id":"orchestrator","status":"Created","created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"progress_overview":{"source_fingerprint":"sha256:<64 hex chars>","aggregate_sequence":20260626000000,"task_count":1,"root_task_ids":["task_<uuid>"],"runnable_task_ids":["task_<uuid>"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[{"current_stage":"created","task_count":1}],"next_action_sets":[{"next_action":"run_task_explicitly","task_count":1,"task_ids":["task_<uuid>"]}],"blocked_sets":[],"nodes":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Created","lifecycle_phase":"created","current_stage":"created","next_action":"run_task_explicitly","parent_task_id":null,"parent_run_id":null,"child_task_count":0,"created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"edges":[]}}
+{"tasks":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","goal":"Implement something","mode_id":"orchestrator","status":"Created","created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"progress_overview":{"source_fingerprint":"sha256:<64 hex chars>","aggregate_sequence":20260626000000,"task_count":1,"runnable_count":1,"blocked_count":0,"terminal_count":0,"parent_join_ready_count":0,"root_task_ids":["task_<uuid>"],"runnable_task_ids":["task_<uuid>"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[{"current_stage":"created","task_count":1}],"next_action_sets":[{"next_action":"run_task_explicitly","task_count":1,"task_ids":["task_<uuid>"]}],"blocked_sets":[],"nodes":[{"task_id":"task_<uuid>","run_id":"run_<uuid>","status":"Created","lifecycle_phase":"created","current_stage":"created","next_action":"run_task_explicitly","parent_task_id":null,"parent_run_id":null,"child_task_count":0,"created_at":"2026-06-26T00:00:00Z","updated_at":"2026-06-26T00:00:00Z"}],"edges":[]}}
 ```
 
 The `progress_overview` is derived by Rust from persisted `TaskRecord` state,

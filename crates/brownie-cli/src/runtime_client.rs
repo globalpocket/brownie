@@ -34,6 +34,11 @@ const MAX_TEXT_FIELD_CHARS: usize = 256;
 const MAX_TASK_LIST_ROWS: usize = 10;
 const MAX_TASK_LIST_GROUP_ROWS: usize = 5;
 const MAX_HEADLESS_ROUTE_ROWS: usize = 5;
+const CLI_TASK_LIST_TRANSPORT_TASK_ROWS: usize = MAX_TASK_LIST_ROWS;
+const CLI_TASK_LIST_TRANSPORT_IDS: usize = 50;
+const CLI_TASK_LIST_TRANSPORT_GROUP_IDS: usize = 20;
+const CLI_RESUME_TRANSPORT_TASK_ROWS: usize = 8;
+const CLI_RESUME_TRANSPORT_ROUTE_CANDIDATES: usize = 8;
 const MAX_MODE_LIST_ROWS: usize = 12;
 const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
@@ -197,8 +202,11 @@ impl RuntimeClient {
     }
 
     fn runtime_resume(&self, json_output: bool) -> Result<String, RuntimeClientError> {
-        let task_list =
-            self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
+        let task_list = self.call_runtime_value(
+            TASK_LIST_METHOD,
+            Some(cli_resume_task_list_params()),
+            RuntimeRequestClass::ReadOnly,
+        )?;
         validate_task_list_result(&task_list)?;
         let result = if let Some(resume_params) = cli_resume_advance_params(&task_list)? {
             let result = self.call_runtime_value(
@@ -308,8 +316,11 @@ impl RuntimeClient {
     }
 
     fn runtime_task_list(&self, json_output: bool) -> Result<String, RuntimeClientError> {
-        let result =
-            self.call_runtime_value(TASK_LIST_METHOD, None, RuntimeRequestClass::ReadOnly)?;
+        let result = self.call_runtime_value(
+            TASK_LIST_METHOD,
+            Some(cli_task_list_params()),
+            RuntimeRequestClass::ReadOnly,
+        )?;
         validate_task_list_result(&result)?;
         if json_output {
             return json_result("list tasks", "task_list", task_list_payload(&result)?);
@@ -800,29 +811,35 @@ fn task_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     );
     payload.insert(
         "runnable_count".to_string(),
-        Value::Number(serde_json::Number::from(array_len(
+        Value::Number(serde_json::Number::from(display_usize_or(
             progress,
-            "runnable_task_ids",
+            "runnable_count",
+            array_len(progress, "runnable_task_ids")?,
         )?)),
     );
     payload.insert(
         "blocked_count".to_string(),
-        Value::Number(serde_json::Number::from(array_len(
+        Value::Number(serde_json::Number::from(display_usize_or(
             progress,
-            "blocked_task_ids",
+            "blocked_count",
+            array_len(progress, "blocked_task_ids")?,
         )?)),
     );
     payload.insert(
         "terminal_count".to_string(),
-        Value::Number(serde_json::Number::from(array_len(
+        Value::Number(serde_json::Number::from(display_usize_or(
             progress,
-            "terminal_task_ids",
+            "terminal_count",
+            array_len(progress, "terminal_task_ids")?,
         )?)),
     );
-    let parent_join_ready_count =
-        optional_array_field_checked(progress, "parent_join_ready_task_ids")?
-            .map(Vec::len)
-            .unwrap_or(0);
+    let parent_join_ready_ids =
+        optional_array_field_checked(progress, "parent_join_ready_task_ids")?;
+    let parent_join_ready_count = display_usize_or(
+        progress,
+        "parent_join_ready_count",
+        parent_join_ready_ids.map(Vec::len).unwrap_or(0),
+    )?;
     payload.insert(
         "parent_join_ready_count".to_string(),
         Value::Number(serde_json::Number::from(parent_join_ready_count)),
@@ -862,7 +879,7 @@ fn task_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     payload.insert(
         "truncated".to_string(),
         json!({
-            "tasks": tasks.len() > MAX_TASK_LIST_ROWS,
+            "tasks": display_usize_or(progress, "task_count", tasks.len())? > tasks.len() || tasks.len() > MAX_TASK_LIST_ROWS,
             "stage_counts": capped_array_len(progress, "stage_counts")? > MAX_TASK_LIST_GROUP_ROWS,
             "next_action_sets": capped_array_len(progress, "next_action_sets")? > MAX_TASK_LIST_GROUP_ROWS,
             "blocked_sets": capped_array_len(progress, "blocked_sets")? > MAX_TASK_LIST_GROUP_ROWS,
@@ -1726,6 +1743,36 @@ struct CliResumeRouteCandidate {
     aggregate_sequence: u64,
     task_created_at: String,
     task_updated_at: String,
+}
+
+fn cli_task_list_params() -> Value {
+    json!({
+        "bounds": {
+            "max_tasks": CLI_TASK_LIST_TRANSPORT_TASK_ROWS,
+            "max_task_goal_chars": 0,
+            "max_task_ids": CLI_TASK_LIST_TRANSPORT_IDS,
+            "max_groups": MAX_TASK_LIST_GROUP_ROWS,
+            "max_group_task_ids": CLI_TASK_LIST_TRANSPORT_GROUP_IDS,
+            "max_headless_route_candidates": MAX_HEADLESS_ROUTE_ROWS,
+            "max_nodes": 0,
+            "max_edges": 0
+        }
+    })
+}
+
+fn cli_resume_task_list_params() -> Value {
+    json!({
+        "bounds": {
+            "max_tasks": CLI_RESUME_TRANSPORT_TASK_ROWS,
+            "max_task_goal_chars": 0,
+            "max_task_ids": 0,
+            "max_groups": 0,
+            "max_group_task_ids": 0,
+            "max_headless_route_candidates": CLI_RESUME_TRANSPORT_ROUTE_CANDIDATES,
+            "max_nodes": 0,
+            "max_edges": 0
+        }
+    })
 }
 
 fn cli_resume_advance_params(task_list: &Value) -> Result<Option<Value>, RuntimeClientError> {
@@ -2872,13 +2919,28 @@ fn render_task_list(result: &Value) -> Result<String, RuntimeClientError> {
     let progress = object_field(result, "progress_overview")?;
 
     let task_count = display_usize_or(progress, "task_count", tasks.len())?;
-    let runnable_count = array_len(progress, "runnable_task_ids")?;
-    let blocked_count = array_len(progress, "blocked_task_ids")?;
-    let terminal_count = array_len(progress, "terminal_task_ids")?;
-    let parent_join_ready_count =
-        optional_array_field_checked(progress, "parent_join_ready_task_ids")?
-            .map(Vec::len)
-            .unwrap_or(0);
+    let runnable_count = display_usize_or(
+        progress,
+        "runnable_count",
+        array_len(progress, "runnable_task_ids")?,
+    )?;
+    let blocked_count = display_usize_or(
+        progress,
+        "blocked_count",
+        array_len(progress, "blocked_task_ids")?,
+    )?;
+    let terminal_count = display_usize_or(
+        progress,
+        "terminal_count",
+        array_len(progress, "terminal_task_ids")?,
+    )?;
+    let parent_join_ready_ids =
+        optional_array_field_checked(progress, "parent_join_ready_task_ids")?;
+    let parent_join_ready_count = display_usize_or(
+        progress,
+        "parent_join_ready_count",
+        parent_join_ready_ids.map(Vec::len).unwrap_or(0),
+    )?;
 
     let mut output = format!(
         "tasks {task_count}\n  runnable: {runnable_count}\n  blocked: {blocked_count}\n  terminal: {terminal_count}\n  parent_join_ready: {parent_join_ready_count}\n"

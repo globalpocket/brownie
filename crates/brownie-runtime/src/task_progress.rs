@@ -137,6 +137,10 @@ pub(super) fn task_list_progress_overview(
         source_fingerprint,
         aggregate_sequence,
         task_count: tasks.len(),
+        runnable_count: runnable_task_ids.len(),
+        blocked_count: blocked_task_ids.len(),
+        terminal_count: terminal_task_ids.len(),
+        parent_join_ready_count: parent_join_ready_task_ids.len(),
         root_task_ids,
         runnable_task_ids,
         blocked_task_ids,
@@ -293,6 +297,7 @@ pub(super) fn task_list_headless_route_candidates(
         left.priority
             .cmp(&right.priority)
             .then(left.kind_string().cmp(&right.kind_string()))
+            .then(left.session_id.is_none().cmp(&right.session_id.is_none()))
             .then(left.session_id.cmp(&right.session_id))
             .then(left.journey_id.cmp(&right.journey_id))
             .then(left.task_id.cmp(&right.task_id))
