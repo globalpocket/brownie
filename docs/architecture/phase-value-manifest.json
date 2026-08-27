@@ -1,39 +1,39 @@
 {
   "schema_version": 1,
-  "phase": "CLI-C1",
+  "phase": "CLI-C2",
   "current_milestone": "brownie_cli_corrective_completion",
   "milestone": "Brownie CLI Corrective Completion",
   "target_capability": "headless_autonomous_development",
-  "concrete_capability_transition": "Default brownie run objective execution moves from runtime provider-runner admission toward a runtime-owned development-capable journey: omitted mode is resolved by the Rust runtime to an existing development-capable Mode Pack, and ordinary development objectives can surface bounded objective proposal routes without CLI-owned mode policy.",
+  "concrete_capability_transition": "Headless run completion closure, accepted-completion lookup, and finalization owner selection move from workspace-global task history to the active runtime journey/session graph.",
   "forbidden_pattern": "develop_primary_command_cli_owned_agent_loop_cli_owned_mode_policy_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_completion_policy_cli_owned_workspace_mutation_duplicate_product_dod_policy_generic_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path_live_repo_local_state",
   "project_objective_ref": "docs/architecture/product-charter.md",
   "strategic_capability_mapping": [
     {
       "capability": "headless_autonomous_development",
-      "relationship": "Makes the official primary CLI objective path enter the Rust runtime's development-capable controlled workspace proposal flow without the CLI selecting implementer, orchestrator, or permission policy."
+      "relationship": "Allows repeated independent Brownie CLI journeys in one repository to complete and finalize the active journey graph rather than all historical workspace tasks."
     },
     {
-      "capability": "runtime_permission_enforcement",
-      "relationship": "Keeps mode resolution and workspace write authority inside the Rust runtime and existing AgentModes policy instead of moving that decision into the CLI."
+      "capability": "progress_visualization",
+      "relationship": "Makes runtime progress and completion views reflect the active journey scope instead of unrelated workspace history."
     },
     {
-      "capability": "controlled_workspace_tools",
-      "relationship": "Connects ordinary development objectives to the existing controlled replace_file proposal route while preserving explicit apply authorization and preflight boundaries."
+      "capability": "subtask_orchestration",
+      "relationship": "Includes typed descendants, recovery, retry, and continuation tasks connected to the active journey while excluding unrelated roots."
     }
   ],
   "phase_value_gate": {
     "required": true,
     "answers": {
-      "strategic_capabilities": "Advances headless_autonomous_development, runtime-enforced permissions, and controlled workspace tools.",
-      "new_capability": "An omitted-mode default development journey can now resolve to a development-capable runtime mode and produce one bounded valid pending replace_file proposal candidate for explicit authorization.",
-      "why_existing_functionality_is_insufficient": "Previous CLI evidence could complete a no-files-changed provider-runner path; that did not prove the primary command can enter Brownie's controlled workspace mutation loop.",
-      "product_gap_if_skipped": "CLI Product Completion would still be able to pass while the primary brownie run command avoids the core read, propose, apply, verify, and complete development capability.",
-      "non_duplicative": "CLI-C1 is not another invocation, resume, output, install, recovery, or pointer phase. It changes the runtime behavior behind default run admission and objective proposal routing.",
-      "no_new_rpc": "Yes. The current implementation uses existing headless.run.drive, headless.continue_once, proposal, apply, verification, and completion route concepts.",
-      "no_new_summary": "Yes. No report, readiness, digest, history, verdict, or inspection-only surface is added.",
-      "runtime_behavior_change": "Runtime behavior changes: omitted journey mode now resolves to implementer, and default journeys without objective_context can expose bounded objective proposal candidate evidence.",
-      "headless_autonomous_contribution": "The primary CLI command can enter a runtime-selected development route while remaining replay-safe through deterministic journey/task/run fingerprints.",
-      "milestone_progress": "Partially closes cli-primary-run-development-path; full closure still requires installed CLI/runtime evidence through apply, verification, objective completion acceptance, and finalization."
+      "strategic_capabilities": "Advances headless_autonomous_development, progress_visualization, and subtask_orchestration.",
+      "new_capability": "An active headless journey can derive terminal completion evidence, accepted completion, closure progress, and finalization owner from its scoped task graph even when other completed or failed roots exist in the same repository.",
+      "why_existing_functionality_is_insufficient": "Workspace-global completion could pick the latest unrelated completed task, require all repository tasks to be complete, or reject finalization because more than one root task existed.",
+      "product_gap_if_skipped": "CLI Product Completion would remain valid only in isolated repositories and could fail or finalize incorrectly during normal repeated CLI use.",
+      "non_duplicative": "CLI-C2 is not resume selection, output formatting, installation, or primary run development-path evidence. It changes terminal completion ownership inside the Rust runtime.",
+      "no_new_rpc": "Yes. The implementation uses existing headless.run.drive, completion acceptance, and finalization paths.",
+      "no_new_summary": "Yes. No report, readiness, digest, history, verdict, summary, or inspection-only surface is added.",
+      "runtime_behavior_change": "Runtime behavior changes by filtering completion closure inputs and finalization owner validation through the active journey root and typed descendants before timestamp ordering.",
+      "headless_autonomous_contribution": "Long-running autonomous repositories can complete multiple independent CLI journeys without stale historical tasks contaminating terminal closure.",
+      "milestone_progress": "Closes the cli-session-scoped-completion corrective blocker after PR review and merge; cli-real-timeout-resume-evidence remains open for CLI-C3."
     },
     "questions": [
       {
@@ -83,9 +83,9 @@
       "phase hard-codes implementer or orchestrator in the CLI",
       "phase makes develop the primary command",
       "phase moves mode policy, permissions, workspace mutation authority, replay, recovery, or completion policy into the CLI",
-      "phase only wraps existing results without changing default run development behavior",
+      "phase scopes by goal text, mode_id, timestamp proximity, id similarity, objective text, or same workspace alone",
       "phase adds a new RPC, generic JSON-RPC passthrough, report, readiness, history, digest, verdict, summary, or inspection-only surface",
-      "phase claims Product Completion while cli-session-scoped-completion or cli-real-timeout-resume-evidence remains open",
+      "phase claims Product Completion while cli-real-timeout-resume-evidence remains open",
       "phase exposes raw prompt, provider response, file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path"
     ]
   },
@@ -93,58 +93,38 @@
     "required": true,
     "strict_review_required": true,
     "no_self_approval": true,
-    "review_intent": "CLI-C1 updates the current phase manifest while preserving the prior CLI-10.1 guard-change history. Review must confirm the manifest describes real runtime behavior and does not weaken phase-value, diagnostics, control-plane authority, or product-completion guards.",
+    "review_intent": "CLI-C2 updates the current phase manifest to describe runtime-owned scoped completion behavior. It does not weaken phase-value, diagnostics, control-plane authority, or product-completion guards.",
     "changed_files": [
-      "scripts/guard-control-plane-authority.mjs",
-      "scripts/guard-control-plane-authority.test.mjs",
       "crates/brownie-runtime/src/headless_journey.rs",
-      "crates/brownie-runtime/src/objective_proposal.rs",
       "crates/brownie-runtime/src/lib.rs",
-      "docs/architecture/phase-value-manifest.json",
-      "docs/architecture/phase-value-manifest.cli-10.json",
-      "docs/architecture/phase-value-manifest.cli-10.1.json"
+      "docs/architecture/phase-value-manifest.json"
     ]
   },
   "exit_criteria": [
-    "Default headless.run.drive journey admission with omitted task_start.mode_id resolves to a runtime-owned development-capable mode and records bounded mode evidence.",
-    "Default development objective execution produces a bounded valid pending replace_file objective proposal candidate without mutating the file before explicit apply.",
-    "Installed brownie --json run from an ordinary repository proves controlled workspace mutation through runtime authority.",
-    "Installed run evidence reaches verification, AcceptedComplete, and finalized closure for the active run.",
-    "CLI request-shape tests prove brownie run sends no mode_id and owns no implementer/orchestrator policy.",
-    "CLI output and JSON remain bounded and sanitized.",
-    "CLI-C1 closes only cli-primary-run-development-path; cli-session-scoped-completion and cli-real-timeout-resume-evidence remain open."
+    "Active journey completion scope is derived in the Rust runtime from the journey checkpoint root plus typed task descendants and provenance-linked recovery/retry/continuation tasks.",
+    "headless.run.drive terminal completion evidence uses active journey scope before latest-completed timestamp ordering.",
+    "headless.run.drive accepted-completion lookup uses active journey scope before latest-completed timestamp ordering.",
+    "Completion closure progress uses active journey scope so unrelated roots do not block complete closure.",
+    "Completion finalization owner is selected from active journey scope rather than global root_task_ids.",
+    "Replay and duplicate-finalization idempotency remain intact.",
+    "CLI remains a thin caller and no new runtime RPC or report surface is added.",
+    "CLI-C2 closes only cli-session-scoped-completion; cli-real-timeout-resume-evidence remains open."
   ],
   "behavior_evidence": [
-    "cargo test -p brownie-runtime headless_run_drive_journey_admission_uses_runtime_default_for_omitted_mode proves omitted journey mode is resolved by runtime to implementer.",
-    "cargo test -p brownie-runtime headless_run_drive_omitted_mode_development_objective_routes_proposal_candidate proves an omitted-mode development objective surfaces a bounded replace_file proposal candidate and does not mutate before explicit apply.",
-    "cargo test -p brownie-runtime objective_proposal proves existing objective proposal authorization and apply route behavior remains intact.",
-    "cargo test -p brownie-runtime headless_run_drive_journey_admission_binds_objective_selected_context_and_replays proves explicit objective-context candidate replay remains compatible.",
-    "cargo test -p brownie-cli cli_run_params_are_fixed_headless_drive_without_mode_policy proves the CLI still omits mode_id.",
-    "Manual temp-repository runtime probe produced review_and_authorize_objective_proposal for Implement README update while README stayed unchanged before apply.",
-    "cargo test -p brownie-runtime headless_continue_applies_objective_proposal_after_authorization_preflight_and_replays proves runtime-owned objective verification and completion acceptance evidence projections are replay-safe.",
-    "cargo test -p brownie-cli cli_run_objective_proposal_preflight_params_use_runtime_route_evidence proves the thin CLI builds objective proposal authorization-preflight params from runtime route evidence without mode policy or replacement content.",
-    "cargo test -p brownie-cli proves existing CLI behavior remains compatible with the objective proposal preflight follower.",
-    "cargo test -p brownie-cli cli_run_objective_proposal_apply_params_use_runtime_preflight_and_inspect_evidence proves the thin CLI builds controlled apply continuation params from runtime preflight and proposal.inspect evidence without CLI mode policy.",
-    "cargo test -p brownie-cli proves the apply follower preserves existing CLI command behavior and bounded output contracts.",
-    "cargo test -p brownie-cli cli_run_objective_apply_verification_params_use_runtime_apply_evidence proves the thin CLI builds objective apply verification params from runtime apply route evidence without computing apply fingerprints or carrying replacement content.",
-    "cargo test -p brownie-cli proves the verification follower preserves existing CLI command behavior and bounded output contracts.",
-    "cargo test -p brownie-cli cli_run_objective_completion_acceptance_params_use_runtime_verification_evidence proves the thin CLI builds objective completion acceptance params from runtime verification evidence without CLI completion policy.",
-    "cargo test -p brownie-cli proves the objective completion acceptance follower preserves existing CLI command behavior and bounded output contracts.",
-    "cargo test -p brownie-cli cli_run_objective_completion_close_params_use_runtime_acceptance_evidence proves the thin CLI builds runtime-owned close and finalization drive params from objective acceptance evidence without duplicating finalization policy.",
-    "cargo test -p brownie-cli proves the objective close/finalization follower preserves existing CLI command behavior and bounded output contracts.",
-    "Manual installed E2E probe proved an installed brownie --json run from an ordinary temporary Git repository executes Implement README update through runtime-owned proposal preflight, controlled replace_file apply, verification, objective completion acceptance, and finalization while updating README.md to new README content.",
-    "cargo test -p brownie-cli installed_run_executes_primary_development_path_from_arbitrary_repository proves the installed CLI plus sibling runtime follows the primary development path from an arbitrary repository without BROWNIE_RUNTIME_PATH, BROWNIE_WORKSPACE_ROOT, repository path, or install prefix leakage."
+    "cargo test -p brownie-runtime headless_completion_scope_tasks_isolates_active_journey_root_from_unrelated_roots proves unrelated completed roots are excluded from active journey completion evidence.",
+    "cargo test -p brownie-runtime headless_latest_accepted_completion_uses_active_journey_scope_before_timestamp_ordering proves accepted-completion lookup scopes before selecting the latest completed task.",
+    "cargo test -p brownie-runtime headless_completion_finalization_uses_active_journey_scope_owner proves finalization owner selection uses active journey scope and replays without duplicate finalization events.",
+    "cargo test -p brownie-runtime completion_finalization proves existing global finalization checks still reject stale progress and conflicting owner checkpoints.",
+    "cargo test -p brownie-runtime proves existing runtime behavior remains compatible with scoped journey completion."
   ],
   "product_dod": {
     "closes": [],
     "leaves_open": [
-      "CLI-C1 PR review and merge",
-      "cli-session-scoped-completion",
+      "CLI-C2 PR review and merge",
       "cli-real-timeout-resume-evidence"
     ],
     "does_not_close": [
       "CLI Product Completion",
-      "cli-session-scoped-completion",
       "cli-real-timeout-resume-evidence",
       "cli-long-history-transport-bound assessment"
     ]
@@ -153,60 +133,59 @@
     {
       "id": "cli-primary-run-development-path",
       "classification": "required_before_release",
-      "status_after_phase": "open",
-      "evidence": "Runtime default admission, proposal candidate routing, installed CLI/runtime apply, verification, objective completion acceptance, and finalization evidence are implemented on the CLI-C1 branch; the debt remains open until PR review and merge."
+      "status_after_phase": "closed",
+      "evidence": "Resolved by merged PR #302 before CLI-C2."
     },
     {
       "id": "cli-session-scoped-completion",
       "classification": "required_before_release",
       "status_after_phase": "open",
-      "evidence": "Intentionally left for CLI-C2."
+      "evidence": "Runtime scoped completion implementation exists on the CLI-C2 branch and remains open until PR review, CI, and merge."
     },
     {
       "id": "cli-real-timeout-resume-evidence",
       "classification": "required_before_release",
       "status_after_phase": "open",
-      "evidence": "Intentionally left for CLI-C3."
+      "evidence": "Intentionally left for CLI-C3 after session-scoped completion lands."
     }
   ],
   "product_completion_gate": {
     "required": true,
     "product_completion_claim": false,
     "accepted_capability": [
-      "Default omitted-mode runtime development admission.",
-      "Default development objective proposal candidate routing without CLI-owned objective_context or mode policy.",
-      "Installed primary brownie run development path through controlled apply, verification, objective completion acceptance, and finalization."
+      "Runtime active journey completion scope derivation.",
+      "Scoped terminal completion evidence lookup.",
+      "Scoped accepted-completion lookup.",
+      "Scoped closure progress and finalization owner validation."
     ],
     "behavior_evidence": [
-      "Targeted runtime tests pass for omitted-mode implementer resolution and bounded proposal candidate routing.",
-      "Existing objective proposal authorization/apply tests pass.",
-      "CLI request-shape test proves no CLI mode_id is sent.",
-      "Installed CLI test and manual E2E prove brownie --json run updates an ordinary repository README through runtime-owned replace_file apply and finalization."
+      "Targeted runtime tests prove unrelated roots no longer contaminate completion evidence, accepted-completion lookup, or finalization owner selection.",
+      "Full brownie-runtime tests pass."
     ],
     "safety_boundary": [
-      "Rust runtime remains authority for mode resolution, permissions, controlled workspace tools, proposal/apply authorization, verification, replay, completion acceptance, and finalization.",
-      "CLI-C1 does not add develop, generic passthrough, new RPC, wrapper, report, readiness, history, digest, verdict, or inspection-only surface.",
+      "Rust runtime remains authority for completion closure, accepted completion, finalization owner, replay, and idempotency.",
+      "CLI-C2 does not add develop, generic passthrough, new RPC, wrapper, report, readiness, history, digest, verdict, or inspection-only surface.",
+      "Scope is derived from journey checkpoint identity, parent_run_id descendants, and typed runtime provenance rather than unsafe heuristics.",
       "No raw prompt, provider response, raw file content, full diff, stdout, stderr, command, environment value, secret, absolute path, or canonical path is exposed."
     ],
     "non_goals": [
       "No terminal Product Completion in this phase.",
-      "No broad multi-session completion scoping closure.",
       "No real timeout/process-loss resume evidence.",
-      "No long-history transport assessment."
+      "No long-history transport assessment.",
+      "No CLI-owned completion/finalization policy."
     ],
     "rejected_alternatives": [
-      "Rejected hard-coding implementer in CLI.",
-      "Rejected accepting provider-runner/no-files-changed completion as sufficient.",
-      "Rejected CLI ledger parsing to recover route evidence.",
-      "Rejected exposing raw proposal content through candidate routing."
+      "Rejected CLI-side task graph scanning or completion policy.",
+      "Rejected new scoped-completion RPC wrapper.",
+      "Rejected timestamp-only or objective-text scoping.",
+      "Rejected Product Completion before CLI-C3 timeout evidence."
     ],
     "technical_debt": [
-      "cli-primary-run-development-path remains open until the CLI-C1 PR is reviewed and merged.",
-      "cli-session-scoped-completion remains open.",
+      "cli-session-scoped-completion remains open until CLI-C2 PR review and merge.",
       "cli-real-timeout-resume-evidence remains open."
     ],
     "next_capability_rationale": [
-      "Continue CLI-C1 by running full validation, committing, pushing, and opening the PR for review."
+      "Open and review the CLI-C2 PR, then proceed to CLI-C3 real timeout/process-loss resume evidence after merge."
     ]
   }
 }

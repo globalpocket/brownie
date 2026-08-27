@@ -3706,11 +3706,23 @@ pub(super) fn handle_headless_run_drive(
                 Err(message) => return error_response(id, -32602, &message),
             }
         } else {
-            match headless_run_completion_finalization(
+            let replay_tasks = match store.tasks().list_tasks() {
+                Ok(tasks) => tasks,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            let completion_scope_tasks =
+                match headless_completion_scope_tasks(&replay_tasks, journey_checkpoint.as_ref()) {
+                    Ok(tasks) => tasks,
+                    Err(message) => return error_response(id, -32602, &message),
+                };
+            match headless_run_completion_finalization_with_scope(
                 &store,
                 &result,
                 params.authorize_completion_finalization.unwrap_or(false),
                 expected_closure_fingerprint,
+                completion_scope_tasks.as_deref(),
             ) {
                 Ok(finalization) => result.completion_finalization = finalization,
                 Err(message) => return error_response(id, -32602, &message),
@@ -3912,7 +3924,17 @@ pub(super) fn handle_headless_run_drive(
         Ok(tasks) => tasks,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    if let Err(message) = headless_latest_accepted_completed_task(&store, &preflight_tasks) {
+    let preflight_completion_scope_tasks =
+        match headless_completion_scope_tasks(&preflight_tasks, journey_checkpoint.as_ref()) {
+            Ok(tasks) => tasks,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    let preflight_completion_tasks = preflight_completion_scope_tasks
+        .as_deref()
+        .unwrap_or(&preflight_tasks);
+    if let Err(message) =
+        headless_latest_accepted_completed_task(&store, preflight_completion_tasks)
+    {
         return error_response(id, -32602, &message);
     }
     let journey_route_resume_plan = match headless_journey_route_resume_plan(
@@ -3957,12 +3979,18 @@ pub(super) fn handle_headless_run_drive(
             Ok(tasks) => tasks,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
-        let post_overview = match task_list_progress_overview(&store, &post_tasks) {
+        let completion_scope_tasks =
+            match headless_completion_scope_tasks(&post_tasks, Some(&plan.journey_checkpoint)) {
+                Ok(tasks) => tasks,
+                Err(message) => return error_response(id, -32602, &message),
+            };
+        let completion_tasks = completion_scope_tasks.as_deref().unwrap_or(&post_tasks);
+        let post_overview = match task_list_progress_overview(&store, completion_tasks) {
             Ok(progress) => progress,
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         };
         let terminal_completion_evidence =
-            match headless_latest_completed_task_completion_evidence(&store, &post_tasks) {
+            match headless_latest_completed_task_completion_evidence(&store, completion_tasks) {
                 Ok(evidence) => evidence,
                 Err(message) => {
                     return error_response(id, -32603, &format!("internal error: {message}"))
@@ -4017,11 +4045,12 @@ pub(super) fn handle_headless_run_drive(
             next_action: next_action.clone(),
         };
         let completion_finalization =
-            match headless_run_completion_finalization(
+            match headless_run_completion_finalization_with_scope(
                 &store,
                 &result_without_fingerprint,
                 true,
                 Some(&completion_closure.closure_fingerprint),
+                completion_scope_tasks.as_deref(),
             ) {
                 Ok(Some(finalization)) => Some(finalization),
                 Ok(None) => return error_response(
@@ -4290,18 +4319,33 @@ pub(super) fn handle_headless_run_drive(
         Ok(progress) => progress,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let completion_scope_tasks =
+        match headless_completion_scope_tasks(&post_tasks, journey_checkpoint.as_ref()) {
+            Ok(tasks) => tasks,
+            Err(message) => return error_response(id, -32602, &message),
+        };
+    let completion_tasks = completion_scope_tasks.as_deref().unwrap_or(&post_tasks);
+    let completion_overview = if completion_scope_tasks.is_some() {
+        match task_list_progress_overview(&store, completion_tasks) {
+            Ok(progress) => progress,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        }
+    } else {
+        post_overview.clone()
+    };
     let latest_terminal_completion_evidence =
-        match headless_latest_completed_task_completion_evidence(&store, &post_tasks) {
+        match headless_latest_completed_task_completion_evidence(&store, completion_tasks) {
             Ok(evidence) => evidence,
             Err(message) => {
                 return error_response(id, -32603, &format!("internal error: {message}"))
             }
         };
     let terminal_completion_evidence = latest_terminal_completion_evidence;
-    let accepted_completion = match headless_latest_accepted_completed_task(&store, &post_tasks) {
-        Ok(accepted_completion) => accepted_completion,
-        Err(message) => return error_response(id, -32602, &message),
-    };
+    let accepted_completion =
+        match headless_latest_accepted_completed_task(&store, completion_tasks) {
+            Ok(accepted_completion) => accepted_completion,
+            Err(message) => return error_response(id, -32602, &message),
+        };
     if let (Some(accepted), Some(evidence)) = (
         accepted_completion.as_ref(),
         terminal_completion_evidence.as_ref(),
@@ -4331,7 +4375,7 @@ pub(super) fn handle_headless_run_drive(
         if candidate.status == "ready_for_review" {
             next_route = Some(objective_proposal_candidate_route(
                 candidate,
-                &post_overview,
+                &completion_overview,
             ));
             next_action = "review_and_authorize_objective_proposal".to_string();
             stop_reason = "objective_proposal_candidate_ready".to_string();
@@ -4343,7 +4387,7 @@ pub(super) fn handle_headless_run_drive(
         next_route.as_ref(),
         &next_action,
         &terminal_completion_evidence,
-        &post_overview,
+        &completion_overview,
         advances.len() >= usize::from(max_advances),
     );
     let journey_route_resume_metadata = journey_route_resume_plan.as_ref().map(|plan| {
@@ -4388,11 +4432,12 @@ pub(super) fn handle_headless_run_drive(
         journey_execution: None,
         next_action: next_action.clone(),
     };
-    let completion_finalization = match headless_run_completion_finalization(
+    let completion_finalization = match headless_run_completion_finalization_with_scope(
         &store,
         &result_without_fingerprint,
         params.authorize_completion_finalization.unwrap_or(false),
         params.expected_completion_closure_fingerprint.as_deref(),
+        completion_scope_tasks.as_deref(),
     ) {
         Ok(finalization) => finalization,
         Err(message) => return error_response(id, -32602, &message),
@@ -4502,11 +4547,108 @@ pub(super) fn handle_headless_run_drive(
     result_response(id, json!(result))
 }
 
+fn headless_completion_scope_provenance_matches(
+    task: &TaskRecord,
+    allowed_task_ids: &BTreeSet<String>,
+    allowed_run_ids: &BTreeSet<String>,
+) -> bool {
+    if let Some(provenance) = task.verification_recovery_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    if let Some(provenance) = task.verification_recovery_retry_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id)
+            && allowed_task_ids.contains(&provenance.recovery_task_id)
+            && allowed_run_ids.contains(&provenance.recovery_run_id);
+    }
+    if let Some(provenance) = task.llm_provider_failure_retry_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    if let Some(provenance) = task.patch_apply_recovery_provenance.as_ref() {
+        return allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    if let Some(provenance) = task.product_continuation_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    if let Some(provenance) = task.product_objective_continuation_provenance.as_ref() {
+        return allowed_task_ids.contains(&provenance.source_task_id)
+            && allowed_run_ids.contains(&provenance.source_run_id);
+    }
+    false
+}
+
+pub(super) fn headless_completion_scope_tasks(
+    tasks: &[TaskRecord],
+    journey_checkpoint: Option<&HeadlessJourneyStartCheckpoint>,
+) -> Result<Option<Vec<TaskRecord>>, String> {
+    let Some(checkpoint) = journey_checkpoint else {
+        return Ok(None);
+    };
+    let Some(root) = tasks
+        .iter()
+        .find(|task| task.task_id == checkpoint.task_id && task.run_id == checkpoint.run_id)
+    else {
+        return Err(
+            "invalid params: active journey completion scope root task is missing".to_string(),
+        );
+    };
+
+    let mut allowed_task_ids = BTreeSet::from([root.task_id.clone()]);
+    let mut allowed_run_ids = BTreeSet::from([root.run_id.clone()]);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for task in tasks {
+            let direct_child = task
+                .parent_run_id
+                .as_ref()
+                .map(|parent_run_id| allowed_run_ids.contains(parent_run_id))
+                .unwrap_or(false);
+            let provenance_child = headless_completion_scope_provenance_matches(
+                task,
+                &allowed_task_ids,
+                &allowed_run_ids,
+            );
+            if (direct_child || provenance_child) && allowed_task_ids.insert(task.task_id.clone()) {
+                allowed_run_ids.insert(task.run_id.clone());
+                changed = true;
+            }
+        }
+    }
+
+    let scoped_tasks = tasks
+        .iter()
+        .filter(|task| allowed_task_ids.contains(&task.task_id))
+        .cloned()
+        .collect();
+    Ok(Some(scoped_tasks))
+}
+
+#[cfg(test)]
 pub(super) fn headless_run_completion_finalization(
     store: &BrownieStore,
     result: &HeadlessRunDriveResult,
     authorized: bool,
     expected_closure_fingerprint: Option<&str>,
+) -> Result<Option<HeadlessRunCompletionFinalization>, String> {
+    headless_run_completion_finalization_with_scope(
+        store,
+        result,
+        authorized,
+        expected_closure_fingerprint,
+        None,
+    )
+}
+
+pub(super) fn headless_run_completion_finalization_with_scope(
+    store: &BrownieStore,
+    result: &HeadlessRunDriveResult,
+    authorized: bool,
+    expected_closure_fingerprint: Option<&str>,
+    completion_scope_tasks: Option<&[TaskRecord]>,
 ) -> Result<Option<HeadlessRunCompletionFinalization>, String> {
     if result.completion_closure.status != HeadlessRunCompletionClosureStatus::Complete {
         if authorized {
@@ -4544,7 +4686,8 @@ pub(super) fn headless_run_completion_finalization(
         .read_headless_run_completion_finalization_checkpoint(&result.session_id, &result.drive_id)
         .map_err(|error| format!("failed to read completion finalization checkpoint: {error}"))?;
     if let Some(checkpoint) = existing {
-        let owner = headless_run_completion_finalization_owner(store, result)?;
+        let owner =
+            headless_run_completion_finalization_owner(store, result, completion_scope_tasks)?;
         if checkpoint.closure_fingerprint != result.completion_closure.closure_fingerprint {
             return Err(
                 "invalid params: persisted completion finalization conflicts with current closure"
@@ -4600,7 +4743,7 @@ pub(super) fn headless_run_completion_finalization(
                 .to_string(),
         );
     }
-    let owner = headless_run_completion_finalization_owner(store, result)?;
+    let owner = headless_run_completion_finalization_owner(store, result, completion_scope_tasks)?;
     let seed = json!({
         "version": "headless_completion_finalization_v1",
         "session_id": result.session_id,
@@ -4756,12 +4899,19 @@ pub(super) struct HeadlessRunCompletionFinalizationOwner {
 fn headless_run_completion_finalization_owner(
     store: &BrownieStore,
     result: &HeadlessRunDriveResult,
+    completion_scope_tasks: Option<&[TaskRecord]>,
 ) -> Result<HeadlessRunCompletionFinalizationOwner, String> {
-    let tasks = store
-        .tasks()
-        .list_tasks()
-        .map_err(|error| format!("invalid params: failed to read current tasks: {error}"))?;
-    let progress = task_list_progress_overview(store, &tasks)?;
+    let listed_tasks;
+    let tasks = match completion_scope_tasks {
+        Some(tasks) => tasks,
+        None => {
+            listed_tasks = store.tasks().list_tasks().map_err(|error| {
+                format!("invalid params: failed to read current tasks: {error}")
+            })?;
+            &listed_tasks
+        }
+    };
+    let progress = task_list_progress_overview(store, tasks)?;
     if progress.source_fingerprint != result.completion_closure.progress_fingerprint
         || progress.aggregate_sequence != result.completion_closure.aggregate_sequence
     {
@@ -4854,7 +5004,7 @@ pub(super) fn headless_latest_completed_task_completion_evidence(
     task_run_completion_evidence_for_record(store, record, false)
 }
 
-fn headless_latest_accepted_completed_task(
+pub(super) fn headless_latest_accepted_completed_task(
     store: &BrownieStore,
     tasks: &[TaskRecord],
 ) -> Result<Option<HeadlessRunAcceptedCompletion>, String> {
