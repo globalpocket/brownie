@@ -26054,6 +26054,7 @@ mod tests {
         repair_result.drive_id = repair_drive_id.to_string();
         repair_result.replayed = false;
         repair_result.drive_fingerprint = format!("sha256:{}", "2".repeat(64));
+        repair_result.objective_proposal_candidate = None;
         let repair_resume = repair_result
             .journey_route_resume
             .as_mut()
@@ -26075,9 +26076,10 @@ mod tests {
                 result: repair_result,
             })
             .expect("write repair checkpoint");
-        let repaired = parse_line(&repair_request.to_string())
+        let repaired_response = parse_line(&repair_request.to_string());
+        let repaired = repaired_response
             .result
-            .expect("repair replay result");
+            .unwrap_or_else(|| panic!("repair replay result: {:?}", repaired_response.error));
         assert_eq!(repaired["journey_route_resume"]["replayed"], true);
         let repaired_events = store
             .tasks()
