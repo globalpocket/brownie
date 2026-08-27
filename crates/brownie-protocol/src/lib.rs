@@ -3153,6 +3153,32 @@ pub struct RecoveryCycleBudgetOutcome {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListParams {
+    #[serde(default)]
+    pub bounds: Option<TaskListBounds>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct TaskListBounds {
+    #[serde(default)]
+    pub max_tasks: Option<usize>,
+    #[serde(default)]
+    pub max_task_goal_chars: Option<usize>,
+    #[serde(default)]
+    pub max_task_ids: Option<usize>,
+    #[serde(default)]
+    pub max_groups: Option<usize>,
+    #[serde(default)]
+    pub max_group_task_ids: Option<usize>,
+    #[serde(default)]
+    pub max_headless_route_candidates: Option<usize>,
+    #[serde(default)]
+    pub max_nodes: Option<usize>,
+    #[serde(default)]
+    pub max_edges: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct TaskListResult {
     pub tasks: Vec<TaskRecord>,
     pub progress_overview: TaskListProgressOverview,
@@ -3163,6 +3189,14 @@ pub struct TaskListProgressOverview {
     pub source_fingerprint: String,
     pub aggregate_sequence: u64,
     pub task_count: usize,
+    #[serde(default)]
+    pub runnable_count: usize,
+    #[serde(default)]
+    pub blocked_count: usize,
+    #[serde(default)]
+    pub terminal_count: usize,
+    #[serde(default)]
+    pub parent_join_ready_count: usize,
     pub root_task_ids: Vec<String>,
     pub runnable_task_ids: Vec<String>,
     pub blocked_task_ids: Vec<String>,

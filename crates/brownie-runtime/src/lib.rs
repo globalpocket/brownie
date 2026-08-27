@@ -177,19 +177,19 @@ use brownie_protocol::{
     RunInspectParams, RunInspectParentJoinReadinessSummary, RunInspectResult, RunInspectSummary,
     RuntimeActionName, RuntimeConfigGetResult, RuntimeDiagnostic, RuntimeDiagnosticsResult,
     RuntimeState, RuntimeStatus, TaskGetParams, TaskInspectParams, TaskInspectResult,
-    TaskListHeadlessRouteCandidate, TaskListProgressBlockedSet, TaskListProgressNextActionSet,
-    TaskListProgressOverview, TaskListProgressStageCount, TaskListResult, TaskProgressGraphEdge,
-    TaskProgressGraphNode, TaskRecord, TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome,
-    TaskRunCompletionAcceptance, TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence,
-    TaskRunContextBudget, TaskRunContextBudgetSummary, TaskRunParams,
-    TaskRunParentJoinReadinessOutcome, TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult,
-    TaskRunSelectedIndexContext, TaskRunSelectedIndexPromptContextSummary,
-    TaskRunVerificationCompletionGate, TaskRunVerificationRecoveryContextRead,
-    TaskRunVerificationRecoveryContextReadSummary, TaskRunVerificationRecoveryRepairOutcome,
-    TaskRunVerificationRecoveryRetryOutcome, TaskStartParams, TaskStartResult, TaskStatus,
-    TaskStatusCounts, TechnicalDebtCarryForward, TechnicalDebtCarryForwardItem,
-    TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult, ToolExecuteStatus,
-    ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
+    TaskListBounds, TaskListHeadlessRouteCandidate, TaskListParams, TaskListProgressBlockedSet,
+    TaskListProgressNextActionSet, TaskListProgressOverview, TaskListProgressStageCount,
+    TaskListResult, TaskProgressGraphEdge, TaskProgressGraphNode, TaskRecord,
+    TaskRunAgentLoopSummary, TaskRunChildOrchestrationOutcome, TaskRunCompletionAcceptance,
+    TaskRunCompletionAcceptanceRequest, TaskRunCompletionEvidence, TaskRunContextBudget,
+    TaskRunContextBudgetSummary, TaskRunParams, TaskRunParentJoinReadinessOutcome,
+    TaskRunPatchApplyRecoveryRepairOutcome, TaskRunResult, TaskRunSelectedIndexContext,
+    TaskRunSelectedIndexPromptContextSummary, TaskRunVerificationCompletionGate,
+    TaskRunVerificationRecoveryContextRead, TaskRunVerificationRecoveryContextReadSummary,
+    TaskRunVerificationRecoveryRepairOutcome, TaskRunVerificationRecoveryRetryOutcome,
+    TaskStartParams, TaskStartResult, TaskStatus, TaskStatusCounts, TechnicalDebtCarryForward,
+    TechnicalDebtCarryForwardItem, TechnicalDebtTransition, ToolExecuteParams, ToolExecuteResult,
+    ToolExecuteStatus, ToolIntentDecisionSummary, ToolIntentInputSummary, ToolIntentParseParams,
     ToolIntentParseResult, ToolIntentParserConfigSummary, ToolIntentParserSummary,
     ToolIntentRejectedSummary, ToolListResult, ToolPlanDecisionSummary, ToolPlanParams,
     ToolPlanResult, ToolSummary, VerificationRecoveryAdmission, VerificationRecoveryApplyTarget,
@@ -570,6 +570,14 @@ const CHILD_FAILURE_SUMMARY_PREVIEW_CHARS: usize = 512;
 const LLM_FAILURE_REASON_PREVIEW_CHARS: usize = 1024;
 const MAX_PARENT_JOIN_CHILD_CONTEXT_SUMMARIES: usize = 12;
 const MAX_RECOVERY_CYCLE_DEPTH: usize = 2;
+const MAX_TASK_LIST_TRANSPORT_TASKS: usize = 200;
+const MAX_TASK_LIST_TRANSPORT_GOAL_CHARS: usize = 512;
+const MAX_TASK_LIST_TRANSPORT_IDS: usize = 500;
+const MAX_TASK_LIST_TRANSPORT_GROUPS: usize = 50;
+const MAX_TASK_LIST_TRANSPORT_GROUP_IDS: usize = 100;
+const MAX_TASK_LIST_TRANSPORT_ROUTE_CANDIDATES: usize = 50;
+const MAX_TASK_LIST_TRANSPORT_NODES: usize = 200;
+const MAX_TASK_LIST_TRANSPORT_EDGES: usize = 400;
 
 pub fn runtime_status() -> RuntimeStatus {
     RuntimeStatus {
@@ -608,7 +616,7 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_TASK_GET => handle_task_get(request.id, request.params),
         METHOD_TASK_RUN => handle_task_run(request.id, request.params),
         METHOD_TASK_INSPECT => handle_task_inspect(request.id, request.params),
-        METHOD_TASK_LIST => handle_task_list(request.id),
+        METHOD_TASK_LIST => handle_task_list(request.id, request.params),
         METHOD_HEADLESS_CONTINUE_ONCE => handle_headless_continue_once(request.id, request.params),
         METHOD_HEADLESS_RUN_ADVANCE => handle_headless_run_advance(request.id, request.params),
         METHOD_HEADLESS_RUN_DRIVE => handle_headless_run_drive(request.id, request.params),
@@ -5132,7 +5140,14 @@ fn handle_task_inspect(id: Value, params: Option<Value>) -> JsonRpcResponse<Valu
     }
 }
 
-fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
+fn handle_task_list(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
+    let params = match params {
+        Some(params) => match serde_json::from_value::<TaskListParams>(params) {
+            Ok(params) => Some(params),
+            Err(error) => return error_response(id, -32602, &format!("invalid params: {error}")),
+        },
+        None => None,
+    };
     let store = match BrownieStore::from_env_or_cwd() {
         Ok(store) => store,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
@@ -5146,16 +5161,160 @@ fn handle_task_list(id: Value) -> JsonRpcResponse<Value> {
                     return error_response(id, -32603, &format!("internal error: {message}"))
                 }
             };
-            result_response(
-                id,
-                json!(TaskListResult {
-                    tasks,
-                    progress_overview
-                }),
-            )
+            let mut result = TaskListResult {
+                tasks,
+                progress_overview,
+            };
+            apply_task_list_transport_bounds(
+                &mut result,
+                params.as_ref().and_then(|p| p.bounds.as_ref()),
+            );
+            result_response(id, json!(result))
         }
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn apply_task_list_transport_bounds(result: &mut TaskListResult, bounds: Option<&TaskListBounds>) {
+    let Some(bounds) = bounds else {
+        return;
+    };
+
+    truncate_to_bound(
+        &mut result.progress_overview.headless_route_candidates,
+        bounds.max_headless_route_candidates,
+        MAX_TASK_LIST_TRANSPORT_ROUTE_CANDIDATES,
+    );
+    truncate_task_rows_preserving_route_candidates(
+        &mut result.tasks,
+        &result.progress_overview.headless_route_candidates,
+        bounds.max_tasks,
+        MAX_TASK_LIST_TRANSPORT_TASKS,
+    );
+    truncate_task_goal_fields(
+        &mut result.tasks,
+        bounds.max_task_goal_chars,
+        MAX_TASK_LIST_TRANSPORT_GOAL_CHARS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.root_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.runnable_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.blocked_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.terminal_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.parent_join_ready_task_ids,
+        bounds.max_task_ids,
+        MAX_TASK_LIST_TRANSPORT_IDS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.stage_counts,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.next_action_sets,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    for set in &mut result.progress_overview.next_action_sets {
+        truncate_to_bound(
+            &mut set.task_ids,
+            bounds.max_group_task_ids,
+            MAX_TASK_LIST_TRANSPORT_GROUP_IDS,
+        );
+    }
+    truncate_to_bound(
+        &mut result.progress_overview.blocked_sets,
+        bounds.max_groups,
+        MAX_TASK_LIST_TRANSPORT_GROUPS,
+    );
+    for set in &mut result.progress_overview.blocked_sets {
+        truncate_to_bound(
+            &mut set.task_ids,
+            bounds.max_group_task_ids,
+            MAX_TASK_LIST_TRANSPORT_GROUP_IDS,
+        );
+    }
+    truncate_to_bound(
+        &mut result.progress_overview.nodes,
+        bounds.max_nodes,
+        MAX_TASK_LIST_TRANSPORT_NODES,
+    );
+    truncate_to_bound(
+        &mut result.progress_overview.edges,
+        bounds.max_edges,
+        MAX_TASK_LIST_TRANSPORT_EDGES,
+    );
+}
+
+fn truncate_to_bound<T>(items: &mut Vec<T>, requested: Option<usize>, ceiling: usize) {
+    if let Some(requested) = requested {
+        items.truncate(requested.min(ceiling));
+    }
+}
+
+fn truncate_task_goal_fields(tasks: &mut [TaskRecord], requested: Option<usize>, ceiling: usize) {
+    let Some(requested) = requested else {
+        return;
+    };
+    let limit = requested.min(ceiling);
+    for task in tasks {
+        task.goal = task.goal.chars().take(limit).collect();
+    }
+}
+
+fn truncate_task_rows_preserving_route_candidates(
+    tasks: &mut Vec<TaskRecord>,
+    route_candidates: &[TaskListHeadlessRouteCandidate],
+    requested: Option<usize>,
+    ceiling: usize,
+) {
+    let Some(requested) = requested else {
+        return;
+    };
+    let limit = requested.min(ceiling);
+    if tasks.len() <= limit {
+        return;
+    }
+
+    let mut candidate_keys = std::collections::BTreeSet::new();
+    for candidate in route_candidates {
+        if let (Some(task_id), Some(run_id)) = (&candidate.task_id, &candidate.run_id) {
+            candidate_keys.insert((task_id.clone(), run_id.clone()));
+        }
+    }
+    if candidate_keys.is_empty() {
+        tasks.truncate(limit);
+        return;
+    }
+
+    let mut selected = Vec::new();
+    let mut remaining = Vec::new();
+    for task in std::mem::take(tasks) {
+        if candidate_keys.contains(&(task.task_id.clone(), task.run_id.clone())) {
+            selected.push(task);
+        } else {
+            remaining.push(task);
+        }
+    }
+    selected.extend(remaining);
+    selected.truncate(limit);
+    *tasks = selected;
 }
 
 fn append_headless_run_completion_finalized_event(
@@ -19878,6 +20037,73 @@ mod tests {
     }
 
     #[test]
+    fn task_list_accepts_runtime_owned_transport_bounds_without_breaking_no_param_compatibility() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        for index in 0..12 {
+            store
+                .tasks()
+                .start_task(TaskStartParams {
+                    goal: format!("Bounded transport task {index} {}", "x".repeat(64)),
+                    mode_id: Some("orchestrator".to_string()),
+                    verification_recovery_source: None,
+                    patch_apply_recovery_source: None,
+                    verification_recovery_retry_source: None,
+                    llm_provider_failure_retry_source: None,
+                    product_continuation_source: None,
+                })
+                .expect("start task");
+        }
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let unbounded = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"task.list"}"#)
+            .result
+            .expect("unbounded result");
+        assert_eq!(unbounded["tasks"].as_array().expect("tasks").len(), 12);
+        assert_eq!(unbounded["progress_overview"]["task_count"], 12);
+        assert_eq!(unbounded["progress_overview"]["runnable_count"], 12);
+
+        let bounded = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.list","params":{"bounds":{"max_tasks":3,"max_task_goal_chars":8,"max_task_ids":2,"max_groups":1,"max_group_task_ids":1,"max_headless_route_candidates":1,"max_nodes":0,"max_edges":0}}}"#,
+        )
+        .result
+        .expect("bounded result");
+        let progress = &bounded["progress_overview"];
+        assert_eq!(bounded["tasks"].as_array().expect("bounded tasks").len(), 3);
+        assert_eq!(
+            bounded["tasks"][0]["goal"].as_str().expect("bounded goal"),
+            "Bounded "
+        );
+        assert_eq!(progress["task_count"], 12);
+        assert_eq!(progress["runnable_count"], 12);
+        assert_eq!(
+            progress["runnable_task_ids"]
+                .as_array()
+                .expect("bounded runnable ids")
+                .len(),
+            2
+        );
+        assert_eq!(
+            progress["next_action_sets"]
+                .as_array()
+                .expect("bounded next action sets")
+                .len(),
+            1
+        );
+        assert_eq!(
+            progress["nodes"].as_array().expect("bounded nodes").len(),
+            0
+        );
+        assert_eq!(
+            progress["edges"].as_array().expect("bounded edges").len(),
+            0
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn headless_continue_once_runs_one_created_task_from_expected_progress_state() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -22485,6 +22711,10 @@ mod tests {
             source_fingerprint: format!("sha256:{}", "a".repeat(64)),
             aggregate_sequence: 7,
             task_count: 1,
+            runnable_count: 0,
+            blocked_count: 0,
+            terminal_count: 1,
+            parent_join_ready_count: 0,
             root_task_ids: vec!["task_done".to_string()],
             runnable_task_ids: Vec::new(),
             blocked_task_ids: Vec::new(),
@@ -22537,6 +22767,10 @@ mod tests {
             source_fingerprint: format!("sha256:{}", "a".repeat(64)),
             aggregate_sequence: 8,
             task_count: 1,
+            runnable_count: 0,
+            blocked_count: 0,
+            terminal_count: 1,
+            parent_join_ready_count: 0,
             root_task_ids: vec!["task_done".to_string()],
             runnable_task_ids: Vec::new(),
             blocked_task_ids: Vec::new(),
@@ -22683,6 +22917,10 @@ mod tests {
             source_fingerprint: format!("sha256:{}", "a".repeat(64)),
             aggregate_sequence: 9,
             task_count: 1,
+            runnable_count: 0,
+            blocked_count: 0,
+            terminal_count: 1,
+            parent_join_ready_count: 0,
             root_task_ids: vec!["task_failed".to_string()],
             runnable_task_ids: Vec::new(),
             blocked_task_ids: Vec::new(),

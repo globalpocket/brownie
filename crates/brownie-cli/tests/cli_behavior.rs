@@ -564,7 +564,21 @@ fn list_tasks_invokes_fixed_runtime_method_and_prints_progress_counts() {
     let request = fs::read_to_string(capture).unwrap();
     let request: serde_json::Value = serde_json::from_str(&request).unwrap();
     assert_eq!(request["method"], "task.list");
-    assert!(request.get("params").is_none());
+    assert_eq!(
+        request["params"],
+        serde_json::json!({
+            "bounds": {
+                "max_tasks": 10,
+                "max_task_goal_chars": 0,
+                "max_task_ids": 50,
+                "max_groups": 5,
+                "max_group_task_ids": 20,
+                "max_headless_route_candidates": 5,
+                "max_nodes": 0,
+                "max_edges": 0
+            }
+        })
+    );
 }
 
 #[test]
@@ -1354,7 +1368,21 @@ fn resume_invokes_task_list_then_headless_continue_once_and_prints_bounded_human
         .collect();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["method"], "task.list");
-    assert!(requests[0].get("params").is_none());
+    assert_eq!(
+        requests[0]["params"],
+        serde_json::json!({
+            "bounds": {
+                "max_tasks": 8,
+                "max_task_goal_chars": 0,
+                "max_task_ids": 0,
+                "max_groups": 0,
+                "max_group_task_ids": 0,
+                "max_headless_route_candidates": 8,
+                "max_nodes": 0,
+                "max_edges": 0
+            }
+        })
+    );
     assert_eq!(requests[1]["method"], "headless.continue_once");
     assert_eq!(requests[1]["params"]["authorize"], true);
     assert_eq!(
@@ -2108,6 +2136,204 @@ fn installed_timeout_resume_continues_exact_persisted_cli_journey_without_duplic
 }
 
 #[test]
+fn installed_long_history_list_and_resume_use_bounded_task_list_transport() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-long-history");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-long-history-repo");
+    let objective = "Implement README update";
+    let filler_suffix = "x".repeat(900);
+    let mut unrelated_task_ids = Vec::new();
+
+    for index in 0..24 {
+        let started = invoke_runtime_json(
+            &runtime,
+            &repository,
+            &serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": index + 1,
+                "method": "task.start",
+                "params": {
+                    "goal": format!("Long history filler task {index}: {filler_suffix}"),
+                    "mode_id": "implementer"
+                }
+            }),
+            &[],
+        );
+        assert!(
+            started.get("error").is_none(),
+            "filler task admission should succeed: {started}"
+        );
+        unrelated_task_ids.push(started["result"]["task_id"].as_str().unwrap().to_string());
+    }
+
+    let raw_unbounded = invoke_runtime_stdout(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":100,"method":"task.list"}),
+        &[],
+    );
+    assert!(
+        raw_unbounded.len() > 16 * 1024,
+        "fixture must exceed the old CLI transport cap, got {} bytes",
+        raw_unbounded.len()
+    );
+
+    let human_list = Command::new(&installed)
+        .args(["list", "tasks"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+    assert!(
+        human_list.status.success(),
+        "bounded human list failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+        human_list.status.code(),
+        String::from_utf8_lossy(&human_list.stdout),
+        String::from_utf8_lossy(&human_list.stderr)
+    );
+    assert!(human_list.stderr.is_empty());
+    let human_stdout = String::from_utf8(human_list.stdout).unwrap();
+    assert!(human_stdout.contains("tasks 24"));
+    assert!(!human_stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!human_stdout.contains(prefix.to_string_lossy().as_ref()));
+
+    let json_list = Command::new(&installed)
+        .args(["--json", "list", "tasks"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+    assert!(json_list.status.success());
+    assert!(json_list.stderr.is_empty());
+    let json_stdout = String::from_utf8(json_list.stdout).unwrap();
+    let list_payload: serde_json::Value = serde_json::from_str(&json_stdout).unwrap();
+    assert_eq!(list_payload["ok"], true);
+    assert_eq!(list_payload["task_list"]["task_count"], 24);
+    assert_eq!(list_payload["task_list"]["runnable_count"], 24);
+    assert_eq!(
+        list_payload["task_list"]["tasks"].as_array().unwrap().len(),
+        10
+    );
+    assert_eq!(list_payload["task_list"]["truncated"]["tasks"], true);
+    assert!(!json_stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!json_stdout.contains(prefix.to_string_lossy().as_ref()));
+
+    let timed_out = Command::new(&installed)
+        .args(["--json", "run", objective])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "2000")
+        .env(
+            "BROWNIE_TEST_SLEEP_AFTER_HEADLESS_JOURNEY_STARTED_MS",
+            "5000",
+        )
+        .output()
+        .unwrap();
+    assert!(!timed_out.status.success());
+    assert_eq!(timed_out.status.code(), Some(70));
+    assert!(timed_out.stderr.is_empty());
+
+    let raw_after_timeout = invoke_runtime_stdout(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":101,"method":"task.list"}),
+        &[],
+    );
+    assert!(
+        raw_after_timeout.len() > 16 * 1024,
+        "post-timeout task.list should still exceed the old cap, got {} bytes",
+        raw_after_timeout.len()
+    );
+    let tasks_after_timeout: serde_json::Value = serde_json::from_str(
+        raw_after_timeout
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(""),
+    )
+    .unwrap();
+    let timed_out_task = single_task_by_goal(&tasks_after_timeout, objective);
+    assert_eq!(timed_out_task["status"], "Created");
+    let timed_out_task_id = timed_out_task["task_id"].as_str().unwrap().to_string();
+    assert!(
+        !unrelated_task_ids.contains(&timed_out_task_id),
+        "timed-out CLI journey must be distinct from unrelated long-history tasks"
+    );
+
+    let resumed = Command::new(&installed)
+        .args(["--json", "resume"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "30000")
+        .output()
+        .unwrap();
+    assert!(
+        resumed.status.success(),
+        "bounded resume failed with status {:?}\nstdout:\n{}\nstderr:\n{}",
+        resumed.status.code(),
+        String::from_utf8_lossy(&resumed.stdout),
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    assert!(resumed.stderr.is_empty());
+    let resume_stdout = String::from_utf8(resumed.stdout).unwrap();
+    let resume_payload: serde_json::Value = serde_json::from_str(&resume_stdout).unwrap();
+    assert_eq!(resume_payload["ok"], true);
+    assert_eq!(resume_payload["command"], "resume");
+    assert_eq!(resume_payload["resume"]["status"], "no_eligible_task");
+    assert_eq!(resume_payload["resume"]["candidate_count"], 1);
+    assert_eq!(
+        resume_payload["resume"]["selected_task_id"],
+        timed_out_task_id
+    );
+    assert_eq!(
+        resume_payload["resume"]["completion_closure_status"],
+        "complete"
+    );
+    assert_eq!(
+        resume_payload["resume"]["completion_finalization_status"],
+        "finalized"
+    );
+    assert!(!resume_stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!resume_stdout.contains(prefix.to_string_lossy().as_ref()));
+
+    let tasks_after_resume = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":102,"method":"task.list"}),
+        &[],
+    );
+    let resumed_task = single_task_by_goal(&tasks_after_resume, objective);
+    assert_eq!(resumed_task["task_id"], timed_out_task_id);
+    assert_eq!(resumed_task["status"], "Completed");
+    assert_eq!(
+        tasks_after_resume["result"]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|task| task["status"] == "Created"
+                && unrelated_task_ids
+                    .iter()
+                    .any(|task_id| task["task_id"].as_str() == Some(task_id.as_str())))
+            .count(),
+        unrelated_task_ids.len()
+    );
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
 fn installed_resume_keeps_runtime_created_recovery_inside_cli_scope() {
     let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-resume-recovery");
     let runtime = installed_runtime_from_prefix(&prefix);
@@ -2364,6 +2590,22 @@ fn invoke_runtime_json(
     request: &serde_json::Value,
     envs: &[(&str, &str)],
 ) -> serde_json::Value {
+    let stdout = invoke_runtime_stdout(runtime, current_dir, request, envs);
+    serde_json::from_str(
+        stdout
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or(""),
+    )
+    .expect("runtime json response")
+}
+
+fn invoke_runtime_stdout(
+    runtime: &Path,
+    current_dir: &Path,
+    request: &serde_json::Value,
+    envs: &[(&str, &str)],
+) -> String {
     let mut child = Command::new(runtime)
         .current_dir(current_dir)
         .stdin(Stdio::piped())
@@ -2389,14 +2631,7 @@ fn invoke_runtime_json(
         "runtime stderr should stay empty: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8(output.stdout).expect("runtime stdout utf8");
-    serde_json::from_str(
-        stdout
-            .lines()
-            .find(|line| !line.trim().is_empty())
-            .unwrap_or(""),
-    )
-    .expect("runtime json response")
+    String::from_utf8(output.stdout).expect("runtime stdout utf8")
 }
 
 fn single_task_by_goal<'a>(tasks: &'a serde_json::Value, goal: &str) -> &'a serde_json::Value {
