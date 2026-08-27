@@ -2286,6 +2286,10 @@ pub struct HeadlessContinueOnceResult {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_proposal_authorization_preflight_result:
         Option<HeadlessRunObjectiveProposalAuthorizationPreflight>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_apply_verification_result: Option<HeadlessRunObjectiveApplyVerification>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub objective_completion_acceptance_result: Option<HeadlessRunObjectiveCompletionAcceptance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub llm_provider_failure_retry_admission: Option<LlmProviderFailureRetryAdmission>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2464,6 +2468,49 @@ pub struct HeadlessRunObjectiveProposalAuthorizationPreflight {
     pub preflight_snapshot: WorkspacePatchPreflightSnapshotSummary,
     pub apply_plan: WorkspacePatchApplyPlanSummary,
     pub authorization_preflight_fingerprint: String,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunObjectiveApplyVerification {
+    pub verification_status: String,
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub proposal_id: String,
+    pub apply_id: String,
+    pub operation: String,
+    pub path_fingerprint: String,
+    pub apply_fingerprint: String,
+    pub expected_post_write_sha256: String,
+    pub current_target_sha256: String,
+    pub verification_fingerprint: String,
+    pub route_kind: HeadlessContinueRouteKind,
+    pub replayed: bool,
+    pub next_action: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunObjectiveCompletionAcceptance {
+    pub acceptance_status: String,
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub session_id: String,
+    pub source_drive_id: String,
+    pub proposal_id: String,
+    pub apply_id: String,
+    pub operation: String,
+    pub path_fingerprint: String,
+    pub apply_fingerprint: String,
+    pub expected_post_write_sha256: String,
+    pub current_target_sha256: String,
+    pub verification_status: String,
+    pub verification_fingerprint: String,
+    pub acceptance_fingerprint: String,
     pub replayed: bool,
     pub next_action: String,
 }

@@ -124,6 +124,31 @@ fn validate_objective_apply_verification_replay_request(
     }
 }
 
+fn objective_apply_verification_result_from_checkpoint(
+    checkpoint: &HeadlessObjectiveApplyVerificationCheckpoint,
+    replayed: bool,
+) -> HeadlessRunObjectiveApplyVerification {
+    HeadlessRunObjectiveApplyVerification {
+        verification_status: checkpoint.verification_status.clone(),
+        journey_id: checkpoint.journey_id.clone(),
+        task_id: checkpoint.task_id.clone(),
+        run_id: checkpoint.run_id.clone(),
+        session_id: checkpoint.session_id.clone(),
+        source_drive_id: checkpoint.source_drive_id.clone(),
+        proposal_id: checkpoint.proposal_id.clone(),
+        apply_id: checkpoint.apply_id.clone(),
+        operation: WorkspacePatchOperation::ReplaceFile.as_str().to_string(),
+        path_fingerprint: checkpoint.expected_path_fingerprint.clone(),
+        apply_fingerprint: checkpoint.expected_apply_fingerprint.clone(),
+        expected_post_write_sha256: checkpoint.expected_post_write_sha256.clone(),
+        current_target_sha256: checkpoint.current_target_sha256.clone(),
+        verification_fingerprint: checkpoint.request_fingerprint.clone().unwrap_or_default(),
+        route_kind: checkpoint.route_kind.clone(),
+        replayed,
+        next_action: checkpoint.next_action.clone(),
+    }
+}
+
 fn validate_objective_apply_verification_route(
     store: &BrownieStore,
     target: &ObjectiveApplyVerificationTarget,
@@ -217,6 +242,8 @@ pub(super) fn headless_continue_objective_apply_verification_replay_result(
         next_action: checkpoint.next_action.clone(),
     };
     let next_action = next_route.next_action.clone();
+    let verification_result =
+        objective_apply_verification_result_from_checkpoint(&checkpoint, true);
     result_response(
         id,
         json!(HeadlessContinueOnceResult {
@@ -237,6 +264,8 @@ pub(super) fn headless_continue_objective_apply_verification_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
+            objective_apply_verification_result: Some(verification_result),
+            objective_completion_acceptance_result: None,
             llm_provider_failure_retry_admission: None,
             product_continuation_admission: None,
             modepack_select_registry_update_result: None,
@@ -353,39 +382,38 @@ fn headless_continue_objective_apply_verification(
         .list_tasks()
         .map_err(|error| error.to_string())?;
     let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    let verification_checkpoint = HeadlessObjectiveApplyVerificationCheckpoint {
+        continuation_id: continuation_id.clone(),
+        decision_id: decision_id.clone(),
+        request_fingerprint: Some(request_fingerprint),
+        objective_apply_continuation_id: target.objective_apply_continuation_id.clone(),
+        expected_objective_apply_decision_id: target.expected_objective_apply_decision_id.clone(),
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+        post_aggregate_sequence: post_progress.aggregate_sequence,
+        journey_id: target.journey_id.clone(),
+        session_id: target.session_id.clone(),
+        source_drive_id: target.source_drive_id.clone(),
+        task_id: target.expected_task_id.clone(),
+        run_id: target.expected_run_id.clone(),
+        proposal_id: target.expected_proposal_id.clone(),
+        apply_id: target.expected_apply_id.clone(),
+        expected_path_fingerprint: target.expected_path_fingerprint.clone(),
+        expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
+        expected_post_write_sha256: target.expected_post_write_sha256.clone(),
+        current_target_sha256: current_target_sha256.clone(),
+        verification_status: verification_status.to_string(),
+        route_kind: route_kind.clone(),
+        next_action: next_action.to_string(),
+    };
     store
-        .write_headless_objective_apply_verification_checkpoint(
-            &HeadlessObjectiveApplyVerificationCheckpoint {
-                continuation_id: continuation_id.clone(),
-                decision_id: decision_id.clone(),
-                request_fingerprint: Some(request_fingerprint),
-                objective_apply_continuation_id: target.objective_apply_continuation_id.clone(),
-                expected_objective_apply_decision_id: target
-                    .expected_objective_apply_decision_id
-                    .clone(),
-                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
-                expected_aggregate_sequence: params.expected_aggregate_sequence,
-                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
-                current_aggregate_sequence: progress_overview.aggregate_sequence,
-                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
-                post_aggregate_sequence: post_progress.aggregate_sequence,
-                journey_id: target.journey_id.clone(),
-                session_id: target.session_id.clone(),
-                source_drive_id: target.source_drive_id.clone(),
-                task_id: target.expected_task_id.clone(),
-                run_id: target.expected_run_id.clone(),
-                proposal_id: target.expected_proposal_id.clone(),
-                apply_id: target.expected_apply_id.clone(),
-                expected_path_fingerprint: target.expected_path_fingerprint.clone(),
-                expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
-                expected_post_write_sha256: target.expected_post_write_sha256.clone(),
-                current_target_sha256: current_target_sha256.clone(),
-                verification_status: verification_status.to_string(),
-                route_kind: route_kind.clone(),
-                next_action: next_action.to_string(),
-            },
-        )
+        .write_headless_objective_apply_verification_checkpoint(&verification_checkpoint)
         .map_err(|error| error.to_string())?;
+    let verification_result =
+        objective_apply_verification_result_from_checkpoint(&verification_checkpoint, false);
     let next_route = HeadlessContinueRoute {
         kind: route_kind,
         reason: route_reason.to_string(),
@@ -421,6 +449,8 @@ fn headless_continue_objective_apply_verification(
         task_run_result: None,
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
+        objective_apply_verification_result: Some(verification_result),
+        objective_completion_acceptance_result: None,
         llm_provider_failure_retry_admission: None,
         product_continuation_admission: None,
         modepack_select_registry_update_result: None,
@@ -579,6 +609,35 @@ fn validate_objective_completion_acceptance_replay_request(
     }
 }
 
+fn objective_completion_acceptance_result_from_checkpoint(
+    checkpoint: &HeadlessObjectiveCompletionAcceptanceCheckpoint,
+    verification_checkpoint: Option<&HeadlessObjectiveApplyVerificationCheckpoint>,
+    replayed: bool,
+) -> HeadlessRunObjectiveCompletionAcceptance {
+    HeadlessRunObjectiveCompletionAcceptance {
+        acceptance_status: checkpoint.acceptance_status.clone(),
+        journey_id: checkpoint.journey_id.clone(),
+        task_id: checkpoint.task_id.clone(),
+        run_id: checkpoint.run_id.clone(),
+        session_id: checkpoint.session_id.clone(),
+        source_drive_id: checkpoint.source_drive_id.clone(),
+        proposal_id: checkpoint.proposal_id.clone(),
+        apply_id: checkpoint.apply_id.clone(),
+        operation: WorkspacePatchOperation::ReplaceFile.as_str().to_string(),
+        path_fingerprint: checkpoint.expected_path_fingerprint.clone(),
+        apply_fingerprint: checkpoint.expected_apply_fingerprint.clone(),
+        expected_post_write_sha256: checkpoint.expected_post_write_sha256.clone(),
+        current_target_sha256: checkpoint.expected_current_target_sha256.clone(),
+        verification_status: verification_checkpoint
+            .map(|checkpoint| checkpoint.verification_status.clone())
+            .unwrap_or_else(|| "verified".to_string()),
+        verification_fingerprint: checkpoint.expected_verification_fingerprint.clone(),
+        acceptance_fingerprint: checkpoint.request_fingerprint.clone().unwrap_or_default(),
+        replayed,
+        next_action: checkpoint.next_action.clone(),
+    }
+}
+
 fn validate_objective_completion_acceptance_route(
     store: &BrownieStore,
     target: &ObjectiveCompletionAcceptanceTarget,
@@ -674,6 +733,8 @@ pub(super) fn headless_continue_objective_completion_acceptance_replay_result(
         next_action: checkpoint.next_action.clone(),
     };
     let next_action = next_route.next_action.clone();
+    let completion_result =
+        objective_completion_acceptance_result_from_checkpoint(&checkpoint, None, true);
     result_response(
         id,
         json!(HeadlessContinueOnceResult {
@@ -694,6 +755,8 @@ pub(super) fn headless_continue_objective_completion_acceptance_replay_result(
             task_run_result: None,
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: None,
+            objective_apply_verification_result: None,
+            objective_completion_acceptance_result: Some(completion_result),
             llm_provider_failure_retry_admission: None,
             product_continuation_admission: None,
             modepack_select_registry_update_result: None,
@@ -797,42 +860,46 @@ fn headless_continue_objective_completion_acceptance(
         .list_tasks()
         .map_err(|error| error.to_string())?;
     let post_progress = task_list_progress_overview(store, &post_tasks)?;
+    let completion_checkpoint = HeadlessObjectiveCompletionAcceptanceCheckpoint {
+        continuation_id: continuation_id.clone(),
+        decision_id: decision_id.clone(),
+        request_fingerprint: Some(request_fingerprint),
+        objective_apply_verification_continuation_id: target
+            .objective_apply_verification_continuation_id
+            .clone(),
+        expected_objective_apply_verification_decision_id: target
+            .expected_objective_apply_verification_decision_id
+            .clone(),
+        expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
+        expected_aggregate_sequence: params.expected_aggregate_sequence,
+        current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
+        current_aggregate_sequence: progress_overview.aggregate_sequence,
+        post_progress_fingerprint: post_progress.source_fingerprint.clone(),
+        post_aggregate_sequence: post_progress.aggregate_sequence,
+        journey_id: target.journey_id.clone(),
+        session_id: target.session_id.clone(),
+        source_drive_id: target.source_drive_id.clone(),
+        task_id: target.expected_task_id.clone(),
+        run_id: target.expected_run_id.clone(),
+        proposal_id: target.expected_proposal_id.clone(),
+        apply_id: target.expected_apply_id.clone(),
+        expected_path_fingerprint: target.expected_path_fingerprint.clone(),
+        expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
+        expected_post_write_sha256: target.expected_post_write_sha256.clone(),
+        expected_current_target_sha256: target.expected_current_target_sha256.clone(),
+        expected_verification_fingerprint: target.expected_verification_fingerprint.clone(),
+        acceptance_status: "accepted".to_string(),
+        route_kind: HeadlessContinueRouteKind::RefreshProgressOverview,
+        next_action: next_action.to_string(),
+    };
     store
-        .write_headless_objective_completion_acceptance_checkpoint(
-            &HeadlessObjectiveCompletionAcceptanceCheckpoint {
-                continuation_id: continuation_id.clone(),
-                decision_id: decision_id.clone(),
-                request_fingerprint: Some(request_fingerprint),
-                objective_apply_verification_continuation_id: target
-                    .objective_apply_verification_continuation_id
-                    .clone(),
-                expected_objective_apply_verification_decision_id: target
-                    .expected_objective_apply_verification_decision_id
-                    .clone(),
-                expected_progress_fingerprint: params.expected_progress_fingerprint.clone(),
-                expected_aggregate_sequence: params.expected_aggregate_sequence,
-                current_progress_fingerprint: progress_overview.source_fingerprint.clone(),
-                current_aggregate_sequence: progress_overview.aggregate_sequence,
-                post_progress_fingerprint: post_progress.source_fingerprint.clone(),
-                post_aggregate_sequence: post_progress.aggregate_sequence,
-                journey_id: target.journey_id.clone(),
-                session_id: target.session_id.clone(),
-                source_drive_id: target.source_drive_id.clone(),
-                task_id: target.expected_task_id.clone(),
-                run_id: target.expected_run_id.clone(),
-                proposal_id: target.expected_proposal_id.clone(),
-                apply_id: target.expected_apply_id.clone(),
-                expected_path_fingerprint: target.expected_path_fingerprint.clone(),
-                expected_apply_fingerprint: target.expected_apply_fingerprint.clone(),
-                expected_post_write_sha256: target.expected_post_write_sha256.clone(),
-                expected_current_target_sha256: target.expected_current_target_sha256.clone(),
-                expected_verification_fingerprint: target.expected_verification_fingerprint.clone(),
-                acceptance_status: "accepted".to_string(),
-                route_kind: HeadlessContinueRouteKind::RefreshProgressOverview,
-                next_action: next_action.to_string(),
-            },
-        )
+        .write_headless_objective_completion_acceptance_checkpoint(&completion_checkpoint)
         .map_err(|error| error.to_string())?;
+    let completion_result = objective_completion_acceptance_result_from_checkpoint(
+        &completion_checkpoint,
+        Some(&verification_checkpoint),
+        false,
+    );
     let next_route = HeadlessContinueRoute {
         kind: HeadlessContinueRouteKind::RefreshProgressOverview,
         reason: route_reason.to_string(),
@@ -864,6 +931,8 @@ fn headless_continue_objective_completion_acceptance(
         task_run_result: None,
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: None,
+        objective_apply_verification_result: None,
+        objective_completion_acceptance_result: Some(completion_result),
         llm_provider_failure_retry_admission: None,
         product_continuation_admission: None,
         modepack_select_registry_update_result: None,

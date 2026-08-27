@@ -1,0 +1,180 @@
+{
+  "schema_version": 1,
+  "phase": "CLI-10.1",
+  "current_milestone": "brownie_cli_campaign",
+  "milestone": "Brownie CLI Campaign",
+  "target_capability": "headless_autonomous_development",
+  "concrete_capability_transition": "Brownie CLI product completion moves from being blocked by stale repo-local Core Runtime control-plane pointers to a release-safe state where repository compatibility pointers and their guard deterministically direct CLI campaign operators to the independent external CLI automation root while remaining non-authoritative.",
+  "forbidden_pattern": "core_campaign_reopen_develop_primary_command_cli_owned_agent_loop_cli_owned_permission_policy_cli_owned_replay_policy_cli_owned_recovery_policy_cli_owned_workspace_mutation_modepack_policy_duplicate_product_dod_policy_duplicate_json_rpc_passthrough_rpc_mirror_report_only_readiness_only_diagnostic_wrapper_history_digest_verdict_summary_documentation_only_runtime_behavior_change_cli_behavior_change_new_rpc_new_cli_command_raw_prompt_provider_response_file_content_stdout_stderr_command_environment_secret_absolute_path_canonical_path_live_repo_local_state",
+  "project_objective_ref": "docs/architecture/product-charter.md",
+  "strategic_capability_mapping": [
+    {
+      "capability": "headless_autonomous_development",
+      "relationship": "Removes the release-blocking risk that a restarted or newly scheduled CLI campaign controller could be misdirected by repository compatibility files into the completed Core Runtime campaign root."
+    }
+  ],
+  "phase_value_gate": {
+    "required": true,
+    "answers": {
+      "strategic_capabilities": "Advances headless_autonomous_development by preserving a correct external control-plane pointer for the independent CLI campaign after CLI-1 through CLI-10 closed all required CLI Product DoD gaps.",
+      "new_capability": "The CLI campaign can evaluate product completion without a required-before-release control-plane debt that points repo-local compatibility files at the completed Core Runtime campaign root.",
+      "why_existing_functionality_is_insufficient": "CLI-10 closed restart/recovery behavior, but the repository pointer contract and guard still accepted ~/.codex/automations/brownie-phase-loop/ as the live external root, which is the completed Core Runtime campaign rather than the active CLI campaign.",
+      "product_gap_if_skipped": "CLI product completion would remain release-blocked because stale repo-local pointers could mislead future operators or older tasks into reading the wrong external campaign state.",
+      "non_duplicative": "CLI-10.1 does not add another resume, output, install, recovery, or progress feature. It closes the single documented release-blocking debt created by stale compatibility metadata after the functional DoD gaps were closed.",
+      "no_new_rpc": "Yes. No runtime RPC, JSON-RPC passthrough, or CLI command is added.",
+      "no_new_summary": "Yes. No report, readiness, digest, verdict, history, inspection, or summary surface is added.",
+      "runtime_behavior_change": "No runtime behavior is intentionally changed; the planned product transition is release eligibility through deterministic control-plane pointer neutralization and guard enforcement.",
+      "headless_autonomous_contribution": "Scheduled CLI heartbeats retain the independent external CLI control-plane root and fail fast if repo-local compatibility files regress to the completed Core Runtime root.",
+      "milestone_progress": "Closes the only open required_before_release CLI campaign debt, enabling the next heartbeat to perform CLI product completion evaluation if validation and review pass."
+    },
+    "questions": [
+      {
+        "id": "strategic_capabilities",
+        "question": "Which strategic capabilities move forward?"
+      },
+      {
+        "id": "new_capability",
+        "question": "What becomes newly executable or usable?"
+      },
+      {
+        "id": "why_existing_functionality_is_insufficient",
+        "question": "Why can existing behavior not substitute for this?"
+      },
+      {
+        "id": "product_gap_if_skipped",
+        "question": "What remains impossible if skipped?"
+      },
+      {
+        "id": "non_duplicative",
+        "question": "Why is this not semantically duplicative?"
+      },
+      {
+        "id": "no_new_rpc",
+        "question": "Can this be done without adding a new RPC?"
+      },
+      {
+        "id": "no_new_summary",
+        "question": "Can this be done without adding a new summary/report surface?"
+      },
+      {
+        "id": "runtime_behavior_change",
+        "question": "How does runtime or user-visible behavior change?"
+      },
+      {
+        "id": "headless_autonomous_contribution",
+        "question": "How does this contribute to headless autonomous operation?"
+      },
+      {
+        "id": "milestone_progress",
+        "question": "How does this move milestone completion?"
+      }
+    ]
+  },
+  "review_value_gate": {
+    "reject_when": [
+      "phase reopens or mutates the completed Core Runtime campaign state",
+      "phase makes develop the primary command",
+      "phase changes runtime, CLI, VSIX, Mode Pack, permission, replay, recovery, workspace mutation, Product DoD, or provider behavior",
+      "phase adds a new runtime RPC, CLI command, generic JSON-RPC passthrough, or mirror endpoint",
+      "phase is report/readiness/history/digest/verdict/summary/inspection-only",
+      "phase leaves repo-local CLI control-plane pointers aimed at ~/.codex/automations/brownie-phase-loop/",
+      "phase stores live scheduled state in .brownie-control/phase-state.json"
+    ]
+  },
+  "guard_engine_change_review": {
+    "required": true,
+    "strict_review_required": true,
+    "no_self_approval": true,
+    "review_intent": "CLI-10.1 updates the deterministic current phase manifest and the control-plane authority guard. Review must confirm the guard change prevents stale Core Runtime campaign roots from being accepted for the CLI campaign without broadening into runtime or CLI behavior.",
+    "changed_files": [
+      ".brownie-control/phase-state.json",
+      ".brownie-control/current-phase-prompt.md",
+      ".brownie-control/next-phase-prompt.md",
+      ".brownie-control/latest-review.md",
+      ".brownie-control/stop-reason.md",
+      ".codex/tasks/implement-current-phase.md",
+      ".codex/tasks/review-and-plan-next-phase.md",
+      "docs/architecture/control-plane-authority.md",
+      "scripts/guard-control-plane-authority.mjs",
+      "scripts/guard-control-plane-authority.test.mjs",
+      "docs/architecture/phase-value-manifest.json",
+      "docs/architecture/phase-value-manifest.cli-10.json",
+      "docs/architecture/phase-value-manifest.cli-9.json"
+    ]
+  },
+  "exit_criteria": [
+    ".brownie-control/phase-state.json remains valid JSON with authoritative=false and no live scheduled state keys.",
+    ".brownie-control/phase-state.json points to ~/.codex/automations/brownie-cli-phase-loop/ instead of ~/.codex/automations/brownie-phase-loop/.",
+    "Repository compatibility pointer files used by the control-plane authority guard point to the CLI campaign external root and explicitly remain pointer-only or non-authoritative.",
+    "The control-plane authority guard rejects the completed Core Runtime campaign root as the CLI campaign control-plane root.",
+    "The phase changes no Rust runtime behavior, CLI command behavior, VSIX behavior, RPC surface, workspace mutation authority, permission logic, replay logic, recovery logic, Mode Pack semantics, Product DoD semantics, report, readiness, history, digest, verdict, or inspection surface.",
+    "The current phase manifest is CLI-10.1, the prior CLI-10 manifest is preserved as docs/architecture/phase-value-manifest.cli-10.json, and phase-value guard passes."
+  ],
+  "behavior_evidence": [
+    "scripts/guard-control-plane-authority.test.mjs proves pointer-only control-plane files are accepted only when they use the CLI campaign automation root.",
+    "scripts/guard-control-plane-authority.test.mjs proves the completed Core Runtime campaign root is rejected for CLI campaign repository pointers.",
+    "pnpm guard:control-plane-authority proves the repository control-plane pointer files satisfy the CLI authority contract.",
+    "pnpm guard:phase-value proves CLI-10.1 is a bounded required-before-release debt closure rather than a wrapper-only or duplicate capability phase."
+  ],
+  "product_dod": {
+    "closes": [],
+    "leaves_open": [],
+    "does_not_close": [
+      "CLI-1 Command Contract",
+      "CLI-2 Runtime Launch Boundary",
+      "CLI-3 CLI-Owned Output Contract",
+      "CLI-4 Autonomous Objective Execution",
+      "CLI-5 Thin CLI Boundary Hardening",
+      "CLI-6 Progress and Next Action UX",
+      "CLI-7 Deterministic Output Contract",
+      "CLI-8 User Install Boundary",
+      "CLI-9 Clean Arbitrary-Repository Golden Journey",
+      "CLI-10 Restart / Recovery Golden Journey"
+    ]
+  },
+  "technical_debt": [
+    {
+      "id": "cli-repo-local-control-plane-pointer-neutralization",
+      "classification": "required_before_release",
+      "status_after_phase": "resolved",
+      "evidence": "Repo-local compatibility pointers and their authority guard no longer accept the completed Core Runtime campaign root as the CLI campaign source of truth."
+    }
+  ],
+  "product_completion_gate": {
+    "required": true,
+    "product_completion_claim": false,
+    "accepted_capability": [
+      "The Brownie CLI campaign repository metadata will point operators and compatibility tasks to the independent external CLI automation root.",
+      "The control-plane authority guard will reject stale Core Runtime campaign root regressions for CLI campaign pointers."
+    ],
+    "behavior_evidence": [
+      "Control-plane authority guard unit tests pass for CLI root acceptance and completed Core Runtime root rejection.",
+      "Current repository pointer files pass the control-plane authority guard.",
+      "Phase-value and diagnostics guards pass without adding runtime, CLI, VSIX, RPC, wrapper, or report behavior."
+    ],
+    "safety_boundary": [
+      "No completed Core Runtime campaign state is mutated.",
+      "No live scheduled state is stored in repo-local .brownie-control.",
+      "No Rust runtime, CLI command, VSIX, Mode Pack, permission, replay, recovery, workspace mutation, provider, or Product DoD behavior is changed.",
+      "No raw prompt, provider response, file content, stdout, stderr, command, environment value, secret, absolute path, or canonical path is exposed."
+    ],
+    "non_goals": [
+      "No new primary command, develop alias, runtime RPC, generic passthrough, report, readiness, history, digest, verdict, or inspection surface.",
+      "No package publication, signing, notarization, Homebrew formula, npm publication, or CLI product completion claim in this PR.",
+      "No cleanup or broad documentation rewrite beyond repository control-plane compatibility pointers and their guard."
+    ],
+    "rejected_alternatives": [
+      "Rejected leaving the existing Core Runtime root pointer because it keeps a required_before_release CLI debt open.",
+      "Rejected using repo-local .brownie-control as live state because the campaign source of truth is the external automation root.",
+      "Rejected mutating the completed Core Runtime campaign state because this is an independent CLI product campaign.",
+      "Rejected adding a runtime or CLI surface because the blocker is release metadata and guard acceptance, not missing executable runtime behavior."
+    ],
+    "technical_debt": [
+      "This phase is expected to resolve cli-repo-local-control-plane-pointer-neutralization.",
+      "No new blocking or required_before_release debt is accepted by this phase."
+    ],
+    "next_capability_rationale": [
+      "After CLI-10.1 lands and review marks the debt resolved, evaluate CLI product completion instead of inventing additional CLI phases unless a concrete blocking debt is discovered."
+    ]
+  }
+}
