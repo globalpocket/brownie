@@ -55,6 +55,7 @@ use brownie_protocol::{
     HeadlessRunJourneyExecutionBoundaryMetadata, HeadlessRunJourneyExecutionMetadata,
     HeadlessRunJourneyMetadata, HeadlessRunJourneyObjectiveContextMetadata,
     HeadlessRunJourneyRouteResumeMetadata, HeadlessRunJourneyTaskStartEnvelope,
+    HeadlessRunObjectiveApplyVerification, HeadlessRunObjectiveCompletionAcceptance,
     HeadlessRunObjectiveProposalAuthorizationPreflight, HeadlessRunObjectiveProposalCandidate,
     HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
     HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
@@ -22227,7 +22228,7 @@ mod tests {
             .get_task(task_id)
             .expect("get task")
             .expect("task");
-        assert_eq!(task.mode_id.as_deref(), Some("provider-runner"));
+        assert_eq!(task.mode_id.as_deref(), Some("implementer"));
         let events = store
             .tasks()
             .read_ledger_events(&task.run_id)
@@ -22237,12 +22238,92 @@ mod tests {
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
-        assert_eq!(mode_payload["mode_id"], "provider-runner");
+        assert_eq!(mode_payload["mode_id"], "implementer");
         assert!(!events
             .iter()
             .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_omitted_mode_development_objective_routes_proposal_candidate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"cli.c1.default.dev","drive_id":"cli.c1.default.dev.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"cli.c1.default.dev.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update"}}}}"#;
+        let result = parse_line(request)
+            .result
+            .expect("default development result");
+
+        assert_eq!(result["status"], "task_executed");
+        assert_eq!(result["stop_reason"], "objective_proposal_candidate_ready");
+        assert_eq!(
+            result["next_action"],
+            "review_and_authorize_objective_proposal"
+        );
+        assert_eq!(
+            result["next_route"]["kind"],
+            "review_and_authorize_objective_proposal"
+        );
+        assert_eq!(
+            result["completion_closure"]["status"],
+            "routed_explicit_action"
+        );
+        let candidate = &result["objective_proposal_candidate"];
+        assert_eq!(candidate["status"], "ready_for_review");
+        assert_eq!(candidate["operation"], "replace_file");
+        assert_eq!(candidate["validation_status"], "Valid");
+        assert_eq!(candidate["approval_status"], "Pending");
+        assert!(candidate["candidate_fingerprint"]
+            .as_str()
+            .expect("candidate fingerprint")
+            .starts_with("sha256:"));
+        assert!(candidate["objective_context_fingerprint"]
+            .as_str()
+            .expect("objective context fingerprint")
+            .starts_with("sha256:"));
+        assert!(candidate["selected_context_fingerprint"]
+            .as_str()
+            .expect("selected context fingerprint")
+            .starts_with("sha256:"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).expect("readme"),
+            "original README"
+        );
+
+        let task_id = result["journey"]["task_id"].as_str().expect("task id");
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some("implementer"));
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+                .count(),
+            1
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::WorkspacePatchApplyResultRecorded)
+                .count(),
+            0
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]
@@ -23116,6 +23197,22 @@ mod tests {
             "accept_objective_completion_explicitly"
         );
         assert_eq!(verified["next_action"], "accept_objective_completion");
+        assert_eq!(
+            verified["objective_apply_verification_result"]["verification_status"],
+            "verified"
+        );
+        assert_eq!(
+            verified["objective_apply_verification_result"]["route_kind"],
+            "accept_objective_completion_explicitly"
+        );
+        assert_eq!(
+            verified["objective_apply_verification_result"]["current_target_sha256"],
+            post_write_sha256
+        );
+        assert_eq!(
+            verified["objective_apply_verification_result"]["next_action"],
+            "accept_objective_completion"
+        );
         let verification_checkpoint = store
             .read_headless_objective_apply_verification_checkpoint("m56.apply.verify")
             .expect("read verification checkpoint")
@@ -23215,6 +23312,22 @@ mod tests {
         assert_eq!(completed["next_action"], "close_headless_run");
         assert_eq!(completed["next_route"]["kind"], "refresh_progress_overview");
         assert_eq!(completed["next_route"]["next_action"], "close_headless_run");
+        assert_eq!(
+            completed["objective_completion_acceptance_result"]["acceptance_status"],
+            "accepted"
+        );
+        assert_eq!(
+            completed["objective_completion_acceptance_result"]["verification_status"],
+            "verified"
+        );
+        assert_eq!(
+            completed["objective_completion_acceptance_result"]["current_target_sha256"],
+            post_write_sha256
+        );
+        assert_eq!(
+            completed["objective_completion_acceptance_result"]["next_action"],
+            "close_headless_run"
+        );
         let completion_checkpoint = store
             .read_headless_objective_completion_acceptance_checkpoint("m56.apply.complete")
             .expect("read completion checkpoint")
@@ -23252,6 +23365,14 @@ mod tests {
             .expect("completion replay");
         assert_eq!(completion_replay["replayed"], true);
         assert_eq!(completion_replay["decision_id"], completed["decision_id"]);
+        assert_eq!(
+            completion_replay["objective_completion_acceptance_result"]["acceptance_fingerprint"],
+            completed["objective_completion_acceptance_result"]["acceptance_fingerprint"]
+        );
+        assert_eq!(
+            completion_replay["objective_completion_acceptance_result"]["replayed"],
+            true
+        );
         assert_eq!(completion_events(), 1);
         let verify_replay = parse_line(&verify_request.to_string())
             .result
@@ -23260,6 +23381,14 @@ mod tests {
         assert_eq!(
             verify_replay["next_route"]["kind"],
             verified["next_route"]["kind"]
+        );
+        assert_eq!(
+            verify_replay["objective_apply_verification_result"]["verification_fingerprint"],
+            verified["objective_apply_verification_result"]["verification_fingerprint"]
+        );
+        assert_eq!(
+            verify_replay["objective_apply_verification_result"]["replayed"],
+            true
         );
 
         std::fs::write(temp.path().join("README.md"), "drifted README").expect("drift target");

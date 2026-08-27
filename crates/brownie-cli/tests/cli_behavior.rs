@@ -1389,6 +1389,10 @@ fn json_resume_outputs_bounded_cli_projection() {
     let output = Command::new(brownie())
         .args(["--json", "resume"])
         .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
         .env("BROWNIE_RUNTIME_PATH_SHOULD_NOT_LEAK", "secret-path")
         .output()
         .unwrap();
@@ -1711,6 +1715,73 @@ fn installed_json_run_projects_completion_from_arbitrary_repository() {
             .as_str()
             .unwrap()
             .starts_with("sha256:")
+    );
+    assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+    assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
+fn installed_run_executes_primary_development_path_from_arbitrary_repository() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-development-run");
+    let repository = ordinary_git_repository("installed-development-run-repo");
+
+    let output = Command::new(&installed)
+        .args(["--json", "run", "Implement README update"])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "30000")
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "run");
+    assert_eq!(payload["run"]["status"], "no_eligible_task");
+    assert_eq!(payload["run"]["completion_closure_status"], "complete");
+    assert_eq!(
+        payload["run"]["objective_proposal_preflight_status"],
+        "authorized_preflight_ready"
+    );
+    assert_eq!(
+        payload["run"]["objective_proposal_preflight_operation"],
+        "replace_file"
+    );
+    assert_eq!(payload["run"]["objective_apply_apply_status"], "Applied");
+    assert_eq!(payload["run"]["objective_apply_applied"], true);
+    assert_eq!(
+        payload["run"]["objective_apply_authorization_consumed"],
+        true
+    );
+    assert_eq!(
+        payload["run"]["objective_apply_verification_verification_status"],
+        "verified"
+    );
+    assert_eq!(
+        payload["run"]["objective_completion_acceptance_acceptance_status"],
+        "accepted"
+    );
+    assert_eq!(
+        payload["run"]["completion_finalization_status"],
+        "finalized"
+    );
+    assert!(
+        payload["run"]["completion_finalization_finalization_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+    assert_eq!(
+        fs::read_to_string(repository.join("README.md")).unwrap(),
+        "new README content"
     );
     assert!(!stdout.contains(repository.to_string_lossy().as_ref()));
     assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));

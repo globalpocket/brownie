@@ -7,7 +7,7 @@ pub(super) fn objective_proposal_candidate_route(
     HeadlessContinueRoute {
         kind: HeadlessContinueRouteKind::ReviewAndAuthorizeObjectiveProposal,
         reason:
-            "Objective-context journey produced one bounded proposal candidate; review and authorize it explicitly."
+            "Journey produced one bounded proposal candidate; review and authorize it explicitly."
                 .to_string(),
         task_id: Some(candidate.task_id.clone()),
         run_id: Some(candidate.run_id.clone()),
@@ -55,6 +55,44 @@ fn finalize_objective_proposal_candidate(
     candidate
 }
 
+fn objective_proposal_context_fingerprints(
+    checkpoint: &HeadlessJourneyStartCheckpoint,
+) -> (String, String) {
+    if let Some(objective_context) = checkpoint.objective_context.as_ref() {
+        return (
+            objective_context.objective_context_fingerprint.clone(),
+            objective_context.selected_context_fingerprint.clone(),
+        );
+    }
+
+    let objective_seed = json!({
+        "version": "headless_default_objective_context_v1",
+        "journey_id": checkpoint.journey_id,
+        "session_id": checkpoint.session_id,
+        "task_id": checkpoint.task_id,
+        "run_id": checkpoint.run_id,
+        "task_start_fingerprint": checkpoint.task_start_fingerprint,
+    });
+    let selected_seed = json!({
+        "version": "headless_default_selected_context_v1",
+        "journey_id": checkpoint.journey_id,
+        "session_id": checkpoint.session_id,
+        "task_id": checkpoint.task_id,
+        "run_id": checkpoint.run_id,
+        "task_start_fingerprint": checkpoint.task_start_fingerprint,
+    });
+    (
+        format!(
+            "sha256:{}",
+            hex_sha256(objective_seed.to_string().as_bytes())
+        ),
+        format!(
+            "sha256:{}",
+            hex_sha256(selected_seed.to_string().as_bytes())
+        ),
+    )
+}
+
 fn denied_objective_proposal_candidate(
     checkpoint: &HeadlessJourneyStartCheckpoint,
     session_id: &str,
@@ -64,10 +102,8 @@ fn denied_objective_proposal_candidate(
     denial_reason: &str,
     replayed: bool,
 ) -> HeadlessRunObjectiveProposalCandidate {
-    let objective_context = checkpoint
-        .objective_context
-        .as_ref()
-        .expect("objective context candidate requires objective context");
+    let (objective_context_fingerprint, selected_context_fingerprint) =
+        objective_proposal_context_fingerprints(checkpoint);
     finalize_objective_proposal_candidate(HeadlessRunObjectiveProposalCandidate {
         status: status.to_string(),
         journey_id: checkpoint.journey_id.clone(),
@@ -75,8 +111,8 @@ fn denied_objective_proposal_candidate(
         run_id: checkpoint.run_id.clone(),
         session_id: session_id.to_string(),
         drive_id: drive_id.to_string(),
-        objective_context_fingerprint: objective_context.objective_context_fingerprint.clone(),
-        selected_context_fingerprint: objective_context.selected_context_fingerprint.clone(),
+        objective_context_fingerprint,
+        selected_context_fingerprint,
         candidate_count: candidate_count.min(16),
         proposal_id: None,
         source_event_id: None,
@@ -99,9 +135,8 @@ pub(super) fn headless_objective_proposal_candidate_outcome(
     drive_id: &str,
     replayed: bool,
 ) -> Result<Option<HeadlessRunObjectiveProposalCandidate>, String> {
-    let Some(objective_context) = checkpoint.objective_context.as_ref() else {
-        return Ok(None);
-    };
+    let (objective_context_fingerprint, selected_context_fingerprint) =
+        objective_proposal_context_fingerprints(checkpoint);
     let events = read_existing_run_events(store, &checkpoint.run_id)?;
     let mut candidates: Vec<(LedgerEvent, Value)> = Vec::new();
     for event in events
@@ -213,8 +248,8 @@ pub(super) fn headless_objective_proposal_candidate_outcome(
             run_id: checkpoint.run_id.clone(),
             session_id: session_id.to_string(),
             drive_id: drive_id.to_string(),
-            objective_context_fingerprint: objective_context.objective_context_fingerprint.clone(),
-            selected_context_fingerprint: objective_context.selected_context_fingerprint.clone(),
+            objective_context_fingerprint,
+            selected_context_fingerprint,
             candidate_count: 1,
             proposal_id: Some(proposal_id.to_string()),
             source_event_id: Some(event.event_id),
@@ -554,14 +589,10 @@ fn validate_objective_proposal_authorization_preflight_route(
                 .to_string(),
         );
     }
-    let objective_context = checkpoint.objective_context.as_ref().ok_or_else(|| {
-        "objective proposal authorization preflight failed: journey has no objective context"
-            .to_string()
-    })?;
-    if objective_context.objective_context_fingerprint
-        != target.expected_objective_context_fingerprint
-        || objective_context.selected_context_fingerprint
-            != target.expected_selected_context_fingerprint
+    let (objective_context_fingerprint, selected_context_fingerprint) =
+        objective_proposal_context_fingerprints(&checkpoint);
+    if objective_context_fingerprint != target.expected_objective_context_fingerprint
+        || selected_context_fingerprint != target.expected_selected_context_fingerprint
     {
         return Err(
             "objective proposal authorization preflight failed: objective context evidence mismatch"
@@ -702,6 +733,8 @@ pub(super) fn headless_continue_objective_proposal_authorization_preflight_repla
             task_run_result: None,
             proposal_apply_result: None,
             objective_proposal_authorization_preflight_result: Some(authorization_result),
+            objective_apply_verification_result: None,
+            objective_completion_acceptance_result: None,
             llm_provider_failure_retry_admission: None,
             product_continuation_admission: None,
             modepack_select_registry_update_result: None,
@@ -866,6 +899,8 @@ fn headless_continue_objective_proposal_authorization_preflight(
         task_run_result: None,
         proposal_apply_result: None,
         objective_proposal_authorization_preflight_result: Some(authorization_result),
+        objective_apply_verification_result: None,
+        objective_completion_acceptance_result: None,
         llm_provider_failure_retry_admission: None,
         product_continuation_admission: None,
         modepack_select_registry_update_result: None,
@@ -1170,6 +1205,8 @@ pub(super) fn headless_continue_objective_proposal_apply_replay_result(
             task_run_result: None,
             proposal_apply_result: Some(checkpoint.result),
             objective_proposal_authorization_preflight_result: None,
+            objective_apply_verification_result: None,
+            objective_completion_acceptance_result: None,
             llm_provider_failure_retry_admission: None,
             product_continuation_admission: None,
             modepack_select_registry_update_result: None,
@@ -1369,6 +1406,8 @@ fn headless_continue_objective_proposal_apply(
         task_run_result: None,
         proposal_apply_result: Some(proposal_apply_result),
         objective_proposal_authorization_preflight_result: None,
+        objective_apply_verification_result: None,
+        objective_completion_acceptance_result: None,
         llm_provider_failure_retry_admission: None,
         product_continuation_admission: None,
         modepack_select_registry_update_result: None,

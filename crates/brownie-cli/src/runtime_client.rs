@@ -18,6 +18,7 @@ const TASK_INSPECT_METHOD: &str = "task.inspect";
 const RUN_INSPECT_METHOD: &str = "run.inspect";
 const TASK_LIST_METHOD: &str = "task.list";
 const MODE_LIST_METHOD: &str = "mode.list";
+const PROPOSAL_INSPECT_METHOD: &str = "proposal.inspect";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
@@ -181,6 +182,11 @@ impl RuntimeClient {
         )?;
         validate_headless_run_drive_result(&result)?;
         let result = self.follow_parent_join_routes_if_available(result)?;
+        let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
+        let result = self.follow_objective_proposal_apply_route_if_available(result)?;
+        let result = self.follow_objective_apply_verification_route_if_available(result)?;
+        let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
+        let result = self.close_and_finalize_objective_completion_if_available(result)?;
         let result = self.accept_and_finalize_completed_run_if_available(result)?;
         if json_output {
             return json_result("run", "run", cli_run_payload(&result)?);
@@ -472,6 +478,128 @@ impl RuntimeClient {
         }
 
         Ok(result)
+    }
+
+    fn follow_objective_proposal_preflight_route_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(params) = objective_proposal_authorization_preflight_params(&result)? else {
+            return Ok(result);
+        };
+
+        let authorization_result = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&authorization_result)?;
+        validate_objective_proposal_authorization_preflight_result(&authorization_result)?;
+        merge_objective_continue_result(result, authorization_result)
+    }
+
+    fn follow_objective_proposal_apply_route_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(inspect_params) = objective_proposal_inspect_params(&result)? else {
+            return Ok(result);
+        };
+        let proposal = self.call_runtime_value(
+            PROPOSAL_INSPECT_METHOD,
+            Some(inspect_params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        let Some(params) = objective_proposal_apply_params(&result, &proposal)? else {
+            return Ok(result);
+        };
+
+        let apply_result = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&apply_result)?;
+        validate_objective_proposal_apply_result(&apply_result)?;
+        merge_objective_continue_result(result, apply_result)
+    }
+
+    fn follow_objective_apply_verification_route_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(params) = objective_apply_verification_params(&result)? else {
+            return Ok(result);
+        };
+
+        let verification_result = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&verification_result)?;
+        validate_objective_apply_verification_result(&verification_result)?;
+        merge_objective_continue_result(result, verification_result)
+    }
+
+    fn follow_objective_completion_acceptance_route_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(params) = objective_completion_acceptance_params(&result)? else {
+            return Ok(result);
+        };
+
+        let completion_result = self.call_runtime_value(
+            HEADLESS_CONTINUE_ONCE_METHOD,
+            Some(params),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_continue_once_result(&completion_result)?;
+        validate_objective_completion_acceptance_result(&completion_result)?;
+        merge_objective_continue_result(result, completion_result)
+    }
+
+    fn close_and_finalize_objective_completion_if_available(
+        &self,
+        result: Value,
+    ) -> Result<Value, RuntimeClientError> {
+        let Some(target) = objective_completion_close_target(&result)? else {
+            return Ok(result);
+        };
+
+        let close_route = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(accepted_completion_route_params(&target, false, None)),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_run_drive_result(&close_route)?;
+        validate_objective_completion_close_route(&close_route)?;
+        let close_route = merge_objective_drive_result(&result, close_route)?;
+
+        let closure = object_field(&close_route, "completion_closure")?;
+        let closure_fingerprint = required_display_string(closure, "closure_fingerprint")?;
+        validate_sha256_fingerprint(&closure_fingerprint)?;
+        let mut finalization_target = target;
+        finalization_target.expected_start_session_sequence = required_u64(
+            close_route
+                .as_object()
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+            "end_session_sequence",
+        )?;
+        let finalized_route = self.call_runtime_value(
+            HEADLESS_RUN_DRIVE_METHOD,
+            Some(accepted_completion_route_params(
+                &finalization_target,
+                true,
+                Some(&closure_fingerprint),
+            )),
+            RuntimeRequestClass::ObjectiveExecution,
+        )?;
+        validate_headless_run_drive_result(&finalized_route)?;
+        validate_objective_completion_close_route(&finalized_route)?;
+        validate_completion_finalization(&finalized_route)?;
+        merge_objective_drive_result(&close_route, finalized_route)
     }
 }
 
@@ -1173,6 +1301,72 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             );
         }
     }
+    if let Some(preflight) = object
+        .get("objective_proposal_authorization_preflight_result")
+        .and_then(Value::as_object)
+    {
+        for key in ["status", "operation", "next_action"] {
+            if let Some(value) = preflight.get(key) {
+                payload.insert(
+                    format!("objective_proposal_preflight_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
+    }
+    if let Some(apply) = object
+        .get("proposal_apply_result")
+        .and_then(Value::as_object)
+        .and_then(|result| result.get("apply_result"))
+        .and_then(Value::as_object)
+    {
+        for key in ["operation", "apply_status", "next_action"] {
+            if let Some(value) = apply.get(key) {
+                payload.insert(
+                    format!("objective_apply_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
+        if let Some(value) = apply.get("applied") {
+            payload.insert(
+                "objective_apply_applied".to_string(),
+                Value::Bool(json_bool(value)?),
+            );
+        }
+        if let Some(value) = apply.get("authorization_consumed") {
+            payload.insert(
+                "objective_apply_authorization_consumed".to_string(),
+                Value::Bool(json_bool(value)?),
+            );
+        }
+    }
+    if let Some(verification) = object
+        .get("objective_apply_verification_result")
+        .and_then(Value::as_object)
+    {
+        for key in ["verification_status", "operation", "next_action"] {
+            if let Some(value) = verification.get(key) {
+                payload.insert(
+                    format!("objective_apply_verification_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
+    }
+    if let Some(completion) = object
+        .get("objective_completion_acceptance_result")
+        .and_then(Value::as_object)
+    {
+        for key in ["acceptance_status", "operation", "next_action"] {
+            if let Some(value) = completion.get(key) {
+                payload.insert(
+                    format!("objective_completion_acceptance_{key}"),
+                    bounded_json_string(value)?,
+                );
+            }
+        }
+    }
     if let Some(accepted) = object.get("accepted_completion").and_then(Value::as_object) {
         for key in [
             "task_id",
@@ -1418,6 +1612,646 @@ fn parent_join_followup_drive_params(target: &ParentJoinRouteTarget, route_index
     })
 }
 
+fn objective_proposal_authorization_preflight_params(
+    result: &Value,
+) -> Result<Option<Value>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "review_and_authorize_objective_proposal" {
+        return Ok(None);
+    }
+
+    let candidate = object_field(result, "objective_proposal_candidate")?;
+    if display_string(candidate, "status")? != "ready_for_review"
+        || display_string(candidate, "operation")? != "replace_file"
+        || display_string(candidate, "validation_status")? != "Valid"
+        || display_string(candidate, "approval_status")? != "Pending"
+        || display_string(candidate, "next_action")? != "review_and_authorize_objective_proposal"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if display_usize(candidate, "candidate_count")? != 1 {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+
+    let journey = object_field(result, "journey")?;
+    let progress = object_field(result, "post_progress")?;
+    let candidate_fingerprint = required_display_string(candidate, "candidate_fingerprint")?;
+    validate_sha256_fingerprint(&candidate_fingerprint)?;
+    let objective_context_fingerprint =
+        required_display_string(candidate, "objective_context_fingerprint")?;
+    validate_sha256_fingerprint(&objective_context_fingerprint)?;
+    let selected_context_fingerprint =
+        required_display_string(candidate, "selected_context_fingerprint")?;
+    validate_sha256_fingerprint(&selected_context_fingerprint)?;
+    let path_fingerprint = required_display_string(candidate, "path_fingerprint")?;
+    validate_sha256_fingerprint(&path_fingerprint)?;
+
+    let progress_fingerprint = required_display_string(progress, "progress_fingerprint")?;
+    validate_sha256_fingerprint(&progress_fingerprint)?;
+    let aggregate_sequence = required_u64(progress, "aggregate_sequence")?;
+    let session_id = required_display_string(candidate, "session_id")?;
+    let continuation_id =
+        stable_cli_objective_route_id("objective.auth", &session_id, &candidate_fingerprint);
+    let authorization_token_fingerprint =
+        stable_cli_objective_authorization_token_fingerprint(&candidate_fingerprint);
+
+    Ok(Some(json!({
+        "authorize": true,
+        "continuation_id": continuation_id,
+        "expected_progress_fingerprint": progress_fingerprint,
+        "expected_aggregate_sequence": aggregate_sequence,
+        "objective_proposal_authorization_preflight_target": {
+            "authorize_objective_proposal_preflight": true,
+            "journey_id": required_display_string(candidate, "journey_id")?,
+            "session_id": session_id,
+            "source_drive_id": required_display_string(candidate, "drive_id")?,
+            "expected_journey_fingerprint": required_display_string(journey, "journey_fingerprint")?,
+            "expected_candidate_fingerprint": candidate_fingerprint,
+            "expected_objective_context_fingerprint": objective_context_fingerprint,
+            "expected_selected_context_fingerprint": selected_context_fingerprint,
+            "expected_task_id": required_display_string(candidate, "task_id")?,
+            "expected_run_id": required_display_string(candidate, "run_id")?,
+            "expected_proposal_id": required_display_string(candidate, "proposal_id")?,
+            "expected_source_event_id": required_display_string(candidate, "source_event_id")?,
+            "expected_source_event_kind": required_display_string(candidate, "source_event_kind")?,
+            "expected_operation": required_display_string(candidate, "operation")?,
+            "expected_path_fingerprint": path_fingerprint,
+            "expected_validation_status": required_display_string(candidate, "validation_status")?,
+            "expected_approval_status": required_display_string(candidate, "approval_status")?,
+            "authorization_token_fingerprint": authorization_token_fingerprint,
+        }
+    })))
+}
+
+fn validate_objective_proposal_authorization_preflight_result(
+    result: &Value,
+) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    if display_string(authorization, "status")? != "authorized_preflight_ready"
+        || display_string(authorization, "operation")? != "replace_file"
+        || display_string(authorization, "validation_status")? != "Valid"
+        || display_string(authorization, "approval_status")? != "Approved"
+        || display_string(authorization, "next_action")? != "apply_authorized_objective_proposal"
+        || object
+            .get("proposal_apply_result")
+            .is_some_and(|value| !value.is_null())
+        || authorization.contains_key("content")
+        || authorization.contains_key("diff")
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "candidate_fingerprint",
+        "authorization_token_fingerprint",
+        "authorization_preflight_fingerprint",
+        "path_fingerprint",
+        "objective_context_fingerprint",
+        "selected_context_fingerprint",
+    ] {
+        validate_sha256_fingerprint(&required_display_string(authorization, key)?)?;
+    }
+    for key in [
+        "journey_id",
+        "task_id",
+        "run_id",
+        "session_id",
+        "source_drive_id",
+        "proposal_id",
+        "source_event_id",
+        "source_event_kind",
+    ] {
+        required_display_string(authorization, key)?;
+    }
+    let route = object_field(result, "next_route")?;
+    if display_string(route, "kind")? != "apply_authorized_objective_proposal_explicitly"
+        || display_string(route, "next_action")? != "apply_authorized_objective_proposal"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn objective_proposal_inspect_params(result: &Value) -> Result<Option<Value>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "apply_authorized_objective_proposal_explicitly" {
+        return Ok(None);
+    }
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    Ok(Some(json!({
+        "run_id": required_display_string(authorization, "run_id")?,
+        "proposal_id": required_display_string(authorization, "proposal_id")?,
+    })))
+}
+
+fn objective_proposal_apply_params(
+    result: &Value,
+    proposal_inspect: &Value,
+) -> Result<Option<Value>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "apply_authorized_objective_proposal_explicitly" {
+        return Ok(None);
+    }
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    let proposal = object_field(proposal_inspect, "proposal")?;
+    let snapshot = object_field_from_value(authorization, "preflight_snapshot")?;
+    let apply_plan = object_field_from_value(authorization, "apply_plan")?;
+
+    let proposal_id = required_display_string(authorization, "proposal_id")?;
+    if required_display_string(proposal, "proposal_id")? != proposal_id
+        || display_string(proposal, "operation")? != "replace_file"
+        || display_string(proposal, "validation_status")? != "Valid"
+        || display_string(proposal, "approval_status")? != "Approved"
+        || json_bool(
+            proposal
+                .get("truncated")
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?
+        || json_bool(
+            proposal
+                .get("diff_redacted")
+                .ok_or(RuntimeClientError::InvalidResponse)?,
+        )?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let replacement_content = required_display_string(proposal, "content_preview")?;
+    if display_usize(proposal, "content_chars")? != replacement_content.chars().count() {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let expected_target_sha256 = required_display_string(snapshot, "file_sha256")?;
+    validate_sha256_fingerprint(&expected_target_sha256)?;
+    let authorization_preflight_fingerprint =
+        required_display_string(authorization, "authorization_preflight_fingerprint")?;
+    validate_sha256_fingerprint(&authorization_preflight_fingerprint)?;
+    let progress_fingerprint =
+        required_display_string(object, "objective_continue_post_progress_fingerprint")?;
+    validate_sha256_fingerprint(&progress_fingerprint)?;
+    let aggregate_sequence = required_u64(object, "objective_continue_post_aggregate_sequence")?;
+    let apply_plan_id = required_display_string(apply_plan, "plan_id")?;
+    if display_string(apply_plan, "status")? != "Ready" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let continuation_id = stable_cli_objective_route_id(
+        "objective.apply",
+        &required_display_string(authorization, "session_id")?,
+        &authorization_preflight_fingerprint,
+    );
+
+    Ok(Some(json!({
+        "authorize": true,
+        "continuation_id": continuation_id,
+        "expected_progress_fingerprint": progress_fingerprint,
+        "expected_aggregate_sequence": aggregate_sequence,
+        "objective_proposal_apply_target": {
+            "authorize_objective_proposal_apply": true,
+            "authorization_preflight_continuation_id": required_display_string(object, "objective_continue_continuation_id")?,
+            "expected_authorization_preflight_decision_id": required_display_string(object, "objective_continue_decision_id")?,
+            "journey_id": required_display_string(authorization, "journey_id")?,
+            "session_id": required_display_string(authorization, "session_id")?,
+            "source_drive_id": required_display_string(authorization, "source_drive_id")?,
+            "expected_journey_fingerprint": required_display_string(object_field(result, "journey")?, "journey_fingerprint")?,
+            "expected_candidate_fingerprint": required_display_string(authorization, "candidate_fingerprint")?,
+            "expected_objective_context_fingerprint": required_display_string(authorization, "objective_context_fingerprint")?,
+            "expected_selected_context_fingerprint": required_display_string(authorization, "selected_context_fingerprint")?,
+            "expected_task_id": required_display_string(authorization, "task_id")?,
+            "expected_run_id": required_display_string(authorization, "run_id")?,
+            "expected_proposal_id": proposal_id,
+            "expected_source_event_id": required_display_string(authorization, "source_event_id")?,
+            "expected_source_event_kind": required_display_string(authorization, "source_event_kind")?,
+            "expected_operation": required_display_string(authorization, "operation")?,
+            "expected_path_fingerprint": required_display_string(authorization, "path_fingerprint")?,
+            "expected_validation_status": required_display_string(authorization, "validation_status")?,
+            "expected_approval_status": required_display_string(authorization, "approval_status")?,
+            "expected_authorization_preflight_fingerprint": authorization_preflight_fingerprint,
+            "expected_preflight_snapshot_id": required_display_string(snapshot, "snapshot_id")?,
+            "expected_apply_plan_id": apply_plan_id,
+            "expected_target_sha256": expected_target_sha256,
+            "replacement_content": replacement_content,
+        }
+    })))
+}
+
+fn validate_objective_proposal_apply_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let proposal_apply = object_field(result, "proposal_apply_result")?;
+    let apply = object_field_from_value(proposal_apply, "apply_result")?;
+    if display_string(apply, "operation")? != "replace_file"
+        || display_string(apply, "apply_status")? != "Applied"
+        || !display_bool(apply, "applied")?
+        || !display_bool(apply, "authorization_consumed")?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&required_display_string(apply, "post_write_sha256")?)?;
+    let route = object_field(result, "next_route")?;
+    if display_string(route, "kind")? != "verify_objective_apply_explicitly"
+        || display_string(route, "next_action")? != "verify_objective_apply"
+        || object
+            .get("objective_proposal_authorization_preflight_result")
+            .is_some_and(|value| !value.is_null())
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn objective_apply_verification_params(
+    result: &Value,
+) -> Result<Option<Value>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "verify_objective_apply_explicitly" {
+        return Ok(None);
+    }
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    let proposal_apply = object_field(result, "proposal_apply_result")?;
+    let apply = object_field_from_value(proposal_apply, "apply_result")?;
+    let progress_fingerprint = required_display_string(route, "progress_fingerprint")?;
+    validate_sha256_fingerprint(&progress_fingerprint)?;
+    let apply_fingerprint = required_display_string(route, "apply_fingerprint")?;
+    validate_sha256_fingerprint(&apply_fingerprint)?;
+    let post_write_sha256 = required_display_string(apply, "post_write_sha256")?;
+    validate_sha256_fingerprint(&post_write_sha256)?;
+    if display_string(apply, "apply_status")? != "Applied"
+        || !display_bool(apply, "applied")?
+        || !display_bool(apply, "authorization_consumed")?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let session_id = required_display_string(authorization, "session_id")?;
+    let continuation_id =
+        stable_cli_objective_route_id("objective.verify", &session_id, &apply_fingerprint);
+
+    Ok(Some(json!({
+        "authorize": true,
+        "continuation_id": continuation_id,
+        "expected_progress_fingerprint": progress_fingerprint,
+        "expected_aggregate_sequence": required_u64(route, "aggregate_sequence")?,
+        "objective_apply_verification_target": {
+            "authorize_objective_apply_verification": true,
+            "objective_apply_continuation_id": required_display_string(object, "objective_continue_continuation_id")?,
+            "expected_objective_apply_decision_id": required_display_string(object, "objective_continue_decision_id")?,
+            "journey_id": required_display_string(authorization, "journey_id")?,
+            "session_id": session_id,
+            "source_drive_id": required_display_string(authorization, "source_drive_id")?,
+            "expected_task_id": required_display_string(authorization, "task_id")?,
+            "expected_run_id": required_display_string(authorization, "run_id")?,
+            "expected_proposal_id": required_display_string(authorization, "proposal_id")?,
+            "expected_apply_id": required_display_string(apply, "apply_id")?,
+            "expected_operation": required_display_string(apply, "operation")?,
+            "expected_apply_status": required_display_string(apply, "apply_status")?,
+            "expected_authorization_consumed": display_bool(apply, "authorization_consumed")?,
+            "expected_path_fingerprint": required_display_string(authorization, "path_fingerprint")?,
+            "expected_apply_fingerprint": apply_fingerprint,
+            "expected_post_write_sha256": post_write_sha256,
+        }
+    })))
+}
+
+fn validate_objective_apply_verification_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let verification = object_field(result, "objective_apply_verification_result")?;
+    if display_string(verification, "verification_status")? != "verified"
+        || display_string(verification, "operation")? != "replace_file"
+        || display_string(verification, "route_kind")? != "accept_objective_completion_explicitly"
+        || display_string(verification, "next_action")? != "accept_objective_completion"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "path_fingerprint",
+        "apply_fingerprint",
+        "expected_post_write_sha256",
+        "current_target_sha256",
+        "verification_fingerprint",
+    ] {
+        validate_sha256_fingerprint(&required_display_string(verification, key)?)?;
+    }
+    if required_display_string(verification, "expected_post_write_sha256")?
+        != required_display_string(verification, "current_target_sha256")?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let route = object_field(result, "next_route")?;
+    if display_string(route, "kind")? != "accept_objective_completion_explicitly"
+        || display_string(route, "next_action")? != "accept_objective_completion"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn objective_completion_acceptance_params(
+    result: &Value,
+) -> Result<Option<Value>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "accept_objective_completion_explicitly" {
+        return Ok(None);
+    }
+    let authorization = object_field(result, "objective_proposal_authorization_preflight_result")?;
+    let proposal_apply = object_field(result, "proposal_apply_result")?;
+    let apply = object_field_from_value(proposal_apply, "apply_result")?;
+    let verification = object_field(result, "objective_apply_verification_result")?;
+    let progress_fingerprint = required_display_string(route, "progress_fingerprint")?;
+    validate_sha256_fingerprint(&progress_fingerprint)?;
+    let apply_fingerprint = required_display_string(verification, "apply_fingerprint")?;
+    validate_sha256_fingerprint(&apply_fingerprint)?;
+    let verification_fingerprint =
+        required_display_string(verification, "verification_fingerprint")?;
+    validate_sha256_fingerprint(&verification_fingerprint)?;
+    let post_write_sha256 = required_display_string(verification, "expected_post_write_sha256")?;
+    validate_sha256_fingerprint(&post_write_sha256)?;
+    let current_target_sha256 = required_display_string(verification, "current_target_sha256")?;
+    validate_sha256_fingerprint(&current_target_sha256)?;
+    if display_string(verification, "verification_status")? != "verified"
+        || display_string(verification, "route_kind")? != "accept_objective_completion_explicitly"
+        || display_string(verification, "next_action")? != "accept_objective_completion"
+        || display_string(apply, "apply_status")? != "Applied"
+        || !display_bool(apply, "applied")?
+        || !display_bool(apply, "authorization_consumed")?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let session_id = required_display_string(authorization, "session_id")?;
+    let continuation_id =
+        stable_cli_objective_route_id("objective.complete", &session_id, &verification_fingerprint);
+
+    Ok(Some(json!({
+        "authorize": true,
+        "continuation_id": continuation_id,
+        "expected_progress_fingerprint": progress_fingerprint,
+        "expected_aggregate_sequence": required_u64(route, "aggregate_sequence")?,
+        "objective_completion_acceptance_target": {
+            "authorize_objective_completion_acceptance": true,
+            "objective_apply_verification_continuation_id": required_display_string(object, "objective_continue_continuation_id")?,
+            "expected_objective_apply_verification_decision_id": required_display_string(object, "objective_continue_decision_id")?,
+            "journey_id": required_display_string(authorization, "journey_id")?,
+            "session_id": session_id,
+            "source_drive_id": required_display_string(authorization, "source_drive_id")?,
+            "expected_task_id": required_display_string(authorization, "task_id")?,
+            "expected_run_id": required_display_string(authorization, "run_id")?,
+            "expected_proposal_id": required_display_string(authorization, "proposal_id")?,
+            "expected_apply_id": required_display_string(apply, "apply_id")?,
+            "expected_operation": required_display_string(apply, "operation")?,
+            "expected_apply_status": required_display_string(apply, "apply_status")?,
+            "expected_authorization_consumed": display_bool(apply, "authorization_consumed")?,
+            "expected_path_fingerprint": required_display_string(authorization, "path_fingerprint")?,
+            "expected_apply_fingerprint": apply_fingerprint,
+            "expected_post_write_sha256": post_write_sha256,
+            "expected_current_target_sha256": current_target_sha256,
+            "expected_verification_status": required_display_string(verification, "verification_status")?,
+            "expected_verification_route_kind": required_display_string(verification, "route_kind")?,
+            "expected_verification_fingerprint": verification_fingerprint,
+        }
+    })))
+}
+
+fn validate_objective_completion_acceptance_result(
+    result: &Value,
+) -> Result<(), RuntimeClientError> {
+    let completion = object_field(result, "objective_completion_acceptance_result")?;
+    if display_string(completion, "acceptance_status")? != "accepted"
+        || display_string(completion, "operation")? != "replace_file"
+        || display_string(completion, "verification_status")? != "verified"
+        || display_string(completion, "next_action")? != "close_headless_run"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "path_fingerprint",
+        "apply_fingerprint",
+        "expected_post_write_sha256",
+        "current_target_sha256",
+        "verification_fingerprint",
+        "acceptance_fingerprint",
+    ] {
+        validate_sha256_fingerprint(&required_display_string(completion, key)?)?;
+    }
+    if required_display_string(completion, "expected_post_write_sha256")?
+        != required_display_string(completion, "current_target_sha256")?
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let route = object_field(result, "next_route")?;
+    if display_string(route, "kind")? != "refresh_progress_overview"
+        || display_string(route, "next_action")? != "close_headless_run"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn objective_completion_close_target(
+    result: &Value,
+) -> Result<Option<CompletionAcceptanceTarget>, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(completion) = optional_object_field(object, "objective_completion_acceptance_result")
+    else {
+        return Ok(None);
+    };
+    let Some(route) = optional_object_field(object, "next_route") else {
+        return Ok(None);
+    };
+    if display_string(route, "kind")? != "refresh_progress_overview"
+        || display_string(route, "next_action")? != "close_headless_run"
+    {
+        return Ok(None);
+    }
+    if display_string(completion, "acceptance_status")? != "accepted"
+        || display_string(completion, "verification_status")? != "verified"
+        || display_string(completion, "next_action")? != "close_headless_run"
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let session_id = required_display_string(completion, "session_id")?;
+    let task_id = required_display_string(completion, "task_id")?;
+    let run_id = required_display_string(completion, "run_id")?;
+    let terminal_completion_fingerprint =
+        required_display_string(completion, "acceptance_fingerprint")?;
+    validate_sha256_fingerprint(&terminal_completion_fingerprint)?;
+    let expected_start_session_sequence = required_u64(object, "end_session_sequence")?;
+
+    Ok(Some(CompletionAcceptanceTarget {
+        session_id,
+        task_id,
+        run_id,
+        terminal_completion_fingerprint,
+        expected_start_session_sequence,
+    }))
+}
+
+fn validate_objective_completion_close_route(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let closure = object_field(result, "completion_closure")?;
+    let next_action = display_string(object, "next_action")?;
+    if display_string(closure, "status")? != "complete"
+        || !matches!(
+            next_action.as_str(),
+            "close_headless_run" | "inspect_progress_overview"
+        )
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    validate_sha256_fingerprint(&required_display_string(closure, "closure_fingerprint")?)?;
+    validate_sha256_fingerprint(&required_display_string(closure, "progress_fingerprint")?)?;
+    if let Some(fingerprint) = closure.get("terminal_completion_fingerprint") {
+        validate_sha256_fingerprint(&bounded_string(fingerprint)?)?;
+    }
+    if let Some(route) = optional_object_field(object, "next_route") {
+        let route_kind = display_string(route, "kind")?;
+        if !matches!(
+            route_kind.as_str(),
+            "refresh_progress_overview" | "inspect_progress_overview" | "no_eligible_task"
+        ) {
+            return Err(RuntimeClientError::InvalidResponse);
+        }
+    }
+    if let Some(accepted) = optional_object_field(object, "accepted_completion") {
+        validate_sha256_fingerprint(&required_display_string(
+            accepted,
+            "terminal_completion_fingerprint",
+        )?)?;
+    }
+    Ok(())
+}
+
+fn merge_objective_drive_result(
+    previous: &Value,
+    drive: Value,
+) -> Result<Value, RuntimeClientError> {
+    let previous = previous
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let mut drive = drive
+        .as_object()
+        .cloned()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    for key in [
+        "journey",
+        "journey_execution",
+        "terminal_completion_evidence",
+        "objective_proposal_authorization_preflight_result",
+        "proposal_apply_result",
+        "objective_apply_verification_result",
+        "objective_completion_acceptance_result",
+        "objective_continue_decision_id",
+        "objective_continue_continuation_id",
+        "objective_continue_post_progress_fingerprint",
+        "objective_continue_post_aggregate_sequence",
+    ] {
+        if let Some(value) = previous.get(key) {
+            drive.insert(key.to_string(), value.clone());
+        }
+    }
+    Ok(Value::Object(drive))
+}
+
+fn merge_objective_continue_result(
+    original: Value,
+    continuation: Value,
+) -> Result<Value, RuntimeClientError> {
+    let mut object = original
+        .as_object()
+        .cloned()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let continuation = continuation
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if let Some(value) = continuation.get("objective_proposal_authorization_preflight_result") {
+        object.insert(
+            "objective_proposal_authorization_preflight_result".to_string(),
+            value.clone(),
+        );
+    }
+    if let Some(value) = continuation.get("proposal_apply_result") {
+        object.insert("proposal_apply_result".to_string(), value.clone());
+    }
+    if let Some(value) = continuation.get("objective_apply_verification_result") {
+        object.insert(
+            "objective_apply_verification_result".to_string(),
+            value.clone(),
+        );
+    }
+    if let Some(value) = continuation.get("objective_completion_acceptance_result") {
+        object.insert(
+            "objective_completion_acceptance_result".to_string(),
+            value.clone(),
+        );
+    }
+    if let Some(value) = continuation.get("next_route") {
+        object.insert("next_route".to_string(), value.clone());
+    }
+    let continuation_next_action = continuation
+        .get("next_action")
+        .map(bounded_json_string)
+        .transpose()?;
+    if let Some(value) = continuation_next_action.as_ref() {
+        object.insert("next_action".to_string(), value.clone());
+    }
+    for (source_key, target_key) in [
+        ("decision_id", "objective_continue_decision_id"),
+        ("continuation_id", "objective_continue_continuation_id"),
+        (
+            "post_progress_fingerprint",
+            "objective_continue_post_progress_fingerprint",
+        ),
+        (
+            "post_aggregate_sequence",
+            "objective_continue_post_aggregate_sequence",
+        ),
+    ] {
+        if let Some(value) = continuation.get(source_key) {
+            object.insert(target_key.to_string(), value.clone());
+        }
+    }
+    let stop_reason = match continuation_next_action.as_ref().and_then(Value::as_str) {
+        Some("close_headless_run") => "objective_completion_accepted",
+        Some("accept_objective_completion") => "objective_apply_verified",
+        Some("verify_objective_apply") => "objective_proposal_apply_ready_for_verification",
+        Some("apply_authorized_objective_proposal") => {
+            "objective_proposal_authorization_preflight_ready"
+        }
+        _ => "objective_route_followed",
+    };
+    object.insert(
+        "stop_reason".to_string(),
+        Value::String(stop_reason.to_string()),
+    );
+    Ok(Value::Object(object))
+}
+
 fn completion_acceptance_target(
     result: &Value,
 ) -> Result<Option<CompletionAcceptanceTarget>, RuntimeClientError> {
@@ -1428,7 +2262,13 @@ fn completion_acceptance_target(
         return Ok(None);
     };
     let closure_status = display_string(closure, "status")?;
-    if closure_status != "complete" || object.get("accepted_completion").is_some() {
+    if closure_status != "complete"
+        || object.get("accepted_completion").is_some()
+        || object.get("completion_finalization").is_some()
+        || object
+            .get("objective_completion_acceptance_result")
+            .is_some()
+    {
         return Ok(None);
     }
 
@@ -1521,6 +2361,26 @@ fn stable_cli_resume_id(progress_fingerprint: &str, aggregate_sequence: u64) -> 
     hasher.update(aggregate_sequence.to_string().as_bytes());
     let digest = hasher.finalize();
     format!("cli.resume.{}", hex_prefix(&digest, 16))
+}
+
+fn stable_cli_objective_route_id(kind: &str, session_id: &str, route_fingerprint: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"brownie-cli-objective-route-v1\\0");
+    hasher.update(kind.as_bytes());
+    hasher.update(b"\\0");
+    hasher.update(session_id.as_bytes());
+    hasher.update(b"\\0");
+    hasher.update(route_fingerprint.as_bytes());
+    let digest = hasher.finalize();
+    format!("cli.obj.{}", hex_prefix(&digest, 16))
+}
+
+fn stable_cli_objective_authorization_token_fingerprint(route_fingerprint: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"brownie-cli-objective-authorization-v1\\0");
+    hasher.update(route_fingerprint.as_bytes());
+    let digest = hasher.finalize();
+    format!("sha256:{}", hex_prefix(&digest, 32))
 }
 
 fn hex_prefix(bytes: &[u8], len: usize) -> String {
@@ -1808,6 +2668,16 @@ fn optional_object_field<'a>(
     key: &str,
 ) -> Option<&'a serde_json::Map<String, Value>> {
     object.get(key).and_then(Value::as_object)
+}
+
+fn object_field_from_value<'a>(
+    object: &'a serde_json::Map<String, Value>,
+    key: &str,
+) -> Result<&'a serde_json::Map<String, Value>, RuntimeClientError> {
+    object
+        .get(key)
+        .and_then(Value::as_object)
+        .ok_or(RuntimeClientError::InvalidResponse)
 }
 
 fn optional_array_field<'a>(
@@ -2142,6 +3012,464 @@ mod tests {
             .as_str()
             .unwrap()
             .ends_with(".journey"));
+    }
+
+    #[test]
+    fn cli_run_objective_proposal_preflight_params_use_runtime_route_evidence() {
+        let drive = json!({
+            "status": "task_executed",
+            "session_id": "cli.run.abc",
+            "drive_id": "cli.run.abc.drive",
+            "next_action": "review_and_authorize_objective_proposal",
+            "stop_reason": "objective_proposal_candidate_ready",
+            "end_session_sequence": 1,
+            "post_progress": {
+                "progress_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aggregate_sequence": 7
+            },
+            "journey": {
+                "journey_id": "cli.run.abc.journey",
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "journey_fingerprint": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "next_route": {
+                "kind": "review_and_authorize_objective_proposal",
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "proposal_id": "proposal_1",
+                "progress_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "aggregate_sequence": 7,
+                "next_action": "review_and_authorize_objective_proposal",
+                "reason": "ready"
+            },
+            "objective_proposal_candidate": {
+                "status": "ready_for_review",
+                "journey_id": "cli.run.abc.journey",
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "session_id": "cli.run.abc",
+                "drive_id": "cli.run.abc.drive",
+                "objective_context_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                "selected_context_fingerprint": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                "candidate_count": 1,
+                "proposal_id": "proposal_1",
+                "source_event_id": "event_1",
+                "source_event_kind": "WorkspacePatchProposed",
+                "operation": "replace_file",
+                "path_fingerprint": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                "validation_status": "Valid",
+                "approval_status": "Pending",
+                "candidate_fingerprint": "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                "replayed": false,
+                "next_action": "review_and_authorize_objective_proposal"
+            }
+        });
+
+        let params = objective_proposal_authorization_preflight_params(&drive)
+            .unwrap()
+            .expect("preflight params");
+        let second = objective_proposal_authorization_preflight_params(&drive)
+            .unwrap()
+            .expect("stable preflight params");
+        assert_eq!(params, second);
+        assert_eq!(params["authorize"], true);
+        assert_eq!(params["expected_aggregate_sequence"], 7);
+        assert_eq!(
+            params["expected_progress_fingerprint"],
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert!(params.get("mode_id").is_none());
+        assert!(params.get("replacement_content").is_none());
+        assert!(params.get("objective_proposal_apply_target").is_none());
+        let target = &params["objective_proposal_authorization_preflight_target"];
+        assert_eq!(target["authorize_objective_proposal_preflight"], true);
+        assert_eq!(target["expected_operation"], "replace_file");
+        assert_eq!(target["expected_validation_status"], "Valid");
+        assert_eq!(target["expected_approval_status"], "Pending");
+        assert_eq!(
+            target["expected_candidate_fingerprint"],
+            "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        );
+        validate_sha256_fingerprint(
+            target["authorization_token_fingerprint"]
+                .as_str()
+                .expect("token fingerprint"),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn cli_run_objective_proposal_apply_params_use_runtime_preflight_and_inspect_evidence() {
+        let authorized: Value = serde_json::from_str(
+            r#"{
+                "status":"task_executed",
+                "session_id":"cli.run.abc",
+                "drive_id":"cli.run.abc.drive",
+                "next_action":"apply_authorized_objective_proposal",
+                "stop_reason":"objective_proposal_authorization_preflight_ready",
+                "end_session_sequence":1,
+                "objective_continue_decision_id":"headless_decision_1",
+                "objective_continue_continuation_id":"cli.obj.auth",
+                "objective_continue_post_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "objective_continue_post_aggregate_sequence":8,
+                "journey":{"journey_id":"cli.run.abc.journey","task_id":"task_1","run_id":"run_1","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                "next_route":{"kind":"apply_authorized_objective_proposal_explicitly","task_id":"task_1","run_id":"run_1","proposal_id":"proposal_1","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":8,"next_action":"apply_authorized_objective_proposal","reason":"ready"},
+                "objective_proposal_authorization_preflight_result":{
+                    "status":"authorized_preflight_ready",
+                    "journey_id":"cli.run.abc.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.abc",
+                    "source_drive_id":"cli.run.abc.drive",
+                    "proposal_id":"proposal_1",
+                    "source_event_id":"event_1",
+                    "source_event_kind":"WorkspacePatchProposed",
+                    "operation":"replace_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "objective_context_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "selected_context_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "candidate_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "authorization_token_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "validation_status":"Valid",
+                    "approval_status":"Approved",
+                    "preflight_snapshot":{"proposal_id":"proposal_1","snapshot_id":"snapshot_1","path":"README.md","canonical_path_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","file_exists":true,"file_kind":"regular_file","file_size_bytes":15,"file_modified_unix_ms":1,"file_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","captured_at":"2026-08-27T00:00:00Z","stale":false,"stale_reason":null},
+                    "apply_plan":{"proposal_id":"proposal_1","plan_id":"plan_1","status":"Ready","checklist":[]},
+                    "authorization_preflight_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "replayed":false,
+                    "next_action":"apply_authorized_objective_proposal"
+                }
+            }"#,
+        )
+        .unwrap();
+        let proposal: Value = serde_json::from_str(
+            r#"{
+                "proposal":{
+                    "proposal_id":"proposal_1",
+                    "path":"README.md",
+                    "operation":"replace_file",
+                    "content_preview":"new README content",
+                    "content_chars":18,
+                    "truncated":false,
+                    "validation_status":"Valid",
+                    "validation_reason":null,
+                    "diff_preview":"--- README.md",
+                    "diff_truncated":false,
+                    "diff_redacted":false,
+                    "approval_status":"Approved",
+                    "approval_reason":null,
+                    "approval_reason_redacted":false,
+                    "approved_at":"2026-08-27T00:00:00Z",
+                    "rejected_at":null,
+                    "latest_apply_plan":null,
+                    "latest_snapshot":null
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let inspect_params = objective_proposal_inspect_params(&authorized)
+            .unwrap()
+            .expect("inspect params");
+        assert_eq!(inspect_params["run_id"], "run_1");
+        assert_eq!(inspect_params["proposal_id"], "proposal_1");
+
+        let params = objective_proposal_apply_params(&authorized, &proposal)
+            .unwrap()
+            .expect("apply params");
+        let second = objective_proposal_apply_params(&authorized, &proposal)
+            .unwrap()
+            .expect("stable apply params");
+        assert_eq!(params, second);
+        assert_eq!(params["authorize"], true);
+        assert!(params.get("mode_id").is_none());
+        assert_eq!(params["expected_aggregate_sequence"], 8);
+        let target = &params["objective_proposal_apply_target"];
+        assert_eq!(target["authorize_objective_proposal_apply"], true);
+        assert_eq!(target["expected_operation"], "replace_file");
+        assert_eq!(
+            target["expected_authorization_preflight_fingerprint"],
+            "sha256:4444444444444444444444444444444444444444444444444444444444444444"
+        );
+        assert_eq!(
+            target["expected_target_sha256"],
+            "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+        );
+        assert_eq!(target["replacement_content"], "new README content");
+    }
+
+    #[test]
+    fn cli_run_objective_apply_verification_params_use_runtime_apply_evidence() {
+        let applied: Value = serde_json::from_str(
+            r#"{
+                "status":"task_executed",
+                "session_id":"cli.run.abc",
+                "drive_id":"cli.run.abc.drive",
+                "next_action":"verify_objective_apply",
+                "stop_reason":"objective_proposal_apply_ready_for_verification",
+                "objective_continue_decision_id":"headless_decision_apply",
+                "objective_continue_continuation_id":"cli.obj.apply",
+                "journey":{"journey_id":"cli.run.abc.journey","task_id":"task_1","run_id":"run_1","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                "next_route":{"kind":"verify_objective_apply_explicitly","task_id":"task_1","run_id":"run_1","proposal_id":"proposal_1","apply_id":"apply_1","apply_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":9,"next_action":"verify_objective_apply","reason":"ready"},
+                "objective_proposal_authorization_preflight_result":{
+                    "status":"authorized_preflight_ready",
+                    "journey_id":"cli.run.abc.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.abc",
+                    "source_drive_id":"cli.run.abc.drive",
+                    "proposal_id":"proposal_1",
+                    "source_event_id":"event_1",
+                    "source_event_kind":"WorkspacePatchProposed",
+                    "operation":"replace_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "objective_context_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "selected_context_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "candidate_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "authorization_token_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "validation_status":"Valid",
+                    "approval_status":"Approved",
+                    "preflight_snapshot":{"proposal_id":"proposal_1","snapshot_id":"snapshot_1","path":"README.md","canonical_path_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","file_exists":true,"file_kind":"regular_file","file_size_bytes":15,"file_modified_unix_ms":1,"file_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","captured_at":"2026-08-27T00:00:00Z","stale":false,"stale_reason":null},
+                    "apply_plan":{"proposal_id":"proposal_1","plan_id":"plan_1","status":"Ready","checklist":[]},
+                    "authorization_preflight_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "replayed":false,
+                    "next_action":"apply_authorized_objective_proposal"
+                },
+                "proposal_apply_result":{
+                    "proposal":{"proposal_id":"proposal_1","path":"README.md","operation":"replace_file","content_preview":"new README content","content_chars":18,"truncated":false,"validation_status":"Valid","validation_reason":null,"diff_preview":"--- README.md","diff_truncated":false,"diff_redacted":false,"approval_status":"Approved","approval_reason":null,"approval_reason_redacted":false,"approved_at":"2026-08-27T00:00:00Z","rejected_at":null,"latest_apply_plan":null,"latest_snapshot":null},
+                    "apply_result":{"proposal_id":"proposal_1","apply_id":"apply_1","apply_status":"Applied","apply_reason":"applied","authorization_id":"auth_1","authorization_consumed":true,"applied":true,"operation":"replace_file","atomic_replacement_completed":true,"atomic_create_completed":false,"atomic_delete_completed":false,"path":"README.md","expected_target_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","expected_target_absent":null,"pre_write_target_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","pre_write_target_exists":true,"post_write_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666","post_delete_target_exists":null,"content_chars":18,"content_bytes":18,"checked_at":"2026-08-27T00:00:00Z","applied_at":"2026-08-27T00:00:00Z","temp_file_cleaned":true,"check_count":1,"failed_checks":[],"blocked_checks":[],"checklist":[]}
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let params = objective_apply_verification_params(&applied)
+            .unwrap()
+            .expect("verification params");
+        let second = objective_apply_verification_params(&applied)
+            .unwrap()
+            .expect("stable verification params");
+        assert_eq!(params, second);
+        assert_eq!(params["authorize"], true);
+        assert!(params.get("mode_id").is_none());
+        assert!(params.get("replacement_content").is_none());
+        assert_eq!(params["expected_aggregate_sequence"], 9);
+        let target = &params["objective_apply_verification_target"];
+        assert_eq!(target["authorize_objective_apply_verification"], true);
+        assert_eq!(target["objective_apply_continuation_id"], "cli.obj.apply");
+        assert_eq!(
+            target["expected_objective_apply_decision_id"],
+            "headless_decision_apply"
+        );
+        assert_eq!(target["expected_operation"], "replace_file");
+        assert_eq!(target["expected_apply_status"], "Applied");
+        assert_eq!(target["expected_authorization_consumed"], true);
+        assert_eq!(
+            target["expected_apply_fingerprint"],
+            "sha256:5555555555555555555555555555555555555555555555555555555555555555"
+        );
+        assert_eq!(
+            target["expected_post_write_sha256"],
+            "sha256:6666666666666666666666666666666666666666666666666666666666666666"
+        );
+    }
+
+    #[test]
+    fn cli_run_objective_completion_acceptance_params_use_runtime_verification_evidence() {
+        let verified: Value = serde_json::from_str(
+            r#"{
+                "status":"task_executed",
+                "session_id":"cli.run.abc",
+                "drive_id":"cli.run.abc.drive",
+                "next_action":"accept_objective_completion",
+                "stop_reason":"objective_apply_verified",
+                "objective_continue_decision_id":"headless_decision_verify",
+                "objective_continue_continuation_id":"cli.obj.verify",
+                "journey":{"journey_id":"cli.run.abc.journey","task_id":"task_1","run_id":"run_1","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                "next_route":{"kind":"accept_objective_completion_explicitly","task_id":"task_1","run_id":"run_1","proposal_id":"proposal_1","apply_id":"apply_1","apply_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":10,"next_action":"accept_objective_completion","reason":"ready"},
+                "objective_proposal_authorization_preflight_result":{
+                    "status":"authorized_preflight_ready",
+                    "journey_id":"cli.run.abc.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.abc",
+                    "source_drive_id":"cli.run.abc.drive",
+                    "proposal_id":"proposal_1",
+                    "source_event_id":"event_1",
+                    "source_event_kind":"WorkspacePatchProposed",
+                    "operation":"replace_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "objective_context_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+                    "selected_context_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+                    "candidate_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+                    "authorization_token_fingerprint":"sha256:1111111111111111111111111111111111111111111111111111111111111111",
+                    "validation_status":"Valid",
+                    "approval_status":"Approved",
+                    "preflight_snapshot":{"proposal_id":"proposal_1","snapshot_id":"snapshot_1","path":"README.md","canonical_path_hash":"sha256:2222222222222222222222222222222222222222222222222222222222222222","file_exists":true,"file_kind":"regular_file","file_size_bytes":15,"file_modified_unix_ms":1,"file_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","captured_at":"2026-08-27T00:00:00Z","stale":false,"stale_reason":null},
+                    "apply_plan":{"proposal_id":"proposal_1","plan_id":"plan_1","status":"Ready","checklist":[]},
+                    "authorization_preflight_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444",
+                    "replayed":false,
+                    "next_action":"apply_authorized_objective_proposal"
+                },
+                "proposal_apply_result":{
+                    "proposal":{"proposal_id":"proposal_1","path":"README.md","operation":"replace_file","content_preview":"new README content","content_chars":18,"truncated":false,"validation_status":"Valid","validation_reason":null,"diff_preview":"--- README.md","diff_truncated":false,"diff_redacted":false,"approval_status":"Approved","approval_reason":null,"approval_reason_redacted":false,"approved_at":"2026-08-27T00:00:00Z","rejected_at":null,"latest_apply_plan":null,"latest_snapshot":null},
+                    "apply_result":{"proposal_id":"proposal_1","apply_id":"apply_1","apply_status":"Applied","apply_reason":"applied","authorization_id":"auth_1","authorization_consumed":true,"applied":true,"operation":"replace_file","atomic_replacement_completed":true,"atomic_create_completed":false,"atomic_delete_completed":false,"path":"README.md","expected_target_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","expected_target_absent":null,"pre_write_target_sha256":"sha256:3333333333333333333333333333333333333333333333333333333333333333","pre_write_target_exists":true,"post_write_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666","post_delete_target_exists":null,"content_chars":18,"content_bytes":18,"checked_at":"2026-08-27T00:00:00Z","applied_at":"2026-08-27T00:00:00Z","temp_file_cleaned":true,"check_count":1,"failed_checks":[],"blocked_checks":[],"checklist":[]}
+                },
+                "objective_apply_verification_result":{
+                    "verification_status":"verified",
+                    "journey_id":"cli.run.abc.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.abc",
+                    "source_drive_id":"cli.run.abc.drive",
+                    "proposal_id":"proposal_1",
+                    "apply_id":"apply_1",
+                    "operation":"replace_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "apply_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555",
+                    "expected_post_write_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666",
+                    "current_target_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666",
+                    "verification_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777",
+                    "route_kind":"accept_objective_completion_explicitly",
+                    "replayed":false,
+                    "next_action":"accept_objective_completion"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let params = objective_completion_acceptance_params(&verified)
+            .unwrap()
+            .expect("completion acceptance params");
+        let second = objective_completion_acceptance_params(&verified)
+            .unwrap()
+            .expect("stable completion acceptance params");
+        assert_eq!(params, second);
+        assert_eq!(params["authorize"], true);
+        assert!(params.get("mode_id").is_none());
+        assert!(params.get("replacement_content").is_none());
+        assert_eq!(params["expected_aggregate_sequence"], 10);
+        let target = &params["objective_completion_acceptance_target"];
+        assert_eq!(target["authorize_objective_completion_acceptance"], true);
+        assert_eq!(
+            target["objective_apply_verification_continuation_id"],
+            "cli.obj.verify"
+        );
+        assert_eq!(
+            target["expected_objective_apply_verification_decision_id"],
+            "headless_decision_verify"
+        );
+        assert_eq!(target["expected_operation"], "replace_file");
+        assert_eq!(target["expected_apply_status"], "Applied");
+        assert_eq!(target["expected_authorization_consumed"], true);
+        assert_eq!(target["expected_verification_status"], "verified");
+        assert_eq!(
+            target["expected_verification_route_kind"],
+            "accept_objective_completion_explicitly"
+        );
+        assert_eq!(
+            target["expected_verification_fingerprint"],
+            "sha256:7777777777777777777777777777777777777777777777777777777777777777"
+        );
+    }
+
+    #[test]
+    fn cli_run_objective_completion_close_params_use_runtime_acceptance_evidence() {
+        let accepted: Value = serde_json::from_str(
+            r#"{
+                "status":"task_executed",
+                "session_id":"cli.run.abc",
+                "drive_id":"cli.run.abc.drive",
+                "next_action":"close_headless_run",
+                "stop_reason":"objective_completion_accepted",
+                "end_session_sequence":1,
+                "objective_continue_decision_id":"headless_decision_complete",
+                "objective_continue_continuation_id":"cli.obj.complete",
+                "journey":{"journey_id":"cli.run.abc.journey","task_id":"task_1","run_id":"run_1","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"},
+                "next_route":{"kind":"refresh_progress_overview","task_id":"task_1","run_id":"run_1","proposal_id":"proposal_1","apply_id":"apply_1","apply_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":11,"next_action":"close_headless_run","reason":"ready"},
+                "objective_completion_acceptance_result":{
+                    "acceptance_status":"accepted",
+                    "journey_id":"cli.run.abc.journey",
+                    "task_id":"task_1",
+                    "run_id":"run_1",
+                    "session_id":"cli.run.abc",
+                    "source_drive_id":"cli.run.abc.drive",
+                    "proposal_id":"proposal_1",
+                    "apply_id":"apply_1",
+                    "operation":"replace_file",
+                    "path_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+                    "apply_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555",
+                    "expected_post_write_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666",
+                    "current_target_sha256":"sha256:6666666666666666666666666666666666666666666666666666666666666666",
+                    "verification_status":"verified",
+                    "verification_fingerprint":"sha256:7777777777777777777777777777777777777777777777777777777777777777",
+                    "acceptance_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888",
+                    "replayed":false,
+                    "next_action":"close_headless_run"
+                }
+            }"#,
+        )
+        .unwrap();
+
+        let target = objective_completion_close_target(&accepted)
+            .unwrap()
+            .expect("close target");
+        assert_eq!(target.session_id, "cli.run.abc");
+        assert_eq!(target.task_id, "task_1");
+        assert_eq!(target.run_id, "run_1");
+        assert_eq!(target.expected_start_session_sequence, 1);
+        assert_eq!(
+            target.terminal_completion_fingerprint,
+            "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+        );
+        let close_params = accepted_completion_route_params(&target, false, None);
+        assert_eq!(close_params["authorize"], true);
+        assert_eq!(close_params["session_id"], "cli.run.abc");
+        assert_eq!(close_params["drive_id"], "cli.run.abc.done");
+        assert_eq!(close_params["expected_start_session_sequence"], 1);
+        assert!(close_params.get("completion_acceptance").is_none());
+        assert!(close_params
+            .get("objective_completion_acceptance_target")
+            .is_none());
+        assert!(close_params
+            .get("authorize_completion_finalization")
+            .is_none());
+
+        let final_params = accepted_completion_route_params(
+            &target,
+            true,
+            Some("sha256:9999999999999999999999999999999999999999999999999999999999999999"),
+        );
+        assert_eq!(final_params["drive_id"], "cli.run.abc.finalize");
+        assert_eq!(final_params["authorize_completion_finalization"], true);
+        assert_eq!(
+            final_params["expected_completion_closure_fingerprint"],
+            "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+        );
+
+        let refreshed_close: Value = serde_json::from_str(
+            r#"{
+                "status":"no_eligible_task",
+                "session_id":"cli.run.abc",
+                "drive_id":"cli.run.abc.done",
+                "start_session_sequence":1,
+                "end_session_sequence":2,
+                "stop_reason":"complete",
+                "completion_closure":{
+                    "status":"complete",
+                    "closure_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999",
+                    "progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                    "terminal_completion_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888"
+                },
+                "next_action":"inspect_progress_overview",
+                "next_route":{"kind":"no_eligible_task","next_action":"inspect_progress_overview"},
+                "accepted_completion":{
+                    "terminal_completion_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888"
+                }
+            }"#,
+        )
+        .unwrap();
+        validate_objective_completion_close_route(&refreshed_close).unwrap();
     }
 
     #[test]

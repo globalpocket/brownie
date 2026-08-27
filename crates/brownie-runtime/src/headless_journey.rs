@@ -44,7 +44,7 @@ fn headless_journey_effective_task_start(
         .unwrap_or_default()
         .is_empty()
     {
-        effective.mode_id = Some("provider-runner".to_string());
+        effective.mode_id = Some("implementer".to_string());
     }
     effective
 }
