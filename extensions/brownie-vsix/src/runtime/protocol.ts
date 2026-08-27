@@ -719,6 +719,7 @@ export interface HeadlessContinueOnceParams {
   expected_progress_fingerprint: string;
   expected_aggregate_sequence: number;
   continuation_id?: string | null;
+  continuation_scope?: HeadlessContinueScope | null;
   max_steps?: number | null;
   context_budget?: TaskRunContextBudget | null;
   selected_index_context?: TaskRunSelectedIndexContext | null;
@@ -756,11 +757,21 @@ export interface HeadlessContinueOnceParams {
   modepack_selected_active_rollback_target?: ModePackSelectedActiveRollbackTarget | null;
 }
 
+export interface HeadlessContinueScope {
+  session_id?: string | null;
+  session_id_prefix?: string | null;
+  journey_id?: string | null;
+  task_id?: string | null;
+  run_id?: string | null;
+  latest_matching_session?: boolean;
+}
+
 export interface HeadlessRunAdvanceParams {
   authorize: true;
   session_id: string;
   advance_id?: string | null;
   expected_session_sequence: number;
+  continuation_scope?: HeadlessContinueScope | null;
   max_steps?: number | null;
   context_budget?: TaskRunContextBudget | null;
   selected_index_context?: TaskRunSelectedIndexContext | null;
@@ -2136,6 +2147,10 @@ export interface TaskListHeadlessRouteCandidate {
   apply_id?: string | null;
   failure_fingerprint?: string | null;
   apply_fingerprint?: string | null;
+  journey_id?: string | null;
+  session_id?: string | null;
+  journey_fingerprint?: string | null;
+  next_session_sequence?: number | null;
   progress_fingerprint: string;
   aggregate_sequence: number;
   route_fingerprint: string;
@@ -6208,12 +6223,13 @@ export function isTaskRunContextBudget(value: unknown): value is TaskRunContextB
 export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessContinueOnceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'product_continuation_run_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
+    hasOnlyFields(value, ['authorize', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'continuation_id', 'continuation_scope', 'max_steps', 'context_budget', 'selected_index_context', 'verification_recovery_source', 'verification_recovery_goal', 'verification_recovery_mode_id', 'verification_recovery_retry_source', 'verification_recovery_retry_goal', 'verification_recovery_retry_mode_id', 'llm_provider_failure_retry_source', 'llm_provider_failure_retry_goal', 'llm_provider_failure_retry_mode_id', 'product_continuation_admission_target', 'product_continuation_run_target', 'verification_recovery_run_target', 'verification_recovery_context_read', 'patch_apply_recovery_source', 'patch_apply_recovery_goal', 'patch_apply_recovery_mode_id', 'patch_apply_recovery_run_target', 'patch_apply_recovery_apply_target', 'verification_recovery_apply_target', 'verification_recovery_retry_run_target', 'llm_provider_failure_retry_run_target', 'parent_join_run_target', 'objective_proposal_authorization_preflight_target', 'objective_proposal_apply_target', 'objective_apply_verification_target', 'objective_completion_acceptance_target', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target', 'modepack_selected_active_rollback_target']) &&
     value.authorize === true &&
     typeof value.expected_progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.expected_progress_fingerprint) &&
     isNonNegativeInteger(value.expected_aggregate_sequence) &&
     (value.continuation_id === undefined || value.continuation_id === null || isHeadlessContinuationId(value.continuation_id)) &&
+    (value.continuation_scope === undefined || value.continuation_scope === null || isHeadlessContinueScope(value.continuation_scope)) &&
     (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
@@ -6249,6 +6265,23 @@ export function isHeadlessContinueOnceParams(value: unknown): value is HeadlessC
     (value.modepack_selected_candidate_approval_target === undefined || value.modepack_selected_candidate_approval_target === null || isModePackSelectedCandidateApprovalTarget(value.modepack_selected_candidate_approval_target)) &&
     (value.modepack_selected_approved_candidate_replacement_target === undefined || value.modepack_selected_approved_candidate_replacement_target === null || isModePackSelectedApprovedCandidateReplacementTarget(value.modepack_selected_approved_candidate_replacement_target)) &&
     (value.modepack_selected_active_rollback_target === undefined || value.modepack_selected_active_rollback_target === null || isModePackSelectedActiveRollbackTarget(value.modepack_selected_active_rollback_target))
+  );
+}
+
+function isHeadlessContinueScope(value: unknown): value is HeadlessContinueScope {
+  const selectorCount = isRecord(value)
+    ? [value.session_id, value.session_id_prefix, value.journey_id, value.task_id, value.run_id].filter((selector) => selector !== undefined && selector !== null).length
+    : 0;
+  return (
+    isRecord(value) &&
+    hasOnlyFields(value, ['session_id', 'session_id_prefix', 'journey_id', 'task_id', 'run_id', 'latest_matching_session']) &&
+    selectorCount >= 1 &&
+    (value.session_id === undefined || value.session_id === null || isHeadlessContinuationId(value.session_id)) &&
+    (value.session_id_prefix === undefined || value.session_id_prefix === null || isHeadlessContinuationId(value.session_id_prefix)) &&
+    (value.journey_id === undefined || value.journey_id === null || isHeadlessContinuationId(value.journey_id)) &&
+    (value.task_id === undefined || value.task_id === null || isHeadlessContinuationId(value.task_id)) &&
+    (value.run_id === undefined || value.run_id === null || isHeadlessContinuationId(value.run_id)) &&
+    (value.latest_matching_session === undefined || typeof value.latest_matching_session === 'boolean')
   );
 }
 
@@ -6787,12 +6820,13 @@ function isModePackSelectedActiveRollbackTarget(value: unknown): value is ModePa
 export function isHeadlessRunAdvanceParams(value: unknown): value is HeadlessRunAdvanceParams {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'max_steps', 'context_budget', 'selected_index_context', 'product_continuation_admission_target', 'product_continuation_run_target', 'product_continuation_derived_target', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
+    hasOnlyFields(value, ['authorize', 'session_id', 'advance_id', 'expected_session_sequence', 'continuation_scope', 'max_steps', 'context_budget', 'selected_index_context', 'product_continuation_admission_target', 'product_continuation_run_target', 'product_continuation_derived_target', 'expected_progress_fingerprint', 'expected_aggregate_sequence', 'modepack_registry_update_selection_target', 'modepack_selected_candidate_fetch_target', 'modepack_selected_candidate_provenance_verification_target', 'modepack_selected_candidate_approval_target', 'modepack_selected_approved_candidate_replacement_target']) &&
     value.authorize === true &&
     isHeadlessRunId(value.session_id) &&
     (value.advance_id === undefined || value.advance_id === null || isHeadlessRunId(value.advance_id)) &&
     isNonNegativeInteger(value.expected_session_sequence) &&
     value.expected_session_sequence >= 1 &&
+    (value.continuation_scope === undefined || value.continuation_scope === null || isHeadlessContinueScope(value.continuation_scope)) &&
     (value.max_steps === undefined || value.max_steps === null || (isNonNegativeInteger(value.max_steps) && value.max_steps >= 1 && value.max_steps <= 3)) &&
     (value.context_budget === undefined || value.context_budget === null || isTaskRunContextBudget(value.context_budget)) &&
     (value.selected_index_context === undefined || value.selected_index_context === null || isCodebaseIndexSelectionReadResult(value.selected_index_context)) &&
@@ -8759,7 +8793,7 @@ function isHeadlessContinueRoute(value: unknown): value is HeadlessContinueRoute
 function isTaskListHeadlessRouteCandidate(value: unknown): value is TaskListHeadlessRouteCandidate {
   return (
     isRecord(value) &&
-    hasOnlyFields(value, ['kind', 'reason', 'task_id', 'run_id', 'proposal_id', 'apply_id', 'failure_fingerprint', 'apply_fingerprint', 'progress_fingerprint', 'aggregate_sequence', 'route_fingerprint', 'priority', 'next_action']) &&
+    hasOnlyFields(value, ['kind', 'reason', 'task_id', 'run_id', 'proposal_id', 'apply_id', 'failure_fingerprint', 'apply_fingerprint', 'journey_id', 'session_id', 'journey_fingerprint', 'next_session_sequence', 'progress_fingerprint', 'aggregate_sequence', 'route_fingerprint', 'priority', 'next_action']) &&
     hasNoForbiddenTaskListProgressFields(value) &&
     isHeadlessContinueRouteKind(value.kind) &&
     typeof value.reason === 'string' &&
@@ -8771,6 +8805,10 @@ function isTaskListHeadlessRouteCandidate(value: unknown): value is TaskListHead
     (value.apply_id === undefined || value.apply_id === null || typeof value.apply_id === 'string') &&
     (value.failure_fingerprint === undefined || value.failure_fingerprint === null || (typeof value.failure_fingerprint === 'string' && isSha256Fingerprint(value.failure_fingerprint))) &&
     (value.apply_fingerprint === undefined || value.apply_fingerprint === null || (typeof value.apply_fingerprint === 'string' && isSha256Fingerprint(value.apply_fingerprint))) &&
+    (value.journey_id === undefined || value.journey_id === null || isHeadlessRunId(value.journey_id)) &&
+    (value.session_id === undefined || value.session_id === null || isHeadlessRunId(value.session_id)) &&
+    (value.journey_fingerprint === undefined || value.journey_fingerprint === null || (typeof value.journey_fingerprint === 'string' && isSha256Fingerprint(value.journey_fingerprint))) &&
+    (value.next_session_sequence === undefined || value.next_session_sequence === null || (isNonNegativeInteger(value.next_session_sequence) && value.next_session_sequence >= 1)) &&
     typeof value.progress_fingerprint === 'string' &&
     isSha256Fingerprint(value.progress_fingerprint) &&
     isNonNegativeInteger(value.aggregate_sequence) &&
