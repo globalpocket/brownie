@@ -84,6 +84,21 @@ rules, decide whether `RuntimePermissionGate` allows workspace writes or process
 execution. External network access, service control, and destructive capability
 requests remain invalid and fail closed during Mode Pack validation.
 
+## MP-2 default entrypoint compatibility
+
+Active Mode Packs may now provide a top-level `entrypoints.default` mode id. The
+entrypoint is validated against the compiled snapshot and then stored in the
+active snapshot summary and fingerprints. For `brownie run "<objective>"`, the
+CLI leaves the entry mode omitted and the runtime resolves the headless journey
+start to the active Mode Pack default when one exists. This keeps AgentModes
+workflow selection in Mode Pack policy while the CLI remains transport glue.
+
+The resolved entry mode is captured in the journey start fingerprint and in the
+task's `ModeResolved` evidence. Replaying the same journey therefore reuses the
+same runtime-owned decision without duplicate admission, and later changes to a
+live `.brownie/modepack.json` cannot rewrite the task-pinned policy. If no Mode
+Pack default is available, Brownie keeps its built-in fallback behavior.
+
 ## M12.1 handoff target compatibility
 
 `CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for

@@ -412,6 +412,8 @@ pub struct ModePackActiveSnapshotSummary {
     pub source_path: String,
     pub mode_count: usize,
     pub mode_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_entrypoint: Option<String>,
     pub compiled_policy_fingerprint: String,
     pub activated_at: String,
     pub activation_event_id: String,
@@ -459,6 +461,8 @@ pub struct ModePackCandidateSummary {
     pub schema_version: u64,
     pub mode_count: usize,
     pub mode_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_entrypoint: Option<String>,
     pub compiled_policy_fingerprint: String,
     pub cached_at: String,
     pub cache_event_id: String,

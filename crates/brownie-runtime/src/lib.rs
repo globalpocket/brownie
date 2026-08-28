@@ -12362,6 +12362,21 @@ fn resolve_task_start_policy(
     }
 }
 
+fn resolve_headless_journey_entrypoint_mode_id(
+    store: &BrownieStore,
+) -> Result<Option<String>, String> {
+    if let Some(snapshot) = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| format!("active modepack snapshot load failed: {error}"))?
+    {
+        return Ok(snapshot.summary.default_entrypoint);
+    }
+
+    Ok(load_workspace_modepack(store.workspace_root())
+        .map_err(|error| format!("modepack load failed: {error}"))?
+        .and_then(|snapshot| snapshot.entrypoints.default))
+}
+
 fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolicy>, String> {
     let mut policies = BuiltinModeRegistry::list();
     if let Some(snapshot) = store
@@ -15759,6 +15774,9 @@ mod tests {
             r#"{
               "name": "capability-agentmodes",
               "schema_version": 1,
+              "entrypoints": {
+                "default": "external-integrator"
+              },
               "modes": [
                 {
                   "mode_id": "external-editor",
@@ -23479,6 +23497,74 @@ mod tests {
     }
 
     #[test]
+    fn headless_run_drive_journey_admission_uses_active_modepack_entrypoint_for_omitted_mode() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        )
+        .result
+        .expect("activation result");
+        assert_eq!(
+            activated["snapshot"]["default_entrypoint"],
+            "external-integrator"
+        );
+        let activation_fingerprint = activated["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .expect("activation fingerprint")
+            .to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp2.entrypoint","drive_id":"mp2.entrypoint.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp2.entrypoint.journey","authorize_journey_start":true,"task_start":{"goal":"Implement README update through the active Mode Pack entrypoint"}}}}"#;
+        let result = parse_line(request)
+            .result
+            .expect("entrypoint journey result");
+
+        assert_eq!(result["status"], "task_executed");
+        let task_id = result["journey"]["task_id"].as_str().expect("task id");
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some("external-integrator"));
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        let mode_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_payload["mode_id"], "external-integrator");
+        assert_eq!(mode_payload["permissions"]["workspace_write"], true);
+        assert_eq!(mode_payload["permissions"]["process_exec"], true);
+        assert_eq!(
+            mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
+            activation_fingerprint
+        );
+
+        let task_count_after_first_drive = store.tasks().list_tasks().expect("tasks").len();
+        let replay = parse_line(request).result.expect("entrypoint replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey"]["replayed"], true);
+        assert_eq!(replay["journey"]["task_id"], result["journey"]["task_id"]);
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first_drive
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn headless_run_drive_omitted_mode_development_objective_routes_proposal_candidate() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
@@ -25542,6 +25628,7 @@ mod tests {
                     source_path: ".brownie/modepack-active/current.json".to_string(),
                     mode_count: 1,
                     mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    default_entrypoint: None,
                     compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
                     activated_at: "2026-08-18T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
@@ -25576,6 +25663,7 @@ mod tests {
         let candidate_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
+            candidate_snapshot.entrypoints.default_mode_id(),
             &candidate_snapshot
                 .modes
                 .iter()
@@ -26816,6 +26904,7 @@ mod tests {
                             schema_version: 1,
                             mode_count: 1,
                             mode_ids: vec!["orchestrator".to_string()],
+                            default_entrypoint: None,
                             compiled_policy_fingerprint: target
                                 .expected_candidate_compiled_policy_fingerprint
                                 .clone(),
@@ -51665,6 +51754,7 @@ mod tests {
                     source_path: ".brownie/modepack-active/current.json".to_string(),
                     mode_count: 1,
                     mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    default_entrypoint: None,
                     compiled_policy_fingerprint: active_policy_fingerprint.clone(),
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
@@ -51809,6 +51899,7 @@ mod tests {
                     source_path: ".brownie/modepack-active/current.json".to_string(),
                     mode_count: 1,
                     mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    default_entrypoint: None,
                     compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
@@ -52039,6 +52130,7 @@ mod tests {
         let candidate_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
+            candidate_snapshot.entrypoints.default_mode_id(),
             &candidate_snapshot
                 .modes
                 .iter()
@@ -52104,6 +52196,7 @@ mod tests {
                     source_path: ".brownie/modepack-active/current.json".to_string(),
                     mode_count: 1,
                     mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    default_entrypoint: None,
                     compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
@@ -53114,6 +53207,7 @@ mod tests {
         let candidate_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
+            candidate_snapshot.entrypoints.default_mode_id(),
             &candidate_snapshot
                 .modes
                 .iter()
@@ -53178,6 +53272,7 @@ mod tests {
                     source_path: ".brownie/modepack-active/current.json".to_string(),
                     mode_count: 1,
                     mode_ids: vec!["remote-reviewer-lite".to_string()],
+                    default_entrypoint: None,
                     compiled_policy_fingerprint: format!("sha256:{}", "6".repeat(64)),
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
