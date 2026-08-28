@@ -1919,6 +1919,12 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             )
         }
     };
+    let context_budget_requested = params.context_budget.is_some();
+    let context_budget = context_budget.or_else(|| {
+        Some(ContextBudget::default_for_prompt(
+            provider_selection.budget.max_prompt_chars,
+        ))
+    });
     if task_run_requires_access_network_permission(&provider_selection) {
         let decision = RuntimePermissionGate::check(&policy, RuntimeAction::AccessNetwork);
         let payload = permission_payload(&policy, &decision);
@@ -1971,7 +1977,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         Ok(events) => events,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    let prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
+    let mut prompt_input = ContextMaterializer::materialize(ContextMaterializerInput {
         task: running.clone(),
         ledger_events,
         child_completion_summaries: child_completion_summaries.clone(),
@@ -1983,6 +1989,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             .map(|context| context.prompt_context.clone()),
         context_budget,
     });
+    prompt_input.context_budget.requested = context_budget_requested;
     let prompt_context_window = prompt_input.context_window.clone();
     let prompt_context_budget = prompt_input.context_budget.clone();
     let context_budget_result = task_run_context_budget_summary(&prompt_context_budget);
@@ -15185,6 +15192,51 @@ mod tests {
         assert_eq!(replay_budget.selected_index_content_chars, 54);
         assert_eq!(replay_budget.selected_index_materialized_chars, 12);
         assert_eq!(replay_budget.selected_index_truncated, true);
+    }
+
+    #[test]
+    fn task_run_omitted_context_budget_uses_provider_prompt_budget() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_MAX_PROMPT_CHARS", "12000");
+        let start = handle_task_start(
+            json!(3),
+            Some(json!({
+                "goal": "Use runtime provider prompt budget",
+                "mode_id": "orchestrator"
+            })),
+        )
+        .result
+        .expect("task start result");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+
+        let run = handle_task_run(
+            json!(4),
+            Some(json!({
+                "task_id": task_id
+            })),
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_MAX_PROMPT_CHARS");
+        assert!(run.error.is_none());
+        let result = run.result.expect("task run result");
+        assert_eq!(result["status"], "Completed");
+        assert!(result.get("context_budget").is_none());
+
+        let events = store_events(temp.path(), run_id);
+        let prompt_built = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .expect("prompt built event");
+        let prompt_payload = prompt_built.payload.as_ref().expect("prompt payload");
+        assert_eq!(prompt_payload["max_prompt_chars"], 12000);
+        assert!(prompt_payload.get("context_budget_requested").is_none());
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
     }
 
     #[test]
@@ -32848,6 +32900,148 @@ mod tests {
     }
 
     #[test]
+    fn current_agentmodes_orchestrator_reaches_provider_request_with_omitted_budget() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        )
+        .result
+        .expect("activation result");
+        assert_eq!(activated["snapshot"]["modepack_name"], "current-agentmodes");
+        assert_eq!(
+            activated["snapshot"]["mode_count"]
+                .as_u64()
+                .unwrap_or_default(),
+            mode_count as u64
+        );
+        let activation_fingerprint = activated["snapshot"]["activation_fingerprint"]
+            .as_str()
+            .expect("activation fingerprint")
+            .to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+
+        let result = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32c.agentmodes.prompt","drive_id":"mp32c.agentmodes.prompt.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"journey_admission":{"journey_id":"mp32c.agentmodes.prompt.journey","authorize_journey_start":true,"task_start":{"goal":"Exercise real AgentModes orchestrator prompt budget integration"}}}}"#,
+        )
+        .result
+        .expect("AgentModes prompt journey result");
+
+        assert_eq!(result["status"], "task_executed");
+        let task_id = result["journey"]["task_id"].as_str().expect("task id");
+        let run_id = result["journey"]["run_id"].as_str().expect("run id");
+        let task = store
+            .tasks()
+            .get_task(task_id)
+            .expect("get task")
+            .expect("task");
+        assert_eq!(task.mode_id.as_deref(), Some("orchestrator"));
+        assert!(result["advances"][0]["steps"][0]
+            .get("context_budget")
+            .is_none());
+
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        let mode_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_payload["mode_id"], "orchestrator");
+        assert_eq!(
+            mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
+            activation_fingerprint
+        );
+        assert!(mode_payload["prompt_sections"]
+            .as_array()
+            .is_some_and(|sections| !sections.is_empty()));
+        assert_eq!(
+            mode_payload["allowed_handoff_targets"],
+            json!([HANDOFF_TARGET_ALL_MODEPACK_MODES])
+        );
+
+        let prompt_payload = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::PromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .expect("prompt built payload");
+        assert_eq!(prompt_payload["max_prompt_chars"], 120000);
+        assert!(prompt_payload.get("context_budget_requested").is_none());
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
+
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains("/Users/satoshitanaka/Documents/AgentModes"));
+        assert!(!ledger_json.contains("raw_modepack_json"));
+        assert!(!ledger_json.contains("raw_prompt"));
+        assert!(!ledger_json.contains("provider_response"));
+        assert!(!ledger_json.contains("BROWNIE_LLM"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn current_agentmodes_orchestrator_explicit_small_budget_fails_before_provider_request() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        )
+        .result
+        .expect("activation result");
+        assert_eq!(
+            activated["snapshot"]["mode_count"]
+                .as_u64()
+                .unwrap_or_default(),
+            mode_count as u64
+        );
+        let started = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Exercise explicit small prompt budget with current AgentModes orchestrator","mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("task start result");
+        let task_id = started["task_id"].as_str().expect("task id");
+        let run_id = started["run_id"].as_str().expect("run id");
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"task.run","params":{{"task_id":"{}","context_budget":{{"max_prompt_chars":128,"max_ledger_events":1,"max_selected_index_chars":0}}}}}}"#,
+            task_id
+        ));
+
+        assert!(run.error.is_some());
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::ModeResolved));
+        assert!(!events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains("/Users/satoshitanaka/Documents/AgentModes"));
+        assert!(!ledger_json.contains("raw_prompt"));
+        assert!(!ledger_json.contains("provider_response"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn external_modepack_child_run_validates_matching_snapshot_provenance() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -34088,6 +34282,10 @@ mod tests {
             "BROWNIE_LLM_API_KEY",
             "BROWNIE_LLM_STRICT",
             "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
+            "BROWNIE_LLM_MAX_PROMPT_CHARS",
+            "BROWNIE_LLM_MAX_MESSAGES",
+            "BROWNIE_LLM_REQUEST_TIMEOUT_MS",
+            "BROWNIE_LLM_RESPONSE_PREVIEW_CHARS",
         ] {
             std::env::remove_var(key);
         }

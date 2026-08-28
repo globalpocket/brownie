@@ -92,3 +92,11 @@ the context-window summary records the effective included and omitted counts.
 If protected policy and task context still exceed the requested budget after
 trimming truncatable context, `task.run` fails closed with context-budget
 evidence instead of dropping protected policy.
+
+MP-3.2C extends this rule to omitted budgets: normal task execution materializes
+context against the runtime/provider `max_prompt_chars` envelope when callers do
+not send an explicit `context_budget`. The omitted-budget path is not reported
+as a caller-requested context budget, but it still protects runtime policy,
+task-pinned Mode Pack policy, mode instructions, and the task objective before
+trimming ledger context. Callers that provide an explicit smaller budget keep
+the existing validation and fail-closed behavior.

@@ -43,8 +43,7 @@ const MAX_MODE_LIST_ROWS: usize = 12;
 const CLI_RUN_MAX_ADVANCES: u8 = 3;
 const CLI_RUN_MAX_STEPS_PER_ADVANCE: u8 = 1;
 const CLI_RUN_MAX_PARENT_JOIN_ROUTES: u8 = 3;
-const CLI_RUN_MAX_PROMPT_CHARS: usize = 4_096;
-const CLI_RUN_MAX_LEDGER_EVENTS: usize = 16;
+const CLI_RUN_MAX_OBJECTIVE_CHARS: usize = 4_096;
 const CLI_RESUME_MAX_STEPS: u8 = 1;
 const CLI_RUN_SESSION_PREFIX: &str = "cli.run.";
 
@@ -2228,11 +2227,6 @@ fn cli_resume_advance_params(
             "journey_id": candidate.journey_id.clone(),
             "task_id": candidate.task_id.clone(),
             "run_id": candidate.run_id.clone()
-        },
-        "context_budget": {
-            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
-            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
-            "max_selected_index_chars": 0
         }
     });
     Ok(Some((params, candidate)))
@@ -2254,12 +2248,7 @@ fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, Run
         "drive_id": format!("{session_id}.resume.drive"),
         "expected_start_session_sequence": session_sequence,
         "max_advances": CLI_RUN_MAX_ADVANCES,
-        "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
-        "context_budget": {
-            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
-            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
-            "max_selected_index_chars": 0
-        }
+        "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE
     })))
 }
 
@@ -2328,11 +2317,6 @@ fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
         "continuation_scope": {
             "session_id_prefix": CLI_RUN_SESSION_PREFIX,
             "latest_matching_session": true
-        },
-        "context_budget": {
-            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
-            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
-            "max_selected_index_chars": 0
         }
     }))
 }
@@ -2349,11 +2333,6 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
         "expected_start_session_sequence": 0,
         "max_advances": CLI_RUN_MAX_ADVANCES,
         "max_steps_per_advance": CLI_RUN_MAX_STEPS_PER_ADVANCE,
-        "context_budget": {
-            "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
-            "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
-            "max_selected_index_chars": 0
-        },
         "journey_admission": {
             "journey_id": format!("{session_id}.journey"),
             "authorize_journey_start": true,
@@ -3259,7 +3238,7 @@ fn accepted_completion_route_params(
 }
 
 fn validate_cli_objective(objective: &str) -> Result<(), RuntimeClientError> {
-    if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_PROMPT_CHARS {
+    if objective.is_empty() || objective.chars().count() > CLI_RUN_MAX_OBJECTIVE_CHARS {
         return Err(RuntimeClientError::InvalidResponse);
     }
     Ok(())
@@ -4428,14 +4407,7 @@ mod tests {
         );
         assert_eq!(params["expected_aggregate_sequence"], 42);
         assert_eq!(params["max_steps"], 1);
-        assert_eq!(
-            params["context_budget"],
-            json!({
-                "max_prompt_chars": 4096,
-                "max_ledger_events": 16,
-                "max_selected_index_chars": 0
-            })
-        );
+        assert!(params.get("context_budget").is_none());
         assert!(params["continuation_id"]
             .as_str()
             .unwrap()

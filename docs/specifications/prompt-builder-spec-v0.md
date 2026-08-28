@@ -80,6 +80,17 @@ and task objective cannot fit the requested budget, runtime execution fails
 closed and records bounded budget metadata instead of omitting the compiled
 policy selected for the task.
 
+MP-3.2C extends prompt fitting for ordinary omitted-budget task execution.
+When `task.run` or normal headless continuation does not include an explicit
+`context_budget`, the runtime materializes the prompt against the resolved
+provider `max_prompt_chars` envelope. This keeps the CLI thin and prevents a
+fixed transport default from truncating real AgentModes orchestrator policy.
+The omitted-budget path is not reported as caller-requested context budget
+evidence, but protected runtime policy, task-pinned Mode Pack policy, mode
+instructions, and task objective still have priority over truncatable ledger
+context. Explicit smaller budgets continue to fail closed when protected task
+context cannot fit.
+
 ## Phase 1.5 tool planning update
 
 Phase 1.5 adds dry-run tool planning before future tool execution. Tool definitions and plans are declarative only and do not perform file reads, file writes, process execution, subtask spawning, network access, service control, or destructive operations. Planned tools are evaluated through `RuntimePermissionGate`; denied dry-run items are recorded but do not fail `task.run` in Phase 1.5. See `docs/specifications/tool-planning-spec-v0.md`.

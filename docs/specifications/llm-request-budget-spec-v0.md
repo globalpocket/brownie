@@ -28,6 +28,14 @@ Priority is env override, then active profile budget, then default budget.
 
 Before an LLM provider call, Brownie checks message count and total prompt characters. Budget failures do not call the provider. The task fails with `LlmRequestFailed` and `TaskFailed` ledger events and a high-level redacted JSON-RPC error.
 
+When `task.run` or normal headless continuation omits `context_budget`,
+runtime prompt materialization uses the resolved provider
+`max_prompt_chars` as its effective context envelope. This keeps ordinary CLI
+`brownie run` and `brownie resume` requests thin: the CLI must not impose a
+Mode Pack-specific prompt budget or fixed prompt-size constant. Explicit
+`context_budget` values remain validated separately and fail closed when they
+cannot fit protected task context.
+
 Prompt and response ledger payloads store previews only. Full prompt text and full provider responses are not persisted. Response preview length is controlled by `response_preview_chars`; prompt preview payloads include `max_prompt_chars`.
 
 `llm.status`, `runtime.config.get`, and diagnostics expose budget summaries. `llm.health` uses `request_timeout_ms` unless an explicit bounded `timeout_ms` is supplied.
