@@ -140,6 +140,49 @@ letting the CLI choose or rewrite workflow policy. `ModeResolved` continues to
 store the task-pinned policy and external Mode Pack provenance, and every
 side-effect still passes `RuntimePermissionGate`.
 
+## MP-3 AgentModes compatibility compiler
+
+MP-3 adds a bounded compatibility compiler from representative AgentModes YAML
+into the existing Brownie Mode Pack JSON policy model. The compiler consumes
+`customModes` entries and emits the same `name`, `schema_version`,
+`entrypoints.default`, and `modes` fields that `brownie-modepack` already
+validates. AgentModes remains an external compatibility target; Brownie does not
+vendor AgentModes, change its source format, or encode AgentModes workflow
+routing decisions as Rust logic.
+
+The compiler maps structured AgentModes groups to trusted runtime capability
+bits: `read` enables read/index metadata, `edit` enables `workspace_write`,
+`command` enables `process_exec`, and `mcp` is accepted without granting
+network, service, destructive, or subtask authority. Role definitions,
+`description`, `whenToUse`, and `customInstructions` text are preserved as
+bounded workflow policy metadata; they cannot grant capabilities. The generated
+Mode Pack must still pass normal Mode Pack validation, and side effects continue
+to be authorized by `RuntimePermissionGate` at use time.
+
+Compiled external modes may carry `when_to_use`, `description`,
+`prompt_sections`, `verification_responsibility`, and
+`instruction_fingerprint`. `prompt_sections` are deterministic, bounded
+instruction artifacts derived from AgentModes fields such as
+`customInstructions`; each section carries a source label and content
+fingerprint. Mode Pack validation accepts these fields only as policy metadata
+and rejects malformed prompt sections fail-closed. The active snapshot
+fingerprint includes these instruction fields so task-pinned policy, replay,
+stale conflict handling, and child provenance reason about the exact workflow
+instructions admitted for the task.
+
+When no explicit compiler default entrypoint is supplied, the generated Mode
+Pack selects `orchestrator` only if that slug exists. Explicit compiler defaults
+must resolve to a compiled mode id. Duplicate slugs, blank required fields,
+unsafe mode ids, malformed group entries, unknown groups, and unknown explicit
+defaults fail closed before activation.
+
+Active Mode Pack policy shadows built-in fallback policy for the same mode id
+when a task is admitted through that active snapshot. Built-ins remain explicit
+bootstrap/fallback modes only when no active Mode Pack default can select the
+workflow. Brownie must not add Rust branches that encode AgentModes routing,
+Git timing, verification sequencing, or completion behavior outside compiled
+Mode Pack policy.
+
 ## M12.1 handoff target admission
 
 M12.1 lets an external Mode Pack mode with `can_spawn_subtasks=true` declare an

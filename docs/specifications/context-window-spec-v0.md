@@ -66,3 +66,19 @@ The prompt builder emits a fixed two-message prompt:
 - a user message containing task metadata, the current goal, and ledger summary lines
 
 Sliding window truncation remains a placeholder. Phase 1.2 may use a character-budget stub, but truncation applies only to the prompt view and must preserve protected content such as the system message and current task goal. It must not delete or rewrite the persisted ledger.
+
+## MP-3 protected Mode Pack instructions
+
+AgentModes `customInstructions` and related workflow prose enter the prompt only
+after compiling into task-pinned Mode Pack policy and being recorded in
+`ModeResolved`. `ContextMaterializer` turns that snapshot into bounded
+`mode_instruction_material`, and `PromptBuilder` places it in the protected
+system message with runtime safety invariants and the compiled permission policy
+summary.
+
+Sliding window truncation must preserve that system-policy region. Old ledger
+summaries, duplicated history, stale retrieval snippets, and other user-message
+material may be trimmed before dropping the compiled mode instructions selected
+for the active task. The protected region is still subject to upstream compiled
+field bounds and fingerprints; it must not persist raw provider responses,
+secrets, raw file content, command output, or unbounded AgentModes source files.

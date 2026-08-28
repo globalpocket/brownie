@@ -55,6 +55,16 @@ struct RawModePolicy {
     mode_id: String,
     display_name: String,
     role_definition: String,
+    #[serde(default)]
+    when_to_use: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    prompt_sections: Vec<brownie_agentmodes::CompiledPromptSection>,
+    #[serde(default)]
+    verification_responsibility: Option<String>,
+    #[serde(default)]
+    instruction_fingerprint: Option<String>,
     permissions: ModePermissions,
     #[serde(default)]
     allowed_handoff_targets: Vec<String>,
@@ -115,6 +125,27 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
             mode_id,
             display_name: non_empty("display_name", raw_mode.display_name)?,
             role_definition: non_empty("role_definition", raw_mode.role_definition)?,
+            when_to_use: raw_mode
+                .when_to_use
+                .map(|value| non_empty("when_to_use", value))
+                .transpose()?,
+            description: raw_mode
+                .description
+                .map(|value| non_empty("description", value))
+                .transpose()?,
+            prompt_sections: raw_mode
+                .prompt_sections
+                .into_iter()
+                .map(validate_prompt_section)
+                .collect::<Result<Vec<_>>>()?,
+            verification_responsibility: raw_mode
+                .verification_responsibility
+                .map(|value| non_empty("verification_responsibility", value))
+                .transpose()?,
+            instruction_fingerprint: raw_mode
+                .instruction_fingerprint
+                .map(|value| non_empty("instruction_fingerprint", value))
+                .transpose()?,
             permissions: raw_mode.permissions,
             allowed_handoff_targets,
             completion_rules: raw_mode
@@ -141,6 +172,20 @@ fn non_empty(field: &str, value: String) -> Result<String> {
         bail!("modepack {field} must not be empty");
     }
     Ok(trimmed.to_string())
+}
+
+fn validate_prompt_section(
+    section: brownie_agentmodes::CompiledPromptSection,
+) -> Result<brownie_agentmodes::CompiledPromptSection> {
+    Ok(brownie_agentmodes::CompiledPromptSection {
+        title: non_empty("prompt_sections[].title", section.title)?,
+        content: non_empty("prompt_sections[].content", section.content)?,
+        source: non_empty("prompt_sections[].source", section.source)?,
+        content_fingerprint: non_empty(
+            "prompt_sections[].content_fingerprint",
+            section.content_fingerprint,
+        )?,
+    })
 }
 
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
@@ -232,6 +277,10 @@ fn validate_handoff_targets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use brownie_agentmodes::{
+        compile_agentmodes_modepack_to_json, AgentModesCompileOptions, RuntimeAction,
+        RuntimePermissionGate,
+    };
 
     #[test]
     fn loads_local_modepack_snapshot() {
@@ -591,6 +640,79 @@ mod tests {
             .expect("integrator mode");
         assert!(integrator.permissions.workspace_write);
         assert!(integrator.permissions.process_exec);
+    }
+
+    #[test]
+    fn accepts_compiled_agentmodes_modepack_json() {
+        let yaml = r#"
+customModes:
+  - slug: orchestrator
+    name: Orchestrator
+    roleDefinition: Coordinate without direct side effects.
+    groups:
+      - read
+    customInstructions: |
+      Delegate to specialists through AgentModes policy.
+  - slug: code
+    name: Code
+    roleDefinition: Implement bounded changes.
+    groups:
+      - read
+      - edit
+  - slug: tester
+    name: Tester
+    roleDefinition: Run verification.
+    groups:
+      - read
+      - command
+  - slug: reviewer
+    name: Reviewer
+    roleDefinition: Review prose mentions edit and command but grants neither.
+    groups:
+      - read
+      - mcp
+"#;
+        let json = compile_agentmodes_modepack_to_json(
+            yaml,
+            AgentModesCompileOptions {
+                modepack_name: Some("compiled-agentmodes".to_string()),
+                default_entrypoint: Some("orchestrator".to_string()),
+            },
+        )
+        .expect("compile AgentModes YAML");
+        let snapshot =
+            load_modepack_from_str(&json, ".brownie/modepack.json").expect("valid Mode Pack");
+
+        assert_eq!(snapshot.name, "compiled-agentmodes");
+        assert_eq!(snapshot.entrypoints.default_mode_id(), Some("orchestrator"));
+        assert!(json.contains("Delegate to specialists through AgentModes policy"));
+        assert!(json.contains("\"instruction_fingerprint\""));
+
+        let code = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "code")
+            .expect("code mode");
+        assert!(code.prompt_sections.is_empty());
+        assert!(RuntimePermissionGate::check(code, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(code, RuntimeAction::ExecuteProcess).allowed);
+
+        let tester = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "tester")
+            .expect("tester mode");
+        assert!(!RuntimePermissionGate::check(tester, RuntimeAction::WriteWorkspace).allowed);
+        assert!(RuntimePermissionGate::check(tester, RuntimeAction::ExecuteProcess).allowed);
+
+        let reviewer = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "reviewer")
+            .expect("reviewer mode");
+        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ExecuteProcess).allowed);
+        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::AccessNetwork).allowed);
     }
 
     #[test]

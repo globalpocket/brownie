@@ -12488,6 +12488,11 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "role_definition": policy.role_definition,
+        "when_to_use": policy.when_to_use,
+        "description": policy.description,
+        "prompt_sections": policy.prompt_sections,
+        "verification_responsibility": policy.verification_responsibility,
+        "instruction_fingerprint": policy.instruction_fingerprint,
         "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
         "permissions": {
@@ -12572,6 +12577,29 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
         mode_id: payload.get("mode_id")?.as_str()?.to_string(),
         display_name: payload.get("display_name")?.as_str()?.to_string(),
         role_definition: payload.get("role_definition")?.as_str()?.to_string(),
+        when_to_use: payload
+            .get("when_to_use")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        description: payload
+            .get("description")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        prompt_sections: serde_json::from_value(
+            payload
+                .get("prompt_sections")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .ok()?,
+        verification_responsibility: payload
+            .get("verification_responsibility")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
+        instruction_fingerprint: payload
+            .get("instruction_fingerprint")
+            .and_then(Value::as_str)
+            .map(ToString::to_string),
         permissions: brownie_agentmodes::ModePermissions {
             read_only: permissions.get("read_only")?.as_bool()?,
             workspace_write: permissions.get("workspace_write")?.as_bool()?,
@@ -12612,6 +12640,11 @@ fn external_modepack_policy_fingerprint(
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "role_definition": policy.role_definition,
+        "when_to_use": policy.when_to_use,
+        "description": policy.description,
+        "prompt_sections": policy.prompt_sections,
+        "verification_responsibility": policy.verification_responsibility,
+        "instruction_fingerprint": policy.instruction_fingerprint,
         "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
         "permissions": {
@@ -13587,6 +13620,28 @@ fn llm_response_received_payload(
 }
 
 fn preview_prompt(prompt: &brownie_context::PromptView, max_chars: usize) -> String {
+    if prompt.messages.len() > 1 {
+        let system_limit = max_chars.min(160);
+        let system_preview = preview_with_limit(&prompt.messages[0].content, system_limit);
+        let separator = "\n---\n";
+        let used = system_preview.chars().count() + separator.chars().count();
+        let remaining = max_chars.saturating_sub(used);
+        let rest = prompt
+            .messages
+            .iter()
+            .skip(1)
+            .map(|message| message.content.as_str())
+            .collect::<Vec<_>>()
+            .join(separator);
+        let joined = format!(
+            "{}{}{}",
+            system_preview,
+            separator,
+            preview_with_limit(&rest, remaining)
+        );
+        return preview_with_limit(&joined, max_chars);
+    }
+
     let joined = prompt
         .messages
         .iter()
