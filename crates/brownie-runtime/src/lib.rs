@@ -15751,6 +15751,81 @@ mod tests {
         .expect("modepack");
     }
 
+    fn write_capability_test_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "capability-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-editor",
+                  "display_name": "External Editor",
+                  "role_definition": "Edit files through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after bounded editing work is complete."]
+                },
+                {
+                  "mode_id": "external-tester",
+                  "display_name": "External Tester",
+                  "role_definition": "Run bounded verification commands through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": false,
+                    "process_exec": true,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting verification evidence."]
+                },
+                {
+                  "mode_id": "external-integrator",
+                  "display_name": "External Integrator",
+                  "role_definition": "Coordinate edits and verification through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": true,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after edit and verification evidence is ready."]
+                },
+                {
+                  "mode_id": "prompt-only-writer",
+                  "display_name": "Prompt Only Writer",
+                  "role_definition": "This text asks to write files, but compiled permissions deny writes.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Pretend prompt text grants workspace writes."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
     fn write_test_handoff_modepack(workspace_root: &std::path::Path) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -51201,6 +51276,146 @@ mod tests {
             .contains("reviewer-lite"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn mode_list_get_and_permission_check_include_external_write_process_capabilities() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capability_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let list = parse_line(r#"{"jsonrpc":"2.0","id":1,"method":"mode.list"}"#);
+        let modes = list.result.expect("list result")["modes"]
+            .as_array()
+            .expect("modes")
+            .clone();
+        assert_eq!(modes.len(), 8);
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "external-editor"
+            && mode["permissions"]["workspace_write"] == true
+            && mode["permissions"]["process_exec"] == false));
+        assert!(modes.iter().any(|mode| mode["mode_id"] == "external-tester"
+            && mode["permissions"]["workspace_write"] == false
+            && mode["permissions"]["process_exec"] == true));
+        assert!(modes
+            .iter()
+            .any(|mode| mode["mode_id"] == "external-integrator"
+                && mode["permissions"]["workspace_write"] == true
+                && mode["permissions"]["process_exec"] == true));
+
+        let editor_write = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"permission.check","params":{"mode_id":"external-editor","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(editor_write.result.expect("editor write")["allowed"], true);
+        let editor_exec = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"permission.check","params":{"mode_id":"external-editor","action":"ExecuteProcess"}}"#,
+        );
+        assert_eq!(editor_exec.result.expect("editor exec")["allowed"], false);
+
+        let tester_write = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"permission.check","params":{"mode_id":"external-tester","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(tester_write.result.expect("tester write")["allowed"], false);
+        let tester_exec = parse_line(
+            r#"{"jsonrpc":"2.0","id":5,"method":"permission.check","params":{"mode_id":"external-tester","action":"ExecuteProcess"}}"#,
+        );
+        assert_eq!(tester_exec.result.expect("tester exec")["allowed"], true);
+
+        let integrator_exec = parse_line(
+            r#"{"jsonrpc":"2.0","id":6,"method":"permission.check","params":{"mode_id":"external-integrator","action":"ExecuteProcess"}}"#,
+        );
+        assert_eq!(
+            integrator_exec.result.expect("integrator exec")["allowed"],
+            true
+        );
+
+        let prompt_only = parse_line(
+            r#"{"jsonrpc":"2.0","id":7,"method":"permission.check","params":{"mode_id":"prompt-only-writer","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(
+            prompt_only.result.expect("prompt-only writer")["allowed"],
+            false
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn active_snapshot_and_task_policy_preserve_external_write_process_capabilities() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_capability_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let activation_fingerprint = activated.result.unwrap()["snapshot"]
+            ["activation_fingerprint"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live candidate");
+
+        let permission = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"permission.check","params":{"mode_id":"external-integrator","action":"WriteWorkspace"}}"#,
+        );
+        assert_eq!(
+            permission.result.expect("active permission")["allowed"],
+            true
+        );
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"task.start","params":{"goal":"Preserve external capability policy","mode_id":"external-integrator"}}"#,
+        );
+        assert!(start.error.is_none());
+        let start_result = start.result.expect("start result");
+        let task_id = start_result["task_id"].as_str().unwrap().to_string();
+        let run_id = start_result["run_id"].as_str().unwrap().to_string();
+        let start_events = store_events(temp.path(), &run_id);
+        let start_mode_resolved = start_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(start_mode_resolved["permissions"]["workspace_write"], true);
+        assert_eq!(start_mode_resolved["permissions"]["process_exec"], true);
+        assert_eq!(
+            start_mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
+            activation_fingerprint
+        );
+
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        assert!(run.error.is_none());
+        assert_eq!(run.result.expect("run result")["status"], "Completed");
+        let run_events = store_events(temp.path(), &run_id);
+        assert!(run_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::PermissionChecked
+                && event
+                    .payload
+                    .as_ref()
+                    .is_some_and(|payload| payload["action"] == "WriteWorkspace"
+                        && payload["allowed"] == true)));
+        assert!(run_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::PermissionChecked
+                && event
+                    .payload
+                    .as_ref()
+                    .is_some_and(|payload| payload["action"] == "ExecuteProcess"
+                        && payload["allowed"] == true)));
+        assert!(run_events
+            .iter()
+            .all(|event| event.kind != LedgerEventKind::ExternalModePackTaskProvenanceDenied));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
     }
 
     #[test]

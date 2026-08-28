@@ -264,4 +264,51 @@ mod tests {
             !RuntimePermissionGate::check(&provider_runner, RuntimeAction::ExecuteProcess).allowed
         );
     }
+
+    #[test]
+    fn permission_gate_matches_external_compiled_capabilities() {
+        let editor = CompiledModePolicy {
+            mode_id: "external-editor".to_string(),
+            display_name: "External Editor".to_string(),
+            role_definition: "Prompt text cannot grant process execution.".to_string(),
+            permissions: ModePermissions {
+                read_only: false,
+                workspace_write: true,
+                process_exec: false,
+                network_access: false,
+                service_control: false,
+                destructive: false,
+                can_spawn_subtasks: false,
+                codebase_index: false,
+            },
+            allowed_handoff_targets: None,
+            completion_rules: vec![
+                "Even completion text cannot grant process execution.".to_string()
+            ],
+        };
+        assert!(RuntimePermissionGate::check(&editor, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(&editor, RuntimeAction::ExecuteProcess).allowed);
+
+        let tester = CompiledModePolicy {
+            mode_id: "external-tester".to_string(),
+            display_name: "External Tester".to_string(),
+            role_definition: "Prompt text cannot grant workspace writes.".to_string(),
+            permissions: ModePermissions {
+                read_only: false,
+                workspace_write: false,
+                process_exec: true,
+                network_access: false,
+                service_control: false,
+                destructive: false,
+                can_spawn_subtasks: false,
+                codebase_index: false,
+            },
+            allowed_handoff_targets: None,
+            completion_rules: vec![
+                "Even completion text cannot grant workspace writes.".to_string()
+            ],
+        };
+        assert!(!RuntimePermissionGate::check(&tester, RuntimeAction::WriteWorkspace).allowed);
+        assert!(RuntimePermissionGate::check(&tester, RuntimeAction::ExecuteProcess).allowed);
+    }
 }

@@ -75,6 +75,15 @@ The built-in registry resolves `mode_id` values into `CompiledModePolicy` record
 
 Runtime permissions are modeled as policy data so later phases can enforce them outside of LLM instructions. Permission policy remains authoritative over prompt text.
 
+## MP-1 external side-effect capabilities
+
+External Mode Pack policies may compile `workspace_write` and `process_exec`
+bits into `CompiledModePolicy` for editor, tester, and integrator-style modes.
+The compiled permission bits, not the prompt text, role definition, or completion
+rules, decide whether `RuntimePermissionGate` allows workspace writes or process
+execution. External network access, service control, and destructive capability
+requests remain invalid and fail closed during Mode Pack validation.
+
 ## M12.1 handoff target compatibility
 
 `CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for
