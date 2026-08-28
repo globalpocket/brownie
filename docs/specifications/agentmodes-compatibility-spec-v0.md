@@ -180,6 +180,16 @@ runtime must preserve AgentModes `orchestrator` instructions, permissions,
 handoff targets, and provenance in `ModeResolved` instead of substituting the
 built-in role text.
 
+MP-3.2C verifies that real AgentModes orchestrator-sized prompt policy can
+reach provider request creation through ordinary omitted-budget task execution.
+The CLI does not choose an AgentModes-specific prompt size and does not inject a
+fixed `4096` prompt budget for normal `brownie run` or compatible resume paths.
+Instead, the runtime fits the protected AgentModes policy and task objective
+against the resolved provider prompt budget while keeping ledger/RPC evidence
+bounded. Explicit smaller caller budgets remain valid protocol input, but they
+fail closed rather than dropping runtime policy, task-pinned Mode Pack policy,
+or compiled AgentModes instructions.
+
 ## M12.1 handoff target compatibility
 
 `CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for

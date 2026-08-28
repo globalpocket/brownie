@@ -1043,14 +1043,7 @@ fn run_invokes_fixed_headless_drive_and_prints_bounded_human_output() {
     assert_eq!(request["params"]["expected_start_session_sequence"], 0);
     assert_eq!(request["params"]["max_advances"], 3);
     assert_eq!(request["params"]["max_steps_per_advance"], 1);
-    assert_eq!(
-        request["params"]["context_budget"],
-        serde_json::json!({
-            "max_prompt_chars": 4096,
-            "max_ledger_events": 16,
-            "max_selected_index_chars": 0
-        })
-    );
+    assert!(request["params"].get("context_budget").is_none());
     assert_eq!(
         request["params"]["journey_admission"]["task_start"]["goal"],
         "summarize this repository"
@@ -1495,14 +1488,7 @@ fn resume_invokes_task_list_then_headless_continue_once_and_prints_bounded_human
             "latest_matching_session": true
         })
     );
-    assert_eq!(
-        requests[1]["params"]["context_budget"],
-        serde_json::json!({
-            "max_prompt_chars": 4096,
-            "max_ledger_events": 16,
-            "max_selected_index_chars": 0
-        })
-    );
+    assert!(requests[1]["params"].get("context_budget").is_none());
 }
 
 #[test]

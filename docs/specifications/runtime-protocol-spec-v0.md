@@ -883,7 +883,7 @@ Phase 2.5 adds the explicit `llm.health` JSON-RPC method, specified in `docs/spe
 
 ## Phase 2.7 LLM request budget note
 
-See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provider requests are bounded by the resolved budget, status/config responses include the budget summary, diagnostics report default/profile/env/invalid budget sources, and ledger/inspection payloads keep prompt and response previews only.
+See [LLM Request Budget Spec v0](llm-request-budget-spec-v0.md). Runtime provider requests are bounded by the resolved budget, omitted normal task-run context budgets derive their effective prompt envelope from the resolved provider budget, status/config responses include the budget summary, diagnostics report default/profile/env/invalid budget sources, and ledger/inspection payloads keep prompt and response previews only.
 
 ## Phase 2.8 prompt sensitive guard
 
