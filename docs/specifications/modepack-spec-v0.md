@@ -77,10 +77,11 @@ MP-1 allows external Mode Packs to declare trusted `workspace_write` and
 `process_exec` capability bits for editor, tester, and integrator-style modes.
 `read_only` is summary metadata and must not be combined with side-effect
 capabilities. Network access, service control, and destructive operations remain
-unsupported external capabilities and are rejected fail-closed during Mode Pack
-validation. The runtime compiles declared capability bits into policy data and
-continues to require every side effect to pass `RuntimePermissionGate`; prompt
-text, role definitions, and completion rules cannot grant capability authority.
+declared capability bits only; they cannot authorize a side effect unless source
+trust and the runtime capability ceiling preserve them. The runtime compiles
+declared capability bits into effective policy data and continues to require
+every side effect to pass `RuntimePermissionGate`; prompt text, role
+definitions, and completion rules cannot grant capability authority.
 MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
 generic workspace editing, generic process execution, Git capability, delegation
 execution, or Rust-owned workflow sequencing.
@@ -179,6 +180,18 @@ capability but never grants it. In particular, an arbitrary repository-local
 Mode Pack or AgentModes source cannot self-authorize `process_exec`; trusted
 local developer and trusted signed active sources may preserve declared command
 capability only when the runtime global ceiling also allows it.
+
+MP-3.2D extends this trust rule from AgentModes compilation to raw Mode Pack
+ingress. Repository-local `.brownie/modepack.json` is untrusted by default and
+its effective policy cannot self-authorize workspace writes, process execution,
+network access, service control, destructive operations, or subtask spawning by
+declaring those fields. Trusted local developer and trusted signed active Mode
+Pack ingress may preserve declared side-effect capability only after the same
+runtime ceiling is applied, and `RuntimePermissionGate` remains final authority
+at use time. Capability narrowing happens before task policy exposure, active
+snapshot evidence, and task-pinned `ModeResolved` reconstruction, so persisted
+runtime policy reflects effective permissions rather than raw declared
+privilege.
 
 Compiled external modes may carry `when_to_use`, `description`,
 `prompt_sections`, `workspace_write_scopes`, `allowed_handoff_targets`, and

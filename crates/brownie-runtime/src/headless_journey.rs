@@ -1042,9 +1042,10 @@ fn modepack_candidate_activation_fingerprint_from_approved_candidate(
                 .to_string(),
         );
     }
-    let snapshot = load_modepack_from_str(
+    let snapshot = load_modepack_from_str_with_options(
         &cached.modepack_json,
         MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+        ModePackLoadOptions::trusted_signed_active_modepack(),
     )
     .map_err(|error| {
         format!("invalid params: journey route resume approved candidate compile failed: {error}")

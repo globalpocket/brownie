@@ -38,7 +38,12 @@ use brownie_llm::{
     OpenAiCompatibleConfig, OpenAiCompatibleConfigFromEnv, OpenAiCompatibleLlmProvider,
     PromptSensitiveGuardMode, PromptSensitiveScanResult,
 };
-use brownie_modepack::{load_modepack_from_str, load_workspace_modepack, WORKSPACE_MODEPACK_PATH};
+#[cfg(test)]
+use brownie_modepack::{load_modepack_from_str, load_workspace_modepack_with_options};
+use brownie_modepack::{
+    load_modepack_from_str_with_options, load_workspace_modepack, ModePackLoadOptions,
+    WORKSPACE_MODEPACK_PATH,
+};
 use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
     ChildInspectParentJoinReadinessSummary, ChildTaskInspectSummary, ChildTaskSourceIntentSummary,
@@ -16062,6 +16067,146 @@ mod tests {
         .expect("modepack");
     }
 
+    fn write_untrusted_all_side_effects_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "untrusted-side-effect-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-integrator",
+                  "display_name": "External Integrator",
+                  "role_definition": "This raw repository-local policy declares every side effect.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": true,
+                    "network_access": true,
+                    "service_control": true,
+                    "destructive": true,
+                    "can_spawn_subtasks": true
+                  },
+                  "workspace_write_scopes": [
+                    {
+                      "file_regex": "^docs/",
+                      "description": "Documentation workspace updates only."
+                    }
+                  ],
+                  "allowed_handoff_targets": ["reviewer-lite"],
+                  "completion_rules": ["Stop after bounded coordination evidence."]
+                },
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review without side effects.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
+    fn commit_trusted_workspace_modepack_snapshot(store: &BrownieStore) {
+        let snapshot = load_workspace_modepack_with_options(
+            store.workspace_root(),
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted modepack load")
+        .expect("modepack");
+        let activated_at = codebase_index_timestamp().expect("timestamp");
+        let policy_snapshots = snapshot
+            .modes
+            .iter()
+            .map(|policy| {
+                let policy_fingerprint = external_modepack_policy_fingerprint(
+                    &snapshot.name,
+                    snapshot.schema_version,
+                    policy,
+                );
+                ActiveModePackPolicySnapshot {
+                    mode_id: policy.mode_id.clone(),
+                    display_name: policy.display_name.clone(),
+                    role_definition: policy.role_definition.clone(),
+                    when_to_use: policy.when_to_use.clone(),
+                    description: policy.description.clone(),
+                    prompt_sections: mode_prompt_sections_payload(policy),
+                    verification_responsibility: policy.verification_responsibility.clone(),
+                    instruction_fingerprint: policy.instruction_fingerprint.clone(),
+                    permissions: mode_permissions_payload(policy),
+                    workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
+                    allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                    completion_rules: policy.completion_rules.clone(),
+                    policy_fingerprint,
+                }
+            })
+            .collect::<Vec<_>>();
+        let mode_ids = policy_snapshots
+            .iter()
+            .map(|policy| policy.mode_id.clone())
+            .collect::<Vec<_>>();
+        let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+            &snapshot.name,
+            snapshot.schema_version,
+            snapshot.entrypoints.default_mode_id(),
+            &policy_snapshots,
+        );
+        let activation_fingerprint = active_modepack_activation_fingerprint(
+            &snapshot.name,
+            snapshot.schema_version,
+            &compiled_policy_fingerprint,
+            &mode_ids,
+            snapshot.entrypoints.default_mode_id(),
+        );
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: format!(
+                        "modepack_activation_{}",
+                        &activation_fingerprint[7..23]
+                    ),
+                    activation_fingerprint,
+                    modepack_name: snapshot.name,
+                    schema_version: snapshot.schema_version,
+                    source_kind: "workspace_modepack".to_string(),
+                    source_path: WORKSPACE_MODEPACK_PATH.to_string(),
+                    mode_count: mode_ids.len(),
+                    mode_ids,
+                    default_entrypoint: snapshot.entrypoints.default.clone(),
+                    compiled_policy_fingerprint,
+                    activated_at,
+                    activation_event_id: String::new(),
+                },
+                policies: policy_snapshots,
+            })
+            .expect("trusted active snapshot");
+    }
+
+    fn trusted_workspace_mode_policy(store: &BrownieStore, mode_id: &str) -> CompiledModePolicy {
+        load_workspace_modepack_with_options(
+            store.workspace_root(),
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted modepack load")
+        .expect("modepack")
+        .modes
+        .into_iter()
+        .find(|policy| policy.mode_id == mode_id)
+        .expect("trusted mode policy")
+    }
+
     fn write_test_handoff_selector_modepack(workspace_root: &std::path::Path) {
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -23801,8 +23946,9 @@ mod tests {
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
         assert_eq!(mode_payload["mode_id"], "external-integrator");
-        assert_eq!(mode_payload["permissions"]["workspace_write"], true);
-        assert_eq!(mode_payload["permissions"]["process_exec"], true);
+        assert_eq!(mode_payload["permissions"]["workspace_write"], false);
+        assert_eq!(mode_payload["permissions"]["process_exec"], false);
+        assert_eq!(mode_payload["workspace_write_scopes"], json!([]));
         assert_eq!(
             mode_payload["external_modepack_task_provenance"]["activation_fingerprint"],
             activation_fingerprint
@@ -32629,9 +32775,7 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start parent");
-        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
-            .expect("resolve external policy")
-            .expect("external policy");
+        let policy = trusted_workspace_mode_policy(&store, "external-orchestrator");
         let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create admitted child task.\",\"input\":{\"goal\":\"Review only bounded evidence.\",\"mode_id\":\"reviewer-lite\"}}]}\n```";
 
         append_tool_intent_events(&store, &parent, &policy, assistant_content)
@@ -32671,6 +32815,7 @@ mod tests {
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         write_test_handoff_selector_modepack(temp.path());
         let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
@@ -32731,6 +32876,7 @@ mod tests {
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         write_test_handoff_selector_modepack(temp.path());
         let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
@@ -32837,7 +32983,7 @@ mod tests {
     }
 
     #[test]
-    fn current_agentmodes_pack_activates_and_pins_selector_policy_when_available() {
+    fn current_agentmodes_pack_activates_with_repository_local_trust_narrowing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
@@ -32881,10 +33027,7 @@ mod tests {
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
         assert_eq!(mode_resolved["mode_id"], "orchestrator");
-        assert_eq!(
-            mode_resolved["allowed_handoff_targets"],
-            json!([HANDOFF_TARGET_ALL_MODEPACK_MODES])
-        );
+        assert_eq!(mode_resolved["allowed_handoff_targets"], Value::Null);
         assert!(mode_resolved["prompt_sections"]
             .as_array()
             .is_some_and(|sections| !sections.is_empty()));
@@ -32962,10 +33105,7 @@ mod tests {
         assert!(mode_payload["prompt_sections"]
             .as_array()
             .is_some_and(|sections| !sections.is_empty()));
-        assert_eq!(
-            mode_payload["allowed_handoff_targets"],
-            json!([HANDOFF_TARGET_ALL_MODEPACK_MODES])
-        );
+        assert_eq!(mode_payload["allowed_handoff_targets"], Value::Null);
 
         let prompt_payload = events
             .iter()
@@ -33060,9 +33200,7 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start parent");
-        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
-            .expect("resolve external policy")
-            .expect("external policy");
+        let policy = trusted_workspace_mode_policy(&store, "external-orchestrator");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -33157,9 +33295,7 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start parent");
-        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
-            .expect("resolve external policy")
-            .expect("external policy");
+        let policy = trusted_workspace_mode_policy(&store, "external-orchestrator");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -33283,9 +33419,7 @@ mod tests {
                 product_continuation_source: None,
             })
             .expect("start parent");
-        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
-            .expect("resolve external policy")
-            .expect("external policy");
+        let policy = trusted_workspace_mode_policy(&store, "external-orchestrator");
         store
             .tasks()
             .append_task_event_with_payload(
@@ -33361,6 +33495,7 @@ mod tests {
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
         write_test_handoff_modepack(temp.path());
         let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
         let parent = store
             .tasks()
             .start_task(brownie_protocol::TaskStartParams {
@@ -52013,7 +52148,7 @@ mod tests {
     }
 
     #[test]
-    fn mode_list_get_and_permission_check_include_external_write_process_capabilities() {
+    fn mode_list_get_and_permission_check_narrow_repository_local_side_effect_capabilities() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         write_capability_test_modepack(temp.path());
@@ -52026,21 +52161,21 @@ mod tests {
             .clone();
         assert_eq!(modes.len(), 8);
         assert!(modes.iter().any(|mode| mode["mode_id"] == "external-editor"
-            && mode["permissions"]["workspace_write"] == true
+            && mode["permissions"]["workspace_write"] == false
             && mode["permissions"]["process_exec"] == false));
         assert!(modes.iter().any(|mode| mode["mode_id"] == "external-tester"
             && mode["permissions"]["workspace_write"] == false
-            && mode["permissions"]["process_exec"] == true));
+            && mode["permissions"]["process_exec"] == false));
         assert!(modes
             .iter()
             .any(|mode| mode["mode_id"] == "external-integrator"
-                && mode["permissions"]["workspace_write"] == true
-                && mode["permissions"]["process_exec"] == true));
+                && mode["permissions"]["workspace_write"] == false
+                && mode["permissions"]["process_exec"] == false));
 
         let editor_write = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"permission.check","params":{"mode_id":"external-editor","action":"WriteWorkspace"}}"#,
         );
-        assert_eq!(editor_write.result.expect("editor write")["allowed"], true);
+        assert_eq!(editor_write.result.expect("editor write")["allowed"], false);
         let editor_exec = parse_line(
             r#"{"jsonrpc":"2.0","id":3,"method":"permission.check","params":{"mode_id":"external-editor","action":"ExecuteProcess"}}"#,
         );
@@ -52053,14 +52188,14 @@ mod tests {
         let tester_exec = parse_line(
             r#"{"jsonrpc":"2.0","id":5,"method":"permission.check","params":{"mode_id":"external-tester","action":"ExecuteProcess"}}"#,
         );
-        assert_eq!(tester_exec.result.expect("tester exec")["allowed"], true);
+        assert_eq!(tester_exec.result.expect("tester exec")["allowed"], false);
 
         let integrator_exec = parse_line(
             r#"{"jsonrpc":"2.0","id":6,"method":"permission.check","params":{"mode_id":"external-integrator","action":"ExecuteProcess"}}"#,
         );
         assert_eq!(
             integrator_exec.result.expect("integrator exec")["allowed"],
-            true
+            false
         );
 
         let prompt_only = parse_line(
@@ -52075,7 +52210,66 @@ mod tests {
     }
 
     #[test]
-    fn active_snapshot_and_task_policy_preserve_external_write_process_capabilities() {
+    fn permission_check_denies_untrusted_repository_local_declared_side_effects() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_untrusted_all_side_effects_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+
+        let mode = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"mode.get","params":{"mode_id":"external-integrator"}}"#,
+        )
+        .result
+        .expect("mode get");
+        assert_eq!(mode["permissions"]["read_only"], true);
+        assert_eq!(mode["permissions"]["workspace_write"], false);
+        assert_eq!(mode["permissions"]["process_exec"], false);
+        assert_eq!(mode["permissions"]["network_access"], false);
+        assert_eq!(mode["permissions"]["service_control"], false);
+        assert_eq!(mode["permissions"]["destructive"], false);
+        assert_eq!(mode["permissions"]["can_spawn_subtasks"], false);
+        assert!(
+            mode["workspace_write_scopes"].is_null() || mode["workspace_write_scopes"] == json!([])
+        );
+        assert_eq!(mode["allowed_handoff_targets"], Value::Null);
+
+        for (id, action) in [
+            (3, "WriteWorkspace"),
+            (4, "ExecuteProcess"),
+            (5, "AccessNetwork"),
+            (6, "ControlService"),
+            (7, "DestructiveOperation"),
+            (8, "SpawnSubtask"),
+        ] {
+            let permission = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "permission.check",
+                    "params": {
+                        "mode_id": "external-integrator",
+                        "action": action
+                    }
+                })
+                .to_string(),
+            );
+            assert_eq!(
+                permission.result.expect("permission result")["allowed"],
+                false,
+                "{action} should be narrowed for repository-local raw Mode Packs"
+            );
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn active_snapshot_and_task_policy_preserve_repository_local_side_effect_denial() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
         let temp = tempfile::tempdir().expect("tempdir");
@@ -52099,7 +52293,7 @@ mod tests {
         );
         assert_eq!(
             permission.result.expect("active permission")["allowed"],
-            true
+            false
         );
 
         let start = parse_line(
@@ -52115,16 +52309,9 @@ mod tests {
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
             .and_then(|event| event.payload.as_ref())
             .expect("mode resolved payload");
-        assert_eq!(start_mode_resolved["permissions"]["workspace_write"], true);
-        assert_eq!(start_mode_resolved["permissions"]["process_exec"], true);
-        assert_eq!(
-            start_mode_resolved["workspace_write_scopes"][0]["file_regex"],
-            "^docs/"
-        );
-        assert_eq!(
-            start_mode_resolved["workspace_write_scopes"][0]["description"],
-            "Documentation workspace updates only."
-        );
+        assert_eq!(start_mode_resolved["permissions"]["workspace_write"], false);
+        assert_eq!(start_mode_resolved["permissions"]["process_exec"], false);
+        assert_eq!(start_mode_resolved["workspace_write_scopes"], json!([]));
         assert_eq!(
             start_mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
             activation_fingerprint
@@ -52143,7 +52330,7 @@ mod tests {
                     .payload
                     .as_ref()
                     .is_some_and(|payload| payload["action"] == "WriteWorkspace"
-                        && payload["allowed"] == true)));
+                        && payload["allowed"] == false)));
         assert!(run_events
             .iter()
             .any(|event| event.kind == LedgerEventKind::PermissionChecked
@@ -52151,7 +52338,7 @@ mod tests {
                     .payload
                     .as_ref()
                     .is_some_and(|payload| payload["action"] == "ExecuteProcess"
-                        && payload["allowed"] == true)));
+                        && payload["allowed"] == false)));
         assert!(run_events
             .iter()
             .all(|event| event.kind != LedgerEventKind::ExternalModePackTaskProvenanceDenied));
@@ -56141,7 +56328,7 @@ mod tests {
         );
         assert_eq!(
             permission.result.expect("permission result")["allowed"],
-            true
+            false
         );
 
         let start = parse_line(
@@ -56160,6 +56347,8 @@ mod tests {
             mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
             candidate_fingerprint
         );
+        assert_eq!(mode_resolved["permissions"]["can_spawn_subtasks"], false);
+        assert_eq!(mode_resolved["allowed_handoff_targets"], Value::Null);
 
         let active_ledger =
             std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
@@ -56322,6 +56511,8 @@ mod tests {
             mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
             rollback_fingerprint
         );
+        assert_eq!(mode_resolved["permissions"]["can_spawn_subtasks"], false);
+        assert_eq!(mode_resolved["allowed_handoff_targets"], Value::Null);
 
         let active_ledger =
             std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
