@@ -208,14 +208,16 @@ impl RuntimeClient {
             RuntimeRequestClass::ReadOnly,
         )?;
         validate_task_list_result(&task_list)?;
-        let result = if let Some(resume_params) = cli_resume_advance_params(&task_list)? {
+        let result = if let Some((resume_params, resume_candidate)) =
+            cli_resume_advance_params(&task_list)?
+        {
             let result = self.call_runtime_value(
                 HEADLESS_RUN_ADVANCE_METHOD,
                 Some(resume_params),
                 RuntimeRequestClass::ObjectiveExecution,
             )?;
             validate_headless_run_advance_result(&result)?;
-            self.continue_resumed_headless_journey_if_available(result)?
+            self.continue_resumed_headless_journey_if_available(result, &resume_candidate)?
         } else {
             let resume_params = cli_resume_params(&task_list)?;
             let result = self.call_runtime_value(
@@ -236,9 +238,10 @@ impl RuntimeClient {
     fn continue_resumed_headless_journey_if_available(
         &self,
         advance_result: Value,
+        resume_candidate: &CliResumeRouteCandidate,
     ) -> Result<Value, RuntimeClientError> {
         let Some(params) = resumed_cli_drive_params(&advance_result)? else {
-            return Ok(advance_result);
+            return attach_resume_route_candidate_context(advance_result, resume_candidate);
         };
 
         let result = self.call_runtime_value(
@@ -254,7 +257,8 @@ impl RuntimeClient {
         let result = self.follow_objective_completion_acceptance_route_if_available(result)?;
         let result = self.close_and_finalize_objective_completion_if_available(result)?;
         let result = self.accept_and_finalize_completed_run_if_available(result)?;
-        merge_resume_drive_result(&advance_result, result)
+        let result = merge_resume_drive_result(&advance_result, result)?;
+        attach_resume_route_candidate_context(result, resume_candidate)
     }
 
     fn runtime_status(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -1573,6 +1577,7 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             }
         }
     }
+    add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
 }
 
@@ -1675,7 +1680,211 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             );
         }
     }
+    add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
+}
+
+fn add_external_loop_contract(
+    payload: &mut serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    promote_payload_alias(
+        payload,
+        "task_id",
+        &[
+            "selected_task_id",
+            "headless_selected_task_id",
+            "headless_root_task_id",
+            "accepted_completion_task_id",
+        ],
+    );
+    promote_payload_alias(
+        payload,
+        "run_id",
+        &[
+            "selected_run_id",
+            "headless_selected_run_id",
+            "headless_root_run_id",
+            "accepted_completion_run_id",
+        ],
+    );
+    promote_payload_alias(payload, "journey_id", &["headless_journey_id"]);
+    ensure_payload_key(payload, "task_id");
+    ensure_payload_key(payload, "run_id");
+    ensure_payload_key(payload, "journey_id");
+
+    let status = payload_string(payload, "status").unwrap_or_else(|| "unknown".to_string());
+    let next_action = payload_string(payload, "next_action")
+        .unwrap_or_else(|| "inspect_progress_overview".to_string());
+    if !payload.contains_key("next_action") {
+        payload.insert(
+            "next_action".to_string(),
+            Value::String(next_action.clone()),
+        );
+    }
+
+    let finalization_status = payload_string(payload, "completion_finalization_status");
+    let closure_status = payload_string(payload, "completion_closure_status");
+    let accepted_status = payload_string(payload, "accepted_completion_status");
+    let candidate_count = payload_usize(payload, "candidate_count");
+    let selected_task_id = payload
+        .get("selected_task_id")
+        .or_else(|| payload.get("task_id"));
+    let no_actionable_work = status == "no_eligible_task"
+        && candidate_count == Some(0)
+        && selected_task_id.map(Value::is_null).unwrap_or(true);
+    let completed = finalization_status.as_deref() == Some("finalized")
+        || (closure_status.as_deref() == Some("complete")
+            && accepted_status.as_deref() == Some("AcceptedComplete")
+            && status == "no_eligible_task");
+
+    let existing_stop_reason = payload_string(payload, "stop_reason");
+    let stop_reason = existing_stop_reason.unwrap_or_else(|| {
+        if completed {
+            "complete".to_string()
+        } else if no_actionable_work {
+            "no_actionable_work".to_string()
+        } else {
+            "bounded_progress".to_string()
+        }
+    });
+    if !payload.contains_key("stop_reason") {
+        payload.insert(
+            "stop_reason".to_string(),
+            Value::String(stop_reason.clone()),
+        );
+    }
+
+    let stale = payload_bool(payload, "stale").unwrap_or(false);
+    let terminal_failure = contains_loop_token(&status, &["failed", "cancelled"])
+        || contains_loop_token(&stop_reason, &["terminal_failure", "non_retryable"]);
+    let blocked = stale
+        || contains_loop_token(&status, &["blocked", "waiting", "external_intervention"])
+        || contains_loop_token(
+            &next_action,
+            &["blocked", "waiting", "external_intervention"],
+        )
+        || contains_loop_token(
+            &stop_reason,
+            &["blocked", "waiting", "external_intervention"],
+        );
+    let progressed = status == "task_executed"
+        || payload_usize(payload, "post_aggregate_sequence")
+            .zip(payload_usize(payload, "current_aggregate_sequence"))
+            .map(|(post, current)| post > current)
+            .unwrap_or(false);
+    let retryable =
+        !completed && !blocked && !terminal_failure && (progressed || !no_actionable_work);
+    let continuation_required = retryable && !no_actionable_work;
+    let controller_action = if completed || terminal_failure || no_actionable_work {
+        "stop"
+    } else if blocked {
+        "return_to_human"
+    } else if continuation_required {
+        "invoke_again"
+    } else {
+        "wait"
+    };
+    let stop_class = if completed {
+        "completed"
+    } else if terminal_failure {
+        "terminal_failure"
+    } else if blocked {
+        "blocked"
+    } else if no_actionable_work {
+        "no_actionable_work"
+    } else if continuation_required {
+        "continuation_required"
+    } else {
+        "waiting"
+    };
+
+    payload.insert(
+        "continuation_required".to_string(),
+        Value::Bool(continuation_required),
+    );
+    payload.insert("completed".to_string(), Value::Bool(completed));
+    payload.insert("blocked".to_string(), Value::Bool(blocked));
+    payload.insert("retryable".to_string(), Value::Bool(retryable));
+    payload.insert(
+        "terminal_failure".to_string(),
+        Value::Bool(terminal_failure),
+    );
+    payload.insert(
+        "controller_action".to_string(),
+        Value::String(controller_action.to_string()),
+    );
+    payload.insert(
+        "stop_class".to_string(),
+        Value::String(stop_class.to_string()),
+    );
+    payload.insert(
+        "automation".to_string(),
+        json!({
+            "status": status,
+            "task_id": payload.get("task_id").cloned().unwrap_or(Value::Null),
+            "run_id": payload.get("run_id").cloned().unwrap_or(Value::Null),
+            "journey_id": payload.get("journey_id").cloned().unwrap_or(Value::Null),
+            "next_action": next_action,
+            "stop_reason": stop_reason,
+            "continuation_required": continuation_required,
+            "completed": completed,
+            "blocked": blocked,
+            "retryable": retryable,
+            "terminal_failure": terminal_failure,
+            "controller_action": controller_action,
+            "stop_class": stop_class
+        }),
+    );
+    Ok(())
+}
+
+fn promote_payload_alias(
+    payload: &mut serde_json::Map<String, Value>,
+    target: &str,
+    sources: &[&str],
+) {
+    if payload
+        .get(target)
+        .map(|value| !value.is_null())
+        .unwrap_or(false)
+    {
+        return;
+    }
+    if let Some(value) = sources.iter().find_map(|source| {
+        payload
+            .get(*source)
+            .filter(|value| !value.is_null())
+            .cloned()
+    }) {
+        payload.insert(target.to_string(), value);
+    }
+}
+
+fn ensure_payload_key(payload: &mut serde_json::Map<String, Value>, key: &str) {
+    payload.entry(key.to_string()).or_insert(Value::Null);
+}
+
+fn payload_string(payload: &serde_json::Map<String, Value>, key: &str) -> Option<String> {
+    payload
+        .get(key)
+        .and_then(Value::as_str)
+        .map(ToString::to_string)
+}
+
+fn payload_bool(payload: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
+    payload.get(key).and_then(Value::as_bool)
+}
+
+fn payload_usize(payload: &serde_json::Map<String, Value>, key: &str) -> Option<usize> {
+    payload
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+}
+
+fn contains_loop_token(value: &str, tokens: &[&str]) -> bool {
+    let value = value.to_ascii_lowercase();
+    tokens.iter().any(|token| value.contains(token))
 }
 
 fn resume_result_first_step(
@@ -1775,7 +1984,9 @@ fn cli_resume_task_list_params() -> Value {
     })
 }
 
-fn cli_resume_advance_params(task_list: &Value) -> Result<Option<Value>, RuntimeClientError> {
+fn cli_resume_advance_params(
+    task_list: &Value,
+) -> Result<Option<(Value, CliResumeRouteCandidate)>, RuntimeClientError> {
     let Some(candidate) = cli_resume_route_candidate(task_list)? else {
         return Ok(None);
     };
@@ -1783,26 +1994,27 @@ fn cli_resume_advance_params(task_list: &Value) -> Result<Option<Value>, Runtime
         &candidate.progress_fingerprint,
         candidate.aggregate_sequence,
     );
-    Ok(Some(json!({
+    let params = json!({
         "authorize": true,
-        "session_id": candidate.session_id,
+        "session_id": candidate.session_id.clone(),
         "advance_id": advance_id,
         "expected_session_sequence": candidate.next_session_sequence,
-        "expected_progress_fingerprint": candidate.progress_fingerprint,
+        "expected_progress_fingerprint": candidate.progress_fingerprint.clone(),
         "expected_aggregate_sequence": candidate.aggregate_sequence,
         "max_steps": CLI_RESUME_MAX_STEPS,
         "continuation_scope": {
-            "session_id": candidate.session_id,
-            "journey_id": candidate.journey_id,
-            "task_id": candidate.task_id,
-            "run_id": candidate.run_id
+            "session_id": candidate.session_id.clone(),
+            "journey_id": candidate.journey_id.clone(),
+            "task_id": candidate.task_id.clone(),
+            "run_id": candidate.run_id.clone()
         },
         "context_budget": {
             "max_prompt_chars": CLI_RUN_MAX_PROMPT_CHARS,
             "max_ledger_events": CLI_RUN_MAX_LEDGER_EVENTS,
             "max_selected_index_chars": 0
         }
-    })))
+    });
+    Ok(Some((params, candidate)))
 }
 
 fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, RuntimeClientError> {
@@ -2659,6 +2871,33 @@ fn merge_resume_drive_result(advance: &Value, drive: Value) -> Result<Value, Run
         }
     }
     Ok(Value::Object(drive))
+}
+
+fn attach_resume_route_candidate_context(
+    result: Value,
+    candidate: &CliResumeRouteCandidate,
+) -> Result<Value, RuntimeClientError> {
+    let mut object = result
+        .as_object()
+        .cloned()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if object.get("selected_headless_journey_context").is_none() {
+        object.insert(
+            "selected_headless_journey_context".to_string(),
+            json!({
+                "kind": "headless_journey_context",
+                "selection_source": "headless_route_candidate",
+                "journey_id": candidate.journey_id,
+                "session_id": candidate.session_id,
+                "task_id": candidate.task_id,
+                "run_id": candidate.run_id,
+                "selected_task_id": candidate.task_id,
+                "selected_run_id": candidate.run_id,
+                "current_session_sequence": candidate.next_session_sequence
+            }),
+        );
+    }
+    Ok(Value::Object(object))
 }
 
 fn merge_objective_continue_result(
