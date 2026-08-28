@@ -12385,15 +12385,7 @@ fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolic
     {
         for policy in snapshot.policies {
             let compiled = compiled_mode_policy_from_active_snapshot(&policy)?;
-            if policies
-                .iter()
-                .any(|existing| existing.mode_id == compiled.mode_id)
-            {
-                return Err(format!(
-                    "active modepack mode duplicates existing mode_id: {}",
-                    compiled.mode_id
-                ));
-            }
+            policies.retain(|existing| existing.mode_id != compiled.mode_id);
             policies.push(compiled);
         }
         return Ok(policies);
@@ -12405,15 +12397,7 @@ fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolic
         return Ok(policies);
     };
     for policy in snapshot.modes {
-        if policies
-            .iter()
-            .any(|existing| existing.mode_id == policy.mode_id)
-        {
-            return Err(format!(
-                "modepack mode duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
+        policies.retain(|existing| existing.mode_id != policy.mode_id);
         policies.push(policy);
     }
     Ok(policies)
@@ -12426,7 +12410,13 @@ fn compiled_mode_policy_from_active_snapshot(
         "mode_id": policy.mode_id,
         "display_name": policy.display_name,
         "role_definition": policy.role_definition,
+        "when_to_use": policy.when_to_use,
+        "description": policy.description,
+        "prompt_sections": policy.prompt_sections,
+        "verification_responsibility": policy.verification_responsibility,
+        "instruction_fingerprint": policy.instruction_fingerprint,
         "permissions": policy.permissions,
+        "workspace_write_scopes": policy.workspace_write_scopes,
         "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
     }))
@@ -12493,6 +12483,7 @@ fn mode_resolved_payload(policy: &CompiledModePolicy) -> Value {
         "prompt_sections": policy.prompt_sections,
         "verification_responsibility": policy.verification_responsibility,
         "instruction_fingerprint": policy.instruction_fingerprint,
+        "workspace_write_scopes": policy.workspace_write_scopes,
         "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
         "permissions": {
@@ -12613,6 +12604,13 @@ fn compiled_mode_policy_from_payload(payload: &Value) -> Option<CompiledModePoli
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         },
+        workspace_write_scopes: serde_json::from_value(
+            payload
+                .get("workspace_write_scopes")
+                .cloned()
+                .unwrap_or_else(|| json!([])),
+        )
+        .ok()?,
         allowed_handoff_targets: payload
             .get("allowed_handoff_targets")
             .and_then(Value::as_array)
@@ -12645,6 +12643,7 @@ fn external_modepack_policy_fingerprint(
         "prompt_sections": policy.prompt_sections,
         "verification_responsibility": policy.verification_responsibility,
         "instruction_fingerprint": policy.instruction_fingerprint,
+        "workspace_write_scopes": policy.workspace_write_scopes,
         "allowed_handoff_targets": policy.allowed_handoff_targets,
         "completion_rules": policy.completion_rules,
         "permissions": {
@@ -15876,6 +15875,12 @@ mod tests {
                     "destructive": false,
                     "can_spawn_subtasks": false
                   },
+                  "workspace_write_scopes": [
+                    {
+                      "file_regex": "^docs/",
+                      "description": "Documentation workspace updates only."
+                    }
+                  ],
                   "completion_rules": ["Stop after edit and verification evidence is ready."]
                 },
                 {
@@ -15892,6 +15897,65 @@ mod tests {
                     "can_spawn_subtasks": false
                   },
                   "completion_rules": ["Pretend prompt text grants workspace writes."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
+    fn write_collision_test_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "collision-agentmodes",
+              "schema_version": 1,
+              "entrypoints": {
+                "default": "orchestrator"
+              },
+              "modes": [
+                {
+                  "mode_id": "orchestrator",
+                  "display_name": "AgentModes Orchestrator",
+                  "role_definition": "Coordinate from active AgentModes policy, not the built-in fallback.",
+                  "when_to_use": "Use the active AgentModes workflow.",
+                  "description": "External policy intentionally shadows the bootstrap mode.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["code"],
+                  "prompt_sections": [
+                    {
+                      "title": "customInstructions",
+                      "source": "AgentModes.customInstructions",
+                      "content_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                      "content": "Use AgentModes routing from the active Mode Pack."
+                    }
+                  ],
+                  "completion_rules": ["Stop after bounded orchestration evidence."]
+                },
+                {
+                  "mode_id": "code",
+                  "display_name": "Code",
+                  "role_definition": "Implement without owning verification.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after code changes are proposed."]
                 }
               ]
             }"#,
@@ -25726,7 +25790,13 @@ mod tests {
                     mode_id: policy.mode_id.clone(),
                     display_name: policy.display_name.clone(),
                     role_definition: policy.role_definition.clone(),
+                    when_to_use: policy.when_to_use.clone(),
+                    description: policy.description.clone(),
+                    prompt_sections: mode_prompt_sections_payload(policy),
+                    verification_responsibility: policy.verification_responsibility.clone(),
+                    instruction_fingerprint: policy.instruction_fingerprint.clone(),
                     permissions: mode_permissions_payload(policy),
+                    workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                     allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                     completion_rules: policy.completion_rules.clone(),
                     policy_fingerprint: external_modepack_policy_fingerprint(
@@ -51528,6 +51598,14 @@ mod tests {
         assert_eq!(start_mode_resolved["permissions"]["workspace_write"], true);
         assert_eq!(start_mode_resolved["permissions"]["process_exec"], true);
         assert_eq!(
+            start_mode_resolved["workspace_write_scopes"][0]["file_regex"],
+            "^docs/"
+        );
+        assert_eq!(
+            start_mode_resolved["workspace_write_scopes"][0]["description"],
+            "Documentation workspace updates only."
+        );
+        assert_eq!(
             start_mode_resolved["external_modepack_task_provenance"]["activation_fingerprint"],
             activation_fingerprint
         );
@@ -51557,6 +51635,78 @@ mod tests {
         assert!(run_events
             .iter()
             .all(|event| event.kind != LedgerEventKind::ExternalModePackTaskProvenanceDenied));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn active_modepack_policy_shadows_builtin_for_colliding_mode_id() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_collision_test_modepack(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let activated_result = activated.result.expect("activation result");
+        assert_eq!(
+            activated_result["snapshot"]["default_entrypoint"],
+            "orchestrator"
+        );
+
+        let listed = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"mode.list"}"#)
+            .result
+            .expect("mode list");
+        let orchestrator_modes = listed["modes"]
+            .as_array()
+            .expect("modes")
+            .iter()
+            .filter(|mode| mode["mode_id"] == "orchestrator")
+            .collect::<Vec<_>>();
+        assert_eq!(orchestrator_modes.len(), 1);
+        assert_eq!(
+            orchestrator_modes[0]["display_name"],
+            "AgentModes Orchestrator"
+        );
+
+        let mode = parse_line(
+            r#"{"jsonrpc":"2.0","id":3,"method":"mode.get","params":{"mode_id":"orchestrator"}}"#,
+        )
+        .result
+        .expect("mode get");
+        assert_eq!(mode["display_name"], "AgentModes Orchestrator");
+        assert_eq!(
+            mode["role_definition"],
+            "Coordinate from active AgentModes policy, not the built-in fallback."
+        );
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":4,"method":"task.start","params":{"goal":"Use colliding active orchestrator","mode_id":"orchestrator"}}"#,
+        );
+        assert!(start.error.is_none());
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .expect("run id")
+            .to_string();
+        let events = store_events(temp.path(), &run_id);
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved");
+        assert_eq!(mode_resolved["display_name"], "AgentModes Orchestrator");
+        assert_eq!(
+            mode_resolved["prompt_sections"][0]["content"],
+            "Use AgentModes routing from the active Mode Pack."
+        );
+        assert_eq!(
+            mode_resolved["external_modepack_task_provenance"]["mode_id"],
+            "orchestrator"
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
@@ -52193,7 +52343,13 @@ mod tests {
                     mode_id: policy.mode_id.clone(),
                     display_name: policy.display_name.clone(),
                     role_definition: policy.role_definition.clone(),
+                    when_to_use: policy.when_to_use.clone(),
+                    description: policy.description.clone(),
+                    prompt_sections: mode_prompt_sections_payload(policy),
+                    verification_responsibility: policy.verification_responsibility.clone(),
+                    instruction_fingerprint: policy.instruction_fingerprint.clone(),
                     permissions: mode_permissions_payload(policy),
+                    workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                     allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                     completion_rules: policy.completion_rules.clone(),
                     policy_fingerprint: external_modepack_policy_fingerprint(
@@ -53270,7 +53426,13 @@ mod tests {
                     mode_id: policy.mode_id.clone(),
                     display_name: policy.display_name.clone(),
                     role_definition: policy.role_definition.clone(),
+                    when_to_use: policy.when_to_use.clone(),
+                    description: policy.description.clone(),
+                    prompt_sections: mode_prompt_sections_payload(policy),
+                    verification_responsibility: policy.verification_responsibility.clone(),
+                    instruction_fingerprint: policy.instruction_fingerprint.clone(),
                     permissions: mode_permissions_payload(policy),
+                    workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                     allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                     completion_rules: policy.completion_rules.clone(),
                     policy_fingerprint: external_modepack_policy_fingerprint(

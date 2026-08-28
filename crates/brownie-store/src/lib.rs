@@ -1999,7 +1999,19 @@ pub struct ActiveModePackPolicySnapshot {
     pub mode_id: String,
     pub display_name: String,
     pub role_definition: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when_to_use: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub prompt_sections: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verification_responsibility: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub instruction_fingerprint: Option<String>,
     pub permissions: serde_json::Value,
+    #[serde(default)]
+    pub workspace_write_scopes: Vec<serde_json::Value>,
     pub allowed_handoff_targets: Option<Vec<String>>,
     pub completion_rules: Vec<String>,
     pub policy_fingerprint: String,

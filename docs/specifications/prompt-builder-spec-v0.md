@@ -71,6 +71,15 @@ Mode Pack permission policy, mode instructions, then task/objective input.
 Prompt text never grants side-effect permissions; `RuntimePermissionGate`
 remains authoritative.
 
+MP-3.1 requires prompt budgeting to preserve protected runtime policy and
+task-pinned Mode Pack policy before truncatable context. `ContextMaterializer`
+may reduce materialized ledger summary entries below the requested
+`max_ledger_events` to satisfy `max_prompt_chars`; it records the resulting
+included/omitted counts in the context budget summary. If the protected policy
+and task objective cannot fit the requested budget, runtime execution fails
+closed and records bounded budget metadata instead of omitting the compiled
+policy selected for the task.
+
 ## Phase 1.5 tool planning update
 
 Phase 1.5 adds dry-run tool planning before future tool execution. Tool definitions and plans are declarative only and do not perform file reads, file writes, process execution, subtask spawning, network access, service control, or destructive operations. Planned tools are evaluated through `RuntimePermissionGate`; denied dry-run items are recorded but do not fail `task.run` in Phase 1.5. See `docs/specifications/tool-planning-spec-v0.md`.

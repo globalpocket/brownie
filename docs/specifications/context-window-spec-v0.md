@@ -82,3 +82,13 @@ material may be trimmed before dropping the compiled mode instructions selected
 for the active task. The protected region is still subject to upstream compiled
 field bounds and fingerprints; it must not persist raw provider responses,
 secrets, raw file content, command output, or unbounded AgentModes source files.
+
+MP-3.1 makes budget fitting explicit for materialized ledger context. When a
+requested prompt budget cannot fit the protected runtime policy, compiled
+Mode Pack policy, and task objective plus the requested recent ledger window,
+`ContextMaterializer` trims oldest materialized ledger summary entries until the
+prompt fits or no ledger entries remain. The persisted ledger is unchanged, and
+the context-window summary records the effective included and omitted counts.
+If protected policy and task context still exceed the requested budget after
+trimming truncatable context, `task.run` fails closed with context-budget
+evidence instead of dropping protected policy.

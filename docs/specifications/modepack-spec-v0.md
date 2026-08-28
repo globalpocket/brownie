@@ -159,8 +159,29 @@ bounded workflow policy metadata; they cannot grant capabilities. The generated
 Mode Pack must still pass normal Mode Pack validation, and side effects continue
 to be authorized by `RuntimePermissionGate` at use time.
 
+MP-3.1 preserves structured AgentModes group metadata instead of collapsing it
+to broad booleans. Structured `edit` metadata such as `fileRegex` and
+`description` compiles into `workspace_write_scopes`. If scopes are present,
+workspace writes are valid only for matching workspace-relative paths. Prose
+cannot widen these scopes.
+
+MP-3.1 also prevents selection guidance and prompt prose from becoming runtime
+semantics. `whenToUse` remains selection metadata and must not be emitted as a
+completion rule. Role definitions and custom instructions must not infer
+verification ownership, completion authority, capabilities, or delegation
+authority. Delegation coordinator authority comes from structured compatibility
+shape and the compiled Mode Pack mode graph; allowed targets are generated from
+that graph and enforced by runtime handoff admission.
+
+Effective external capability is bounded by declared structured groups, source
+trust, and the runtime global capability ceiling. Source trust narrows
+capability but never grants it. In particular, an arbitrary repository-local
+Mode Pack or AgentModes source cannot self-authorize `process_exec`; trusted
+local developer and trusted signed active sources may preserve declared command
+capability only when the runtime global ceiling also allows it.
+
 Compiled external modes may carry `when_to_use`, `description`,
-`prompt_sections`, `verification_responsibility`, and
+`prompt_sections`, `workspace_write_scopes`, `allowed_handoff_targets`, and
 `instruction_fingerprint`. `prompt_sections` are deterministic, bounded
 instruction artifacts derived from AgentModes fields such as
 `customInstructions`; each section carries a source label and content
@@ -169,6 +190,12 @@ and rejects malformed prompt sections fail-closed. The active snapshot
 fingerprint includes these instruction fields so task-pinned policy, replay,
 stale conflict handling, and child provenance reason about the exact workflow
 instructions admitted for the task.
+
+Active snapshot policy entries also persist `workspace_write_scopes`. Runtime
+mode resolution writes those scopes into `ModeResolved`, and context
+materialization renders the task-pinned scopes and handoff targets in protected
+system policy. This makes prompt budgeting and prompt construction consume the
+same effective policy surface as runtime permission checks.
 
 When no explicit compiler default entrypoint is supplied, the generated Mode
 Pack selects `orchestrator` only if that slug exists. Explicit compiler defaults
@@ -182,6 +209,12 @@ bootstrap/fallback modes only when no active Mode Pack default can select the
 workflow. Brownie must not add Rust branches that encode AgentModes routing,
 Git timing, verification sequencing, or completion behavior outside compiled
 Mode Pack policy.
+
+Collision precedence is deterministic: active/candidate Mode Pack validation
+still rejects duplicate ids inside the Mode Pack itself, but it does not reject
+ids that also exist in Brownie's built-in bootstrap registry. When such an id is
+present, the runtime removes the built-in fallback entry from the effective
+policy set and uses the external policy plus task-pinned provenance.
 
 ## M12.1 handoff target admission
 
