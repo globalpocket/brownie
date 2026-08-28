@@ -15,7 +15,7 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.
 - `IndexCodebase` — controlled by `codebase_index`.
 
-The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions.
+The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions. Prompt text, role definitions, and completion rules cannot grant permissions that are not present in the compiled mode policy.
 
 ## JSON-RPC
 
@@ -26,6 +26,14 @@ The `read_only` field is informational for summaries. Individual capabilities ar
 `task.run` records `PermissionChecked` events for minimum Phase 1.4 checks: `ReadWorkspace`, `SpawnSubtask`, `WriteWorkspace`, and `ExecuteProcess`. Denied checks also append a `PermissionDenied` event with the same payload.
 
 Phase 1.4 does not execute real tools, apply file edits, execute processes, call real LLM APIs, fetch Mode Packs, parse AgentModes YAML, or implement Qdrant/llama-server/indexer wrappers.
+
+MP-1 permits external Mode Pack policies to compile trusted `workspace_write`
+and `process_exec` bits into the same permission snapshot shape used by built-in
+modes. `RuntimePermissionGate` remains the final authority for `WriteWorkspace`
+and `ExecuteProcess`, including active Mode Pack snapshots and task-pinned
+`ModeResolved` policy. Contradictory `read_only=true` plus side-effect
+capability declarations are invalid, and unsupported external network, service
+control, and destructive capabilities remain fail-closed.
 
 M9.2 adds `IndexCodebase` as the runtime action for `codebase.index.build`.
 The check is performed in Rust before scanning. The action allows bounded

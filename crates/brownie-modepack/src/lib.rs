@@ -121,11 +121,8 @@ fn non_empty(field: &str, value: String) -> Result<String> {
 }
 
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
-    if !permissions.read_only || permissions.workspace_write {
-        bail!("mode {mode_id} requests unsupported workspace write access");
-    }
-    if permissions.process_exec {
-        bail!("mode {mode_id} requests unsupported process execution");
+    if permissions.read_only && (permissions.workspace_write || permissions.process_exec) {
+        bail!("mode {mode_id} declares read_only=true with side-effect capabilities");
     }
     if permissions.network_access {
         bail!("mode {mode_id} requests unsupported network access");
@@ -364,6 +361,93 @@ mod tests {
     }
 
     #[test]
+    fn loads_workspace_write_and_process_execution_modes() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "trusted-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-editor",
+                  "display_name": "External Editor",
+                  "role_definition": "Edit files through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                },
+                {
+                  "mode_id": "external-tester",
+                  "display_name": "External Tester",
+                  "role_definition": "Run bounded verification commands through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": false,
+                    "process_exec": true,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                },
+                {
+                  "mode_id": "external-integrator",
+                  "display_name": "External Integrator",
+                  "role_definition": "Coordinate edits and verification through runtime-controlled tools.",
+                  "permissions": {
+                    "read_only": false,
+                    "workspace_write": true,
+                    "process_exec": true,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let snapshot = load_workspace_modepack(temp.path())
+            .expect("trusted side-effect modes should compile")
+            .expect("snapshot");
+
+        let editor = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-editor")
+            .expect("editor mode");
+        assert!(editor.permissions.workspace_write);
+        assert!(!editor.permissions.process_exec);
+
+        let tester = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-tester")
+            .expect("tester mode");
+        assert!(!tester.permissions.workspace_write);
+        assert!(tester.permissions.process_exec);
+
+        let integrator = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-integrator")
+            .expect("integrator mode");
+        assert!(integrator.permissions.workspace_write);
+        assert!(integrator.permissions.process_exec);
+    }
+
+    #[test]
     fn rejects_unsafe_permissions() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
@@ -401,7 +485,49 @@ mod tests {
     }
 
     #[test]
-    fn rejects_workspace_write_and_process_execution() {
+    fn rejects_external_service_and_destructive_permissions() {
+        for (field, expected) in [
+            ("service_control", "unsupported service control"),
+            ("destructive", "unsupported destructive operations"),
+        ] {
+            let modepack = format!(
+                r#"{{
+                  "name": "unsafe",
+                  "schema_version": 1,
+                  "modes": [
+                    {{
+                      "mode_id": "{field}",
+                      "display_name": "Unsafe",
+                      "role_definition": "Should be rejected.",
+                      "permissions": {{
+                        "read_only": false,
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "network_access": false,
+                        "service_control": {},
+                        "destructive": {},
+                        "can_spawn_subtasks": false
+                      }}
+                    }}
+                  ]
+                }}"#,
+                field == "service_control",
+                field == "destructive"
+            );
+
+            let error = load_modepack_from_str(&modepack, ".brownie/modepack.json")
+                .expect_err("unsafe modepack should fail")
+                .to_string();
+
+            assert!(
+                error.contains(expected),
+                "expected {expected:?} for {field}, got {error:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_read_only_side_effect_combination() {
         let temp = tempfile::tempdir().expect("temp dir");
         let brownie_dir = temp
             .path()
@@ -413,15 +539,15 @@ mod tests {
         fs::write(
             brownie_dir.join("modepack.json"),
             r#"{
-              "name": "unsafe",
+              "name": "contradictory",
               "schema_version": 1,
               "modes": [
                 {
-                  "mode_id": "writer",
-                  "display_name": "Writer",
-                  "role_definition": "Should be rejected.",
+                  "mode_id": "confused-editor",
+                  "display_name": "Confused Editor",
+                  "role_definition": "Claims read-only while asking for side effects.",
                   "permissions": {
-                    "read_only": false,
+                    "read_only": true,
                     "workspace_write": true,
                     "process_exec": true,
                     "network_access": false,
@@ -436,9 +562,9 @@ mod tests {
         .expect("modepack");
 
         let error = load_workspace_modepack(temp.path())
-            .expect_err("unsafe modepack should fail")
+            .expect_err("contradictory modepack should fail")
             .to_string();
 
-        assert!(error.contains("unsupported workspace write access"));
+        assert!(error.contains("read_only=true with side-effect capabilities"));
     }
 }

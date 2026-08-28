@@ -71,7 +71,19 @@ The M2 JSON schema is intentionally minimal:
 }
 ```
 
-M2 does not fetch remote Mode Packs. It rejects Mode Pack modes that request workspace writes, process execution, network access, service control, destructive operations, or non-read-only permissions. M9.2 permits Mode Packs to opt into metadata-only codebase indexing with `codebase_index`; omitted fields default to `false` for compatibility. `task.start` stores the resolved policy summary in `ModeResolved`, and `task.run` reconstructs the policy from that ledger snapshot so later Mode Pack edits do not change already-started tasks.
+M2 does not fetch remote Mode Packs. M9.2 permits Mode Packs to opt into metadata-only codebase indexing with `codebase_index`; omitted fields default to `false` for compatibility. `task.start` stores the resolved policy summary in `ModeResolved`, and `task.run` reconstructs the policy from that ledger snapshot so later Mode Pack edits do not change already-started tasks.
+
+MP-1 allows external Mode Packs to declare trusted `workspace_write` and
+`process_exec` capability bits for editor, tester, and integrator-style modes.
+`read_only` is summary metadata and must not be combined with side-effect
+capabilities. Network access, service control, and destructive operations remain
+unsupported external capabilities and are rejected fail-closed during Mode Pack
+validation. The runtime compiles declared capability bits into policy data and
+continues to require every side effect to pass `RuntimePermissionGate`; prompt
+text, role definitions, and completion rules cannot grant capability authority.
+MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
+generic workspace editing, generic process execution, Git capability, delegation
+execution, or Rust-owned workflow sequencing.
 
 ## M12.1 handoff target admission
 
