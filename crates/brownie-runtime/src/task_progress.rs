@@ -132,6 +132,7 @@ pub(super) fn task_list_progress_overview(
         &source_fingerprint,
         aggregate_sequence,
     )?;
+    let selected_headless_route = headless_route_candidates.first().cloned();
 
     Ok(TaskListProgressOverview {
         source_fingerprint,
@@ -150,6 +151,7 @@ pub(super) fn task_list_progress_overview(
         stage_counts,
         next_action_sets,
         blocked_sets,
+        selected_headless_route,
         headless_route_candidates,
         nodes,
         edges,

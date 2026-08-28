@@ -1,7 +1,7 @@
 pub mod cli;
 pub mod runtime_client;
 
-use cli::{Cli, CliCommand, CliError};
+use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
 use runtime_client::{RuntimeClient, RuntimeClientError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -40,6 +40,7 @@ where
             "invalid_invocation",
             &error.to_string(),
             json_requested,
+            "unknown",
         ),
     }
 }
@@ -61,19 +62,20 @@ fn execute(cli: Cli) -> CliOutput {
         },
         command => {
             let client = RuntimeClient::default();
+            let command_name = command_name(&command);
             match client.invoke(&command, cli.json) {
                 Ok(message) => CliOutput {
                     exit_code: ExitCode::Success,
                     stdout: message,
                     stderr: String::new(),
                 },
-                Err(error) => runtime_error_output(error, cli.json),
+                Err(error) => runtime_error_output(error, cli.json, command_name),
             }
         }
     }
 }
 
-fn runtime_error_output(error: RuntimeClientError, json: bool) -> CliOutput {
+fn runtime_error_output(error: RuntimeClientError, json: bool, command: &'static str) -> CliOutput {
     let (exit_code, code, message) = match error {
         RuntimeClientError::RuntimeUnavailable => (
             ExitCode::RuntimeUnavailable,
@@ -107,48 +109,69 @@ fn runtime_error_output(error: RuntimeClientError, json: bool) -> CliOutput {
         ),
     };
 
-    error_output(exit_code, code, message, json)
+    error_output(exit_code, code, message, json, command)
 }
 
-fn error_output(exit_code: ExitCode, code: &str, message: &str, json: bool) -> CliOutput {
+fn error_output(
+    exit_code: ExitCode,
+    code: &str,
+    message: &str,
+    json: bool,
+    command: &'static str,
+) -> CliOutput {
     if json {
         let retryable = matches!(code, "runtime_communication_failed" | "runtime_timeout");
         let controller_action = if retryable {
-            "invoke_again"
+            "retry"
         } else {
-            "return_to_human"
+            "return_to_supervisor"
         };
         let stop_class = if retryable {
             "retryable_failure"
         } else {
             "terminal_failure"
         };
+        let next_invocation = if retryable && matches!(command, "run" | "resume") {
+            serde_json::json!({
+                "command": "resume",
+                "arguments": []
+            })
+        } else {
+            serde_json::Value::Null
+        };
         let payload = serde_json::json!({
             "ok": false,
+            "command": command,
             "status": code,
             "next_action": controller_action,
             "stop_reason": code,
-            "continuation_required": false,
+            "continuation_required": retryable && matches!(command, "run" | "resume"),
             "completed": false,
             "blocked": false,
             "retryable": retryable,
             "terminal_failure": !retryable,
             "controller_action": controller_action,
             "stop_class": stop_class,
+            "next_invocation": next_invocation.clone(),
             "automation": {
-                "status": code,
+                "schema_version": 1,
+                "outcome_scope": "process",
+                "status": stop_class,
+                "class": stop_class,
+                "outcome_source": "cli_process",
                 "task_id": null,
                 "run_id": null,
                 "journey_id": null,
                 "next_action": controller_action,
                 "stop_reason": code,
-                "continuation_required": false,
+                "continuation_required": retryable && matches!(command, "run" | "resume"),
                 "completed": false,
                 "blocked": false,
                 "retryable": retryable,
                 "terminal_failure": !retryable,
                 "controller_action": controller_action,
-                "stop_class": stop_class
+                "stop_class": stop_class,
+                "next_invocation": next_invocation
             },
             "error": {
                 "code": code,
@@ -167,6 +190,28 @@ fn error_output(exit_code: ExitCode, code: &str, message: &str, json: bool) -> C
         exit_code,
         stdout: String::new(),
         stderr: format!("brownie: {message}\n"),
+    }
+}
+
+fn command_name(command: &CliCommand) -> &'static str {
+    match command {
+        CliCommand::Run { .. } => "run",
+        CliCommand::Resume => "resume",
+        CliCommand::Status => "status",
+        CliCommand::Inspect {
+            target: InspectTarget::Task { .. },
+        } => "inspect task",
+        CliCommand::Inspect {
+            target: InspectTarget::Run { .. },
+        } => "inspect run",
+        CliCommand::List {
+            target: ListTarget::Tasks,
+        } => "list tasks",
+        CliCommand::Mode {
+            target: ModeTarget::List,
+        } => "mode list",
+        CliCommand::Help { .. } => "help",
+        CliCommand::Version => "version",
     }
 }
 
@@ -327,11 +372,13 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
         assert_eq!(payload["retryable"], false);
         assert_eq!(payload["terminal_failure"], true);
-        assert_eq!(payload["controller_action"], "return_to_human");
+        assert_eq!(payload["controller_action"], "return_to_supervisor");
         assert_eq!(
             payload["automation"]["controller_action"],
-            "return_to_human"
+            "return_to_supervisor"
         );
+        assert_eq!(payload["automation"]["schema_version"], 1);
+        assert_eq!(payload["automation"]["outcome_scope"], "process");
         assert!(output.stderr.is_empty());
     }
 

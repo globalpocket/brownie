@@ -3206,6 +3206,8 @@ pub struct TaskListProgressOverview {
     pub stage_counts: Vec<TaskListProgressStageCount>,
     pub next_action_sets: Vec<TaskListProgressNextActionSet>,
     pub blocked_sets: Vec<TaskListProgressBlockedSet>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected_headless_route: Option<TaskListHeadlessRouteCandidate>,
     pub headless_route_candidates: Vec<TaskListHeadlessRouteCandidate>,
     pub nodes: Vec<TaskProgressGraphNode>,
     pub edges: Vec<TaskProgressGraphEdge>,
