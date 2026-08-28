@@ -401,6 +401,10 @@ fn status_timeout_fails_closed() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"code\":\"runtime_timeout\""));
     assert!(stdout.contains("\"exit_code\":70"));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["retryable"], true);
+    assert_eq!(payload["terminal_failure"], false);
+    assert_eq!(payload["controller_action"], "invoke_again");
 }
 
 #[test]
@@ -1243,6 +1247,28 @@ fn json_run_outputs_bounded_runtime_owned_result() {
         payload["run"]["completion_summary_preview"],
         "json completed"
     );
+    assert_eq!(payload["run"]["continuation_required"], true);
+    assert_eq!(payload["run"]["completed"], false);
+    assert_eq!(payload["run"]["blocked"], false);
+    assert_eq!(payload["run"]["retryable"], true);
+    assert_eq!(payload["run"]["terminal_failure"], false);
+    assert_eq!(payload["run"]["controller_action"], "invoke_again");
+    assert_eq!(payload["run"]["stop_class"], "continuation_required");
+    assert_eq!(payload["run"]["automation"]["status"], "task_executed");
+    assert_eq!(payload["run"]["automation"]["task_id"], "task-json");
+    assert_eq!(payload["run"]["automation"]["run_id"], "run-json");
+    assert_eq!(
+        payload["run"]["automation"]["journey_id"],
+        "cli.run.json.journey"
+    );
+    assert_eq!(
+        payload["run"]["automation"]["stop_reason"],
+        "budget_exhausted"
+    );
+    assert_eq!(
+        payload["run"]["automation"]["controller_action"],
+        "invoke_again"
+    );
     assert!(payload["run"].get("advances").is_none());
     assert!(!stdout.contains("secret-path"));
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
@@ -1452,6 +1478,17 @@ fn resume_uses_runtime_owned_route_candidate_for_scoped_run_advance() {
         payload["resume"]["completion_finalization_status"],
         "finalized"
     );
+    assert_eq!(payload["resume"]["task_id"], "task-new");
+    assert_eq!(payload["resume"]["run_id"], "run-new");
+    assert_eq!(payload["resume"]["journey_id"], "cli.run.new.journey");
+    assert_eq!(payload["resume"]["continuation_required"], false);
+    assert_eq!(payload["resume"]["completed"], true);
+    assert_eq!(payload["resume"]["blocked"], false);
+    assert_eq!(payload["resume"]["retryable"], false);
+    assert_eq!(payload["resume"]["terminal_failure"], false);
+    assert_eq!(payload["resume"]["controller_action"], "stop");
+    assert_eq!(payload["resume"]["stop_class"], "completed");
+    assert_eq!(payload["resume"]["automation"]["controller_action"], "stop");
 
     let requests = fs::read_to_string(capture).unwrap();
     let requests: Vec<serde_json::Value> = requests
@@ -1533,6 +1570,21 @@ fn json_resume_outputs_bounded_cli_projection() {
     assert_eq!(
         payload["resume"]["next_action"],
         "inspect_progress_overview"
+    );
+    assert_eq!(payload["resume"]["task_id"], serde_json::Value::Null);
+    assert_eq!(payload["resume"]["run_id"], serde_json::Value::Null);
+    assert_eq!(payload["resume"]["journey_id"], serde_json::Value::Null);
+    assert_eq!(payload["resume"]["stop_reason"], "no_actionable_work");
+    assert_eq!(payload["resume"]["continuation_required"], false);
+    assert_eq!(payload["resume"]["completed"], false);
+    assert_eq!(payload["resume"]["blocked"], false);
+    assert_eq!(payload["resume"]["retryable"], false);
+    assert_eq!(payload["resume"]["terminal_failure"], false);
+    assert_eq!(payload["resume"]["controller_action"], "stop");
+    assert_eq!(payload["resume"]["stop_class"], "no_actionable_work");
+    assert_eq!(
+        payload["resume"]["automation"]["stop_reason"],
+        "no_actionable_work"
     );
     assert!(payload["resume"].get("next_route").is_none());
     assert!(payload["resume"].get("task_run_result").is_none());

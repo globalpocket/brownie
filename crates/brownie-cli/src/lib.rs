@@ -112,8 +112,44 @@ fn runtime_error_output(error: RuntimeClientError, json: bool) -> CliOutput {
 
 fn error_output(exit_code: ExitCode, code: &str, message: &str, json: bool) -> CliOutput {
     if json {
+        let retryable = matches!(code, "runtime_communication_failed" | "runtime_timeout");
+        let controller_action = if retryable {
+            "invoke_again"
+        } else {
+            "return_to_human"
+        };
+        let stop_class = if retryable {
+            "retryable_failure"
+        } else {
+            "terminal_failure"
+        };
         let payload = serde_json::json!({
             "ok": false,
+            "status": code,
+            "next_action": controller_action,
+            "stop_reason": code,
+            "continuation_required": false,
+            "completed": false,
+            "blocked": false,
+            "retryable": retryable,
+            "terminal_failure": !retryable,
+            "controller_action": controller_action,
+            "stop_class": stop_class,
+            "automation": {
+                "status": code,
+                "task_id": null,
+                "run_id": null,
+                "journey_id": null,
+                "next_action": controller_action,
+                "stop_reason": code,
+                "continuation_required": false,
+                "completed": false,
+                "blocked": false,
+                "retryable": retryable,
+                "terminal_failure": !retryable,
+                "controller_action": controller_action,
+                "stop_class": stop_class
+            },
             "error": {
                 "code": code,
                 "message": message
@@ -288,6 +324,14 @@ mod tests {
         let output = run_cli(["brownie", "--json", "resume"]);
         assert_eq!(output.exit_code, ExitCode::RuntimeUnavailable);
         assert!(output.stdout.contains("\"code\":\"runtime_unavailable\""));
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["retryable"], false);
+        assert_eq!(payload["terminal_failure"], true);
+        assert_eq!(payload["controller_action"], "return_to_human");
+        assert_eq!(
+            payload["automation"]["controller_action"],
+            "return_to_human"
+        );
         assert!(output.stderr.is_empty());
     }
 
@@ -297,6 +341,9 @@ mod tests {
         assert_eq!(output.exit_code, ExitCode::InvalidInvocation);
         assert!(output.stdout.contains("\"code\":\"invalid_invocation\""));
         assert!(output.stdout.contains("\"exit_code\":64"));
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["retryable"], false);
+        assert_eq!(payload["stop_class"], "terminal_failure");
         assert!(output.stderr.is_empty());
     }
 }
