@@ -2983,8 +2983,12 @@ where
             "modepack candidate fetch failed: response contains sensitive-like content".to_string(),
         );
     }
-    let snapshot = load_modepack_from_str(&body, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
-        .map_err(|error| format!("modepack candidate compile failed: {error}"))?;
+    let snapshot = load_modepack_from_str_with_options(
+        &body,
+        MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+        ModePackLoadOptions::trusted_local_developer(),
+    )
+    .map_err(|error| format!("modepack candidate compile failed: {error}"))?;
     let policies = snapshot
         .modes
         .iter()
@@ -3637,9 +3641,12 @@ pub(super) fn approve_remote_modepack_candidate(
             params.expected_content_sha256, cached.summary.content_sha256
         ));
     }
-    let recompiled =
-        load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
-            .map_err(|error| format!("modepack candidate approval compile failed: {error}"))?;
+    let recompiled = load_modepack_from_str_with_options(
+        &cached.modepack_json,
+        MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+        ModePackLoadOptions::trusted_signed_active_modepack(),
+    )
+    .map_err(|error| format!("modepack candidate approval compile failed: {error}"))?;
     let policy_snapshots = recompiled
         .modes
         .iter()
@@ -3974,11 +3981,14 @@ pub(super) fn verify_modepack_candidate_provenance(
             params.expected_content_sha256, cached.summary.content_sha256
         ));
     }
-    let recompiled =
-        load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
-            .map_err(|error| {
-                format!("modepack candidate provenance verification compile failed: {error}")
-            })?;
+    let recompiled = load_modepack_from_str_with_options(
+        &cached.modepack_json,
+        MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+        ModePackLoadOptions::trusted_signed_active_modepack(),
+    )
+    .map_err(|error| {
+        format!("modepack candidate provenance verification compile failed: {error}")
+    })?;
     let policy_snapshots = recompiled
         .modes
         .iter()
@@ -4744,9 +4754,12 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
             content_sha256, actual_content_sha256
         ));
     }
-    let snapshot =
-        load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
-            .map_err(|error| format!("approved modepack candidate compile failed: {error}"))?;
+    let snapshot = load_modepack_from_str_with_options(
+        &cached.modepack_json,
+        MODEPACK_CANDIDATE_CACHE_SOURCE_PATH,
+        ModePackLoadOptions::trusted_signed_active_modepack(),
+    )
+    .map_err(|error| format!("approved modepack candidate compile failed: {error}"))?;
     let policies = snapshot
         .modes
         .iter()

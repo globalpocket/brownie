@@ -33,8 +33,75 @@ pub struct ModePackSnapshot {
     pub name: String,
     pub schema_version: u64,
     pub source_path: PathBuf,
+    pub source_trust: ModePackSourceTrust,
+    pub capability_ceiling: ModePackCapabilityCeiling,
     pub entrypoints: ModePackEntrypoints,
     pub modes: Vec<CompiledModePolicy>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModePackSourceTrust {
+    TrustedLocalDeveloper,
+    TrustedSignedActiveModePack,
+    UntrustedRepositoryLocal,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModePackCapabilityCeiling {
+    pub workspace_write: bool,
+    pub process_exec: bool,
+    pub network_access: bool,
+    pub service_control: bool,
+    pub destructive: bool,
+    pub can_spawn_subtasks: bool,
+}
+
+impl Default for ModePackCapabilityCeiling {
+    fn default() -> Self {
+        Self {
+            workspace_write: true,
+            process_exec: true,
+            network_access: true,
+            service_control: true,
+            destructive: true,
+            can_spawn_subtasks: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModePackLoadOptions {
+    pub source_trust: ModePackSourceTrust,
+    pub capability_ceiling: ModePackCapabilityCeiling,
+}
+
+impl ModePackLoadOptions {
+    pub fn trusted_local_developer() -> Self {
+        Self {
+            source_trust: ModePackSourceTrust::TrustedLocalDeveloper,
+            capability_ceiling: ModePackCapabilityCeiling::default(),
+        }
+    }
+
+    pub fn trusted_signed_active_modepack() -> Self {
+        Self {
+            source_trust: ModePackSourceTrust::TrustedSignedActiveModePack,
+            capability_ceiling: ModePackCapabilityCeiling::default(),
+        }
+    }
+
+    pub fn untrusted_repository_local() -> Self {
+        Self {
+            source_trust: ModePackSourceTrust::UntrustedRepositoryLocal,
+            capability_ceiling: ModePackCapabilityCeiling::default(),
+        }
+    }
+}
+
+impl Default for ModePackLoadOptions {
+    fn default() -> Self {
+        Self::trusted_local_developer()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -79,6 +146,16 @@ struct RawModePolicy {
 pub fn load_workspace_modepack(
     workspace_root: impl AsRef<Path>,
 ) -> Result<Option<ModePackSnapshot>> {
+    load_workspace_modepack_with_options(
+        workspace_root,
+        ModePackLoadOptions::untrusted_repository_local(),
+    )
+}
+
+pub fn load_workspace_modepack_with_options(
+    workspace_root: impl AsRef<Path>,
+    options: ModePackLoadOptions,
+) -> Result<Option<ModePackSnapshot>> {
     let path = workspace_root.as_ref().join(WORKSPACE_MODEPACK_PATH);
     if !path.exists() {
         return Ok(None);
@@ -87,19 +164,31 @@ pub fn load_workspace_modepack(
         fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))?;
     let raw: RawModePack = serde_json::from_str(&content)
         .with_context(|| format!("failed to parse {}", path.display()))?;
-    Ok(Some(compile_snapshot(raw, path)?))
+    Ok(Some(compile_snapshot(raw, path, options)?))
 }
 
 pub fn load_modepack_from_str(
     content: &str,
     source_path: impl Into<PathBuf>,
 ) -> Result<ModePackSnapshot> {
-    let raw: RawModePack =
-        serde_json::from_str(content).context("failed to parse Mode Pack JSON")?;
-    compile_snapshot(raw, source_path.into())
+    load_modepack_from_str_with_options(content, source_path, ModePackLoadOptions::default())
 }
 
-fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSnapshot> {
+pub fn load_modepack_from_str_with_options(
+    content: &str,
+    source_path: impl Into<PathBuf>,
+    options: ModePackLoadOptions,
+) -> Result<ModePackSnapshot> {
+    let raw: RawModePack =
+        serde_json::from_str(content).context("failed to parse Mode Pack JSON")?;
+    compile_snapshot(raw, source_path.into(), options)
+}
+
+fn compile_snapshot(
+    raw: RawModePack,
+    source_path: PathBuf,
+    options: ModePackLoadOptions,
+) -> Result<ModePackSnapshot> {
     if raw.schema_version != MODEPACK_SCHEMA_VERSION {
         bail!(
             "unsupported modepack schema_version {}; expected {}",
@@ -120,11 +209,19 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
             bail!("duplicate mode_id in modepack: {mode_id}");
         }
         validate_permissions(&mode_id, &raw_mode.permissions)?;
-        let allowed_handoff_targets = validate_handoff_targets(
-            &mode_id,
-            &raw_mode.permissions,
-            raw_mode.allowed_handoff_targets,
-        )?;
+        let permissions = effective_permissions(raw_mode.permissions, options);
+        let allowed_handoff_targets =
+            validate_handoff_targets(&mode_id, &permissions, raw_mode.allowed_handoff_targets)?;
+        let allowed_handoff_targets = if permissions.can_spawn_subtasks {
+            allowed_handoff_targets
+        } else {
+            None
+        };
+        let workspace_write_scopes = if permissions.workspace_write {
+            raw_mode.workspace_write_scopes
+        } else {
+            Vec::new()
+        };
         modes.push(CompiledModePolicy {
             mode_id,
             display_name: non_empty("display_name", raw_mode.display_name)?,
@@ -150,8 +247,8 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
                 .instruction_fingerprint
                 .map(|value| non_empty("instruction_fingerprint", value))
                 .transpose()?,
-            permissions: raw_mode.permissions,
-            workspace_write_scopes: raw_mode.workspace_write_scopes,
+            permissions,
+            workspace_write_scopes,
             allowed_handoff_targets,
             completion_rules: raw_mode
                 .completion_rules
@@ -166,9 +263,56 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
         name,
         schema_version: raw.schema_version,
         source_path,
+        source_trust: options.source_trust,
+        capability_ceiling: options.capability_ceiling,
         entrypoints,
         modes,
     })
+}
+
+fn effective_permissions(
+    declared: ModePermissions,
+    options: ModePackLoadOptions,
+) -> ModePermissions {
+    let trusted_side_effect_source = matches!(
+        options.source_trust,
+        ModePackSourceTrust::TrustedLocalDeveloper
+            | ModePackSourceTrust::TrustedSignedActiveModePack
+    );
+    let workspace_write = declared.workspace_write
+        && trusted_side_effect_source
+        && options.capability_ceiling.workspace_write;
+    let process_exec = declared.process_exec
+        && trusted_side_effect_source
+        && options.capability_ceiling.process_exec;
+    let network_access = declared.network_access
+        && trusted_side_effect_source
+        && options.capability_ceiling.network_access;
+    let service_control = declared.service_control
+        && trusted_side_effect_source
+        && options.capability_ceiling.service_control;
+    let destructive = declared.destructive
+        && trusted_side_effect_source
+        && options.capability_ceiling.destructive;
+    let can_spawn_subtasks = declared.can_spawn_subtasks
+        && trusted_side_effect_source
+        && options.capability_ceiling.can_spawn_subtasks;
+    ModePermissions {
+        read_only: declared.read_only
+            || !(workspace_write
+                || process_exec
+                || network_access
+                || service_control
+                || destructive
+                || can_spawn_subtasks),
+        workspace_write,
+        process_exec,
+        network_access,
+        service_control,
+        destructive,
+        can_spawn_subtasks,
+        codebase_index: declared.codebase_index,
+    }
 }
 
 fn non_empty(field: &str, value: String) -> Result<String> {
@@ -196,15 +340,6 @@ fn validate_prompt_section(
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
     if permissions.read_only && (permissions.workspace_write || permissions.process_exec) {
         bail!("mode {mode_id} declares read_only=true with side-effect capabilities");
-    }
-    if permissions.network_access {
-        bail!("mode {mode_id} requests unsupported network access");
-    }
-    if permissions.service_control {
-        bail!("mode {mode_id} requests unsupported service control");
-    }
-    if permissions.destructive {
-        bail!("mode {mode_id} requests unsupported destructive operations");
     }
     Ok(())
 }
@@ -247,10 +382,7 @@ fn validate_handoff_targets(
     targets: Vec<String>,
 ) -> Result<Option<Vec<String>>> {
     if !permissions.can_spawn_subtasks {
-        if targets.is_empty() {
-            return Ok(None);
-        }
-        bail!("mode {mode_id} declares handoff targets without subtask permission");
+        return Ok(None);
     }
     if targets.is_empty() {
         bail!("mode {mode_id} can spawn subtasks but declares no allowed_handoff_targets");
@@ -329,9 +461,12 @@ mod tests {
         )
         .expect("modepack");
 
-        let snapshot = load_workspace_modepack(temp.path())
-            .expect("load")
-            .expect("snapshot");
+        let snapshot = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect("load")
+        .expect("snapshot");
 
         assert_eq!(snapshot.name, "local-agentmodes");
         assert_eq!(snapshot.schema_version, MODEPACK_SCHEMA_VERSION);
@@ -379,9 +514,12 @@ mod tests {
         )
         .expect("modepack");
 
-        let snapshot = load_workspace_modepack(temp.path())
-            .expect("load")
-            .expect("snapshot");
+        let snapshot = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect("load")
+        .expect("snapshot");
 
         assert_eq!(
             snapshot.entrypoints.default_mode_id(),
@@ -481,9 +619,12 @@ mod tests {
         )
         .expect("modepack");
 
-        let snapshot = load_workspace_modepack(temp.path())
-            .expect("load")
-            .expect("snapshot");
+        let snapshot = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect("load")
+        .expect("snapshot");
 
         let orchestrator = snapshot
             .modes
@@ -582,7 +723,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_spawning_mode_without_handoff_targets() {
+    fn untrusted_spawning_mode_without_handoff_targets_is_narrowed() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
         fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -611,11 +752,13 @@ mod tests {
         )
         .expect("modepack");
 
-        let error = load_workspace_modepack(temp.path())
-            .expect_err("spawning mode without targets should fail")
-            .to_string();
+        let snapshot = load_workspace_modepack(temp.path())
+            .expect("untrusted missing targets should narrow")
+            .expect("snapshot");
+        let orchestrator = &snapshot.modes[0];
 
-        assert!(error.contains("declares no allowed_handoff_targets"));
+        assert!(!orchestrator.permissions.can_spawn_subtasks);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
     }
 
     #[test]
@@ -649,15 +792,18 @@ mod tests {
         )
         .expect("modepack");
 
-        let error = load_workspace_modepack(temp.path())
-            .expect_err("invalid target should fail")
-            .to_string();
+        let error = load_workspace_modepack_with_options(
+            temp.path(),
+            ModePackLoadOptions::trusted_local_developer(),
+        )
+        .expect_err("invalid target should fail")
+        .to_string();
 
         assert!(error.contains("unsupported characters"));
     }
 
     #[test]
-    fn loads_workspace_write_and_process_execution_modes() {
+    fn workspace_modepack_load_defaults_to_untrusted_side_effect_ceiling() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
         fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -675,10 +821,11 @@ mod tests {
                     "read_only": false,
                     "workspace_write": true,
                     "process_exec": false,
-                    "network_access": false,
-                    "service_control": false,
-                    "destructive": false,
-                    "can_spawn_subtasks": false
+                    "network_access": true,
+                    "service_control": true,
+                    "destructive": true,
+                    "can_spawn_subtasks": true,
+                    "codebase_index": true
                   }
                 },
                 {
@@ -723,8 +870,19 @@ mod tests {
             .iter()
             .find(|mode| mode.mode_id == "external-editor")
             .expect("editor mode");
-        assert!(editor.permissions.workspace_write);
+        assert_eq!(
+            snapshot.source_trust,
+            ModePackSourceTrust::UntrustedRepositoryLocal
+        );
+        assert!(editor.permissions.read_only);
+        assert!(!editor.permissions.workspace_write);
         assert!(!editor.permissions.process_exec);
+        assert!(!editor.permissions.network_access);
+        assert!(!editor.permissions.service_control);
+        assert!(!editor.permissions.destructive);
+        assert!(!editor.permissions.can_spawn_subtasks);
+        assert!(editor.permissions.codebase_index);
+        assert_eq!(editor.allowed_handoff_targets, None);
 
         let tester = snapshot
             .modes
@@ -732,15 +890,75 @@ mod tests {
             .find(|mode| mode.mode_id == "external-tester")
             .expect("tester mode");
         assert!(!tester.permissions.workspace_write);
-        assert!(tester.permissions.process_exec);
+        assert!(!tester.permissions.process_exec);
 
         let integrator = snapshot
             .modes
             .iter()
             .find(|mode| mode.mode_id == "external-integrator")
             .expect("integrator mode");
+        assert!(!integrator.permissions.workspace_write);
+        assert!(!integrator.permissions.process_exec);
+    }
+
+    #[test]
+    fn trusted_modepack_options_preserve_declared_side_effects_with_ceiling() {
+        let content = r#"{
+          "name": "trusted-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "external-integrator",
+              "display_name": "External Integrator",
+              "role_definition": "Coordinate edits and verification through runtime-controlled tools.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": true,
+                "process_exec": true,
+                "network_access": true,
+                "service_control": true,
+                "destructive": true,
+                "can_spawn_subtasks": true,
+                "codebase_index": true
+              },
+              "allowed_handoff_targets": ["$modepack/*"]
+            }
+          ]
+        }"#;
+
+        let snapshot = load_modepack_from_str_with_options(
+            content,
+            ".brownie/modepack.json",
+            ModePackLoadOptions {
+                source_trust: ModePackSourceTrust::TrustedSignedActiveModePack,
+                capability_ceiling: ModePackCapabilityCeiling {
+                    workspace_write: true,
+                    process_exec: false,
+                    network_access: false,
+                    service_control: true,
+                    destructive: false,
+                    can_spawn_subtasks: true,
+                },
+            },
+        )
+        .expect("trusted side-effect mode should compile");
+
+        let integrator = &snapshot.modes[0];
+        assert_eq!(
+            snapshot.source_trust,
+            ModePackSourceTrust::TrustedSignedActiveModePack
+        );
         assert!(integrator.permissions.workspace_write);
-        assert!(integrator.permissions.process_exec);
+        assert!(!integrator.permissions.process_exec);
+        assert!(!integrator.permissions.network_access);
+        assert!(integrator.permissions.service_control);
+        assert!(!integrator.permissions.destructive);
+        assert!(integrator.permissions.can_spawn_subtasks);
+        assert!(integrator.permissions.codebase_index);
+        assert_eq!(
+            integrator.allowed_handoff_targets.as_deref(),
+            Some([HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()].as_slice())
+        );
     }
 
     #[test]
@@ -870,7 +1088,7 @@ customModes:
     }
 
     #[test]
-    fn rejects_unsafe_permissions() {
+    fn untrusted_workspace_modepack_narrows_network_permission() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
         fs::create_dir_all(&brownie_dir).expect("brownie dir");
@@ -899,19 +1117,23 @@ customModes:
         )
         .expect("modepack");
 
-        let error = load_workspace_modepack(temp.path())
-            .expect_err("unsafe modepack should fail")
-            .to_string();
+        let snapshot = load_workspace_modepack(temp.path())
+            .expect("load")
+            .expect("snapshot");
+        let networker = &snapshot.modes[0];
 
-        assert!(error.contains("unsupported network access"));
+        assert_eq!(
+            snapshot.source_trust,
+            ModePackSourceTrust::UntrustedRepositoryLocal
+        );
+        assert!(networker.permissions.read_only);
+        assert!(!networker.permissions.network_access);
+        assert!(!RuntimePermissionGate::check(networker, RuntimeAction::AccessNetwork).allowed);
     }
 
     #[test]
-    fn rejects_external_service_and_destructive_permissions() {
-        for (field, expected) in [
-            ("service_control", "unsupported service control"),
-            ("destructive", "unsupported destructive operations"),
-        ] {
+    fn untrusted_string_modepack_options_narrow_service_and_destructive_permissions() {
+        for field in ["service_control", "destructive"] {
             let modepack = format!(
                 r#"{{
                   "name": "unsafe",
@@ -937,13 +1159,20 @@ customModes:
                 field == "destructive"
             );
 
-            let error = load_modepack_from_str(&modepack, ".brownie/modepack.json")
-                .expect_err("unsafe modepack should fail")
-                .to_string();
+            let snapshot = load_modepack_from_str_with_options(
+                &modepack,
+                ".brownie/modepack.json",
+                ModePackLoadOptions::untrusted_repository_local(),
+            )
+            .expect("untrusted unsafe declaration should narrow");
+            let policy = &snapshot.modes[0];
 
+            assert!(policy.permissions.read_only);
+            assert!(!policy.permissions.service_control);
+            assert!(!policy.permissions.destructive);
+            assert!(!RuntimePermissionGate::check(policy, RuntimeAction::ControlService).allowed);
             assert!(
-                error.contains(expected),
-                "expected {expected:?} for {field}, got {error:?}"
+                !RuntimePermissionGate::check(policy, RuntimeAction::DestructiveOperation).allowed
             );
         }
     }
