@@ -39,3 +39,24 @@ M2 keeps the built-in stub registry, then appends locally loaded Mode Pack modes
 Built-in modes remain available and remain the default when `task.start` omits `mode_id`. Local Mode Pack modes must use unique `mode_id` values that do not duplicate existing runtime modes. Unsupported permission expansion is rejected at load time: local modes must be read-only and cannot enable workspace writes, process execution, network access, service control, or destructive operations.
 
 For running tasks, the resolved policy is snapshotted into the `ModeResolved` ledger payload. `task.run` prefers that snapshot over re-reading the current Mode Pack file.
+
+## MP-3 AgentModes workflow policy fields
+
+MP-3 extends `CompiledModePolicy` so representative AgentModes YAML can compile
+into stable runtime policy without moving AgentModes workflow decisions into
+Rust. In addition to the permission bits, compiled modes may carry
+`when_to_use`, `description`, bounded `prompt_sections`,
+`verification_responsibility`, and an `instruction_fingerprint`.
+
+`ModeResolved` stores the full effective policy for the admitted task, including
+the instruction fields. `task.run` reconstructs policy from that task-pinned
+snapshot, and active Mode Pack fingerprints include the same fields. Later edits
+to a live Mode Pack file therefore cannot alter role text, custom instructions,
+or verification responsibility for an already admitted task.
+
+Policy precedence is fixed: runtime safety invariants override compiled Mode
+Pack permission policy, compiled permission policy overrides mode instructions,
+mode instructions override task/objective text, and prompt text never grants
+side-effect authority. `RuntimePermissionGate` remains the final authority for
+workspace writes, process execution, network/service/destructive actions, and
+subtask spawning.

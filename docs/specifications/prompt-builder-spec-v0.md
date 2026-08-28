@@ -22,7 +22,7 @@ The task goal comes from `TaskRecord`. The ledger summary comes from the persist
 
 `PromptBuilder` emits a fixed prompt view with two messages:
 
-1. `System`: identifies Brownie Runtime and states that real LLM/tool execution is disabled in the current phase.
+1. `System`: identifies Brownie Runtime and carries protected runtime policy.
 2. `User`: includes task id, run id, mode id, current goal, and deterministic ledger summary lines.
 
 ## Persistence rule
@@ -53,6 +53,23 @@ Phase 1.4 adds the `RuntimePermissionGate` foundation. Runtime permission checks
 Runtime actions are `ReadWorkspace`, `WriteWorkspace`, `ExecuteProcess`, `AccessNetwork`, `ControlService`, `DestructiveOperation`, `SpawnSubtask`, and `IndexCodebase`. Phase 1.4 records permission decisions only; it does not execute real tools, write files, apply patches, execute processes, call real LLM APIs, parse AgentModes YAML, fetch Mode Packs, or implement Qdrant/llama-server/indexer behavior.
 
 The runtime protocol includes `permission.check`. Task runs append `PermissionChecked` ledger events for minimum checks and append `PermissionDenied` when a checked action is denied. `ModeResolved` stores a full permission snapshot so prompt materialization can summarize active mode capabilities.
+
+## MP-3 Mode Pack instruction materialization
+
+`PromptBuildInput` may include `mode_instruction_material` derived from the
+latest task-pinned `ModeResolved` event. `ContextMaterializer` formats
+AgentModes-derived fields such as `role_definition`, `when_to_use`,
+`description`, `prompt_sections`, `verification_responsibility`,
+`instruction_fingerprint`, and completion rules from the compiled policy
+snapshot.
+
+The system message contains the runtime safety invariants, compiled Mode Pack
+permission summary, and compiled Mode Pack instructions. The user message
+contains task/objective and ledger context. Mode Pack instructions must not be
+mixed into task text. The priority order is runtime safety invariants, compiled
+Mode Pack permission policy, mode instructions, then task/objective input.
+Prompt text never grants side-effect permissions; `RuntimePermissionGate`
+remains authoritative.
 
 ## Phase 1.5 tool planning update
 

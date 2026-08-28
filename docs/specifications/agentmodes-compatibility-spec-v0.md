@@ -99,6 +99,52 @@ same runtime-owned decision without duplicate admission, and later changes to a
 live `.brownie/modepack.json` cannot rewrite the task-pinned policy. If no Mode
 Pack default is available, Brownie keeps its built-in fallback behavior.
 
+## MP-3 AgentModes compatibility compiler
+
+Brownie now accepts representative AgentModes YAML as compatibility input and
+compiles it into the stable Brownie Mode Pack policy shape. The compiler reads
+`customModes` entries with `slug`, `name`, `roleDefinition`, `whenToUse`,
+`description`, `groups`, and `customInstructions`; it does not rewrite the
+AgentModes format or vendor the AgentModes repository.
+
+Only structured AgentModes `groups` grant runtime capabilities. `read` grants
+metadata-only workspace read/index capability, `edit` grants trusted workspace
+write capability, `command` grants trusted process execution capability, and
+`mcp` grants no Brownie runtime side-effect capability in v0. Prompt prose,
+role definitions, custom instructions, and completion text remain workflow
+policy data and cannot grant write, command, network, service, destructive, or
+subtask authority. The compiled JSON must still pass Mode Pack validation, and
+every side effect remains subject to `RuntimePermissionGate`.
+
+If no explicit compiler default entrypoint is provided, the compiler selects
+`orchestrator` when that AgentModes slug exists. Explicit defaults must refer to
+a compiled mode id and use the same bounded ASCII identifier shape as other Mode
+Pack references. Unknown groups, malformed group entries, duplicate slugs,
+missing required fields, unsafe identifiers, and unknown explicit defaults fail
+closed.
+
+The compiled policy preserves AgentModes workflow prose as bounded policy data:
+`when_to_use`, `description`, `prompt_sections`, `verification_responsibility`,
+and an instruction fingerprint. `customInstructions` is compiled into prompt
+sections with deterministic fingerprints. These fields are snapshotted in
+`ModeResolved`, reconstructed by `task.run`, and included in the active policy
+fingerprint so replay and task-pinned execution cannot silently switch workflow
+instructions after task admission.
+
+Prompt materialization must carry compiled AgentModes instructions into the
+protected system-policy region, separate from task/objective text. Prompt
+precedence is: runtime safety invariants, compiled Mode Pack permission policy,
+compiled mode instructions, then task/objective input. Prompt prose can shape
+workflow behavior, but it never grants side-effect permission; groups compile
+capability bits and `RuntimePermissionGate` remains the final authority.
+
+When an active Mode Pack defines a mode id that also exists as a built-in
+fallback, the active Mode Pack policy is the runtime-selected policy for that
+task. Built-in modes remain bootstrap/fallback policy only when no applicable
+active Mode Pack entrypoint exists. Configured-but-invalid AgentModes or Mode
+Pack entrypoints fail closed during validation instead of silently falling back
+to a built-in implementer workflow.
+
 ## M12.1 handoff target compatibility
 
 `CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for

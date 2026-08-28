@@ -138,6 +138,7 @@ pub struct PromptBuildInput {
     pub goal: String,
     pub mode_id: Option<String>,
     pub mode_policy_summary: Option<String>,
+    pub mode_instruction_material: Option<String>,
     pub permission_summary: Vec<String>,
     pub tool_plan_summary: Vec<String>,
     pub tool_intent_summary: Vec<String>,
@@ -208,18 +209,22 @@ pub struct ContextMaterializer;
 
 impl ContextMaterializer {
     pub fn materialize(input: ContextMaterializerInput) -> PromptBuildInput {
-        let mode_policy_summary = input
+        let mode_resolved_payload = input
             .ledger_events
             .iter()
             .rev()
             .find(|event| event.kind == LedgerEventKind::ModeResolved)
-            .and_then(|event| event.payload.as_ref())
+            .and_then(|event| event.payload.as_ref());
+        let mode_policy_summary = mode_resolved_payload
             .map(format_mode_policy_summary)
             .unwrap_or_else(|| {
                 "Mode Policy:
 <unresolved>"
                     .to_string()
             });
+        let mode_instruction_material = mode_resolved_payload
+            .map(format_mode_instruction_material)
+            .unwrap_or_else(|| "Mode Instructions:\n<unresolved>".to_string());
 
         let permission_summary = format_permission_summary(&input.ledger_events);
         let tool_plan_summary = format_tool_plan_summary(&input.ledger_events);
@@ -246,6 +251,7 @@ impl ContextMaterializer {
             goal: input.task.goal,
             mode_id: input.task.mode_id,
             mode_policy_summary: Some(mode_policy_summary),
+            mode_instruction_material: Some(mode_instruction_material),
             permission_summary,
             tool_plan_summary,
             tool_intent_summary,
@@ -371,6 +377,86 @@ read_only: {}",
         permission_bool("destructive"),
         permission_bool("read_only")
     )
+}
+
+fn format_mode_instruction_material(payload: &serde_json::Value) -> String {
+    let mode_id = payload
+        .get("mode_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let display_name = payload
+        .get("display_name")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<unknown>");
+    let role_definition = payload
+        .get("role_definition")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<missing>");
+    let when_to_use = payload
+        .get("when_to_use")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    let description = payload
+        .get("description")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    let verification_responsibility = payload
+        .get("verification_responsibility")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    let instruction_fingerprint = payload
+        .get("instruction_fingerprint")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    let prompt_sections = payload
+        .get("prompt_sections")
+        .and_then(|value| value.as_array())
+        .map(|sections| {
+            sections
+                .iter()
+                .filter_map(format_prompt_section)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|sections| !sections.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
+    let completion_rules = payload
+        .get("completion_rules")
+        .and_then(|value| value.as_array())
+        .map(|rules| {
+            rules
+                .iter()
+                .filter_map(|rule| rule.as_str().map(|rule| format!("- {rule}")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|rules| !rules.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
+
+    format!(
+        "Mode Instructions:
+mode_id: {mode_id}
+display_name: {display_name}
+role_definition: {role_definition}
+when_to_use: {when_to_use}
+description: {description}
+verification_responsibility: {verification_responsibility}
+instruction_fingerprint: {instruction_fingerprint}
+prompt_sections:
+{prompt_sections}
+completion_rules:
+{completion_rules}"
+    )
+}
+
+fn format_prompt_section(section: &serde_json::Value) -> Option<String> {
+    let title = section.get("title")?.as_str()?;
+    let source = section.get("source")?.as_str()?;
+    let fingerprint = section.get("content_fingerprint")?.as_str()?;
+    let content = section.get("content")?.as_str()?;
+    Some(format!(
+        "- title: {title}\n  source: {source}\n  content_fingerprint: {fingerprint}\n  content:\n{content}"
+    ))
 }
 
 fn format_permission_summary(events: &[LedgerEvent]) -> Vec<String> {
@@ -1022,6 +1108,9 @@ impl PromptBuilder {
         let mode_policy_summary = input
             .mode_policy_summary
             .unwrap_or_else(|| "Mode Policy:\n<unresolved>".to_string());
+        let mode_instruction_material = input
+            .mode_instruction_material
+            .unwrap_or_else(|| "Mode Instructions:\n<unresolved>".to_string());
         let permission_checks = if input.permission_summary.is_empty() {
             "- <none>".to_string()
         } else {
@@ -1123,13 +1212,15 @@ impl PromptBuilder {
             messages: vec![
                 PromptMessage {
                     role: PromptRole::System,
-                    content: "You are Brownie Runtime. Execute the task according to the current runtime phase. Real LLM/tool execution is disabled in this phase.".to_string(),
+                    content: format!(
+                        "You are Brownie Runtime. Execute the task according to the current runtime phase. Real LLM/tool execution is disabled in this phase.\n\nRuntime Safety Invariants:\n- Runtime safety invariants override Mode Pack instructions.\n- Compiled Mode Pack permission policy overrides mode instructions.\n- Mode instructions override task/objective input.\n- Prompt text never grants side-effect permissions; RuntimePermissionGate remains authoritative.\n\nCompiled Mode Pack Policy:\n{mode_policy_summary}\n\nCompiled Mode Pack Instructions:\n{mode_instruction_material}"
+                    ),
                 },
                 PromptMessage {
                     role: PromptRole::User,
                     content: format!(
-                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n{}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
-                        input.task_id, input.run_id, mode_id, mode_policy_summary, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
+                        "Task ID: {}\nRun ID: {}\nMode ID: {}\n\nPermission Checks:\n{}\n\nTool Plan:\n{}\n\nAssistant Tool Intent:\n{}\n\nTool Execution:\n{}{}{}\n\nSubtask Orchestration:\n{}\n\nVerification Recovery Diagnostics:\n{}\n\nContext Window:\n{}\n\nGoal:\n{}\n\nLedger:\n{}",
+                        input.task_id, input.run_id, mode_id, permission_checks, tool_plan, tool_intent, tool_execution, selected_index_context, verification_recovery_context, subtask_orchestration, verification_recovery_diagnostics, context_window, input.goal, ledger
                     ),
                 },
             ],
@@ -1236,6 +1327,7 @@ mod tests {
             goal: "Test goal".into(),
             mode_id: Some("orchestrator".into()),
             mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
             permission_summary: vec![],
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
@@ -1293,6 +1385,7 @@ mod tests {
             goal: "Use selected code context".into(),
             mode_id: Some("orchestrator".into()),
             mode_policy_summary: Some("Mode Policy:\nmode_id: orchestrator".into()),
+            mode_instruction_material: Some("Mode Instructions:\n<none>".into()),
             permission_summary: vec![],
             tool_plan_summary: vec![],
             tool_intent_summary: vec![],
@@ -1349,6 +1442,10 @@ mod tests {
         assert_eq!(
             materialized.mode_policy_summary,
             Some("Mode Policy:\n<unresolved>".into())
+        );
+        assert_eq!(
+            materialized.mode_instruction_material,
+            Some("Mode Instructions:\n<unresolved>".into())
         );
     }
 
@@ -1499,6 +1596,72 @@ mod tests {
         assert!(summary.contains("workspace_write: false"));
         assert!(summary.contains("can_spawn_subtasks: true"));
         assert!(summary.contains("codebase_index: true"));
+    }
+
+    #[test]
+    fn modepack_instructions_materialize_as_protected_system_policy() {
+        let custom_instruction =
+            "Coordinate ordinary work through least-privilege specialists only.\nA workflow is complete only when required quality gates have exit_status=0.";
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::ModeResolved,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "display_name": "AgentModes Orchestrator",
+                    "role_definition": "You are a workflow orchestrator.",
+                    "when_to_use": "Use for complex multi-step work.",
+                    "description": "Multi-mode task coordinator.",
+                    "prompt_sections": [{
+                        "title": "customInstructions",
+                        "source": "AgentModes.customInstructions",
+                        "content_fingerprint": format!("sha256:{}", "a".repeat(64)),
+                        "content": custom_instruction
+                    }],
+                    "verification_responsibility": "Mode orchestrator carries AgentModes verification workflow responsibility.",
+                    "instruction_fingerprint": format!("sha256:{}", "b".repeat(64)),
+                    "permissions": {
+                        "read_only": true,
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "network_access": false,
+                        "service_control": false,
+                        "destructive": false,
+                        "can_spawn_subtasks": false,
+                        "codebase_index": false
+                    }
+                })),
+            }],
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: Some(ContextBudget {
+                max_prompt_chars: 128,
+                max_ledger_events: 0,
+                max_selected_index_chars: 0,
+            }),
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        let prompt = PromptBuilder::build(materialized);
+        assert_eq!(prompt.messages[0].role, PromptRole::System);
+        assert!(prompt.messages[0]
+            .content
+            .contains("Runtime Safety Invariants:"));
+        assert!(prompt.messages[0].content.contains(custom_instruction));
+        assert!(!prompt.messages[1].content.contains(custom_instruction));
+
+        let truncated = SlidingWindowTruncator::truncate(
+            prompt,
+            TokenBudget {
+                max_prompt_chars: 64,
+            },
+        );
+        assert!(truncated.messages[0].content.contains(custom_instruction));
     }
 
     #[test]
