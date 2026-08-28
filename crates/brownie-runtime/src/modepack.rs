@@ -3017,6 +3017,7 @@ where
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
+        snapshot.entrypoints.default_mode_id(),
         &policies,
     );
     let summary = ModePackCandidateSummary {
@@ -3031,6 +3032,7 @@ where
         schema_version: snapshot.schema_version,
         mode_count: mode_ids.len(),
         mode_ids,
+        default_entrypoint: snapshot.entrypoints.default.clone(),
         compiled_policy_fingerprint,
         cached_at: codebase_index_timestamp().map_err(|error| error.to_string())?,
         cache_event_id: String::new(),
@@ -3672,6 +3674,7 @@ pub(super) fn approve_remote_modepack_candidate(
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &recompiled.name,
         recompiled.schema_version,
+        recompiled.entrypoints.default_mode_id(),
         &policy_snapshots,
     );
     if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
@@ -4012,6 +4015,7 @@ pub(super) fn verify_modepack_candidate_provenance(
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &recompiled.name,
         recompiled.schema_version,
+        recompiled.entrypoints.default_mode_id(),
         &policy_snapshots,
     );
     if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
@@ -4784,6 +4788,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
     let actual_compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
+        snapshot.entrypoints.default_mode_id(),
         &policies,
     );
     if actual_compiled_policy_fingerprint != compiled_policy_fingerprint {
@@ -4816,6 +4821,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
         snapshot.schema_version,
         &actual_compiled_policy_fingerprint,
         &mode_ids,
+        snapshot.entrypoints.default_mode_id(),
     );
     let summary = ModePackActiveSnapshotSummary {
         activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
@@ -4826,6 +4832,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
         source_path: cached.summary.candidate_id,
         mode_count: mode_ids.len(),
         mode_ids,
+        default_entrypoint: snapshot.entrypoints.default.clone(),
         compiled_policy_fingerprint: actual_compiled_policy_fingerprint,
         activated_at,
         activation_event_id: String::new(),
@@ -4899,6 +4906,7 @@ pub(super) fn build_active_modepack_snapshot(
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
+        snapshot.entrypoints.default_mode_id(),
         &policy_snapshots,
     );
     let activation_fingerprint = active_modepack_activation_fingerprint(
@@ -4906,6 +4914,7 @@ pub(super) fn build_active_modepack_snapshot(
         snapshot.schema_version,
         &compiled_policy_fingerprint,
         &mode_ids,
+        snapshot.entrypoints.default_mode_id(),
     );
     let summary = ModePackActiveSnapshotSummary {
         activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
@@ -4916,6 +4925,7 @@ pub(super) fn build_active_modepack_snapshot(
         source_path: WORKSPACE_MODEPACK_PATH.to_string(),
         mode_count: mode_ids.len(),
         mode_ids,
+        default_entrypoint: snapshot.entrypoints.default.clone(),
         compiled_policy_fingerprint,
         activated_at,
         activation_event_id: String::new(),
@@ -4942,13 +4952,15 @@ pub(super) fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
 pub(super) fn active_modepack_compiled_policy_fingerprint(
     modepack_name: &str,
     schema_version: u64,
+    default_entrypoint: Option<&str>,
     policies: &[ActiveModePackPolicySnapshot],
 ) -> String {
     let canonical = json!({
-        "version": "active_modepack_compiled_policy_fingerprint_v1",
+        "version": "active_modepack_compiled_policy_fingerprint_v2",
         "modepack_name": modepack_name,
         "schema_version": schema_version,
         "source_path": WORKSPACE_MODEPACK_PATH,
+        "default_entrypoint": default_entrypoint,
         "policies": policies,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
@@ -4959,13 +4971,15 @@ pub(super) fn active_modepack_activation_fingerprint(
     schema_version: u64,
     compiled_policy_fingerprint: &str,
     mode_ids: &[String],
+    default_entrypoint: Option<&str>,
 ) -> String {
     let canonical = json!({
-        "version": "active_modepack_activation_fingerprint_v1",
+        "version": "active_modepack_activation_fingerprint_v2",
         "modepack_name": modepack_name,
         "schema_version": schema_version,
         "source_path": WORKSPACE_MODEPACK_PATH,
         "mode_ids": mode_ids,
+        "default_entrypoint": default_entrypoint,
         "compiled_policy_fingerprint": compiled_policy_fingerprint,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))

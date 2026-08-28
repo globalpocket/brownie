@@ -13,12 +13,25 @@ pub const WORKSPACE_MODEPACK_PATH: &str = ".brownie/modepack.json";
 pub const MODEPACK_SCHEMA_VERSION: u64 = 1;
 const MAX_HANDOFF_TARGETS: usize = 16;
 const MAX_HANDOFF_TARGET_CHARS: usize = 64;
+const MAX_MODE_ID_REFERENCE_CHARS: usize = 64;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ModePackEntrypoints {
+    pub default: Option<String>,
+}
+
+impl ModePackEntrypoints {
+    pub fn default_mode_id(&self) -> Option<&str> {
+        self.default.as_deref()
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModePackSnapshot {
     pub name: String,
     pub schema_version: u64,
     pub source_path: PathBuf,
+    pub entrypoints: ModePackEntrypoints,
     pub modes: Vec<CompiledModePolicy>,
 }
 
@@ -26,7 +39,15 @@ pub struct ModePackSnapshot {
 struct RawModePack {
     name: String,
     schema_version: u64,
+    #[serde(default)]
+    entrypoints: RawModePackEntrypoints,
     modes: Vec<RawModePolicy>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawModePackEntrypoints {
+    #[serde(default)]
+    default: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,11 +124,13 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
                 .collect::<Result<Vec<_>>>()?,
         });
     }
+    let entrypoints = validate_entrypoints(raw.entrypoints, &seen)?;
 
     Ok(ModePackSnapshot {
         name,
         schema_version: raw.schema_version,
         source_path,
+        entrypoints,
         modes,
     })
 }
@@ -134,6 +157,38 @@ fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<
         bail!("mode {mode_id} requests unsupported destructive operations");
     }
     Ok(())
+}
+
+fn validate_entrypoints(
+    entrypoints: RawModePackEntrypoints,
+    mode_ids: &HashSet<String>,
+) -> Result<ModePackEntrypoints> {
+    let default = entrypoints
+        .default
+        .map(|mode_id| validate_mode_id_reference("entrypoints.default", mode_id, mode_ids))
+        .transpose()?;
+    Ok(ModePackEntrypoints { default })
+}
+
+fn validate_mode_id_reference(
+    field: &str,
+    value: String,
+    mode_ids: &HashSet<String>,
+) -> Result<String> {
+    let value = non_empty(field, value)?;
+    if value.chars().count() > MAX_MODE_ID_REFERENCE_CHARS {
+        bail!("modepack {field} exceeds length limit");
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+    {
+        bail!("modepack {field} contains unsupported characters");
+    }
+    if !mode_ids.contains(&value) {
+        bail!("modepack {field} references unknown mode_id: {value}");
+    }
+    Ok(value)
 }
 
 fn validate_handoff_targets(
@@ -223,6 +278,97 @@ mod tests {
         assert_eq!(snapshot.modes[0].mode_id, "reviewer-lite");
         assert!(!snapshot.modes[0].permissions.workspace_write);
         assert_eq!(snapshot.modes[0].allowed_handoff_targets, None);
+        assert_eq!(snapshot.entrypoints.default_mode_id(), None);
+    }
+
+    #[test]
+    fn loads_default_entrypoint_when_it_references_a_mode() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let brownie_dir = temp.path().join(".brownie");
+        fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "entrypoint-pack",
+              "schema_version": 1,
+              "entrypoints": {
+                "default": "external-orchestrator"
+              },
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Select a runtime-owned workflow entry mode.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+
+        let snapshot = load_workspace_modepack(temp.path())
+            .expect("load")
+            .expect("snapshot");
+
+        assert_eq!(
+            snapshot.entrypoints.default_mode_id(),
+            Some("external-orchestrator")
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_blank_and_unsafe_default_entrypoints() {
+        for (default_mode, expected) in [
+            ("missing-mode", "references unknown mode_id"),
+            ("   ", "must not be empty"),
+            (
+                "../external-orchestrator",
+                "contains unsupported characters",
+            ),
+        ] {
+            let content = format!(
+                r#"{{
+                  "name": "entrypoint-pack",
+                  "schema_version": 1,
+                  "entrypoints": {{
+                    "default": "{default_mode}"
+                  }},
+                  "modes": [
+                    {{
+                      "mode_id": "external-orchestrator",
+                      "display_name": "External Orchestrator",
+                      "role_definition": "Select a runtime-owned workflow entry mode.",
+                      "permissions": {{
+                        "read_only": true,
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "network_access": false,
+                        "service_control": false,
+                        "destructive": false,
+                        "can_spawn_subtasks": false
+                      }}
+                    }}
+                  ]
+                }}"#
+            );
+
+            let error = load_modepack_from_str(&content, ".brownie/modepack.json")
+                .expect_err("invalid default entrypoint")
+                .to_string();
+
+            assert!(
+                error.contains(expected),
+                "expected {error:?} to contain {expected:?}"
+            );
+        }
     }
 
     #[test]

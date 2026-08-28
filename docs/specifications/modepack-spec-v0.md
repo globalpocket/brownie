@@ -85,6 +85,61 @@ MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
 generic workspace editing, generic process execution, Git capability, delegation
 execution, or Rust-owned workflow sequencing.
 
+## MP-2 default entrypoint
+
+MP-2 adds an optional top-level `entrypoints.default` field to the Mode Pack
+schema:
+
+```json
+{
+  "name": "local-agentmodes",
+  "schema_version": 1,
+  "entrypoints": {
+    "default": "external-orchestrator"
+  },
+  "modes": [
+    {
+      "mode_id": "external-orchestrator",
+      "display_name": "External Orchestrator",
+      "role_definition": "Select the workflow route.",
+      "permissions": {
+        "read_only": true,
+        "workspace_write": false,
+        "process_exec": false,
+        "network_access": false,
+        "service_control": false,
+        "destructive": false,
+        "can_spawn_subtasks": false,
+        "codebase_index": false
+      }
+    }
+  ]
+}
+```
+
+The default entrypoint must reference a mode in the same compiled snapshot. The
+mode id reference is normalized with the same bounded ASCII shape as handoff
+targets: non-empty, 64 characters or fewer, and limited to letters, digits,
+`.`, `_`, and `-`. Unknown, blank, or unsupported values fail closed during Mode
+Pack validation.
+
+For the CLI primary run path, `brownie run "<objective>"` starts a headless
+journey without a CLI-selected mode. The runtime resolves that omitted journey
+task mode to the active Mode Pack snapshot's `entrypoints.default` when present.
+If no active snapshot exists, the runtime may resolve the local workspace Mode
+Pack default. If no Mode Pack default exists, the legacy built-in headless
+fallback remains `implementer`. Direct low-level `task.start` omitted-mode
+behavior remains the built-in runtime default policy and is not a Mode Pack
+workflow selector.
+
+Active Mode Pack snapshot summaries store `default_entrypoint`, and active
+compiled-policy and activation fingerprints include it. Journey start
+fingerprints are computed from the runtime-resolved effective task start, so
+replay and stale-conflict checks bind the same entrypoint decision instead of
+letting the CLI choose or rewrite workflow policy. `ModeResolved` continues to
+store the task-pinned policy and external Mode Pack provenance, and every
+side-effect still passes `RuntimePermissionGate`.
+
 ## M12.1 handoff target admission
 
 M12.1 lets an external Mode Pack mode with `can_spawn_subtasks=true` declare an

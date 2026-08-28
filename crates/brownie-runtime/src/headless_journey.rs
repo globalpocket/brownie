@@ -63,8 +63,9 @@ fn sleep_after_headless_journey_started_for_test() {
 }
 
 fn headless_journey_effective_task_start(
+    store: &BrownieStore,
     task_start: &HeadlessRunJourneyTaskStartEnvelope,
-) -> HeadlessRunJourneyTaskStartEnvelope {
+) -> Result<HeadlessRunJourneyTaskStartEnvelope, String> {
     let mut effective = task_start.clone();
     if effective
         .mode_id
@@ -73,9 +74,64 @@ fn headless_journey_effective_task_start(
         .unwrap_or_default()
         .is_empty()
     {
-        effective.mode_id = Some("implementer".to_string());
+        effective.mode_id = Some(
+            resolve_headless_journey_entrypoint_mode_id(store)?
+                .unwrap_or_else(|| "implementer".to_string()),
+        );
     }
-    effective
+    Ok(effective)
+}
+
+fn headless_journey_effective_admission(
+    store: &BrownieStore,
+    admission: &HeadlessRunJourneyAdmission,
+) -> Result<HeadlessRunJourneyAdmission, String> {
+    let mut effective = admission.clone();
+    if let Some(task_start) = admission.task_start.as_ref() {
+        effective.task_start = Some(headless_journey_effective_task_start(store, task_start)?);
+    }
+    Ok(effective)
+}
+
+fn headless_journey_task_start_fingerprint_for_persisted_journey(
+    store: &BrownieStore,
+    admission: &HeadlessRunJourneyAdmission,
+    journey: &HeadlessJourneyStartCheckpoint,
+    id: &Value,
+) -> Result<String, JsonRpcResponse<Value>> {
+    let Some(task_start) = admission.task_start.as_ref() else {
+        return Ok(headless_journey_task_start_fingerprint(admission));
+    };
+    let mut effective = admission.clone();
+    let mut task_start = task_start.clone();
+    if task_start
+        .mode_id
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or_default()
+        .is_empty()
+    {
+        let Some(record) = store.tasks().get_task(&journey.task_id).map_err(|error| {
+            error_response(id.clone(), -32603, &format!("internal error: {error}"))
+        })?
+        else {
+            return Err(error_response(
+                id.clone(),
+                -32603,
+                "internal error: persisted journey task is missing",
+            ));
+        };
+        let Some(mode_id) = record.mode_id else {
+            return Err(error_response(
+                id.clone(),
+                -32603,
+                "internal error: persisted journey task mode is missing",
+            ));
+        };
+        task_start.mode_id = Some(mode_id);
+    }
+    effective.task_start = Some(task_start);
+    Ok(headless_journey_task_start_fingerprint(&effective))
 }
 
 fn headless_journey_selected_index_context_fingerprint(
@@ -224,12 +280,14 @@ fn headless_journey_start_checkpoint_for_admission(
     drive_id: &str,
     id: &Value,
 ) -> Result<HeadlessJourneyStartCheckpoint, JsonRpcResponse<Value>> {
-    let task_start_fingerprint = headless_journey_task_start_fingerprint(admission);
     if let Some(existing) = store
         .tasks()
         .read_headless_journey_start_checkpoint(&admission.journey_id)
         .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
     {
+        let task_start_fingerprint = headless_journey_task_start_fingerprint_for_persisted_journey(
+            store, admission, &existing, id,
+        )?;
         if existing.session_id != session_id
             || existing.drive_id != drive_id
             || existing.task_start_fingerprint != task_start_fingerprint
@@ -262,6 +320,9 @@ fn headless_journey_start_checkpoint_for_admission(
         }
         return Ok(existing);
     }
+    let effective_admission = headless_journey_effective_admission(store, admission)
+        .map_err(|message| error_response(id.clone(), -32602, &message))?;
+    let task_start_fingerprint = headless_journey_task_start_fingerprint(&effective_admission);
     if store
         .tasks()
         .read_headless_run_session_checkpoint(session_id)
@@ -307,14 +368,13 @@ fn headless_journey_start_checkpoint_for_admission(
             .map_err(|message| error_response(id.clone(), -32602, &message))?;
         (record.task_id, record.run_id, policy, false)
     } else {
-        let Some(task_start) = admission.task_start.as_ref() else {
+        let Some(task_start) = effective_admission.task_start.as_ref() else {
             return Err(error_response(
                 id.clone(),
                 -32602,
                 "invalid params: journey admission requires task_start",
             ));
         };
-        let task_start = headless_journey_effective_task_start(task_start);
         let policy = resolve_task_start_policy(task_start.mode_id.as_deref(), store)
             .map_err(|message| error_response(id.clone(), -32602, &message))?;
         let start_response = handle_task_start(
@@ -1016,6 +1076,7 @@ fn modepack_candidate_activation_fingerprint_from_approved_candidate(
     let actual_compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
+        snapshot.entrypoints.default_mode_id(),
         &policies,
     );
     if actual_compiled_policy_fingerprint != compiled_policy_fingerprint
@@ -1033,6 +1094,7 @@ fn modepack_candidate_activation_fingerprint_from_approved_candidate(
         snapshot.schema_version,
         &actual_compiled_policy_fingerprint,
         &mode_ids,
+        snapshot.entrypoints.default_mode_id(),
     ))
 }
 
@@ -3146,7 +3208,14 @@ fn handle_headless_journey_execution(
             objective_context: None,
             product_objective_continuation_source: None,
         };
-        if journey.task_start_fingerprint != headless_journey_task_start_fingerprint(&admission) {
+        let task_start_fingerprint =
+            match headless_journey_task_start_fingerprint_for_persisted_journey(
+                store, &admission, &journey, &id,
+            ) {
+                Ok(fingerprint) => fingerprint,
+                Err(response) => return response,
+            };
+        if journey.task_start_fingerprint != task_start_fingerprint {
             return error_response(
                 id,
                 -32602,
