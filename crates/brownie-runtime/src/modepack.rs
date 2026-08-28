@@ -2985,14 +2985,6 @@ where
     }
     let snapshot = load_modepack_from_str(&body, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
         .map_err(|error| format!("modepack candidate compile failed: {error}"))?;
-    for policy in &snapshot.modes {
-        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
-            return Err(format!(
-                "modepack candidate duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
-    }
     let policies = snapshot
         .modes
         .iter()
@@ -3000,7 +2992,13 @@ where
             mode_id: policy.mode_id.clone(),
             display_name: policy.display_name.clone(),
             role_definition: policy.role_definition.clone(),
+            when_to_use: policy.when_to_use.clone(),
+            description: policy.description.clone(),
+            prompt_sections: mode_prompt_sections_payload(policy),
+            verification_responsibility: policy.verification_responsibility.clone(),
+            instruction_fingerprint: policy.instruction_fingerprint.clone(),
             permissions: mode_permissions_payload(policy),
+            workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
@@ -3642,14 +3640,6 @@ pub(super) fn approve_remote_modepack_candidate(
     let recompiled =
         load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
             .map_err(|error| format!("modepack candidate approval compile failed: {error}"))?;
-    for policy in &recompiled.modes {
-        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
-            return Err(format!(
-                "modepack candidate approval failed: candidate duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
-    }
     let policy_snapshots = recompiled
         .modes
         .iter()
@@ -3657,7 +3647,13 @@ pub(super) fn approve_remote_modepack_candidate(
             mode_id: policy.mode_id.clone(),
             display_name: policy.display_name.clone(),
             role_definition: policy.role_definition.clone(),
+            when_to_use: policy.when_to_use.clone(),
+            description: policy.description.clone(),
+            prompt_sections: mode_prompt_sections_payload(policy),
+            verification_responsibility: policy.verification_responsibility.clone(),
+            instruction_fingerprint: policy.instruction_fingerprint.clone(),
             permissions: mode_permissions_payload(policy),
+            workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
@@ -3983,14 +3979,6 @@ pub(super) fn verify_modepack_candidate_provenance(
             .map_err(|error| {
                 format!("modepack candidate provenance verification compile failed: {error}")
             })?;
-    for policy in &recompiled.modes {
-        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
-            return Err(format!(
-                "modepack candidate provenance verification failed: candidate duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
-    }
     let policy_snapshots = recompiled
         .modes
         .iter()
@@ -3998,7 +3986,13 @@ pub(super) fn verify_modepack_candidate_provenance(
             mode_id: policy.mode_id.clone(),
             display_name: policy.display_name.clone(),
             role_definition: policy.role_definition.clone(),
+            when_to_use: policy.when_to_use.clone(),
+            description: policy.description.clone(),
+            prompt_sections: mode_prompt_sections_payload(policy),
+            verification_responsibility: policy.verification_responsibility.clone(),
+            instruction_fingerprint: policy.instruction_fingerprint.clone(),
             permissions: mode_permissions_payload(policy),
+            workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
@@ -4753,14 +4747,6 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
     let snapshot =
         load_modepack_from_str(&cached.modepack_json, MODEPACK_CANDIDATE_CACHE_SOURCE_PATH)
             .map_err(|error| format!("approved modepack candidate compile failed: {error}"))?;
-    for policy in &snapshot.modes {
-        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
-            return Err(format!(
-                "approved modepack candidate compile failed: candidate duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
-    }
     let policies = snapshot
         .modes
         .iter()
@@ -4774,7 +4760,13 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
                 mode_id: policy.mode_id.clone(),
                 display_name: policy.display_name.clone(),
                 role_definition: policy.role_definition.clone(),
+                when_to_use: policy.when_to_use.clone(),
+                description: policy.description.clone(),
+                prompt_sections: mode_prompt_sections_payload(policy),
+                verification_responsibility: policy.verification_responsibility.clone(),
+                instruction_fingerprint: policy.instruction_fingerprint.clone(),
                 permissions: mode_permissions_payload(policy),
+                workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                 allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                 completion_rules: policy.completion_rules.clone(),
                 policy_fingerprint,
@@ -4870,14 +4862,6 @@ pub(super) fn build_active_modepack_snapshot(
     else {
         return Err("modepack activation failed: missing .brownie/modepack.json".to_string());
     };
-    for policy in &snapshot.modes {
-        if BuiltinModeRegistry::get(&policy.mode_id).is_some() {
-            return Err(format!(
-                "modepack mode duplicates existing mode_id: {}",
-                policy.mode_id
-            ));
-        }
-    }
     let activated_at = codebase_index_timestamp().map_err(|error| error.to_string())?;
     let policy_snapshots = snapshot
         .modes
@@ -4892,7 +4876,13 @@ pub(super) fn build_active_modepack_snapshot(
                 mode_id: policy.mode_id.clone(),
                 display_name: policy.display_name.clone(),
                 role_definition: policy.role_definition.clone(),
+                when_to_use: policy.when_to_use.clone(),
+                description: policy.description.clone(),
+                prompt_sections: mode_prompt_sections_payload(policy),
+                verification_responsibility: policy.verification_responsibility.clone(),
+                instruction_fingerprint: policy.instruction_fingerprint.clone(),
                 permissions: mode_permissions_payload(policy),
+                workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                 allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                 completion_rules: policy.completion_rules.clone(),
                 policy_fingerprint,
@@ -4947,6 +4937,22 @@ pub(super) fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
         "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
         "codebase_index": policy.permissions.codebase_index,
     })
+}
+
+pub(super) fn mode_workspace_write_scopes_payload(policy: &CompiledModePolicy) -> Vec<Value> {
+    policy
+        .workspace_write_scopes
+        .iter()
+        .map(|scope| json!(scope))
+        .collect()
+}
+
+pub(super) fn mode_prompt_sections_payload(policy: &CompiledModePolicy) -> Vec<Value> {
+    policy
+        .prompt_sections
+        .iter()
+        .map(|section| json!(section))
+        .collect()
 }
 
 pub(super) fn active_modepack_compiled_policy_fingerprint(

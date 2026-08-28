@@ -123,13 +123,42 @@ Pack references. Unknown groups, malformed group entries, duplicate slugs,
 missing required fields, unsafe identifiers, and unknown explicit defaults fail
 closed.
 
+MP-3.1 narrows the compiler boundary for real AgentModes execution semantics.
+`whenToUse` is selection guidance and must not compile into completion rules.
+Free-form role text and custom instructions must not create verification
+ownership, completion behavior, side-effect capability, or delegation authority.
+Those prose fields are protected prompt policy only.
+
 The compiled policy preserves AgentModes workflow prose as bounded policy data:
-`when_to_use`, `description`, `prompt_sections`, `verification_responsibility`,
-and an instruction fingerprint. `customInstructions` is compiled into prompt
-sections with deterministic fingerprints. These fields are snapshotted in
-`ModeResolved`, reconstructed by `task.run`, and included in the active policy
-fingerprint so replay and task-pinned execution cannot silently switch workflow
-instructions after task admission.
+`when_to_use`, `description`, `prompt_sections`, and an instruction fingerprint.
+`customInstructions` is compiled into prompt sections with deterministic
+fingerprints. These fields are snapshotted in `ModeResolved`, reconstructed by
+`task.run`, and included in the active policy fingerprint so replay and
+task-pinned execution cannot silently switch workflow instructions after task
+admission.
+
+Structured AgentModes group metadata is preserved. A structured `edit` group may
+compile `workspace_write_scopes`, including `fileRegex` and `description`.
+`workspace_write=true` only grants write authority inside the compiled static
+scope when scopes are present; writes outside the scope are denied by runtime
+permission checks. Later delegated dynamic scopes must narrow this static scope,
+not widen it.
+
+AgentModes coordinator compatibility is derived from structured source shape,
+not mode-id special cases or prose keywords. A mode with no side-effect groups
+may compile as a delegation coordinator with `can_spawn_subtasks=true` and an
+`allowed_handoff_targets` set derived from the compiled Mode Pack mode graph.
+Requested child modes are still admitted by Rust against the task-pinned policy
+and target allow-list.
+
+Effective capability is the intersection of declared AgentModes groups, source
+trust, and the runtime global capability ceiling. Trusted local developer and
+trusted signed active Mode Pack sources may preserve declared process execution
+when the global ceiling allows it. Untrusted repository-local AgentModes or Mode
+Packs cannot self-authorize process execution even when they declare `command`.
+The trust classification is separate from permission: it narrows compiled
+capability but does not itself grant any capability absent from structured
+groups.
 
 Prompt materialization must carry compiled AgentModes instructions into the
 protected system-policy region, separate from task/objective text. Prompt
@@ -144,6 +173,12 @@ task. Built-in modes remain bootstrap/fallback policy only when no applicable
 active Mode Pack entrypoint exists. Configured-but-invalid AgentModes or Mode
 Pack entrypoints fail closed during validation instead of silently falling back
 to a built-in implementer workflow.
+
+This collision rule is required for real AgentModes compatibility because
+`orchestrator` is both a Brownie bootstrap id and an AgentModes workflow id. The
+runtime must preserve AgentModes `orchestrator` instructions, permissions,
+handoff targets, and provenance in `ModeResolved` instead of substituting the
+built-in role text.
 
 ## M12.1 handoff target compatibility
 

@@ -17,6 +17,14 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 
 The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions. Prompt text, role definitions, and completion rules cannot grant permissions that are not present in the compiled mode policy.
 
+MP-3.1 adds scoped workspace-write checks for compiled AgentModes policy. When a
+mode has `workspace_write=true` and no `workspace_write_scopes`, the action bit
+continues to allow generic writes subject to later proposal/apply checks. When
+scopes are present, `RuntimePermissionGate` must also check the requested
+workspace-relative path against the compiled static scope, such as an AgentModes
+`edit.fileRegex`. A path outside the compiled scope is denied even though the
+mode has the general write bit. Prompt prose cannot widen or add scopes.
+
 ## JSON-RPC
 
 `permission.check` accepts a built-in `mode_id` and action name, resolves the mode through the built-in registry, and returns an allowed/denied decision with a human-readable reason. Unknown modes return JSON-RPC `-32602`.

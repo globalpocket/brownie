@@ -681,7 +681,14 @@ Unknown mode IDs passed to `mode.get` return JSON-RPC `-32602 invalid params`. `
 
 M2 extends the existing mode RPCs without adding a new endpoint. When `.brownie/modepack.json` exists under the workspace root, `mode.list`, `mode.get`, `permission.check`, and explicit `task.start` mode resolution include local Mode Pack modes after validating the file through the Rust `brownie-modepack` crate.
 
-Invalid Mode Pack files fail these mode-resolution paths with an internal runtime error rather than silently falling back. Local Mode Pack modes must not duplicate existing mode IDs and must remain read-only without workspace write, process execution, network access, service control, or destructive permissions.
+Invalid Mode Pack files fail these mode-resolution paths with an internal
+runtime error rather than silently falling back. MP-3.1 permits active or
+workspace Mode Pack modes to reuse Brownie built-in bootstrap ids, such as
+`orchestrator`; the external policy shadows the built-in fallback for mode
+listing, lookup, permission checks, task admission, prompt materialization, and
+task-pinned replay. Local Mode Pack modes must still be unique within the Mode
+Pack itself and cannot enable network access, service control, or destructive
+permissions.
 
 `task.start` records the resolved policy snapshot in the run ledger. `task.run` uses that ledger snapshot so already-started tasks are not affected by later edits to `.brownie/modepack.json`.
 

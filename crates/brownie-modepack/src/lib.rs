@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use brownie_agentmodes::{CompiledModePolicy, ModePermissions};
+use brownie_agentmodes::{CompiledModePolicy, ModePermissions, WorkspaceWriteScope};
 use serde::Deserialize;
 
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
@@ -66,6 +66,8 @@ struct RawModePolicy {
     #[serde(default)]
     instruction_fingerprint: Option<String>,
     permissions: ModePermissions,
+    #[serde(default)]
+    workspace_write_scopes: Vec<WorkspaceWriteScope>,
     #[serde(default)]
     allowed_handoff_targets: Vec<String>,
     #[serde(default)]
@@ -147,6 +149,7 @@ fn compile_snapshot(raw: RawModePack, source_path: PathBuf) -> Result<ModePackSn
                 .map(|value| non_empty("instruction_fingerprint", value))
                 .transpose()?,
             permissions: raw_mode.permissions,
+            workspace_write_scopes: raw_mode.workspace_write_scopes,
             allowed_handoff_targets,
             completion_rules: raw_mode
                 .completion_rules
@@ -677,6 +680,7 @@ customModes:
             AgentModesCompileOptions {
                 modepack_name: Some("compiled-agentmodes".to_string()),
                 default_entrypoint: Some("orchestrator".to_string()),
+                ..AgentModesCompileOptions::default()
             },
         )
         .expect("compile AgentModes YAML");

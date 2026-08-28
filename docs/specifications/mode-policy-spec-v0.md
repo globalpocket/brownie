@@ -34,9 +34,18 @@ The runtime protocol includes `permission.check`. Task runs append `PermissionCh
 
 ## M2 local Mode Pack policy update
 
-M2 keeps the built-in stub registry, then appends locally loaded Mode Pack modes from `.brownie/modepack.json` when present. The runtime uses this merged policy set for `mode.list`, `mode.get`, `permission.check`, and explicit `mode_id` resolution in `task.start`.
+M2 keeps the built-in stub registry, then loads active or workspace Mode Pack
+modes from `.brownie/modepack.json` when present. MP-3.1 permits an active
+Mode Pack mode to reuse a built-in fallback id; the external policy shadows the
+built-in policy for `mode.list`, `mode.get`, `permission.check`, explicit
+`mode_id` resolution in `task.start`, and omitted `brownie run` entrypoint
+resolution when the active Mode Pack default selects it.
 
-Built-in modes remain available and remain the default when `task.start` omits `mode_id`. Local Mode Pack modes must use unique `mode_id` values that do not duplicate existing runtime modes. Unsupported permission expansion is rejected at load time: local modes must be read-only and cannot enable workspace writes, process execution, network access, service control, or destructive operations.
+Built-in modes remain available for ids not supplied by the active/workspace
+Mode Pack and remain the default when `task.start` omits `mode_id`. Mode Pack
+modes must still use unique `mode_id` values within the Mode Pack itself.
+Unsupported permission expansion is rejected at load time: local modes cannot
+enable network access, service control, or destructive operations.
 
 For running tasks, the resolved policy is snapshotted into the `ModeResolved` ledger payload. `task.run` prefers that snapshot over re-reading the current Mode Pack file.
 
@@ -46,13 +55,29 @@ MP-3 extends `CompiledModePolicy` so representative AgentModes YAML can compile
 into stable runtime policy without moving AgentModes workflow decisions into
 Rust. In addition to the permission bits, compiled modes may carry
 `when_to_use`, `description`, bounded `prompt_sections`,
-`verification_responsibility`, and an `instruction_fingerprint`.
+`workspace_write_scopes`, `allowed_handoff_targets`, and an
+`instruction_fingerprint`.
+
+MP-3.1 requires structured source data, not prose keywords, for runtime
+semantics. `when_to_use` remains mode-selection metadata and does not become a
+completion rule. Prompt prose and role definitions do not grant verification
+ownership, completion authority, side-effect capability, or delegation
+authority. Structured `edit` metadata such as `fileRegex` is preserved as
+`workspace_write_scopes`; if scopes are present, workspace write permission is
+valid only for paths matching a compiled scope.
+
+Compiled external capability is effective capability, not merely declared
+capability. The compiler/runtime materialization must intersect declared groups
+with source trust and the runtime global capability ceiling. Trust is not a
+permission source; it can only narrow side-effect authority. Untrusted
+repository-local policy cannot grant process execution to itself.
 
 `ModeResolved` stores the full effective policy for the admitted task, including
 the instruction fields. `task.run` reconstructs policy from that task-pinned
 snapshot, and active Mode Pack fingerprints include the same fields. Later edits
 to a live Mode Pack file therefore cannot alter role text, custom instructions,
-or verification responsibility for an already admitted task.
+write scopes, handoff targets, or other compiled workflow policy for an already
+admitted task.
 
 Policy precedence is fixed: runtime safety invariants override compiled Mode
 Pack permission policy, compiled permission policy overrides mode instructions,
@@ -60,3 +85,9 @@ mode instructions override task/objective text, and prompt text never grants
 side-effect authority. `RuntimePermissionGate` remains the final authority for
 workspace writes, process execution, network/service/destructive actions, and
 subtask spawning.
+
+Prompt materialization must show task-pinned effective policy, not live
+Mode Pack drift. The protected system policy summary includes effective
+permission bits, `workspace_write_scopes`, and `allowed_handoff_targets` from
+the admitted `ModeResolved` payload so the model sees the same constrained
+capability surface that `RuntimePermissionGate` enforces.

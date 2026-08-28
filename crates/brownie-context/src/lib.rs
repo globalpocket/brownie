@@ -291,7 +291,19 @@ impl ContextMaterializer {
             prompt_input.context_budget.selected_index_truncated =
                 context.content_truncated_for_prompt;
         }
-        let prompt = PromptBuilder::build(prompt_input.clone());
+        let mut prompt = PromptBuilder::build(prompt_input.clone());
+        while prompt_char_count(&prompt) > budget.max_prompt_chars
+            && !prompt_input.ledger_summary.is_empty()
+        {
+            prompt_input.ledger_summary.remove(0);
+            prompt_input.context_window.omitted_events += 1;
+            prompt_input.context_window.included_events = prompt_input.ledger_summary.len();
+            prompt_input.context_window.first_included_event =
+                prompt_input.ledger_summary.first().cloned();
+            prompt_input.context_window.last_included_event =
+                prompt_input.ledger_summary.last().cloned();
+            prompt = PromptBuilder::build(prompt_input.clone());
+        }
         prompt_input.context_budget.prompt_chars = prompt_char_count(&prompt);
         prompt_input.context_budget.protected_context_chars = protected_prompt_char_count(&prompt);
         prompt_input.context_budget.prompt_within_budget =
@@ -356,13 +368,41 @@ fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
             .map(|value| value.to_string())
             .unwrap_or_else(|| "<unknown>".to_string())
     };
+    let workspace_write_scopes = payload
+        .get("workspace_write_scopes")
+        .and_then(|value| value.as_array())
+        .map(|scopes| {
+            scopes
+                .iter()
+                .filter_map(format_workspace_write_scope)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|scopes| !scopes.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
+    let allowed_handoff_targets = payload
+        .get("allowed_handoff_targets")
+        .and_then(|value| value.as_array())
+        .map(|targets| {
+            targets
+                .iter()
+                .filter_map(|target| target.as_str().map(|target| format!("- {target}")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|targets| !targets.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
 
     format!(
         "Mode Policy:
 mode_id: {mode_id}
 workspace_write: {}
+workspace_write_scopes:
+{workspace_write_scopes}
 process_exec: {}
 can_spawn_subtasks: {}
+allowed_handoff_targets:
+{allowed_handoff_targets}
 codebase_index: {}
 network_access: {}
 service_control: {}
@@ -377,6 +417,17 @@ read_only: {}",
         permission_bool("destructive"),
         permission_bool("read_only")
     )
+}
+
+fn format_workspace_write_scope(scope: &serde_json::Value) -> Option<String> {
+    let file_regex = scope.get("file_regex")?.as_str()?;
+    let description = scope
+        .get("description")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    Some(format!(
+        "- file_regex: {file_regex}\n  description: {description}"
+    ))
 }
 
 fn format_mode_instruction_material(payload: &serde_json::Value) -> String {
@@ -1560,6 +1611,65 @@ mod tests {
     }
 
     #[test]
+    fn context_materializer_shrinks_ledger_to_fit_prompt_budget() {
+        let events = [
+            LedgerEventKind::TaskStarted,
+            LedgerEventKind::PermissionChecked,
+            LedgerEventKind::ToolPlanned,
+            LedgerEventKind::ToolIntentParsed,
+            LedgerEventKind::ToolExecutionRequested,
+            LedgerEventKind::ToolExecutionCompleted,
+        ]
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| LedgerEvent {
+            event_id: format!("event_{index}"),
+            task_id: "task_1".into(),
+            run_id: "run_1".into(),
+            kind: kind.clone(),
+            timestamp: "2026-01-01T00:00:00Z".into(),
+            payload: None,
+        })
+        .collect::<Vec<_>>();
+        let empty_ledger_prompt =
+            PromptBuilder::build(ContextMaterializer::materialize(ContextMaterializerInput {
+                task: task_record(),
+                ledger_events: vec![],
+                child_completion_summaries: vec![],
+                selected_index_context: None,
+                verification_recovery_context: None,
+                context_budget: None,
+            }));
+        let budget = prompt_char_count(&empty_ledger_prompt) + 40;
+
+        let materialized = ContextMaterializer::materialize(ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: events.clone(),
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: Some(ContextBudget {
+                max_prompt_chars: budget,
+                max_ledger_events: events.len(),
+                max_selected_index_chars: 0,
+            }),
+        });
+
+        assert!(materialized.context_budget.prompt_within_budget);
+        assert!(materialized.ledger_summary.len() < events.len());
+        assert_eq!(
+            materialized.context_window.omitted_events,
+            events.len() - materialized.ledger_summary.len()
+        );
+        assert_eq!(
+            materialized.context_window.included_events,
+            materialized.ledger_summary.len()
+        );
+        let prompt = PromptBuilder::build(materialized);
+        assert!(prompt_char_count(&prompt) <= budget);
+    }
+
+    #[test]
     fn context_materializer_includes_mode_policy_summary_from_ledger() {
         let input = ContextMaterializerInput {
             task: task_record(),
@@ -1581,7 +1691,12 @@ mod tests {
                         "destructive": false,
                         "can_spawn_subtasks": true,
                         "codebase_index": true
-                    }
+                    },
+                    "workspace_write_scopes": [{
+                        "file_regex": "\\.md$",
+                        "description": "Markdown documentation only"
+                    }],
+                    "allowed_handoff_targets": ["reviewer-lite"]
                 })),
             }],
             child_completion_summaries: vec![],
@@ -1594,7 +1709,12 @@ mod tests {
         let summary = materialized.mode_policy_summary.expect("mode summary");
         assert!(summary.contains("mode_id: orchestrator"));
         assert!(summary.contains("workspace_write: false"));
+        assert!(summary.contains("workspace_write_scopes:"));
+        assert!(summary.contains("file_regex: \\.md$"));
+        assert!(summary.contains("description: Markdown documentation only"));
         assert!(summary.contains("can_spawn_subtasks: true"));
+        assert!(summary.contains("allowed_handoff_targets:"));
+        assert!(summary.contains("- reviewer-lite"));
         assert!(summary.contains("codebase_index: true"));
     }
 

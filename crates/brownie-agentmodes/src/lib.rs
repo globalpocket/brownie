@@ -3,8 +3,9 @@
 use std::collections::HashSet;
 
 use anyhow::{bail, Context, Result};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value as YamlValue;
+use serde_yaml::{Mapping as YamlMapping, Value as YamlValue};
 use sha2::{Digest, Sha256};
 
 pub const COMPATIBILITY_TARGET: &str = "AgentModes";
@@ -29,6 +30,8 @@ pub struct CompiledModePolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub instruction_fingerprint: Option<String>,
     pub permissions: ModePermissions,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspace_write_scopes: Vec<WorkspaceWriteScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_handoff_targets: Option<Vec<String>>,
     pub completion_rules: Vec<String>,
@@ -56,6 +59,14 @@ pub struct ModePermissions {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WorkspaceWriteScope {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_regex: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum RuntimeAction {
     ReadWorkspace,
     WriteWorkspace,
@@ -78,6 +89,38 @@ pub struct PermissionDecision {
 pub struct AgentModesCompileOptions {
     pub modepack_name: Option<String>,
     pub default_entrypoint: Option<String>,
+    pub source_trust: AgentModesSourceTrust,
+    pub capability_ceiling: AgentModesCapabilityCeiling,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentModesSourceTrust {
+    TrustedLocalDeveloper,
+    TrustedSignedActiveModePack,
+    UntrustedRepositoryLocal,
+}
+
+impl Default for AgentModesSourceTrust {
+    fn default() -> Self {
+        Self::TrustedLocalDeveloper
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentModesCapabilityCeiling {
+    pub workspace_write: bool,
+    pub process_exec: bool,
+    pub can_spawn_subtasks: bool,
+}
+
+impl Default for AgentModesCapabilityCeiling {
+    fn default() -> Self {
+        Self {
+            workspace_write: true,
+            process_exec: true,
+            can_spawn_subtasks: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,6 +183,43 @@ impl RuntimePermissionGate {
         let reason = permission_reason(policy, &action, allowed);
         PermissionDecision {
             action,
+            allowed,
+            reason,
+        }
+    }
+
+    pub fn check_workspace_write_path(
+        policy: &CompiledModePolicy,
+        relative_path: &str,
+    ) -> PermissionDecision {
+        let base = Self::check(policy, RuntimeAction::WriteWorkspace);
+        if !base.allowed {
+            return base;
+        }
+        if policy.workspace_write_scopes.is_empty() {
+            return PermissionDecision {
+                action: RuntimeAction::WriteWorkspace,
+                allowed: true,
+                reason: format!("Mode {} allows workspace writes.", policy.mode_id),
+            };
+        }
+        let allowed = policy
+            .workspace_write_scopes
+            .iter()
+            .any(|scope| workspace_write_scope_matches(scope, relative_path));
+        let reason = if allowed {
+            format!(
+                "Mode {} allows workspace writes for {relative_path} within compiled scope.",
+                policy.mode_id
+            )
+        } else {
+            format!(
+                "Mode {} does not allow workspace writes for {relative_path} outside compiled scope.",
+                policy.mode_id
+            )
+        };
+        PermissionDecision {
+            action: RuntimeAction::WriteWorkspace,
             allowed,
             reason,
         }
@@ -209,7 +289,7 @@ fn compile_agentmodes_document(
             .unwrap_or_else(|| "agentmodes-compiled".to_string()),
     )?;
     let mut seen = HashSet::new();
-    let mut modes = Vec::with_capacity(raw.custom_modes.len());
+    let mut compiled_modes = Vec::with_capacity(raw.custom_modes.len());
     for raw_mode in raw.custom_modes {
         let mode_id = validate_agentmodes_mode_id("customModes[].slug", raw_mode.slug)?;
         if !seen.insert(mode_id.clone()) {
@@ -229,11 +309,14 @@ fn compile_agentmodes_document(
         let prompt_sections =
             compile_agentmodes_prompt_sections(raw_mode.custom_instructions.as_deref())?;
         let groups = compile_agentmodes_groups(&mode_id, &raw_mode.groups)?;
-        let permissions = permissions_from_agentmodes_groups(&groups);
-        let completion_rules =
-            compile_agentmodes_completion_rules(when_to_use.as_deref(), &prompt_sections)?;
-        let verification_responsibility =
-            compile_verification_responsibility(&mode_id, &role_definition, &prompt_sections);
+        let permissions = permissions_from_agentmodes_groups(
+            &groups,
+            options.source_trust,
+            options.capability_ceiling,
+        );
+        let workspace_write_scopes = workspace_write_scopes_from_agentmodes_groups(&groups);
+        let completion_rules = compile_agentmodes_completion_rules(&prompt_sections)?;
+        let verification_responsibility = None;
         let instruction_fingerprint = Some(mode_instruction_fingerprint(
             &role_definition,
             when_to_use.as_deref(),
@@ -241,24 +324,53 @@ fn compile_agentmodes_document(
             &prompt_sections,
             &completion_rules,
             verification_responsibility.as_deref(),
+            &workspace_write_scopes,
         ));
 
-        modes.push(CompiledModePolicy {
-            mode_id,
-            display_name,
-            role_definition,
-            when_to_use,
-            description,
-            prompt_sections,
-            verification_responsibility,
-            instruction_fingerprint,
-            permissions,
-            allowed_handoff_targets: None,
-            completion_rules,
-        });
+        compiled_modes.push((
+            groups.is_empty(),
+            CompiledModePolicy {
+                mode_id,
+                display_name,
+                role_definition,
+                when_to_use,
+                description,
+                prompt_sections,
+                verification_responsibility,
+                instruction_fingerprint,
+                permissions,
+                workspace_write_scopes,
+                allowed_handoff_targets: None,
+                completion_rules,
+            },
+        ));
     }
 
     let default = resolve_agentmodes_default_entrypoint(options.default_entrypoint, &seen)?;
+    let mode_ids = compiled_modes
+        .iter()
+        .map(|(_, mode)| mode.mode_id.clone())
+        .collect::<Vec<_>>();
+    let modes = compiled_modes
+        .into_iter()
+        .map(|(delegation_coordinator, mut mode)| {
+            if delegation_coordinator
+                && mode_ids.len() > 1
+                && options.capability_ceiling.can_spawn_subtasks
+            {
+                mode.permissions.read_only = true;
+                mode.permissions.can_spawn_subtasks = true;
+                mode.allowed_handoff_targets = Some(
+                    mode_ids
+                        .iter()
+                        .filter(|mode_id| *mode_id != &mode.mode_id)
+                        .cloned()
+                        .collect(),
+                );
+            }
+            mode
+        })
+        .collect();
 
     Ok(AgentModesModePack {
         name,
@@ -269,45 +381,107 @@ fn compile_agentmodes_document(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum AgentModesGroup {
+enum AgentModesGroupKind {
     Read,
     Edit,
     Command,
     Mcp,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CompiledAgentModesGroup {
+    kind: AgentModesGroupKind,
+    scope: Option<WorkspaceWriteScope>,
+}
+
 fn compile_agentmodes_groups(
     mode_id: &str,
     groups: &[YamlValue],
-) -> Result<HashSet<AgentModesGroup>> {
-    let mut compiled = HashSet::new();
+) -> Result<Vec<CompiledAgentModesGroup>> {
+    let mut seen = HashSet::new();
+    let mut compiled = Vec::new();
     for group in groups {
-        let Some(group_name) = agentmodes_group_name(group) else {
-            bail!("mode {mode_id} has malformed AgentModes group entry");
-        };
+        let (group_name, metadata) = agentmodes_group_parts(group).ok_or_else(|| {
+            anyhow::anyhow!("mode {mode_id} has malformed AgentModes group entry")
+        })?;
         let parsed = match group_name {
-            "read" => AgentModesGroup::Read,
-            "edit" => AgentModesGroup::Edit,
-            "command" => AgentModesGroup::Command,
-            "mcp" => AgentModesGroup::Mcp,
+            "read" => AgentModesGroupKind::Read,
+            "edit" => AgentModesGroupKind::Edit,
+            "command" => AgentModesGroupKind::Command,
+            "mcp" => AgentModesGroupKind::Mcp,
             other => bail!("mode {mode_id} requests unsupported AgentModes group: {other}"),
         };
-        compiled.insert(parsed);
+        if !seen.insert(parsed) {
+            bail!("mode {mode_id} declares duplicate AgentModes group: {group_name}");
+        }
+        let scope = compile_workspace_write_scope(mode_id, group_name, metadata)?;
+        compiled.push(CompiledAgentModesGroup {
+            kind: parsed,
+            scope,
+        });
     }
     Ok(compiled)
 }
 
-fn agentmodes_group_name(group: &YamlValue) -> Option<&str> {
+fn agentmodes_group_parts(group: &YamlValue) -> Option<(&str, Option<&YamlMapping>)> {
     match group {
-        YamlValue::String(value) => Some(value.as_str()),
-        YamlValue::Sequence(values) => values.first().and_then(YamlValue::as_str),
+        YamlValue::String(value) => Some((value.as_str(), None)),
+        YamlValue::Sequence(values) => {
+            let name = values.first().and_then(YamlValue::as_str)?;
+            let metadata = values.get(1).and_then(YamlValue::as_mapping);
+            Some((name, metadata))
+        }
         _ => None,
     }
 }
 
-fn permissions_from_agentmodes_groups(groups: &HashSet<AgentModesGroup>) -> ModePermissions {
-    let workspace_write = groups.contains(&AgentModesGroup::Edit);
-    let process_exec = groups.contains(&AgentModesGroup::Command);
+fn compile_workspace_write_scope(
+    mode_id: &str,
+    group_name: &str,
+    metadata: Option<&YamlMapping>,
+) -> Result<Option<WorkspaceWriteScope>> {
+    if metadata.is_some() && group_name != "edit" {
+        bail!("mode {mode_id} declares metadata for unsupported scoped group: {group_name}");
+    }
+    let Some(metadata) = metadata else {
+        return Ok(None);
+    };
+    let file_regex = yaml_string_field(metadata, "fileRegex")
+        .map(|value| bounded_agentmodes_field("customModes[].groups[].fileRegex", value))
+        .transpose()?;
+    if let Some(file_regex) = file_regex.as_deref() {
+        Regex::new(file_regex)
+            .with_context(|| format!("mode {mode_id} declares invalid edit fileRegex"))?;
+    }
+    let description = yaml_string_field(metadata, "description")
+        .map(|value| bounded_agentmodes_field("customModes[].groups[].description", value))
+        .transpose()?;
+    if file_regex.is_none() && description.is_none() {
+        bail!("mode {mode_id} declares empty edit scope metadata");
+    }
+    Ok(Some(WorkspaceWriteScope {
+        file_regex,
+        description,
+    }))
+}
+
+fn yaml_string_field(metadata: &YamlMapping, field: &str) -> Option<String> {
+    metadata
+        .get(YamlValue::String(field.to_string()))
+        .and_then(YamlValue::as_str)
+        .map(ToString::to_string)
+}
+
+fn permissions_from_agentmodes_groups(
+    groups: &[CompiledAgentModesGroup],
+    source_trust: AgentModesSourceTrust,
+    capability_ceiling: AgentModesCapabilityCeiling,
+) -> ModePermissions {
+    let contains = |kind| groups.iter().any(|group| group.kind == kind);
+    let workspace_write = contains(AgentModesGroupKind::Edit) && capability_ceiling.workspace_write;
+    let process_exec = contains(AgentModesGroupKind::Command)
+        && capability_ceiling.process_exec
+        && source_trust_allows_process_exec(source_trust);
     ModePermissions {
         read_only: !workspace_write && !process_exec,
         workspace_write,
@@ -316,8 +490,35 @@ fn permissions_from_agentmodes_groups(groups: &HashSet<AgentModesGroup>) -> Mode
         service_control: false,
         destructive: false,
         can_spawn_subtasks: false,
-        codebase_index: groups.contains(&AgentModesGroup::Read),
+        codebase_index: contains(AgentModesGroupKind::Read),
     }
+}
+
+fn source_trust_allows_process_exec(source_trust: AgentModesSourceTrust) -> bool {
+    matches!(
+        source_trust,
+        AgentModesSourceTrust::TrustedLocalDeveloper
+            | AgentModesSourceTrust::TrustedSignedActiveModePack
+    )
+}
+
+fn workspace_write_scopes_from_agentmodes_groups(
+    groups: &[CompiledAgentModesGroup],
+) -> Vec<WorkspaceWriteScope> {
+    groups
+        .iter()
+        .filter(|group| group.kind == AgentModesGroupKind::Edit)
+        .filter_map(|group| group.scope.clone())
+        .collect()
+}
+
+fn workspace_write_scope_matches(scope: &WorkspaceWriteScope, relative_path: &str) -> bool {
+    if let Some(file_regex) = scope.file_regex.as_deref() {
+        return Regex::new(file_regex)
+            .map(|regex| regex.is_match(relative_path))
+            .unwrap_or(false);
+    }
+    true
 }
 
 fn compile_agentmodes_prompt_sections(
@@ -339,16 +540,9 @@ fn compile_agentmodes_prompt_sections(
 }
 
 fn compile_agentmodes_completion_rules(
-    when_to_use: Option<&str>,
     prompt_sections: &[CompiledPromptSection],
 ) -> Result<Vec<String>> {
     let mut rules = Vec::new();
-    if let Some(when_to_use) = when_to_use {
-        rules.push(format!(
-            "When to use: {}",
-            truncate_for_policy_rule(when_to_use)
-        ));
-    }
     if !prompt_sections.is_empty() {
         rules.push(
             "Follow the AgentModes custom instruction artifact as workflow policy data; it does not grant runtime side-effect permissions."
@@ -364,33 +558,6 @@ fn compile_agentmodes_completion_rules(
     Ok(rules)
 }
 
-fn compile_verification_responsibility(
-    mode_id: &str,
-    role_definition: &str,
-    prompt_sections: &[CompiledPromptSection],
-) -> Option<String> {
-    let haystack = format!(
-        "{}\n{}",
-        role_definition.to_ascii_lowercase(),
-        prompt_sections
-            .iter()
-            .map(|section| section.content.to_ascii_lowercase())
-            .collect::<Vec<_>>()
-            .join("\n")
-    );
-    if haystack.contains("verification")
-        || haystack.contains("quality gate")
-        || haystack.contains("quality gates")
-        || haystack.contains("test")
-    {
-        Some(format!(
-            "Mode {mode_id} carries AgentModes verification workflow responsibility."
-        ))
-    } else {
-        None
-    }
-}
-
 fn mode_instruction_fingerprint(
     role_definition: &str,
     when_to_use: Option<&str>,
@@ -398,12 +565,14 @@ fn mode_instruction_fingerprint(
     prompt_sections: &[CompiledPromptSection],
     completion_rules: &[String],
     verification_responsibility: Option<&str>,
+    workspace_write_scopes: &[WorkspaceWriteScope],
 ) -> String {
     let canonical = serde_json::json!({
         "role_definition": role_definition,
         "when_to_use": when_to_use,
         "description": description,
         "prompt_sections": prompt_sections,
+        "workspace_write_scopes": workspace_write_scopes,
         "completion_rules": completion_rules,
         "verification_responsibility": verification_responsibility,
     });
@@ -417,17 +586,6 @@ fn sha256_fingerprint(bytes: &[u8]) -> String {
 
 fn hex_lower(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
-fn truncate_for_policy_rule(value: &str) -> String {
-    const MAX_RULE_CHARS: usize = 160;
-    let trimmed = value.trim();
-    if trimmed.chars().count() <= MAX_RULE_CHARS {
-        return trimmed.to_string();
-    }
-    let mut output: String = trimmed.chars().take(MAX_RULE_CHARS).collect();
-    output.push_str("...");
-    output
 }
 
 fn resolve_agentmodes_default_entrypoint(
@@ -527,6 +685,7 @@ fn orchestrator() -> CompiledModePolicy {
         verification_responsibility: None,
         instruction_fingerprint: None,
         permissions: permissions(false, false, true, true),
+        workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after producing a coordination result for the current task phase.".to_string(),
@@ -545,6 +704,7 @@ fn implementer() -> CompiledModePolicy {
         verification_responsibility: None,
         instruction_fingerprint: None,
         permissions: permissions(true, true, false, true),
+        workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after the requested implementation work is complete or blocked.".to_string(),
@@ -565,6 +725,7 @@ fn verifier() -> CompiledModePolicy {
         verification_responsibility: None,
         instruction_fingerprint: None,
         permissions: permissions(false, true, false, false),
+        workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after reporting verification status and relevant failures.".to_string(),
@@ -594,6 +755,7 @@ fn provider_runner() -> CompiledModePolicy {
             can_spawn_subtasks: false,
             codebase_index: false,
         },
+        workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
         completion_rules: vec![
             "Stop after configured provider execution completes or fails.".to_string(),
@@ -695,6 +857,7 @@ mod tests {
                 can_spawn_subtasks: false,
                 codebase_index: false,
             },
+            workspace_write_scopes: vec![],
             allowed_handoff_targets: None,
             completion_rules: vec![
                 "Even completion text cannot grant process execution.".to_string()
@@ -722,6 +885,7 @@ mod tests {
                 can_spawn_subtasks: false,
                 codebase_index: false,
             },
+            workspace_write_scopes: vec![],
             allowed_handoff_targets: None,
             completion_rules: vec![
                 "Even completion text cannot grant workspace writes.".to_string()
@@ -739,8 +903,7 @@ customModes:
     roleDefinition: Coordinate the workflow without direct edits.
     whenToUse: Use for complex coordination.
     description: Coordinate multi-mode tasks.
-    groups:
-      - read
+    groups: []
     customInstructions: |
       Delegate to specialists; do not edit directly.
   - slug: code
@@ -786,6 +949,7 @@ customModes:
             AgentModesCompileOptions {
                 modepack_name: Some("representative-agentmodes".to_string()),
                 default_entrypoint: None,
+                ..AgentModesCompileOptions::default()
             },
         )
         .expect("compiled AgentModes Mode Pack");
@@ -804,10 +968,19 @@ customModes:
             .find(|mode| mode.mode_id == "orchestrator")
             .expect("orchestrator");
         assert!(orchestrator.permissions.read_only);
-        assert!(orchestrator.permissions.codebase_index);
+        assert!(!orchestrator.permissions.codebase_index);
         assert!(!orchestrator.permissions.workspace_write);
         assert!(!orchestrator.permissions.process_exec);
-        assert_eq!(orchestrator.allowed_handoff_targets, None);
+        assert!(orchestrator.permissions.can_spawn_subtasks);
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec![
+                "code".to_string(),
+                "tester".to_string(),
+                "reviewer".to_string(),
+                "verified-integrator".to_string()
+            ])
+        );
         assert_eq!(
             orchestrator.when_to_use.as_deref(),
             Some("Use for complex coordination.")
@@ -835,11 +1008,14 @@ customModes:
         assert!(integrator.permissions.workspace_write);
         assert!(integrator.permissions.process_exec);
         assert!(integrator.permissions.codebase_index);
-        assert!(integrator
-            .verification_responsibility
-            .as_deref()
-            .unwrap_or("")
-            .contains("verification"));
+        assert_eq!(integrator.verification_responsibility, None);
+        assert_eq!(
+            integrator.workspace_write_scopes.as_slice(),
+            &[WorkspaceWriteScope {
+                file_regex: Some(".*".to_string()),
+                description: Some("Scoped edit permission.".to_string())
+            }]
+        );
     }
 
     #[test]
@@ -871,6 +1047,58 @@ customModes:
     }
 
     #[test]
+    fn source_trust_and_global_ceiling_bound_effective_capabilities() {
+        let untrusted = compile_agentmodes_modepack_from_yaml(
+            representative_agentmodes_yaml(),
+            AgentModesCompileOptions {
+                source_trust: AgentModesSourceTrust::UntrustedRepositoryLocal,
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect("compiled untrusted AgentModes Mode Pack");
+        let tester = untrusted
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "tester")
+            .expect("tester");
+        assert!(!RuntimePermissionGate::check(tester, RuntimeAction::ExecuteProcess).allowed);
+
+        let integrator = untrusted
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "verified-integrator")
+            .expect("verified integrator");
+        assert!(RuntimePermissionGate::check(integrator, RuntimeAction::WriteWorkspace).allowed);
+        assert!(!RuntimePermissionGate::check(integrator, RuntimeAction::ExecuteProcess).allowed);
+
+        let ceiling_denied = compile_agentmodes_modepack_from_yaml(
+            representative_agentmodes_yaml(),
+            AgentModesCompileOptions {
+                capability_ceiling: AgentModesCapabilityCeiling {
+                    workspace_write: false,
+                    process_exec: false,
+                    can_spawn_subtasks: false,
+                },
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect("compiled ceiling-limited AgentModes Mode Pack");
+        let orchestrator = ceiling_denied
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "orchestrator")
+            .expect("orchestrator");
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
+        let code = ceiling_denied
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "code")
+            .expect("code");
+        assert!(!RuntimePermissionGate::check(code, RuntimeAction::WriteWorkspace).allowed);
+    }
+
+    #[test]
     fn compiles_representative_agentmodes_mode_files_with_instruction_sentinels() {
         let modepack = compile_agentmodes_modepack_from_yaml_documents(
             [
@@ -878,6 +1106,7 @@ customModes:
                 include_str!("../tests/fixtures/agentmodes/verified-integrator.yaml"),
                 include_str!("../tests/fixtures/agentmodes/code.yaml"),
                 include_str!("../tests/fixtures/agentmodes/tester.yaml"),
+                include_str!("../tests/fixtures/agentmodes/architect.yaml"),
             ],
             AgentModesCompileOptions::default(),
         )
@@ -906,6 +1135,16 @@ customModes:
             .starts_with("sha256:"));
         assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::ExecuteProcess).allowed);
+        assert!(RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec![
+                "verified-integrator".to_string(),
+                "code".to_string(),
+                "tester".to_string(),
+                "architect".to_string()
+            ])
+        );
 
         let verified_integrator = modepack
             .modes
@@ -935,6 +1174,11 @@ customModes:
             .expect("code");
         assert!(RuntimePermissionGate::check(code, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(code, RuntimeAction::ExecuteProcess).allowed);
+        assert_eq!(code.verification_responsibility, None);
+        assert!(code
+            .completion_rules
+            .iter()
+            .all(|rule| !rule.contains("When to use")));
 
         let tester = modepack
             .modes
@@ -946,6 +1190,25 @@ customModes:
         assert!(tester.prompt_sections[0]
             .content
             .contains("Execute exactly commands[0]"));
+
+        let architect = modepack
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "architect")
+            .expect("architect");
+        assert_eq!(
+            architect.workspace_write_scopes.as_slice(),
+            &[WorkspaceWriteScope {
+                file_regex: Some("\\.md$".to_string()),
+                description: Some("Markdown only".to_string())
+            }]
+        );
+        assert!(
+            RuntimePermissionGate::check_workspace_write_path(architect, "docs/plan.md").allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check_workspace_write_path(architect, "src/lib.rs").allowed
+        );
     }
 
     #[test]
@@ -1020,6 +1283,7 @@ customModes:
             AgentModesCompileOptions {
                 modepack_name: None,
                 default_entrypoint: Some("missing-mode".to_string()),
+                ..AgentModesCompileOptions::default()
             },
         )
         .expect_err("unknown default entrypoint")
