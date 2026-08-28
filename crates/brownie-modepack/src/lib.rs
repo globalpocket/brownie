@@ -5,7 +5,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
-use brownie_agentmodes::{CompiledModePolicy, ModePermissions, WorkspaceWriteScope};
+use brownie_agentmodes::{
+    CompiledModePolicy, ModePermissions, WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
+};
 use serde::Deserialize;
 
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
@@ -256,10 +258,21 @@ fn validate_handoff_targets(
     if targets.len() > MAX_HANDOFF_TARGETS {
         bail!("mode {mode_id} declares too many allowed_handoff_targets");
     }
+    if targets
+        .iter()
+        .any(|target| target == HANDOFF_TARGET_ALL_MODEPACK_MODES)
+        && targets.len() != 1
+    {
+        bail!("mode {mode_id} mixes the all-modepack handoff selector with explicit targets");
+    }
     let mut seen = HashSet::new();
     let mut normalized = Vec::with_capacity(targets.len());
     for target in targets {
         let target = non_empty("allowed_handoff_targets[]", target)?;
+        if target == HANDOFF_TARGET_ALL_MODEPACK_MODES {
+            normalized.push(target);
+            continue;
+        }
         if target.chars().count() > MAX_HANDOFF_TARGET_CHARS {
             bail!("mode {mode_id} allowed_handoff_targets entry exceeds length limit");
         }
@@ -484,6 +497,91 @@ mod tests {
     }
 
     #[test]
+    fn loads_spawning_mode_with_all_modepack_handoff_selector() {
+        let snapshot = load_modepack_from_str(
+            r#"{
+              "name": "handoff-selector-pack",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Delegate to validated members through a bounded selector.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["$modepack/*"]
+                },
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review without writing.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+            ".brownie/modepack.json",
+        )
+        .expect("valid selector Mode Pack");
+
+        let orchestrator = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-orchestrator")
+            .expect("external orchestrator");
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
+        );
+    }
+
+    #[test]
+    fn rejects_mixed_all_modepack_handoff_selector_and_explicit_targets() {
+        let error = load_modepack_from_str(
+            r#"{
+              "name": "mixed-handoff-selector-pack",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Invalid mixed target selector.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["$modepack/*", "reviewer-lite"]
+                }
+              ]
+            }"#,
+            ".brownie/modepack.json",
+        )
+        .expect_err("mixed selector should fail")
+        .to_string();
+
+        assert!(error.contains("mixes the all-modepack handoff selector"));
+    }
+
+    #[test]
     fn rejects_spawning_mode_without_handoff_targets() {
         let temp = tempfile::tempdir().expect("tempdir");
         let brownie_dir = temp.path().join(".brownie");
@@ -680,6 +778,7 @@ customModes:
             AgentModesCompileOptions {
                 modepack_name: Some("compiled-agentmodes".to_string()),
                 default_entrypoint: Some("orchestrator".to_string()),
+                delegation_coordinators: vec!["orchestrator".to_string()],
                 ..AgentModesCompileOptions::default()
             },
         )
@@ -717,6 +816,57 @@ customModes:
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::AccessNetwork).allowed);
+    }
+
+    #[test]
+    fn validates_current_agentmodes_pack_scale_when_source_is_available() {
+        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
+        if !modes_dir.exists() {
+            return;
+        }
+        let mut documents = Vec::new();
+        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
+                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
+            }
+        }
+        documents.sort();
+        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
+        let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_yaml_documents(
+            document_refs,
+            AgentModesCompileOptions {
+                modepack_name: Some("current-agentmodes".to_string()),
+                delegation_coordinators: vec![
+                    "orchestrator".to_string(),
+                    "workflow-orchestrator".to_string(),
+                    "epoch-orchestrator".to_string(),
+                ],
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect("compile current AgentModes mode pack");
+        let json = serde_json::to_string_pretty(&modepack).expect("serialize modepack");
+        let snapshot =
+            load_modepack_from_str(&json, ".brownie/modepack.json").expect("validate modepack");
+
+        assert!(snapshot.modes.len() > MAX_HANDOFF_TARGETS);
+        let orchestrator = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "orchestrator")
+            .expect("orchestrator");
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
+        );
+        let composer = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "user-response-composer")
+            .expect("user response composer");
+        assert!(!RuntimePermissionGate::check(composer, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(composer.allowed_handoff_targets, None);
     }
 
     #[test]

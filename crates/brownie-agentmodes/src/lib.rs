@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 pub const COMPATIBILITY_TARGET: &str = "AgentModes";
 pub const DEFAULT_MODE_ID: &str = "orchestrator";
 pub const AGENTMODES_MODEPACK_SCHEMA_VERSION: u64 = 1;
+pub const HANDOFF_TARGET_ALL_MODEPACK_MODES: &str = "$modepack/*";
 const MAX_MODE_ID_CHARS: usize = 64;
 const MAX_MODE_TEXT_CHARS: usize = 32_000;
 
@@ -89,6 +90,7 @@ pub struct PermissionDecision {
 pub struct AgentModesCompileOptions {
     pub modepack_name: Option<String>,
     pub default_entrypoint: Option<String>,
+    pub delegation_coordinators: Vec<String>,
     pub source_trust: AgentModesSourceTrust,
     pub capability_ceiling: AgentModesCapabilityCeiling,
 }
@@ -327,50 +329,50 @@ fn compile_agentmodes_document(
             &workspace_write_scopes,
         ));
 
-        compiled_modes.push((
-            groups.is_empty(),
-            CompiledModePolicy {
-                mode_id,
-                display_name,
-                role_definition,
-                when_to_use,
-                description,
-                prompt_sections,
-                verification_responsibility,
-                instruction_fingerprint,
-                permissions,
-                workspace_write_scopes,
-                allowed_handoff_targets: None,
-                completion_rules,
-            },
-        ));
+        compiled_modes.push(CompiledModePolicy {
+            mode_id,
+            display_name,
+            role_definition,
+            when_to_use,
+            description,
+            prompt_sections,
+            verification_responsibility,
+            instruction_fingerprint,
+            permissions,
+            workspace_write_scopes,
+            allowed_handoff_targets: None,
+            completion_rules,
+        });
     }
 
     let default = resolve_agentmodes_default_entrypoint(options.default_entrypoint, &seen)?;
+    let delegation_coordinators =
+        validate_delegation_coordinators(options.delegation_coordinators, &seen)?;
     let mode_ids = compiled_modes
         .iter()
-        .map(|(_, mode)| mode.mode_id.clone())
+        .map(|mode| mode.mode_id.clone())
         .collect::<Vec<_>>();
     let modes = compiled_modes
         .into_iter()
-        .map(|(delegation_coordinator, mut mode)| {
-            if delegation_coordinator
+        .map(|mut mode| {
+            if delegation_coordinators.contains(&mode.mode_id)
                 && mode_ids.len() > 1
                 && options.capability_ceiling.can_spawn_subtasks
             {
+                if mode.permissions.workspace_write || mode.permissions.process_exec {
+                    bail!(
+                        "delegation_coordinators[] mode {} must not declare workspace write or process execution groups",
+                        mode.mode_id
+                    );
+                }
                 mode.permissions.read_only = true;
                 mode.permissions.can_spawn_subtasks = true;
-                mode.allowed_handoff_targets = Some(
-                    mode_ids
-                        .iter()
-                        .filter(|mode_id| *mode_id != &mode.mode_id)
-                        .cloned()
-                        .collect(),
-                );
+                mode.allowed_handoff_targets =
+                    Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()]);
             }
-            mode
+            Ok(mode)
         })
-        .collect();
+        .collect::<Result<Vec<_>>>()?;
 
     Ok(AgentModesModePack {
         name,
@@ -604,6 +606,23 @@ fn resolve_agentmodes_default_entrypoint(
     } else {
         Ok(None)
     }
+}
+
+fn validate_delegation_coordinators(
+    requested: Vec<String>,
+    mode_ids: &HashSet<String>,
+) -> Result<HashSet<String>> {
+    let mut normalized = HashSet::new();
+    for requested in requested {
+        let requested = validate_agentmodes_mode_id("delegation_coordinators[]", requested)?;
+        if !mode_ids.contains(&requested) {
+            bail!("delegation_coordinators[] references unknown AgentModes slug: {requested}");
+        }
+        if !normalized.insert(requested.clone()) {
+            bail!("duplicate delegation_coordinators[] entry: {requested}");
+        }
+    }
+    Ok(normalized)
 }
 
 fn validate_agentmodes_mode_id(field: &str, value: String) -> Result<String> {
@@ -949,6 +968,7 @@ customModes:
             AgentModesCompileOptions {
                 modepack_name: Some("representative-agentmodes".to_string()),
                 default_entrypoint: None,
+                delegation_coordinators: vec!["orchestrator".to_string()],
                 ..AgentModesCompileOptions::default()
             },
         )
@@ -974,12 +994,7 @@ customModes:
         assert!(orchestrator.permissions.can_spawn_subtasks);
         assert_eq!(
             orchestrator.allowed_handoff_targets,
-            Some(vec![
-                "code".to_string(),
-                "tester".to_string(),
-                "reviewer".to_string(),
-                "verified-integrator".to_string()
-            ])
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
         );
         assert_eq!(
             orchestrator.when_to_use.as_deref(),
@@ -1047,10 +1062,28 @@ customModes:
     }
 
     #[test]
+    fn empty_groups_do_not_grant_delegation_without_structured_coordinator_metadata() {
+        let modepack = compile_agentmodes_modepack_from_yaml(
+            representative_agentmodes_yaml(),
+            AgentModesCompileOptions::default(),
+        )
+        .expect("compiled AgentModes Mode Pack");
+
+        let orchestrator = modepack
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "orchestrator")
+            .expect("orchestrator");
+        assert!(!RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(orchestrator.allowed_handoff_targets, None);
+    }
+
+    #[test]
     fn source_trust_and_global_ceiling_bound_effective_capabilities() {
         let untrusted = compile_agentmodes_modepack_from_yaml(
             representative_agentmodes_yaml(),
             AgentModesCompileOptions {
+                delegation_coordinators: vec!["orchestrator".to_string()],
                 source_trust: AgentModesSourceTrust::UntrustedRepositoryLocal,
                 ..AgentModesCompileOptions::default()
             },
@@ -1074,6 +1107,7 @@ customModes:
         let ceiling_denied = compile_agentmodes_modepack_from_yaml(
             representative_agentmodes_yaml(),
             AgentModesCompileOptions {
+                delegation_coordinators: vec!["orchestrator".to_string()],
                 capability_ceiling: AgentModesCapabilityCeiling {
                     workspace_write: false,
                     process_exec: false,
@@ -1108,7 +1142,10 @@ customModes:
                 include_str!("../tests/fixtures/agentmodes/tester.yaml"),
                 include_str!("../tests/fixtures/agentmodes/architect.yaml"),
             ],
-            AgentModesCompileOptions::default(),
+            AgentModesCompileOptions {
+                delegation_coordinators: vec!["orchestrator".to_string()],
+                ..AgentModesCompileOptions::default()
+            },
         )
         .expect("compiled representative AgentModes mode files");
 
@@ -1138,12 +1175,7 @@ customModes:
         assert!(RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
         assert_eq!(
             orchestrator.allowed_handoff_targets,
-            Some(vec![
-                "verified-integrator".to_string(),
-                "code".to_string(),
-                "tester".to_string(),
-                "architect".to_string()
-            ])
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
         );
 
         let verified_integrator = modepack
@@ -1293,6 +1325,21 @@ customModes:
     }
 
     #[test]
+    fn rejects_unknown_delegation_coordinator_metadata() {
+        let error = compile_agentmodes_modepack_from_yaml(
+            representative_agentmodes_yaml(),
+            AgentModesCompileOptions {
+                delegation_coordinators: vec!["missing-mode".to_string()],
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect_err("unknown delegation coordinator")
+        .to_string();
+
+        assert!(error.contains("delegation_coordinators[] references unknown AgentModes slug"));
+    }
+
+    #[test]
     fn serializes_compiled_agentmodes_modepack_with_bounded_prompt_policy() {
         let json = compile_agentmodes_modepack_to_json(
             representative_agentmodes_yaml(),
@@ -1306,5 +1353,55 @@ customModes:
         assert!(json.contains("Delegate to specialists"));
         assert!(json.contains("Make the smallest safe diff"));
         assert!(json.contains("\"instruction_fingerprint\""));
+    }
+
+    #[test]
+    fn compiles_current_agentmodes_pack_scale_when_source_is_available() {
+        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
+        if !modes_dir.exists() {
+            return;
+        }
+        let mut documents = Vec::new();
+        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
+                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
+            }
+        }
+        documents.sort();
+        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
+
+        let modepack = compile_agentmodes_modepack_from_yaml_documents(
+            document_refs,
+            AgentModesCompileOptions {
+                modepack_name: Some("current-agentmodes".to_string()),
+                delegation_coordinators: vec![
+                    "orchestrator".to_string(),
+                    "workflow-orchestrator".to_string(),
+                    "epoch-orchestrator".to_string(),
+                ],
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect("compile current AgentModes mode pack");
+
+        assert!(modepack.modes.len() > 16);
+        let orchestrator = modepack
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "orchestrator")
+            .expect("orchestrator");
+        assert!(RuntimePermissionGate::check(orchestrator, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(
+            orchestrator.allowed_handoff_targets,
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
+        );
+        let composer = modepack
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "user-response-composer")
+            .expect("user response composer");
+        assert!(!RuntimePermissionGate::check(composer, RuntimeAction::SpawnSubtask).allowed);
+        assert_eq!(composer.allowed_handoff_targets, None);
     }
 }

@@ -258,6 +258,17 @@ pub(super) fn subtask_spawn_input_runtime_rejection_reason(
         return Ok(Some("subtask.spawn input.mode_id is unknown."));
     }
     if let Some(allowed_handoff_targets) = policy.allowed_handoff_targets.as_ref() {
+        if allowed_handoff_targets
+            .iter()
+            .any(|allowed_mode_id| allowed_mode_id == HANDOFF_TARGET_ALL_MODEPACK_MODES)
+        {
+            if mode_id == policy.mode_id {
+                return Ok(Some(
+                    "subtask.spawn input.mode_id cannot target the active mode through the all-modepack handoff selector.",
+                ));
+            }
+            return Ok(None);
+        }
         if !allowed_handoff_targets
             .iter()
             .any(|allowed_mode_id| allowed_mode_id == &mode_id)

@@ -91,3 +91,16 @@ Mode Pack drift. The protected system policy summary includes effective
 permission bits, `workspace_write_scopes`, and `allowed_handoff_targets` from
 the admitted `ModeResolved` payload so the model sees the same constrained
 capability surface that `RuntimePermissionGate` enforces.
+
+MP-3.2A replaces the prior small-fixture all-target handoff list with a bounded
+selector for AgentModes pack scale. `allowed_handoff_targets: ["$modepack/*"]`
+means the coordinator may request any validated mode in the same compiled
+Mode Pack except itself; the runtime still resolves and admits the concrete
+requested child mode from task-pinned policy. The selector is valid only as a
+single target entry and must not be combined with explicit target names.
+
+AgentModes `groups: []` is no longer a coordinator signal. Delegation authority
+comes from structured compatibility-adapter metadata supplied to the compiler
+and validated against the compiled graph. A structured coordinator cannot also
+declare workspace-write or process-exec groups, and free-form prompt text cannot
+create handoff authority.
