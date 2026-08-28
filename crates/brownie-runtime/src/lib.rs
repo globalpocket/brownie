@@ -32673,6 +32673,118 @@ mod tests {
     }
 
     #[test]
+    fn agentmodes_new_task_alias_uses_active_handoff_admission() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_selector_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+
+        let allowed = "new_task(\"reviewer-lite\", \"Review SECRET_ALIAS_PACKET and return bounded findings.\")";
+        append_tool_intent_events(&store, &parent, &policy, allowed)
+            .expect("append allowed alias intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, allowed)
+            .expect("handle allowed alias intent");
+
+        let denied_self =
+            "new_task(mode: external-orchestrator, message: 'Do not recurse into self.')";
+        append_tool_intent_events(&store, &parent, &policy, denied_self)
+            .expect("append denied self alias intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, denied_self)
+            .expect("handle denied self alias intent");
+
+        let reviewer = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Reviewer should not dispatch".into(),
+                mode_id: Some("reviewer-lite".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start reviewer");
+        let reviewer_policy = resolve_workspace_mode_policy(&store, "reviewer-lite")
+            .expect("resolve reviewer policy")
+            .expect("reviewer policy");
+        let reviewer_attempt =
+            "new_task(\"external-orchestrator\", \"Try to dispatch without permission.\")";
+        append_tool_intent_events(&store, &reviewer, &reviewer_policy, reviewer_attempt)
+            .expect("append reviewer alias intent");
+        handle_approved_workspace_intents(&store, &reviewer, &reviewer_policy, reviewer_attempt)
+            .expect("handle reviewer alias intent");
+
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        let queued = parent_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .expect("queued payload");
+        assert_eq!(queued["tool_id"], "subtask.spawn");
+        assert_eq!(queued["requested_mode_id"], "reviewer-lite");
+        assert_eq!(
+            queued["requested_goal_preview"],
+            "Review SECRET_ALIAS_PACKET and return bounded findings."
+        );
+        assert!(queued.get("input").is_none());
+        assert!(parent_events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("requested_mode_id"))
+                    .and_then(Value::as_str)
+                    == Some("external-orchestrator")
+        }));
+        let parent_ledger = std::fs::read_to_string(
+            temp.path()
+                .join(".brownie/runs")
+                .join(&parent.run_id)
+                .join("ledger.jsonl"),
+        )
+        .expect("parent ledger");
+        assert!(!parent_ledger.contains("new_task("));
+
+        let reviewer_events = store
+            .tasks()
+            .read_ledger_events(&reviewer.run_id)
+            .expect("reviewer events");
+        assert!(reviewer_events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    .and_then(Value::as_str)
+                    == Some("subtask.spawn")
+        }));
+        assert!(!reviewer_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn current_agentmodes_pack_activates_and_pins_selector_policy_when_available() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -56473,6 +56585,26 @@ mod tests {
         assert!(!result.to_string().contains("do-not-return"));
         assert!(result["items"].as_array().expect("items").is_empty());
         assert_eq!(result["rejected"][0]["code"], "invalid_input");
+    }
+
+    #[test]
+    fn tool_intent_parse_adapts_agentmodes_new_task_without_raw_payload() {
+        let response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"tool.intent.parse","params":{"mode_id":"orchestrator","assistant_content":"new_task(\"reviewer\", \"Review SECRET_PACKET_123 and return findings.\")"}}"#,
+        );
+        assert!(response.error.is_none());
+        let result = response.result.expect("result");
+        assert_eq!(result["items"][0]["tool_id"], "subtask.spawn");
+        assert_eq!(result["items"][0]["allowed"], true);
+        assert_eq!(result["items"][0]["input_summary"]["field_count"], 2);
+        let result_text = result.to_string();
+        assert!(!result_text.contains("SECRET_PACKET_123"));
+        assert!(!result_text.contains("Review SECRET_PACKET_123"));
+        assert!(result["items"]
+            .as_array()
+            .expect("items")
+            .iter()
+            .all(|item| item.get("input").is_none()));
     }
 
     #[test]

@@ -60,6 +60,28 @@ The runtime resolves a requested `mode_id` against the built-in plus local Mode 
 
 When a later accepted handoff envelope materializes a child, a valid `requested_goal_preview` becomes the child goal and a valid `requested_mode_id` becomes the child `mode_id`. M5.15 still does not execute the child LLM loop, scheduler handoff, process execution, network access, service control, patch apply, or workspace mutation.
 
+## MP-3.2B AgentModes new_task compatibility adapter
+
+Current AgentModes coordinator instructions use Boomerang `new_task(mode,
+message)` for child task delegation. Brownie accepts this invocation shape as a
+compatibility alias at the tool-intent parsing boundary only. A bounded
+`new_task(mode, message)` line normalizes to Brownie's existing `subtask.spawn`
+request with `input.mode_id = mode` and `input.goal = message`.
+
+The alias grants no authority. The normalized request is evaluated by the same
+`RuntimePermissionGate` and task-pinned handoff target validation as native
+`subtask.spawn`. Malformed calls, oversized arguments, missing arguments, unsafe
+mode identifiers, unauthorized modes, unknown targets, and self-dispatch fail
+closed through the existing rejected or denied intent paths.
+
+Durable and RPC-visible evidence stays summary-only. The parser may use the
+bounded message to populate the normalized runtime request, but
+`tool.intent.parse`, ledger rejection payloads, and permission summaries must
+not echo the raw `new_task` call, raw provider output, or full message payload.
+
+Native fenced `brownie-tool-intent` JSON remains the canonical Brownie intent
+format and existing `subtask.spawn` behavior is unchanged.
+
 ## M5.16 multi-candidate child materialization
 
 When an accepted handoff envelope covers multiple distinct queued candidates, `task.run` may materialize one controlled child `TaskRecord` per candidate. The duplicate guard is candidate-aware: an existing child blocks only the same `parent_run_id`, `source_candidate_id`, and `source_handoff_envelope_fingerprint` tuple, not other candidates in the same envelope.

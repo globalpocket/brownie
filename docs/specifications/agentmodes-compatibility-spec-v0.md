@@ -217,6 +217,26 @@ requested child mode against task-pinned policy before queueing or materializing
 a child, so the selector is compact authority evidence, not a bypass around
 target validation.
 
+## MP-3.2B Boomerang new_task adapter
+
+AgentModes prompt policy may instruct controller modes to delegate with
+Boomerang `new_task(mode, message)`. Brownie treats that shape as a
+compatibility alias for the existing runtime-owned `subtask.spawn` intent, not
+as a new authority source. The adapter belongs at the runtime tool-intent
+parsing boundary and normalizes a bounded call into `subtask.spawn` input before
+permission evaluation.
+
+The adapter must not derive delegation authority from prose, `whenToUse`, mode
+ids, keyword search, or `groups: []`. A mode can delegate only when its compiled
+policy has `SpawnSubtask` and the requested child target passes task-pinned
+handoff validation, including the `$modepack/*` same-pack selector contract
+from MP-3.2A. Non-dispatch modes such as `user-response-composer` remain unable
+to create children even if they mention or emit `new_task`.
+
+Runtime evidence remains bounded and summary-only. Brownie must not persist raw
+provider output, raw `new_task` arguments, or the full child message beyond
+existing sanitized request summaries and child goal previews.
+
 ## M12.2 child snapshot provenance compatibility
 
 Controlled children spawned through external Mode Pack handoff targets carry a
