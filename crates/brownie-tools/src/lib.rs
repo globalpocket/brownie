@@ -37,6 +37,7 @@ pub const MAX_WORKSPACE_WRITE_CONTENT_CHARS: usize = 200_000;
 pub const DEFAULT_PROPOSAL_PREVIEW_CHARS: usize = 2_000;
 pub const MAX_SUBTASK_SPAWN_GOAL_CHARS: usize = 1_000;
 pub const MAX_SUBTASK_SPAWN_MODE_ID_CHARS: usize = 128;
+const AGENTMODES_NEW_TASK_ALIAS_TOOL_ID: &str = "new_task";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToolSideEffectLevel {
@@ -1612,6 +1613,19 @@ impl ToolIntentParser {
                     "Missing closing brownie-tool-intent fence.",
                     "missing_closing_fence",
                 ));
+            } else {
+                let (requests, alias_rejections) =
+                    parse_agentmodes_new_task_requests(content, config);
+                if !requests.is_empty() || !alias_rejections.is_empty() {
+                    summary.accepted_requests = requests.len();
+                    rejected.extend(alias_rejections);
+                    summary.rejected_requests = rejected.len();
+                    return ParsedToolIntent {
+                        requests,
+                        rejected,
+                        summary,
+                    };
+                }
             }
             summary.rejected_requests = rejected.len();
             return ParsedToolIntent {
@@ -1858,6 +1872,183 @@ fn rejection(tool_id: Option<String>, reason: impl Into<String>, code: &str) -> 
         reason: reason.into(),
         code: code.to_string(),
     }
+}
+
+fn parse_agentmodes_new_task_requests(
+    content: &str,
+    config: &ToolIntentParserConfig,
+) -> (Vec<AssistantToolRequest>, Vec<RejectedToolIntent>) {
+    let mut requests = Vec::new();
+    let mut rejected = Vec::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || !line.starts_with("new_task(") {
+            continue;
+        }
+        if requests.len() + rejected.len() >= config.max_tool_requests {
+            rejected.push(rejection(
+                Some(AGENTMODES_NEW_TASK_ALIAS_TOOL_ID.to_string()),
+                "new_task requests exceed parser count limit.",
+                "too_many_requests",
+            ));
+            break;
+        }
+        match parse_agentmodes_new_task_call(line, config) {
+            Ok(request) => requests.push(request),
+            Err(reason) => rejected.push(rejection(
+                Some(AGENTMODES_NEW_TASK_ALIAS_TOOL_ID.to_string()),
+                reason,
+                "invalid_input",
+            )),
+        }
+    }
+    (requests, rejected)
+}
+
+fn parse_agentmodes_new_task_call(
+    line: &str,
+    config: &ToolIntentParserConfig,
+) -> Result<AssistantToolRequest, &'static str> {
+    if line.len() > config.max_input_bytes {
+        return Err("new_task arguments exceed parser size limit.");
+    }
+    let line = line.strip_suffix(';').unwrap_or(line).trim_end();
+    let Some(arguments) = line
+        .strip_prefix("new_task(")
+        .and_then(|line| line.strip_suffix(')'))
+    else {
+        return Err("new_task call must use new_task(mode, message).");
+    };
+    let parts = split_new_task_arguments(arguments)?;
+    if parts.len() != 2 {
+        return Err("new_task requires mode and message arguments.");
+    }
+    let (mode_id, goal) = parse_new_task_mode_and_message(&parts)?;
+    let input = json!({
+        "goal": goal,
+        "mode_id": mode_id,
+    });
+    preflight_subtask_spawn_input(&input)?;
+    Ok(AssistantToolRequest {
+        tool_id: SUBTASK_SPAWN_TOOL_ID.to_string(),
+        reason: "AgentModes new_task compatibility adapter.".to_string(),
+        input,
+    })
+}
+
+fn split_new_task_arguments(arguments: &str) -> Result<Vec<String>, &'static str> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+    for ch in arguments.chars() {
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            current.push(ch);
+            escaped = true;
+            continue;
+        }
+        if let Some(active_quote) = quote {
+            current.push(ch);
+            if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => {
+                quote = Some(ch);
+                current.push(ch);
+            }
+            ',' => {
+                parts.push(current.trim().to_string());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if quote.is_some() {
+        return Err("new_task arguments contain an unterminated string.");
+    }
+    parts.push(current.trim().to_string());
+    Ok(parts)
+}
+
+fn parse_new_task_mode_and_message(parts: &[String]) -> Result<(String, String), &'static str> {
+    let first = parts[0].trim();
+    let second = parts[1].trim();
+    let keyed = first.starts_with("mode:") || first.starts_with("mode=");
+    if keyed {
+        let mode_id = parse_keyed_new_task_value(first, "mode")?;
+        let goal = parse_keyed_new_task_value(second, "message")?;
+        return Ok((mode_id, goal));
+    }
+    let mode_id = parse_new_task_string_or_bare_mode(first)?;
+    let goal = parse_new_task_string(second)?;
+    Ok((mode_id, goal))
+}
+
+fn parse_keyed_new_task_value(part: &str, expected_key: &str) -> Result<String, &'static str> {
+    let Some((key, value)) = part.split_once(':').or_else(|| part.split_once('=')) else {
+        return Err("new_task keyed arguments must use mode and message.");
+    };
+    if key.trim() != expected_key {
+        return Err("new_task keyed arguments must be mode then message.");
+    }
+    if expected_key == "mode" {
+        parse_new_task_string_or_bare_mode(value.trim())
+    } else {
+        parse_new_task_string(value.trim())
+    }
+}
+
+fn parse_new_task_string_or_bare_mode(value: &str) -> Result<String, &'static str> {
+    if value.starts_with('"') || value.starts_with('\'') {
+        return parse_new_task_string(value);
+    }
+    if value.split_whitespace().count() != 1 {
+        return Err("new_task mode must be a single mode id.");
+    }
+    Ok(value.to_string())
+}
+
+fn parse_new_task_string(value: &str) -> Result<String, &'static str> {
+    let mut chars = value.chars();
+    let Some(quote @ ('"' | '\'')) = chars.next() else {
+        return Err("new_task message must be a quoted string.");
+    };
+    if !value.ends_with(quote) || value.len() < 2 {
+        return Err("new_task string arguments must be quoted.");
+    }
+    let inner = &value[1..value.len() - 1];
+    let mut parsed = String::new();
+    let mut escaped = false;
+    for ch in inner.chars() {
+        if escaped {
+            parsed.push(match ch {
+                '"' | '\'' | '\\' => ch,
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                _ => return Err("new_task string contains unsupported escape."),
+            });
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+        } else {
+            parsed.push(ch);
+        }
+    }
+    if escaped {
+        return Err("new_task string contains trailing escape.");
+    }
+    Ok(parsed)
 }
 
 pub fn preflight_workspace_read_path(relative_path: &str) -> Result<(), &'static str> {
@@ -2483,6 +2674,59 @@ mod tests {
         );
         assert_eq!(parsed.requests[0].input["mode_id"], "implementer");
         assert_eq!(parsed.requests[1].input, serde_json::json!({}));
+    }
+
+    #[test]
+    fn parser_adapts_agentmodes_new_task_call_to_subtask_spawn() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "new_task(\"reviewer\", \"Review this change and report findings.\")",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(
+            parsed.requests[0].reason,
+            "AgentModes new_task compatibility adapter."
+        );
+        assert_eq!(parsed.requests[0].input["mode_id"], "reviewer");
+        assert_eq!(
+            parsed.requests[0].input["goal"],
+            "Review this change and report findings."
+        );
+        assert_eq!(parsed.summary.accepted_requests, 1);
+    }
+
+    #[test]
+    fn parser_adapts_agentmodes_keyed_new_task_call_to_subtask_spawn() {
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "new_task(mode: reviewer, message: 'Review compact TASK_PACKET_V1.');",
+        );
+        assert_eq!(parsed.requests.len(), 1);
+        assert!(parsed.rejected.is_empty());
+        assert_eq!(parsed.requests[0].tool_id, SUBTASK_SPAWN_TOOL_ID);
+        assert_eq!(parsed.requests[0].input["mode_id"], "reviewer");
+        assert_eq!(
+            parsed.requests[0].input["goal"],
+            "Review compact TASK_PACKET_V1."
+        );
+    }
+
+    #[test]
+    fn parser_rejects_malformed_agentmodes_new_task_without_raw_payload() {
+        let oversized_goal = "secret-token ".repeat(MAX_SUBTASK_SPAWN_GOAL_CHARS);
+        let parsed = ToolIntentParser::parse_assistant_content(&format!(
+            "new_task(\"../reviewer\", \"{oversized_goal}\")"
+        ));
+        assert!(parsed.requests.is_empty());
+        assert_eq!(parsed.rejected.len(), 1);
+        assert_eq!(
+            parsed.rejected[0].tool_id.as_deref(),
+            Some(AGENTMODES_NEW_TASK_ALIAS_TOOL_ID)
+        );
+        assert_eq!(parsed.rejected[0].code, "invalid_input");
+        let rejected = serde_json::to_string(&parsed.rejected).expect("serialize");
+        assert!(!rejected.contains("../reviewer"));
+        assert!(!rejected.contains("secret-token"));
     }
 
     #[test]
