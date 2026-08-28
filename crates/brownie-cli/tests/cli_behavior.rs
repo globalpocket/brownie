@@ -404,7 +404,9 @@ fn status_timeout_fails_closed() {
     let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(payload["retryable"], true);
     assert_eq!(payload["terminal_failure"], false);
-    assert_eq!(payload["controller_action"], "invoke_again");
+    assert_eq!(payload["controller_action"], "retry");
+    assert_eq!(payload["automation"]["controller_action"], "retry");
+    assert_eq!(payload["automation"]["outcome_scope"], "process");
 }
 
 #[test]
@@ -1215,10 +1217,48 @@ fn run_leading_json_is_global_and_later_json_is_objective() {
 
 #[test]
 fn json_run_outputs_bounded_runtime_owned_result() {
-    let runtime = fake_runtime(
-        "json-run",
-        r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.json","drive_id":"cli.run.json.drive","stop_reason":"budget_exhausted","completion_closure":{"status":"budget_exhausted"},"next_action":"inspect_progress_overview","journey":{"journey_id":"cli.run.json.journey","task_id":"task-json","run_id":"run-json"},"terminal_completion_evidence":{"completion_result_fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","completion_summary_preview":"json completed"}}}"#,
-    );
+    let body = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+            "status": "task_executed",
+            "session_id": "cli.run.json",
+            "drive_id": "cli.run.json.drive",
+            "stop_reason": "budget_exhausted",
+            "completion_closure": {
+                "status": "budget_exhausted"
+            },
+            "next_action": "inspect_progress_overview",
+            "journey": {
+                "journey_id": "cli.run.json.journey",
+                "task_id": "task-json",
+                "run_id": "run-json"
+            },
+            "terminal_completion_evidence": {
+                "completion_result_fingerprint": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+                "completion_summary_preview": "json completed"
+            },
+            "execution_outcome": {
+                "schema_version": 1,
+                "outcome_scope": "objective",
+                "class": "continuation_required",
+                "status": "continuation_required",
+                "controller_action": "resume",
+                "continuation_required": true,
+                "completed": false,
+                "blocked": false,
+                "retryable": true,
+                "terminal_failure": false,
+                "stop_reason": "budget_exhausted",
+                "next_invocation": {
+                    "command": "resume",
+                    "arguments": []
+                }
+            }
+        }
+    })
+    .to_string();
+    let runtime = fake_runtime("json-run", &body);
 
     let output = Command::new(brownie())
         .args(["--json", "run", "write a bounded note"])
@@ -1252,9 +1292,21 @@ fn json_run_outputs_bounded_runtime_owned_result() {
     assert_eq!(payload["run"]["blocked"], false);
     assert_eq!(payload["run"]["retryable"], true);
     assert_eq!(payload["run"]["terminal_failure"], false);
-    assert_eq!(payload["run"]["controller_action"], "invoke_again");
+    assert_eq!(payload["run"]["controller_action"], "resume");
     assert_eq!(payload["run"]["stop_class"], "continuation_required");
-    assert_eq!(payload["run"]["automation"]["status"], "task_executed");
+    assert_eq!(payload["automation"]["controller_action"], "resume");
+    assert_eq!(payload["automation"]["schema_version"], 1);
+    assert_eq!(payload["automation"]["outcome_scope"], "objective");
+    assert_eq!(payload["automation"]["status"], "continuation_required");
+    assert_eq!(payload["automation"]["outcome_source"], "runtime");
+    assert_eq!(
+        payload["automation"]["next_invocation"]["command"],
+        "resume"
+    );
+    assert_eq!(
+        payload["run"]["automation"]["status"],
+        "continuation_required"
+    );
     assert_eq!(payload["run"]["automation"]["task_id"], "task-json");
     assert_eq!(payload["run"]["automation"]["run_id"], "run-json");
     assert_eq!(
@@ -1265,13 +1317,28 @@ fn json_run_outputs_bounded_runtime_owned_result() {
         payload["run"]["automation"]["stop_reason"],
         "budget_exhausted"
     );
-    assert_eq!(
-        payload["run"]["automation"]["controller_action"],
-        "invoke_again"
-    );
+    assert_eq!(payload["run"]["automation"]["controller_action"], "resume");
+    assert!(payload["run"].get("execution_outcome").is_none());
     assert!(payload["run"].get("advances").is_none());
     assert!(!stdout.contains("secret-path"));
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+}
+
+#[test]
+fn cli_external_loop_policy_guard_uses_runtime_outcome_and_selected_route() {
+    let source =
+        fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime_client.rs"))
+            .unwrap();
+    let old_token_helper = format!("{}{}", "contains_loop", "_token");
+    let old_invoke_action = format!("{}{}", "invoke", "_again");
+    let old_human_action = format!("{}{}", "return_to", "_human");
+    let old_candidate_sort = format!("{}{}", "resume_candidates", ".sort_by");
+    assert!(source.contains("execution_outcome"));
+    assert!(source.contains("selected_headless_route"));
+    assert!(!source.contains(&old_token_helper));
+    assert!(!source.contains(&format!("\"{old_invoke_action}\"")));
+    assert!(!source.contains(&format!("\"{old_human_action}\"")));
+    assert!(!source.contains(&old_candidate_sort));
 }
 
 #[test]
@@ -1443,7 +1510,7 @@ fn resume_uses_runtime_owned_route_candidate_for_scoped_run_advance() {
     let runtime = fake_runtime_sequence(
         "resume-run-advance",
         &[
-            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-old","run_id":"run-old","status":"Created","created_at":"2026-08-27T10:00:00Z","updated_at":"2026-08-27T10:00:00Z"},{"task_id":"task-new","run_id":"run-new","status":"Created","created_at":"2026-08-27T10:01:00Z","updated_at":"2026-08-27T10:01:00Z"},{"task_id":"task-unrelated","run_id":"run-unrelated","status":"Created","created_at":"2026-08-27T10:02:00Z","updated_at":"2026-08-27T10:02:00Z"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":3,"root_task_ids":["task-old","task-new","task-unrelated"],"runnable_task_ids":["task-old","task-new","task-unrelated"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":3,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[{"kind":"headless_continue_once","reason":"older cli route","task_id":"task-old","run_id":"run-old","journey_id":"cli.run.old.journey","session_id":"cli.run.old","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","next_session_sequence":1,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","priority":80,"next_action":"headless_continue_once"},{"kind":"headless_continue_once","reason":"newer cli route","task_id":"task-new","run_id":"run-new","journey_id":"cli.run.new.journey","session_id":"cli.run.new","journey_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","next_session_sequence":2,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","priority":80,"next_action":"headless_continue_once"},{"kind":"headless_continue_once","reason":"non-cli route","task_id":"task-unrelated","run_id":"run-unrelated","journey_id":"other.session.journey","session_id":"other.session","journey_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","next_session_sequence":1,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:111111111111111111111111111111111111111111111111111111111111","priority":80,"next_action":"headless_continue_once"}],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-old","run_id":"run-old","status":"Created","created_at":"2026-08-27T10:00:00Z","updated_at":"2026-08-27T10:00:00Z"},{"task_id":"task-new","run_id":"run-new","status":"Created","created_at":"2026-08-27T10:01:00Z","updated_at":"2026-08-27T10:01:00Z"},{"task_id":"task-unrelated","run_id":"run-unrelated","status":"Created","created_at":"2026-08-27T10:02:00Z","updated_at":"2026-08-27T10:02:00Z"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":3,"root_task_ids":["task-old","task-new","task-unrelated"],"runnable_task_ids":["task-old","task-new","task-unrelated"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":3,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"selected_headless_route":{"kind":"headless_continue_once","reason":"runtime selected cli route","task_id":"task-new","run_id":"run-new","journey_id":"cli.run.new.journey","session_id":"cli.run.new","journey_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","next_session_sequence":2,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","priority":80,"next_action":"headless_continue_once"},"headless_route_candidates":[{"kind":"headless_continue_once","reason":"older cli route","task_id":"task-old","run_id":"run-old","journey_id":"cli.run.old.journey","session_id":"cli.run.old","journey_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","next_session_sequence":1,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","priority":80,"next_action":"headless_continue_once"},{"kind":"headless_continue_once","reason":"newer cli route","task_id":"task-new","run_id":"run-new","journey_id":"cli.run.new.journey","session_id":"cli.run.new","journey_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","next_session_sequence":2,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","priority":80,"next_action":"headless_continue_once"},{"kind":"headless_continue_once","reason":"non-cli route","task_id":"task-unrelated","run_id":"run-unrelated","journey_id":"other.session.journey","session_id":"other.session","journey_fingerprint":"sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","next_session_sequence":1,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"route_fingerprint":"sha256:111111111111111111111111111111111111111111111111111111111111","priority":80,"next_action":"headless_continue_once"}],"nodes":[],"edges":[]}}}"#,
             r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","session_id":"cli.run.new","advance_id":"cli.resume.advance","session_sequence":2,"replayed":false,"start_progress":{"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7},"post_progress":{"progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","aggregate_sequence":8},"max_steps":1,"step_count":1,"executed_count":1,"replayed_count":0,"stop_reason":"step executed","checkpoint_fingerprint":"sha256:8888888888888888888888888888888888888888888888888888888888888888","terminal_completion_evidence":null,"next_route":null,"steps":[{"step_index":1,"status":"task_executed","decision_id":"decision-new","continuation_id":"run.cli.run.new.2","selected_task_id":"task-new","selected_run_id":"run-new","candidate_count":1,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:9999999999999999999999999999999999999999999999999999999999999999","post_aggregate_sequence":8,"replayed":false,"next_route":null,"next_action":"inspect_progress_overview"}],"next_action":"inspect_progress_overview"}}"#,
             r#"{"jsonrpc":"2.0","id":1,"result":{"status":"no_eligible_task","session_id":"cli.run.new","drive_id":"cli.run.new.resume.drive","start_session_sequence":2,"end_session_sequence":3,"max_advances":3,"max_steps_per_advance":1,"advance_count":0,"executed_count":0,"replayed_count":0,"replayed":false,"stop_reason":"completion finalized","next_route":null,"completion_closure":{"status":"complete","closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222","progress_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","next_action":"accept_completion"},"accepted_completion":{"acceptance_id":"accept-new","task_id":"task-new","run_id":"run-new","status":"AcceptedComplete","terminal_completion_fingerprint":"sha256:4444444444444444444444444444444444444444444444444444444444444444","acceptance_fingerprint":"sha256:5555555555555555555555555555555555555555555555555555555555555555","verifier_gate_status":"passed","next_action":"finalize_completion"},"completion_finalization":{"finalization_fingerprint":"sha256:6666666666666666666666666666666666666666666666666666666666666666","closure_fingerprint":"sha256:2222222222222222222222222222222222222222222222222222222222222222","progress_fingerprint":"sha256:3333333333333333333333333333333333333333333333333333333333333333","status":"finalized","next_action":"inspect_progress_overview"},"next_action":"inspect_progress_overview"}}"#,
         ],
@@ -1488,7 +1555,11 @@ fn resume_uses_runtime_owned_route_candidate_for_scoped_run_advance() {
     assert_eq!(payload["resume"]["terminal_failure"], false);
     assert_eq!(payload["resume"]["controller_action"], "stop");
     assert_eq!(payload["resume"]["stop_class"], "completed");
+    assert_eq!(payload["automation"]["schema_version"], 1);
+    assert_eq!(payload["automation"]["status"], "completed");
+    assert_eq!(payload["automation"]["controller_action"], "stop");
     assert_eq!(payload["resume"]["automation"]["controller_action"], "stop");
+    assert!(payload["resume"].get("execution_outcome").is_none());
 
     let requests = fs::read_to_string(capture).unwrap();
     let requests: Vec<serde_json::Value> = requests
@@ -1586,6 +1657,10 @@ fn json_resume_outputs_bounded_cli_projection() {
         payload["resume"]["automation"]["stop_reason"],
         "no_actionable_work"
     );
+    assert_eq!(
+        payload["automation"]["outcome_source"],
+        "legacy_cli_projection"
+    );
     assert!(payload["resume"].get("next_route").is_none());
     assert!(payload["resume"].get("task_run_result").is_none());
     assert!(!stdout.contains("secret-path"));
@@ -1660,6 +1735,53 @@ fn resume_surfaces_stale_progress_as_runtime_owned_decision() {
     assert!(stdout.contains("status: stale_progress"));
     assert!(stdout.contains("stale: true"));
     assert!(stdout.contains("next: refresh_progress_overview"));
+}
+
+#[test]
+fn json_resume_projects_stale_progress_as_retryable_runtime_owned_resume() {
+    let runtime = fake_runtime_sequence(
+        "resume-json-stale",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-1","run_id":"run-1","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","aggregate_sequence":9,"task_count":1,"root_task_ids":["task-1"],"runnable_task_ids":["task-1"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":1,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"stale_progress","decision_id":null,"continuation_id":"cli.resume.stale","selected_task_id":null,"selected_run_id":null,"candidate_count":1,"expected_progress_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","expected_aggregate_sequence":9,"current_progress_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","current_aggregate_sequence":10,"post_progress_fingerprint":null,"post_aggregate_sequence":null,"stale":true,"replayed":false,"task_run_result":null,"proposal_apply_result":null,"next_route":{"kind":"inspect_progress_overview","reason":"refresh","next_action":"refresh_progress_overview"},"next_action":"refresh_progress_overview","execution_outcome":{"schema_version":1,"outcome_scope":"objective","class":"stale_retry","status":"stale_retry","controller_action":"resume","continuation_required":true,"completed":false,"blocked":false,"retryable":true,"terminal_failure":false,"stop_reason":"stale_progress","next_invocation":{"command":"resume","arguments":[]}}}}"#,
+        ],
+    );
+
+    let output = Command::new(brownie())
+        .args(["--json", "resume"])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["automation"]["schema_version"], 1);
+    assert_eq!(payload["automation"]["outcome_source"], "runtime");
+    assert_eq!(payload["automation"]["status"], "stale_retry");
+    assert_eq!(payload["automation"]["class"], "stale_retry");
+    assert_eq!(payload["automation"]["controller_action"], "resume");
+    assert_eq!(payload["automation"]["continuation_required"], true);
+    assert_eq!(payload["automation"]["blocked"], false);
+    assert_eq!(payload["automation"]["retryable"], true);
+    assert_eq!(payload["automation"]["terminal_failure"], false);
+    assert_eq!(
+        payload["automation"]["next_invocation"]["command"],
+        "resume"
+    );
+    assert_eq!(payload["resume"]["stale"], true);
+    assert_eq!(payload["resume"]["automation"]["status"], "stale_retry");
+    assert_eq!(
+        payload["resume"]["automation"]["controller_action"],
+        "resume"
+    );
+    assert!(payload["resume"].get("execution_outcome").is_none());
 }
 
 #[test]
@@ -2119,6 +2241,15 @@ fn installed_timeout_resume_continues_exact_persisted_cli_journey_without_duplic
     let timeout_payload: serde_json::Value = serde_json::from_str(&timeout_stdout).unwrap();
     assert_eq!(timeout_payload["ok"], false);
     assert_eq!(timeout_payload["error"]["code"], "runtime_timeout");
+    assert_eq!(timeout_payload["automation"]["schema_version"], 1);
+    assert_eq!(timeout_payload["automation"]["outcome_scope"], "process");
+    assert_eq!(timeout_payload["automation"]["controller_action"], "retry");
+    assert_eq!(timeout_payload["automation"]["continuation_required"], true);
+    assert_eq!(timeout_payload["automation"]["retryable"], true);
+    assert_eq!(
+        timeout_payload["automation"]["next_invocation"]["command"],
+        "resume"
+    );
 
     let tasks_after_timeout = invoke_runtime_json(
         &runtime,
@@ -2164,6 +2295,13 @@ fn installed_timeout_resume_continues_exact_persisted_cli_journey_without_duplic
         payload["resume"]["completion_finalization_status"],
         "finalized"
     );
+    assert_eq!(payload["automation"]["schema_version"], 1);
+    assert_eq!(payload["automation"]["status"], "completed");
+    assert_eq!(payload["automation"]["controller_action"], "stop");
+    assert_eq!(payload["automation"]["completed"], true);
+    assert_eq!(payload["automation"]["outcome_source"], "runtime");
+    assert_eq!(payload["resume"]["automation"]["controller_action"], "stop");
+    assert!(payload["resume"].get("execution_outcome").is_none());
 
     let tasks_after_resume = invoke_runtime_json(
         &runtime,
@@ -2356,6 +2494,12 @@ fn installed_long_history_list_and_resume_use_bounded_task_list_transport() {
         resume_payload["resume"]["completion_finalization_status"],
         "finalized"
     );
+    assert_eq!(resume_payload["automation"]["schema_version"], 1);
+    assert_eq!(resume_payload["automation"]["status"], "completed");
+    assert_eq!(resume_payload["automation"]["controller_action"], "stop");
+    assert_eq!(resume_payload["automation"]["completed"], true);
+    assert_eq!(resume_payload["automation"]["outcome_source"], "runtime");
+    assert!(resume_payload["resume"].get("execution_outcome").is_none());
     assert!(!resume_stdout.contains(repository.to_string_lossy().as_ref()));
     assert!(!resume_stdout.contains(prefix.to_string_lossy().as_ref()));
 

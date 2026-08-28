@@ -59,24 +59,23 @@ as objective failure by itself.
 ## JSON Automation Contract
 
 `brownie --json run "<objective>"` and `brownie --json resume` preserve their
-existing bounded public projections and add a stable automation contract:
+existing bounded public projections and add a stable top-level automation
+contract. Runtime headless execution results include a structured
+`execution_outcome`; the CLI validates that runtime-owned outcome, projects it
+into the public `automation` object, and omits the raw outcome from bounded
+`run` / `resume` projections to keep installed CLI output bounded. Older
+runtime results may be projected through the legacy exact-status compatibility
+path, marked with `outcome_source = "legacy_cli_projection"`, but the CLI must
+not classify outcomes by substring heuristics. That compatibility path is a
+bounded migration boundary for older runtime responses; new runtime headless
+responses are expected to carry `execution_outcome`.
 
 ```json
 {
-  "status": "task_executed",
-  "task_id": "task_...",
-  "run_id": "run_...",
-  "journey_id": "cli.run....journey",
-  "next_action": "inspect_progress_overview",
-  "stop_reason": "budget_exhausted",
-  "continuation_required": true,
-  "completed": false,
-  "blocked": false,
-  "retryable": true,
-  "terminal_failure": false,
-  "controller_action": "invoke_again",
-  "stop_class": "continuation_required",
-  "automation": {
+  "ok": true,
+  "command": "resume",
+  "exit_code": 0,
+  "resume": {
     "status": "task_executed",
     "task_id": "task_...",
     "run_id": "run_...",
@@ -88,23 +87,91 @@ existing bounded public projections and add a stable automation contract:
     "blocked": false,
     "retryable": true,
     "terminal_failure": false,
-    "controller_action": "invoke_again",
-    "stop_class": "continuation_required"
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "automation": {
+      "schema_version": 1,
+      "outcome_scope": "objective",
+      "status": "continuation_required",
+      "class": "continuation_required",
+      "outcome_source": "runtime",
+      "task_id": "task_...",
+      "run_id": "run_...",
+      "journey_id": "cli.run....journey",
+      "next_action": "inspect_progress_overview",
+      "stop_reason": "budget_exhausted",
+      "continuation_required": true,
+      "completed": false,
+      "blocked": false,
+      "retryable": true,
+      "terminal_failure": false,
+      "controller_action": "resume",
+      "stop_class": "continuation_required",
+      "next_invocation": {
+        "command": "resume",
+        "arguments": []
+      }
+    }
+  },
+  "automation": {
+    "schema_version": 1,
+    "outcome_scope": "objective",
+    "status": "continuation_required",
+    "class": "continuation_required",
+    "outcome_source": "runtime",
+    "task_id": "task_...",
+    "run_id": "run_...",
+    "journey_id": "cli.run....journey",
+    "next_action": "inspect_progress_overview",
+    "stop_reason": "budget_exhausted",
+    "continuation_required": true,
+    "completed": false,
+    "blocked": false,
+    "retryable": true,
+    "terminal_failure": false,
+    "controller_action": "resume",
+    "stop_class": "continuation_required",
+    "next_invocation": {
+      "command": "resume",
+      "arguments": []
+    }
   }
 }
 ```
 
 External controllers should prefer `automation.controller_action`:
 
-- `invoke_again`: call Brownie again when the controller is ready.
+- `resume`: continue the same active objective with `brownie resume`.
 - `stop`: stop because the objective completed or no actionable work remains.
 - `wait`: wait for external conditions before calling again.
-- `return_to_human`: return control to a human or supervising system.
+- `retry`: retry the same process-level invocation after retryable transport or
+  runtime communication loss.
+- `return_to_supervisor`: return control to the supervising system because the
+  CLI invocation cannot safely decide the next step.
+
+These are the only valid controller actions. `brownie run "<objective>"` starts
+a new objective journey; automation continuation must use `brownie resume` or
+the top-level `automation.next_invocation.command == "resume"`. Reissuing
+`brownie run` for continuation is a new-objective admission request, not resume.
+
+Stale progress is not terminal failure. Runtime-owned stale progress outcomes
+are projected as `status = "stale_retry"`, `controller_action = "resume"`,
+`blocked = false`, `terminal_failure = false`, and `retryable = true`, allowing
+the next resume invocation to re-evaluate durable runtime state.
+
+When resuming, the runtime exposes a canonical `selected_headless_route` inside
+the bounded task progress overview. The CLI validates that selected route and
+passes its scope back to the runtime; it must not sort route candidates or make
+its own candidate choice.
 
 JSON error envelopes use the same process-level fields. Runtime communication
 failure and runtime timeout are retryable process failures. Invalid invocation,
 runtime unavailable, runtime error, and invalid runtime response are
 non-retryable unless an external supervisor changes configuration or code.
+Process-level error automation uses `schema_version = 1`,
+`outcome_scope = "process"`, and the finite controller actions above. For a
+retryable failed `run` or `resume` process invocation, `next_invocation.command`
+is `resume` so an external loop does not duplicate objective admission.
 
 ## Exit Code Contract
 

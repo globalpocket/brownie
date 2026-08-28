@@ -2980,7 +2980,7 @@ fn handle_headless_journey_execution(
             {
                 return error_response(id, -32603, &format!("internal error: {error}"));
             }
-            return result_response(id, json!(result));
+            return headless_run_drive_result_response(id, &result);
         }
     } else if execution
         .expected_execution_checkpoint_fingerprint
@@ -3171,7 +3171,7 @@ fn handle_headless_journey_execution(
                     .unwrap_or(false);
                 last_result = Some(result.clone());
                 if complete {
-                    return result_response(id, json!(result));
+                    return headless_run_drive_result_response(id, &result);
                 }
             }
         }
@@ -3294,7 +3294,7 @@ fn handle_headless_journey_execution(
             .cloned();
         let Some(replacement) = replacement else {
             if let Some(result) = last_result {
-                return result_response(id, json!(result));
+                return headless_run_drive_result_response(id, &result);
             }
             return error_response(
                 id,
@@ -3372,7 +3372,7 @@ fn handle_headless_journey_execution(
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
         result.journey_execution = Some(metadata);
-        return result_response(id, json!(result));
+        return headless_run_drive_result_response(id, &result);
     }
     error_response(
         id,
@@ -3829,7 +3829,7 @@ pub(super) fn handle_headless_run_drive(
                 return error_response(id, -32603, &format!("internal error: {error}"));
             }
         }
-        return result_response(id, json!(result));
+        return headless_run_drive_result_response(id, &result);
     }
 
     let existing_start_checkpoint = match store
@@ -4203,7 +4203,7 @@ pub(super) fn handle_headless_run_drive(
         if let Err(error) = append_headless_run_session_drive_completed_events(&store, &result) {
             return error_response(id, -32603, &format!("internal error: {error}"));
         }
-        return result_response(id, json!(result));
+        return headless_run_drive_result_response(id, &result);
     }
 
     let mut advances = Vec::new();
@@ -4621,7 +4621,7 @@ pub(super) fn handle_headless_run_drive(
     if let Err(error) = append_headless_run_session_drive_completed_events(&store, &result) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
-    result_response(id, json!(result))
+    headless_run_drive_result_response(id, &result)
 }
 
 fn headless_completion_scope_provenance_matches(

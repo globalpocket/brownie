@@ -752,6 +752,13 @@ fn json_result(command: &str, key: &str, result: Value) -> Result<String, Runtim
         "exit_code".to_string(),
         Value::Number(serde_json::Number::from(0_u8)),
     );
+    if let Some(automation) = result
+        .as_object()
+        .and_then(|object| object.get("automation"))
+        .cloned()
+    {
+        payload.insert("automation".to_string(), automation);
+    }
     payload.insert(key.to_string(), result);
     bounded_output(format!("{}\n", Value::Object(payload)))
 }
@@ -1161,6 +1168,7 @@ fn validate_headless_run_drive_result(result: &Value) -> Result<(), RuntimeClien
     if let Some(closure) = optional_object_field(object, "completion_closure") {
         required_display_string(closure, "status")?;
     }
+    validate_optional_execution_outcome(object)?;
     Ok(())
 }
 
@@ -1211,6 +1219,7 @@ fn validate_headless_run_advance_result(result: &Value) -> Result<(), RuntimeCli
     for step in steps {
         validate_headless_continue_step_result(step)?;
     }
+    validate_optional_execution_outcome(object)?;
     Ok(())
 }
 
@@ -1343,6 +1352,7 @@ fn validate_headless_continue_once_result(result: &Value) -> Result<(), RuntimeC
     if let Some(context) = optional_object_field(object, "selected_headless_journey_context") {
         validate_selected_headless_journey_context(context)?;
     }
+    validate_optional_execution_outcome(object)?;
     Ok(())
 }
 
@@ -1380,6 +1390,164 @@ fn validate_selected_headless_journey_context(
     required_bool(context, "has_session_checkpoint")?;
     optional_u64(context, "current_session_sequence")?;
     Ok(())
+}
+
+fn validate_optional_execution_outcome(
+    object: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    if let Some(outcome) = optional_object_field_checked(object, "execution_outcome")? {
+        validate_execution_outcome(outcome)?;
+    }
+    Ok(())
+}
+
+fn validate_execution_outcome(
+    outcome: &serde_json::Map<String, Value>,
+) -> Result<(), RuntimeClientError> {
+    if outcome.get("schema_version").and_then(Value::as_u64) != Some(1) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let outcome_scope = required_display_string(outcome, "outcome_scope")?;
+    if !matches!(outcome_scope.as_str(), "objective" | "process") {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let class_name = required_display_string(outcome, "class")?;
+    if !is_valid_execution_outcome_class(&class_name) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let status = required_display_string(outcome, "status")?;
+    if status != class_name {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let controller_action = required_display_string(outcome, "controller_action")?;
+    if !is_valid_controller_action(&controller_action) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "continuation_required",
+        "completed",
+        "blocked",
+        "retryable",
+        "terminal_failure",
+    ] {
+        required_bool(outcome, key)?;
+    }
+    required_display_string(outcome, "stop_reason")?;
+    validate_next_invocation(outcome.get("next_invocation"), &controller_action)?;
+    Ok(())
+}
+
+fn validate_next_invocation(
+    next_invocation: Option<&Value>,
+    controller_action: &str,
+) -> Result<(), RuntimeClientError> {
+    let Some(next_invocation) = next_invocation.filter(|value| !value.is_null()) else {
+        return if controller_action == "resume" {
+            Err(RuntimeClientError::InvalidResponse)
+        } else {
+            Ok(())
+        };
+    };
+    let object = next_invocation
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let command = required_display_string(object, "command")?;
+    if command != "resume" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    let arguments = object
+        .get("arguments")
+        .and_then(Value::as_array)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    if !arguments.is_empty() {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    if controller_action != "resume" && controller_action != "retry" {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(())
+}
+
+fn is_valid_execution_outcome_class(value: &str) -> bool {
+    matches!(
+        value,
+        "continuation_required"
+            | "completed"
+            | "blocked"
+            | "stale_retry"
+            | "no_actionable_work"
+            | "waiting"
+            | "retryable_failure"
+            | "terminal_failure"
+    )
+}
+
+fn is_valid_controller_action(value: &str) -> bool {
+    matches!(
+        value,
+        "resume" | "stop" | "wait" | "retry" | "return_to_supervisor"
+    )
+}
+
+fn bounded_json_execution_outcome(value: &Value) -> Result<Value, RuntimeClientError> {
+    let outcome = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    validate_execution_outcome(outcome)?;
+    let mut projected = serde_json::Map::new();
+    projected.insert(
+        "schema_version".to_string(),
+        Value::Number(serde_json::Number::from(1_u8)),
+    );
+    for key in [
+        "outcome_scope",
+        "class",
+        "status",
+        "controller_action",
+        "stop_reason",
+    ] {
+        projected.insert(
+            key.to_string(),
+            bounded_json_string(
+                outcome
+                    .get(key)
+                    .ok_or(RuntimeClientError::InvalidResponse)?,
+            )?,
+        );
+    }
+    for key in [
+        "continuation_required",
+        "completed",
+        "blocked",
+        "retryable",
+        "terminal_failure",
+    ] {
+        projected.insert(key.to_string(), Value::Bool(required_bool(outcome, key)?));
+    }
+    if let Some(next_invocation) = outcome.get("next_invocation") {
+        projected.insert(
+            "next_invocation".to_string(),
+            bounded_json_next_invocation(next_invocation)?,
+        );
+    }
+    Ok(Value::Object(projected))
+}
+
+fn bounded_json_next_invocation(value: &Value) -> Result<Value, RuntimeClientError> {
+    if value.is_null() {
+        return Ok(Value::Null);
+    }
+    let object = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    Ok(json!({
+        "command": bounded_json_string(
+            object
+                .get("command")
+                .ok_or(RuntimeClientError::InvalidResponse)?
+        )?,
+        "arguments": []
+    }))
 }
 
 fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {
@@ -1577,6 +1745,12 @@ fn cli_run_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             }
         }
     }
+    if let Some(outcome) = object.get("execution_outcome") {
+        payload.insert(
+            "execution_outcome".to_string(),
+            bounded_json_execution_outcome(outcome)?,
+        );
+    }
     add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
 }
@@ -1680,6 +1854,12 @@ fn cli_resume_payload(result: &Value) -> Result<Value, RuntimeClientError> {
             );
         }
     }
+    if let Some(outcome) = object.get("execution_outcome") {
+        payload.insert(
+            "execution_outcome".to_string(),
+            bounded_json_execution_outcome(outcome)?,
+        );
+    }
     add_external_loop_contract(&mut payload)?;
     Ok(Value::Object(payload))
 }
@@ -1712,130 +1892,189 @@ fn add_external_loop_contract(
     ensure_payload_key(payload, "run_id");
     ensure_payload_key(payload, "journey_id");
 
-    let status = payload_string(payload, "status").unwrap_or_else(|| "unknown".to_string());
-    let next_action = payload_string(payload, "next_action")
-        .unwrap_or_else(|| "inspect_progress_overview".to_string());
-    if !payload.contains_key("next_action") {
-        payload.insert(
-            "next_action".to_string(),
-            Value::String(next_action.clone()),
-        );
-    }
-
-    let finalization_status = payload_string(payload, "completion_finalization_status");
-    let closure_status = payload_string(payload, "completion_closure_status");
-    let accepted_status = payload_string(payload, "accepted_completion_status");
-    let candidate_count = payload_usize(payload, "candidate_count");
-    let selected_task_id = payload
-        .get("selected_task_id")
-        .or_else(|| payload.get("task_id"));
-    let no_actionable_work = status == "no_eligible_task"
-        && candidate_count == Some(0)
-        && selected_task_id.map(Value::is_null).unwrap_or(true);
-    let completed = finalization_status.as_deref() == Some("finalized")
-        || (closure_status.as_deref() == Some("complete")
-            && accepted_status.as_deref() == Some("AcceptedComplete")
-            && status == "no_eligible_task");
-
-    let existing_stop_reason = payload_string(payload, "stop_reason");
-    let stop_reason = existing_stop_reason.unwrap_or_else(|| {
-        if completed {
-            "complete".to_string()
-        } else if no_actionable_work {
-            "no_actionable_work".to_string()
-        } else {
-            "bounded_progress".to_string()
-        }
-    });
-    if !payload.contains_key("stop_reason") {
-        payload.insert(
-            "stop_reason".to_string(),
-            Value::String(stop_reason.clone()),
-        );
-    }
-
-    let stale = payload_bool(payload, "stale").unwrap_or(false);
-    let terminal_failure = contains_loop_token(&status, &["failed", "cancelled"])
-        || contains_loop_token(&stop_reason, &["terminal_failure", "non_retryable"]);
-    let blocked = stale
-        || contains_loop_token(&status, &["blocked", "waiting", "external_intervention"])
-        || contains_loop_token(
-            &next_action,
-            &["blocked", "waiting", "external_intervention"],
-        )
-        || contains_loop_token(
-            &stop_reason,
-            &["blocked", "waiting", "external_intervention"],
-        );
-    let progressed = status == "task_executed"
-        || payload_usize(payload, "post_aggregate_sequence")
-            .zip(payload_usize(payload, "current_aggregate_sequence"))
-            .map(|(post, current)| post > current)
-            .unwrap_or(false);
-    let retryable =
-        !completed && !blocked && !terminal_failure && (progressed || !no_actionable_work);
-    let continuation_required = retryable && !no_actionable_work;
-    let controller_action = if completed || terminal_failure || no_actionable_work {
-        "stop"
-    } else if blocked {
-        "return_to_human"
-    } else if continuation_required {
-        "invoke_again"
+    let outcome = if let Some(outcome) = payload.get("execution_outcome") {
+        automation_outcome_from_execution_outcome(outcome)?
     } else {
-        "wait"
+        automation_outcome_from_legacy_payload(payload)?
     };
-    let stop_class = if completed {
-        "completed"
-    } else if terminal_failure {
-        "terminal_failure"
-    } else if blocked {
-        "blocked"
-    } else if no_actionable_work {
-        "no_actionable_work"
-    } else if continuation_required {
-        "continuation_required"
-    } else {
-        "waiting"
-    };
-
     payload.insert(
         "continuation_required".to_string(),
-        Value::Bool(continuation_required),
+        Value::Bool(outcome.continuation_required),
     );
-    payload.insert("completed".to_string(), Value::Bool(completed));
-    payload.insert("blocked".to_string(), Value::Bool(blocked));
-    payload.insert("retryable".to_string(), Value::Bool(retryable));
+    payload.insert("completed".to_string(), Value::Bool(outcome.completed));
+    payload.insert("blocked".to_string(), Value::Bool(outcome.blocked));
+    payload.insert("retryable".to_string(), Value::Bool(outcome.retryable));
     payload.insert(
         "terminal_failure".to_string(),
-        Value::Bool(terminal_failure),
+        Value::Bool(outcome.terminal_failure),
     );
     payload.insert(
         "controller_action".to_string(),
-        Value::String(controller_action.to_string()),
+        Value::String(outcome.controller_action.clone()),
+    );
+    payload.insert(
+        "stop_reason".to_string(),
+        Value::String(outcome.stop_reason.clone()),
     );
     payload.insert(
         "stop_class".to_string(),
-        Value::String(stop_class.to_string()),
+        Value::String(outcome.class_name.clone()),
     );
+    if let Some(next_invocation) = outcome.next_invocation.clone() {
+        payload.insert("next_invocation".to_string(), next_invocation);
+    }
     payload.insert(
         "automation".to_string(),
         json!({
-            "status": status,
+            "schema_version": 1,
+            "outcome_scope": outcome.outcome_scope.clone(),
+            "status": outcome.status.clone(),
+            "class": outcome.class_name.clone(),
+            "outcome_source": outcome.outcome_source.clone(),
             "task_id": payload.get("task_id").cloned().unwrap_or(Value::Null),
             "run_id": payload.get("run_id").cloned().unwrap_or(Value::Null),
             "journey_id": payload.get("journey_id").cloned().unwrap_or(Value::Null),
-            "next_action": next_action,
-            "stop_reason": stop_reason,
-            "continuation_required": continuation_required,
-            "completed": completed,
-            "blocked": blocked,
-            "retryable": retryable,
-            "terminal_failure": terminal_failure,
-            "controller_action": controller_action,
-            "stop_class": stop_class
+            "next_action": payload.get("next_action").cloned().unwrap_or(Value::Null),
+            "stop_reason": outcome.stop_reason.clone(),
+            "continuation_required": outcome.continuation_required,
+            "completed": outcome.completed,
+            "blocked": outcome.blocked,
+            "retryable": outcome.retryable,
+            "terminal_failure": outcome.terminal_failure,
+            "controller_action": outcome.controller_action.clone(),
+            "stop_class": outcome.class_name.clone(),
+            "next_invocation": outcome.next_invocation.clone().unwrap_or(Value::Null)
         }),
     );
+    payload.remove("execution_outcome");
     Ok(())
+}
+
+struct AutomationOutcome {
+    outcome_scope: String,
+    status: String,
+    class_name: String,
+    controller_action: String,
+    continuation_required: bool,
+    completed: bool,
+    blocked: bool,
+    retryable: bool,
+    terminal_failure: bool,
+    stop_reason: String,
+    next_invocation: Option<Value>,
+    outcome_source: String,
+}
+
+fn automation_outcome_from_execution_outcome(
+    value: &Value,
+) -> Result<AutomationOutcome, RuntimeClientError> {
+    let outcome = value
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    validate_execution_outcome(outcome)?;
+    let class_name = required_display_string(outcome, "class")?;
+    let status = outcome
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or(class_name.as_str())
+        .to_string();
+    Ok(AutomationOutcome {
+        outcome_scope: required_display_string(outcome, "outcome_scope")?,
+        status,
+        class_name,
+        controller_action: required_display_string(outcome, "controller_action")?,
+        continuation_required: required_bool(outcome, "continuation_required")?,
+        completed: required_bool(outcome, "completed")?,
+        blocked: required_bool(outcome, "blocked")?,
+        retryable: required_bool(outcome, "retryable")?,
+        terminal_failure: required_bool(outcome, "terminal_failure")?,
+        stop_reason: required_display_string(outcome, "stop_reason")?,
+        next_invocation: outcome
+            .get("next_invocation")
+            .filter(|value| !value.is_null())
+            .cloned(),
+        outcome_source: "runtime".to_string(),
+    })
+}
+
+fn automation_outcome_from_legacy_payload(
+    payload: &serde_json::Map<String, Value>,
+) -> Result<AutomationOutcome, RuntimeClientError> {
+    let status = payload_string(payload, "status").ok_or(RuntimeClientError::InvalidResponse)?;
+    let completed = payload_string(payload, "completion_finalization_status").as_deref()
+        == Some("finalized")
+        || (payload_string(payload, "completion_closure_status").as_deref() == Some("complete")
+            && payload_string(payload, "accepted_completion_status").as_deref()
+                == Some("AcceptedComplete"));
+    let (class_name, controller_action, continuation_required, retryable, stop_reason) =
+        if completed {
+            (
+                "completed",
+                "stop",
+                false,
+                false,
+                payload_string(payload, "stop_reason").unwrap_or_else(|| "complete".to_string()),
+            )
+        } else {
+            match status.as_str() {
+                "stale_progress" => (
+                    "stale_retry",
+                    "resume",
+                    true,
+                    true,
+                    payload_string(payload, "stop_reason")
+                        .unwrap_or_else(|| "stale_progress".to_string()),
+                ),
+                "no_eligible_task" => (
+                    "no_actionable_work",
+                    "stop",
+                    false,
+                    false,
+                    payload_string(payload, "stop_reason")
+                        .unwrap_or_else(|| "no_actionable_work".to_string()),
+                ),
+                "task_in_progress" => (
+                    "waiting",
+                    "wait",
+                    false,
+                    true,
+                    payload_string(payload, "stop_reason")
+                        .unwrap_or_else(|| "task_in_progress".to_string()),
+                ),
+                "task_executed" => (
+                    "continuation_required",
+                    "resume",
+                    true,
+                    true,
+                    payload_string(payload, "stop_reason")
+                        .unwrap_or_else(|| "bounded_progress".to_string()),
+                ),
+                _ => return Err(RuntimeClientError::InvalidResponse),
+            }
+        };
+    Ok(AutomationOutcome {
+        outcome_scope: "objective".to_string(),
+        status: class_name.to_string(),
+        class_name: class_name.to_string(),
+        controller_action: controller_action.to_string(),
+        continuation_required,
+        completed,
+        blocked: false,
+        retryable,
+        terminal_failure: false,
+        stop_reason,
+        next_invocation: next_invocation_for_controller_action(controller_action),
+        outcome_source: "legacy_cli_projection".to_string(),
+    })
+}
+
+fn next_invocation_for_controller_action(controller_action: &str) -> Option<Value> {
+    (controller_action == "resume").then(|| {
+        json!({
+            "command": "resume",
+            "arguments": []
+        })
+    })
 }
 
 fn promote_payload_alias(
@@ -1869,22 +2108,6 @@ fn payload_string(payload: &serde_json::Map<String, Value>, key: &str) -> Option
         .get(key)
         .and_then(Value::as_str)
         .map(ToString::to_string)
-}
-
-fn payload_bool(payload: &serde_json::Map<String, Value>, key: &str) -> Option<bool> {
-    payload.get(key).and_then(Value::as_bool)
-}
-
-fn payload_usize(payload: &serde_json::Map<String, Value>, key: &str) -> Option<usize> {
-    payload
-        .get(key)
-        .and_then(Value::as_u64)
-        .and_then(|value| usize::try_from(value).ok())
-}
-
-fn contains_loop_token(value: &str, tokens: &[&str]) -> bool {
-    let value = value.to_ascii_lowercase();
-    tokens.iter().any(|token| value.contains(token))
 }
 
 fn resume_result_first_step(
@@ -1950,8 +2173,6 @@ struct CliResumeRouteCandidate {
     next_session_sequence: u64,
     progress_fingerprint: String,
     aggregate_sequence: u64,
-    task_created_at: String,
-    task_updated_at: String,
 }
 
 fn cli_task_list_params() -> Value {
@@ -1987,7 +2208,7 @@ fn cli_resume_task_list_params() -> Value {
 fn cli_resume_advance_params(
     task_list: &Value,
 ) -> Result<Option<(Value, CliResumeRouteCandidate)>, RuntimeClientError> {
-    let Some(candidate) = cli_resume_route_candidate(task_list)? else {
+    let Some(candidate) = cli_resume_selected_route_candidate(task_list)? else {
         return Ok(None);
     };
     let advance_id = stable_cli_resume_id(
@@ -2042,13 +2263,12 @@ fn resumed_cli_drive_params(advance_result: &Value) -> Result<Option<Value>, Run
     })))
 }
 
-fn cli_resume_route_candidate(
+fn cli_resume_selected_route_candidate(
     task_list: &Value,
 ) -> Result<Option<CliResumeRouteCandidate>, RuntimeClientError> {
-    let object = task_list
+    task_list
         .as_object()
-        .ok_or(RuntimeClientError::InvalidResponse)?;
-    let tasks = object
+        .ok_or(RuntimeClientError::InvalidResponse)?
         .get("tasks")
         .and_then(Value::as_array)
         .ok_or(RuntimeClientError::InvalidResponse)?;
@@ -2056,63 +2276,42 @@ fn cli_resume_route_candidate(
     let progress_fingerprint = required_display_string(progress, "source_fingerprint")?;
     validate_sha256_fingerprint(&progress_fingerprint)?;
     let aggregate_sequence = required_u64(progress, "aggregate_sequence")?;
-    let Some(candidates) = optional_array_field_checked(progress, "headless_route_candidates")?
-    else {
+    let Some(candidate) = progress.get("selected_headless_route") else {
         return Ok(None);
     };
-
-    let mut resume_candidates = Vec::new();
-    for candidate in candidates {
-        let candidate = candidate
-            .as_object()
-            .ok_or(RuntimeClientError::InvalidResponse)?;
-        let Some(session_id) = candidate.get("session_id").and_then(Value::as_str) else {
-            continue;
-        };
-        if !session_id.starts_with(CLI_RUN_SESSION_PREFIX) {
-            continue;
-        }
-        let journey_id = required_display_string(candidate, "journey_id")?;
-        let task_id = required_display_string(candidate, "task_id")?;
-        let run_id = required_display_string(candidate, "run_id")?;
-        let journey_fingerprint = required_display_string(candidate, "journey_fingerprint")?;
-        validate_sha256_fingerprint(&journey_fingerprint)?;
-        let next_session_sequence = required_u64(candidate, "next_session_sequence")?;
-        if next_session_sequence == 0
-            || required_display_string(candidate, "progress_fingerprint")? != progress_fingerprint
-            || required_u64(candidate, "aggregate_sequence")? != aggregate_sequence
-        {
-            return Err(RuntimeClientError::InvalidResponse);
-        }
-        let Some(task) = tasks.iter().find_map(|task| {
-            let task = task.as_object()?;
-            let matches = task.get("task_id").and_then(Value::as_str) == Some(task_id.as_str())
-                && task.get("run_id").and_then(Value::as_str) == Some(run_id.as_str());
-            matches.then_some(task)
-        }) else {
-            return Err(RuntimeClientError::InvalidResponse);
-        };
-        resume_candidates.push(CliResumeRouteCandidate {
-            session_id: session_id.to_string(),
-            journey_id,
-            task_id,
-            run_id,
-            next_session_sequence,
-            progress_fingerprint: progress_fingerprint.clone(),
-            aggregate_sequence,
-            task_created_at: required_display_string(task, "created_at")?,
-            task_updated_at: required_display_string(task, "updated_at")?,
-        });
+    if candidate.is_null() {
+        return Ok(None);
     }
-
-    resume_candidates.sort_by(|left, right| {
-        left.task_created_at
-            .cmp(&right.task_created_at)
-            .then(left.task_updated_at.cmp(&right.task_updated_at))
-            .then(left.session_id.cmp(&right.session_id))
-            .then(left.journey_id.cmp(&right.journey_id))
-    });
-    Ok(resume_candidates.pop())
+    let candidate = candidate
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let Some(session_id) = candidate.get("session_id").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    if !session_id.starts_with(CLI_RUN_SESSION_PREFIX) {
+        return Ok(None);
+    }
+    let journey_id = required_display_string(candidate, "journey_id")?;
+    let task_id = required_display_string(candidate, "task_id")?;
+    let run_id = required_display_string(candidate, "run_id")?;
+    let journey_fingerprint = required_display_string(candidate, "journey_fingerprint")?;
+    validate_sha256_fingerprint(&journey_fingerprint)?;
+    let next_session_sequence = required_u64(candidate, "next_session_sequence")?;
+    if next_session_sequence == 0
+        || required_display_string(candidate, "progress_fingerprint")? != progress_fingerprint
+        || required_u64(candidate, "aggregate_sequence")? != aggregate_sequence
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    Ok(Some(CliResumeRouteCandidate {
+        session_id: session_id.to_string(),
+        journey_id,
+        task_id,
+        run_id,
+        next_session_sequence,
+        progress_fingerprint,
+        aggregate_sequence,
+    }))
 }
 
 fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {

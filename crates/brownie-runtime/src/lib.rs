@@ -13619,6 +13619,258 @@ fn result_response(id: Value, result: Value) -> JsonRpcResponse<Value> {
     }
 }
 
+fn headless_continue_once_result_response(
+    id: Value,
+    result: &HeadlessContinueOnceResult,
+) -> JsonRpcResponse<Value> {
+    let mut value = json!(result);
+    insert_execution_outcome(&mut value, headless_continue_once_execution_outcome(result));
+    result_response(id, value)
+}
+
+fn headless_run_advance_result_response(
+    id: Value,
+    result: &HeadlessRunAdvanceResult,
+) -> JsonRpcResponse<Value> {
+    let mut value = json!(result);
+    insert_execution_outcome(&mut value, headless_run_advance_execution_outcome(result));
+    result_response(id, value)
+}
+
+fn headless_run_drive_result_response(
+    id: Value,
+    result: &HeadlessRunDriveResult,
+) -> JsonRpcResponse<Value> {
+    let mut value = json!(result);
+    insert_execution_outcome(&mut value, headless_run_drive_execution_outcome(result));
+    result_response(id, value)
+}
+
+fn insert_execution_outcome(result: &mut Value, outcome: Value) {
+    if let Some(object) = result.as_object_mut() {
+        object.insert("execution_outcome".to_string(), outcome);
+    }
+}
+
+fn headless_continue_once_execution_outcome(result: &HeadlessContinueOnceResult) -> Value {
+    let stop_reason = result
+        .stop_reason
+        .clone()
+        .unwrap_or_else(|| match result.status {
+            HeadlessContinueOnceStatus::StaleProgress => "stale_progress".to_string(),
+            HeadlessContinueOnceStatus::NoEligibleTask => "no_eligible_task".to_string(),
+            HeadlessContinueOnceStatus::TaskInProgress => "task_in_progress".to_string(),
+            HeadlessContinueOnceStatus::TaskExecuted => "bounded_progress".to_string(),
+        });
+    match result.status {
+        HeadlessContinueOnceStatus::StaleProgress => execution_outcome_value(
+            "stale_retry",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::NoEligibleTask => execution_outcome_value(
+            "no_actionable_work",
+            "stop",
+            false,
+            false,
+            false,
+            false,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::TaskInProgress => execution_outcome_value(
+            "waiting",
+            "wait",
+            false,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::TaskExecuted => execution_outcome_value(
+            "continuation_required",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+    }
+}
+
+fn headless_run_advance_execution_outcome(result: &HeadlessRunAdvanceResult) -> Value {
+    let stop_reason = result.stop_reason.clone();
+    match result.status {
+        HeadlessContinueOnceStatus::StaleProgress => execution_outcome_value(
+            "stale_retry",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::NoEligibleTask => execution_outcome_value(
+            "no_actionable_work",
+            "stop",
+            false,
+            false,
+            false,
+            false,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::TaskInProgress => execution_outcome_value(
+            "waiting",
+            "wait",
+            false,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessContinueOnceStatus::TaskExecuted => execution_outcome_value(
+            "continuation_required",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+    }
+}
+
+fn headless_run_drive_execution_outcome(result: &HeadlessRunDriveResult) -> Value {
+    let stop_reason = result.stop_reason.clone();
+    if result
+        .completion_finalization
+        .as_ref()
+        .map(|finalization| finalization.status == "finalized")
+        .unwrap_or(false)
+    {
+        return execution_outcome_value(
+            "completed",
+            "stop",
+            false,
+            true,
+            false,
+            false,
+            false,
+            &stop_reason,
+        );
+    }
+    if result.completion_closure.status == HeadlessRunCompletionClosureStatus::Complete
+        && result
+            .accepted_completion
+            .as_ref()
+            .map(|accepted| accepted.status == "AcceptedComplete")
+            .unwrap_or(false)
+    {
+        return execution_outcome_value(
+            "completed",
+            "stop",
+            false,
+            true,
+            false,
+            false,
+            false,
+            &stop_reason,
+        );
+    }
+
+    match result.completion_closure.status {
+        HeadlessRunCompletionClosureStatus::StaleNoProgress => execution_outcome_value(
+            "stale_retry",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessRunCompletionClosureStatus::TaskInProgress => execution_outcome_value(
+            "waiting",
+            "wait",
+            false,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+        HeadlessRunCompletionClosureStatus::NoEligibleTask => execution_outcome_value(
+            "no_actionable_work",
+            "stop",
+            false,
+            false,
+            false,
+            false,
+            false,
+            &stop_reason,
+        ),
+        HeadlessRunCompletionClosureStatus::Complete
+        | HeadlessRunCompletionClosureStatus::RoutedExplicitAction
+        | HeadlessRunCompletionClosureStatus::BudgetExhausted
+        | HeadlessRunCompletionClosureStatus::UnknownNonterminal => execution_outcome_value(
+            "continuation_required",
+            "resume",
+            true,
+            false,
+            false,
+            true,
+            false,
+            &stop_reason,
+        ),
+    }
+}
+
+fn execution_outcome_value(
+    class_name: &str,
+    controller_action: &str,
+    continuation_required: bool,
+    completed: bool,
+    blocked: bool,
+    retryable: bool,
+    terminal_failure: bool,
+    stop_reason: &str,
+) -> Value {
+    let next_invocation = if controller_action == "resume" {
+        json!({
+            "command": "resume",
+            "arguments": []
+        })
+    } else {
+        Value::Null
+    };
+    json!({
+        "schema_version": 1,
+        "outcome_scope": "objective",
+        "class": class_name,
+        "status": class_name,
+        "controller_action": controller_action,
+        "continuation_required": continuation_required,
+        "completed": completed,
+        "blocked": blocked,
+        "retryable": retryable,
+        "terminal_failure": terminal_failure,
+        "stop_reason": stop_reason,
+        "next_invocation": next_invocation
+    })
+}
+
 fn error_response(id: Value, code: i64, message: &str) -> JsonRpcResponse<Value> {
     JsonRpcResponse {
         jsonrpc: JSONRPC_VERSION.to_string(),
@@ -20779,7 +21031,7 @@ mod tests {
     }
 
     #[test]
-    fn headless_run_advance_rejects_stale_initial_progress_without_checkpoint() {
+    fn headless_run_advance_returns_stale_retry_without_checkpoint_mutation() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let store = BrownieStore::new(temp.path());
@@ -20800,7 +21052,28 @@ mod tests {
         let response = parse_line(
             r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.advance","params":{"authorize":true,"session_id":"m17.stale","expected_session_sequence":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":0,"max_steps":2}}"#,
         );
-        assert_eq!(response.error.expect("stale error").code, -32602);
+        let result = response
+            .result
+            .unwrap_or_else(|| panic!("stale retry result: {:?}", response.error));
+        assert_eq!(result["status"], "stale_progress");
+        assert_eq!(result["session_id"], "m17.stale");
+        assert_eq!(result["session_sequence"], 1);
+        assert_eq!(result["step_count"], 1);
+        assert_eq!(result["steps"][0]["status"], "stale_progress");
+        assert_eq!(result["executed_count"], 0);
+        assert_eq!(result["replayed_count"], 0);
+        assert_eq!(result["stop_reason"], "stale_progress");
+        assert_eq!(result["execution_outcome"]["schema_version"], 1);
+        assert_eq!(result["execution_outcome"]["status"], "stale_retry");
+        assert_eq!(result["execution_outcome"]["controller_action"], "resume");
+        assert_eq!(result["execution_outcome"]["continuation_required"], true);
+        assert_eq!(result["execution_outcome"]["blocked"], false);
+        assert_eq!(result["execution_outcome"]["retryable"], true);
+        assert_eq!(result["execution_outcome"]["terminal_failure"], false);
+        assert_eq!(
+            result["execution_outcome"]["next_invocation"]["command"],
+            "resume"
+        );
         assert!(store
             .tasks()
             .read_headless_run_session_checkpoint("m17.stale")
@@ -22731,6 +23004,7 @@ mod tests {
             stage_counts: Vec::new(),
             next_action_sets: Vec::new(),
             blocked_sets: Vec::new(),
+            selected_headless_route: None,
             headless_route_candidates: Vec::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
@@ -22787,6 +23061,7 @@ mod tests {
             stage_counts: Vec::new(),
             next_action_sets: Vec::new(),
             blocked_sets: Vec::new(),
+            selected_headless_route: None,
             headless_route_candidates: Vec::new(),
             nodes: Vec::new(),
             edges: Vec::new(),
@@ -22937,6 +23212,7 @@ mod tests {
             stage_counts: Vec::new(),
             next_action_sets: Vec::new(),
             blocked_sets: Vec::new(),
+            selected_headless_route: None,
             headless_route_candidates: Vec::new(),
             nodes: Vec::new(),
             edges: Vec::new(),

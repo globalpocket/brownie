@@ -1840,7 +1840,7 @@ pub(super) fn handle_headless_continue_once(
         None => None,
     };
 
-    let mut result = json!(HeadlessContinueOnceResult {
+    let result = HeadlessContinueOnceResult {
         status: HeadlessContinueOnceStatus::TaskExecuted,
         decision_id: Some(decision_id),
         continuation_id: params.continuation_id,
@@ -1876,14 +1876,19 @@ pub(super) fn handle_headless_continue_once(
         stop_reason: None,
         steps: Vec::new(),
         next_action,
-    });
+    };
+    let mut result_value = json!(&result);
     if let Some(context) = selected_headless_journey_context {
-        if let Some(object) = result.as_object_mut() {
+        if let Some(object) = result_value.as_object_mut() {
             object.insert("selected_headless_journey_context".to_string(), context);
         }
     }
+    insert_execution_outcome(
+        &mut result_value,
+        headless_continue_once_execution_outcome(&result),
+    );
 
-    result_response(id, result)
+    result_response(id, result_value)
 }
 
 fn validate_headless_continue_scope(scope: &HeadlessContinueScope) -> Result<(), &'static str> {
@@ -2509,7 +2514,7 @@ pub(super) fn handle_headless_run_advance(
             }
             let mut result = checkpoint.result.clone();
             result.replayed = true;
-            return result_response(id, json!(result));
+            return headless_run_advance_result_response(id, &result);
         }
         if params.expected_session_sequence != checkpoint.session_sequence + 1 {
             return error_response(
@@ -2772,13 +2777,6 @@ pub(super) fn handle_headless_run_advance(
         Ok(result) => result,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
-    if continue_result.status == HeadlessContinueOnceStatus::StaleProgress {
-        return error_response(
-            id,
-            -32602,
-            "invalid params: starting progress checkpoint is stale",
-        );
-    }
     let start_progress = HeadlessRunProgressCheckpoint {
         progress_fingerprint: continue_result.current_progress_fingerprint.clone(),
         aggregate_sequence: continue_result.current_aggregate_sequence,
@@ -2883,6 +2881,9 @@ pub(super) fn handle_headless_run_advance(
         steps: advance_steps,
         next_action: continue_result.next_action.clone(),
     };
+    if result.status == HeadlessContinueOnceStatus::StaleProgress {
+        return headless_run_advance_result_response(id, &result);
+    }
     if let Err(error) = append_headless_run_session_advanced_events(&store, &result) {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
@@ -2898,7 +2899,7 @@ pub(super) fn handle_headless_run_advance(
     {
         return error_response(id, -32603, &format!("internal error: {error}"));
     }
-    result_response(id, json!(result))
+    headless_run_advance_result_response(id, &result)
 }
 
 pub(super) fn validate_headless_run_selected_candidate_fetch_replay_target(
@@ -5377,7 +5378,7 @@ fn handle_headless_continue_budget(
     result.replayed_count = Some(replayed_count);
     result.stop_reason = Some(stop_reason);
     result.steps = steps;
-    result_response(id, json!(result))
+    headless_continue_once_result_response(id, &result)
 }
 
 fn headless_continue_budget_stop_reason(
