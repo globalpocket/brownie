@@ -19,6 +19,7 @@ use base64::{engine::general_purpose, Engine as _};
 use brownie_agent_loop::{AgentLoop, AgentLoopState};
 use brownie_agentmodes::{
     BuiltinModeRegistry, CompiledModePolicy, RuntimeAction, RuntimePermissionGate,
+    HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use brownie_config::{
     BrownieConfig, LlmProfile, LlmRequestBudgetConfig, RuntimeConfigLoader, CONFIG_RELATIVE_PATH,
@@ -16007,6 +16008,92 @@ mod tests {
             }"#,
         )
         .expect("modepack");
+    }
+
+    fn write_test_handoff_selector_modepack(workspace_root: &std::path::Path) {
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "handoff-selector-agentmodes",
+              "schema_version": 1,
+              "modes": [
+                {
+                  "mode_id": "external-orchestrator",
+                  "display_name": "External Orchestrator",
+                  "role_definition": "Delegate to any validated member except itself.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": true
+                  },
+                  "allowed_handoff_targets": ["$modepack/*"],
+                  "completion_rules": ["Stop after dispatching admitted subtasks."]
+                },
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review local changes without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+    }
+
+    fn write_current_agentmodes_modepack_if_available(
+        workspace_root: &std::path::Path,
+    ) -> Option<usize> {
+        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
+        if !modes_dir.exists() {
+            return None;
+        }
+        let mut documents = Vec::new();
+        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
+            let path = entry.expect("dir entry").path();
+            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
+                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
+            }
+        }
+        documents.sort();
+        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
+        let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_yaml_documents(
+            document_refs,
+            brownie_agentmodes::AgentModesCompileOptions {
+                modepack_name: Some("current-agentmodes".to_string()),
+                delegation_coordinators: vec![
+                    "orchestrator".to_string(),
+                    "workflow-orchestrator".to_string(),
+                    "epoch-orchestrator".to_string(),
+                ],
+                ..brownie_agentmodes::AgentModesCompileOptions::default()
+            },
+        )
+        .expect("compile current AgentModes mode pack");
+        let mode_count = modepack.modes.len();
+        let brownie_dir = workspace_root.join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            serde_json::to_string_pretty(&modepack).expect("serialize modepack"),
+        )
+        .expect("write modepack");
+        Some(mode_count)
     }
 
     fn write_changed_test_handoff_modepack(workspace_root: &std::path::Path) {
@@ -32522,6 +32609,129 @@ mod tests {
             "Review only bounded evidence."
         );
         assert!(queued_payload.get("input").is_none());
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn external_mode_handoff_selector_allows_valid_member_and_denies_self() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_test_handoff_selector_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Parent orchestration".into(),
+                mode_id: Some("external-orchestrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "external-orchestrator")
+            .expect("resolve external policy")
+            .expect("external policy");
+
+        let allowed = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Create admitted child task.\",\"input\":{\"goal\":\"Review bounded evidence.\",\"mode_id\":\"reviewer-lite\"}}]}\n```";
+        append_tool_intent_events(&store, &parent, &policy, allowed)
+            .expect("append allowed tool intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, allowed)
+            .expect("handle allowed workspace intents");
+
+        let denied = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"subtask.spawn\",\"reason\":\"Invalid self dispatch.\",\"input\":{\"goal\":\"Recurse into self.\",\"mode_id\":\"external-orchestrator\"}}]}\n```";
+        append_tool_intent_events(&store, &parent, &policy, denied)
+            .expect("append denied tool intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, denied)
+            .expect("handle denied workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SubtaskOrchestrationQueued
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("requested_mode_id"))
+                    .and_then(Value::as_str)
+                    == Some("reviewer-lite")
+        }));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("requested_mode_id"))
+                    .and_then(Value::as_str)
+                    == Some("external-orchestrator")
+        }));
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn current_agentmodes_pack_activates_and_pins_selector_policy_when_available() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let activated = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"modepack.activate","params":{"authorize":true}}"#,
+        );
+        assert!(activated.error.is_none());
+        let snapshot = &activated.result.expect("activation result")["snapshot"];
+        assert_eq!(snapshot["modepack_name"], "current-agentmodes");
+        assert!(snapshot["mode_count"].as_u64().unwrap_or_default() > 16);
+        assert_eq!(
+            snapshot["mode_count"].as_u64().unwrap_or_default(),
+            mode_count as u64
+        );
+
+        let run = parse_line(
+            r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"exercise current AgentModes selector policy","mode_id":"orchestrator"}}"#,
+        );
+        assert!(run.error.is_none());
+        let task_id = run.result.expect("task start result")["task_id"]
+            .as_str()
+            .expect("task id")
+            .to_string();
+        let store = BrownieStore::new(temp.path());
+        let task = store
+            .tasks()
+            .get_task(&task_id)
+            .expect("get task")
+            .expect("task");
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("task events");
+        let mode_resolved = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::ModeResolved)
+            .and_then(|event| event.payload.as_ref())
+            .expect("mode resolved payload");
+        assert_eq!(mode_resolved["mode_id"], "orchestrator");
+        assert_eq!(
+            mode_resolved["allowed_handoff_targets"],
+            json!([HANDOFF_TARGET_ALL_MODEPACK_MODES])
+        );
+        assert!(mode_resolved["prompt_sections"]
+            .as_array()
+            .is_some_and(|sections| !sections.is_empty()));
+
+        let composer_policy = resolve_workspace_mode_policy(&store, "user-response-composer")
+            .expect("resolve composer")
+            .expect("composer policy");
+        assert!(
+            !RuntimePermissionGate::check(&composer_policy, RuntimeAction::SpawnSubtask).allowed
+        );
+        assert_eq!(composer_policy.allowed_handoff_targets, None);
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 

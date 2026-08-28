@@ -56,6 +56,13 @@ request when the requested `input.mode_id` is unknown or absent from that mode's
 `allowed_handoff_targets`. This denial is recorded as bounded tool-intent
 evidence before queueing, and it does not create or materialize a child task.
 
+MP-3.2A adds the bounded `$modepack/*` handoff selector for large external Mode
+Packs. The selector does not bypass `SpawnSubtask`; the active policy must still
+allow subtask spawning, the requested child mode must resolve from the
+task-pinned Mode Pack policy, and self-dispatch through the selector is denied
+before queueing. Explicit target lists remain bounded, and the selector cannot
+be mixed with explicit targets.
+
 ## Phase 1.5 tool planning update
 
 Phase 1.5 adds dry-run tool planning before future tool execution. Tool definitions and plans are declarative only and do not perform file reads, file writes, process execution, subtask spawning, network access, service control, or destructive operations. Planned tools are evaluated through `RuntimePermissionGate`; denied dry-run items are recorded but do not fail `task.run` in Phase 1.5. See `docs/specifications/tool-planning-spec-v0.md`.

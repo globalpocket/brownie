@@ -193,6 +193,30 @@ active mode can spawn subtasks, the requested child mode resolves, and the child
 mode id is present in the active policy's allow-list when one exists. Built-in
 modes preserve their existing behavior by leaving the allow-list unset.
 
+## MP-3.2A full-pack scale handoff contract
+
+Current AgentModes compatibility must be proven against the real mode-pack
+scale, not only short representative fixtures. Brownie must compile all current
+AgentModes `modes/*.yaml` entries from a pinned source revision or equivalent
+fixture fingerprint, then validate the generated Brownie Mode Pack and activate
+it through the same runtime snapshot path used by ordinary external Mode Packs.
+
+Empty `groups` is not delegation authority. A no-group AgentModes mode is
+read-only by default and cannot spawn subtasks unless a structured
+compatibility adapter explicitly marks that mode as a delegation coordinator.
+That adapter metadata is validated against the compiled Mode Pack graph, cannot
+name missing modes, cannot be duplicated, and cannot turn an edit or command
+mode into a coordinator. Prompt prose, `whenToUse`, and `new_task(...)` strings
+remain workflow instructions only; they do not grant `SpawnSubtask`.
+
+For large packs, explicit all-other-mode allow-lists are replaced by the
+bounded selector `$modepack/*`. The selector means every validated mode in the
+same compiled Mode Pack except the active mode itself. The selector must not be
+mixed with explicit target names. Runtime subtask admission still resolves the
+requested child mode against task-pinned policy before queueing or materializing
+a child, so the selector is compact authority evidence, not a bypass around
+target validation.
+
 ## M12.2 child snapshot provenance compatibility
 
 Controlled children spawned through external Mode Pack handoff targets carry a
