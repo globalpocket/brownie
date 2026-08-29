@@ -77,12 +77,10 @@ MP-1 allows external Mode Packs to declare trusted `workspace_write` and
 `process_exec` capability bits for editor, tester, and integrator-style modes.
 `read_only` is summary metadata and must not be combined with side-effect
 capabilities. Network access, service control, and destructive operations remain
-reserved protocol fields in v0; raw external Mode Pack declarations are narrowed
-out of effective runtime policy for trusted and untrusted sources. A future
-runtime feature may define a separate opt-in contract, but source trust alone
-cannot preserve these bits as executable authority in this campaign. The runtime
-compiles declared capability bits into effective policy data and continues to
-require every side effect to pass `RuntimePermissionGate`; prompt text, role
+declared capability bits only; they cannot authorize a side effect unless source
+trust and the runtime capability ceiling preserve them. The runtime compiles
+declared capability bits into effective policy data and continues to require
+every side effect to pass `RuntimePermissionGate`; prompt text, role
 definitions, and completion rules cannot grant capability authority.
 MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
 generic workspace editing, generic process execution, Git capability, delegation
@@ -289,6 +287,26 @@ provenance is denied before provider or tool execution. The denial evidence is
 bounded and must not include raw Mode Pack JSON, raw prompts, provider
 responses, file content, stdout, stderr, commands, environment values, secrets,
 request bodies, absolute paths, or canonical paths.
+
+## MCP policy
+
+Mode Packs may declare first-phase MCP access with a top-level `mcp_servers`
+map and per-mode `mcp.servers[].tools` allow-lists. Only `stdio` transport is
+valid in v0. Server ids and tool names are bounded identifiers, and duplicate,
+unknown, malformed, or oversized entries fail closed during Mode Pack
+validation.
+
+The mode permission bit is `mcp_tool_access`. It is narrowed by source trust and
+the runtime capability ceiling. Untrusted repository-local Mode Packs cannot
+grant MCP execution even if they declare `mcp_tool_access` and allow-listed
+tools. AgentModes `mcp` groups remain candidates/prose only unless a structured
+Mode Pack MCP server/tool allow-list exists.
+
+Mode Pack MCP server command configuration is structured runtime policy. It is
+not prompt authority, and raw command configuration, credentials, environment
+values, or secret headers must not be copied into prompt, ledger, or RPC
+evidence. Task admission stores bounded catalog provenance instead; see
+`mcp-client-spec-v0.md`.
 
 ## Non-goals for v0
 

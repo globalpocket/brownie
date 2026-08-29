@@ -82,6 +82,13 @@ Pinned real-AgentModes CI coverage must prove the default orchestrator prompt
 path reaches provider request creation with those catalog semantics and without
 persisting raw prompt text or developer-local AgentModes source paths.
 
+MCP catalog materialization is runtime-owned. PromptBuilder may expose bounded
+task-pinned MCP evidence, including normalized tool ids and schema/config
+fingerprints, below runtime safety invariants, compiled Mode Pack permission
+policy, and mode instructions. It must not expose raw MCP server command
+configuration, credentials, environment values, secret headers, or unbounded
+schema text, and MCP descriptions are never permission sources.
+
 MP-3.1 requires prompt budgeting to preserve protected runtime policy and
 task-pinned Mode Pack policy before truncatable context. `ContextMaterializer`
 may reduce materialized ledger summary entries below the requested

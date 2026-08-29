@@ -1080,6 +1080,7 @@ fn modepack_candidate_activation_fingerprint_from_approved_candidate(
                 instruction_fingerprint: policy.instruction_fingerprint.clone(),
                 permissions: mode_permissions_payload(policy),
                 workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
+                mcp_access: mode_mcp_access_payload(policy),
                 allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
                 completion_rules: policy.completion_rules.clone(),
                 policy_fingerprint,

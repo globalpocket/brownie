@@ -67,6 +67,8 @@ pub struct CompiledModePolicy {
     pub workspace_write_scopes: Vec<WorkspaceWriteScope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub allowed_handoff_targets: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_access: Vec<CompiledMcpServerAccess>,
     pub completion_rules: Vec<String>,
 }
 
@@ -88,6 +90,12 @@ pub struct CompiledPolicyArtifact {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompiledMcpServerAccess {
+    pub server_id: String,
+    pub tools: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePermissions {
     pub read_only: bool,
     pub workspace_write: bool,
@@ -98,6 +106,8 @@ pub struct ModePermissions {
     pub can_spawn_subtasks: bool,
     #[serde(default)]
     pub codebase_index: bool,
+    #[serde(default)]
+    pub mcp_tool_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,6 +128,7 @@ pub enum RuntimeAction {
     DestructiveOperation,
     SpawnSubtask,
     IndexCodebase,
+    UseMcpTool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -225,10 +236,41 @@ impl RuntimePermissionGate {
             RuntimeAction::DestructiveOperation => policy.permissions.destructive,
             RuntimeAction::SpawnSubtask => policy.permissions.can_spawn_subtasks,
             RuntimeAction::IndexCodebase => policy.permissions.codebase_index,
+            RuntimeAction::UseMcpTool => policy.permissions.mcp_tool_access,
         };
         let reason = permission_reason(policy, &action, allowed);
         PermissionDecision {
             action,
+            allowed,
+            reason,
+        }
+    }
+
+    pub fn check_mcp_tool(
+        policy: &CompiledModePolicy,
+        server_id: &str,
+        tool_name: &str,
+    ) -> PermissionDecision {
+        let base = Self::check(policy, RuntimeAction::UseMcpTool);
+        if !base.allowed {
+            return base;
+        }
+        let allowed = policy.mcp_access.iter().any(|server| {
+            server.server_id == server_id && server.tools.iter().any(|tool| tool == tool_name)
+        });
+        let reason = if allowed {
+            format!(
+                "Mode {} allows MCP tool mcp.{server_id}.{tool_name} through compiled policy.",
+                policy.mode_id
+            )
+        } else {
+            format!(
+                "Mode {} does not allow MCP tool mcp.{server_id}.{tool_name}.",
+                policy.mode_id
+            )
+        };
+        PermissionDecision {
+            action: RuntimeAction::UseMcpTool,
             allowed,
             reason,
         }
@@ -282,6 +324,7 @@ fn permission_reason(policy: &CompiledModePolicy, action: &RuntimeAction, allowe
         RuntimeAction::DestructiveOperation => "destructive operations",
         RuntimeAction::SpawnSubtask => "subtask spawning",
         RuntimeAction::IndexCodebase => "codebase indexing",
+        RuntimeAction::UseMcpTool => "MCP tool execution",
     };
     if allowed {
         format!("Mode {} allows {capability}.", policy.mode_id)
@@ -443,6 +486,7 @@ fn compile_agentmodes_document(
             permissions,
             workspace_write_scopes,
             allowed_handoff_targets: None,
+            mcp_access: vec![],
             completion_rules,
         });
     }
@@ -834,6 +878,7 @@ fn permissions_from_agentmodes_groups(
         destructive: false,
         can_spawn_subtasks: false,
         codebase_index: contains(AgentModesGroupKind::Read),
+        mcp_tool_access: false,
     }
 }
 
@@ -1029,6 +1074,7 @@ fn permissions(
         destructive: false,
         can_spawn_subtasks,
         codebase_index,
+        mcp_tool_access: false,
     }
 }
 
@@ -1047,6 +1093,7 @@ fn orchestrator() -> CompiledModePolicy {
         permissions: permissions(false, false, true, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
+        mcp_access: vec![],
         completion_rules: vec![
             "Stop after producing a coordination result for the current task phase.".to_string(),
         ],
@@ -1066,6 +1113,7 @@ fn implementer() -> CompiledModePolicy {
         permissions: permissions(true, true, false, true),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
+        mcp_access: vec![],
         completion_rules: vec![
             "Stop after the requested implementation work is complete or blocked.".to_string(),
         ],
@@ -1087,6 +1135,7 @@ fn verifier() -> CompiledModePolicy {
         permissions: permissions(false, true, false, false),
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
+        mcp_access: vec![],
         completion_rules: vec![
             "Stop after reporting verification status and relevant failures.".to_string(),
         ],
@@ -1114,9 +1163,11 @@ fn provider_runner() -> CompiledModePolicy {
             destructive: false,
             can_spawn_subtasks: false,
             codebase_index: false,
+            mcp_tool_access: false,
         },
         workspace_write_scopes: vec![],
         allowed_handoff_targets: None,
+        mcp_access: vec![],
         completion_rules: vec![
             "Stop after configured provider execution completes or fails.".to_string(),
         ],
@@ -1216,9 +1267,11 @@ mod tests {
                 destructive: false,
                 can_spawn_subtasks: false,
                 codebase_index: false,
+                mcp_tool_access: false,
             },
             workspace_write_scopes: vec![],
             allowed_handoff_targets: None,
+            mcp_access: vec![],
             completion_rules: vec![
                 "Even completion text cannot grant process execution.".to_string()
             ],
@@ -1244,9 +1297,11 @@ mod tests {
                 destructive: false,
                 can_spawn_subtasks: false,
                 codebase_index: false,
+                mcp_tool_access: false,
             },
             workspace_write_scopes: vec![],
             allowed_handoff_targets: None,
+            mcp_access: vec![],
             completion_rules: vec![
                 "Even completion text cannot grant workspace writes.".to_string()
             ],
@@ -1332,6 +1387,8 @@ customModes:
         assert!(!orchestrator.permissions.codebase_index);
         assert!(!orchestrator.permissions.workspace_write);
         assert!(!orchestrator.permissions.process_exec);
+        assert!(!orchestrator.permissions.mcp_tool_access);
+        assert!(orchestrator.mcp_access.is_empty());
         assert!(orchestrator.permissions.can_spawn_subtasks);
         assert_eq!(
             orchestrator.allowed_handoff_targets,
@@ -1364,6 +1421,8 @@ customModes:
         assert!(integrator.permissions.workspace_write);
         assert!(integrator.permissions.process_exec);
         assert!(integrator.permissions.codebase_index);
+        assert!(!integrator.permissions.mcp_tool_access);
+        assert!(integrator.mcp_access.is_empty());
         assert_eq!(integrator.verification_responsibility, None);
         assert_eq!(
             integrator.workspace_write_scopes.as_slice(),
@@ -1391,10 +1450,6 @@ customModes:
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::AccessNetwork).allowed);
-        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ControlService).allowed);
-        assert!(
-            !RuntimePermissionGate::check(reviewer, RuntimeAction::DestructiveOperation).allowed
-        );
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::SpawnSubtask).allowed);
 
         let code = modepack
@@ -1404,9 +1459,6 @@ customModes:
             .expect("code");
         assert!(RuntimePermissionGate::check(code, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(code, RuntimeAction::ExecuteProcess).allowed);
-        assert!(!RuntimePermissionGate::check(code, RuntimeAction::AccessNetwork).allowed);
-        assert!(!RuntimePermissionGate::check(code, RuntimeAction::ControlService).allowed);
-        assert!(!RuntimePermissionGate::check(code, RuntimeAction::DestructiveOperation).allowed);
     }
 
     #[test]

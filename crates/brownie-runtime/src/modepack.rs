@@ -3004,6 +3004,7 @@ where
             permissions: mode_permissions_payload(policy),
             workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            mcp_access: mode_mcp_access_payload(policy),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
                 &snapshot.name,
@@ -3664,6 +3665,7 @@ pub(super) fn approve_remote_modepack_candidate(
             permissions: mode_permissions_payload(policy),
             workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            mcp_access: mode_mcp_access_payload(policy),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
                 &recompiled.name,
@@ -4007,6 +4009,7 @@ pub(super) fn verify_modepack_candidate_provenance(
             permissions: mode_permissions_payload(policy),
             workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
             allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+            mcp_access: mode_mcp_access_payload(policy),
             completion_rules: policy.completion_rules.clone(),
             policy_fingerprint: external_modepack_policy_fingerprint(
                 &recompiled.name,
@@ -4785,6 +4788,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
                 permissions: mode_permissions_payload(policy),
                 workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                 allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                mcp_access: mode_mcp_access_payload(policy),
                 completion_rules: policy.completion_rules.clone(),
                 policy_fingerprint,
             }
@@ -4907,6 +4911,7 @@ pub(super) fn build_active_modepack_snapshot(
                 permissions: mode_permissions_payload(policy),
                 workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
                 allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                mcp_access: mode_mcp_access_payload(policy),
                 completion_rules: policy.completion_rules.clone(),
                 policy_fingerprint,
             }
@@ -4962,7 +4967,16 @@ pub(super) fn mode_permissions_payload(policy: &CompiledModePolicy) -> Value {
         "destructive": policy.permissions.destructive,
         "can_spawn_subtasks": policy.permissions.can_spawn_subtasks,
         "codebase_index": policy.permissions.codebase_index,
+        "mcp_tool_access": policy.permissions.mcp_tool_access,
     })
+}
+
+pub(super) fn mode_mcp_access_payload(policy: &CompiledModePolicy) -> Vec<Value> {
+    policy
+        .mcp_access
+        .iter()
+        .map(|access| json!(access))
+        .collect()
 }
 
 pub(super) fn mode_workspace_write_scopes_payload(policy: &CompiledModePolicy) -> Vec<Value> {
