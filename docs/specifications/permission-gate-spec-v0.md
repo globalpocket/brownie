@@ -40,8 +40,13 @@ and `process_exec` bits into the same permission snapshot shape used by built-in
 modes. `RuntimePermissionGate` remains the final authority for `WriteWorkspace`
 and `ExecuteProcess`, including active Mode Pack snapshots and task-pinned
 `ModeResolved` policy. Contradictory `read_only=true` plus side-effect
-capability declarations are invalid, and unsupported external network, service
-control, and destructive capabilities remain fail-closed.
+capability declarations are invalid. External `network_access`,
+`service_control`, and `destructive` declarations are reserved in v0 and are
+narrowed out of effective Mode Pack policy for both trusted active and
+untrusted repository-local sources, so `AccessNetwork`, `ControlService`, and
+`DestructiveOperation` remain denied for external Mode Pack-authored modes.
+Runtime-owned provider transport is separate from generic external Mode Pack
+authority.
 
 M9.2 adds `IndexCodebase` as the runtime action for `codebase.index.build`.
 The check is performed in Rust before scanning. The action allows bounded
