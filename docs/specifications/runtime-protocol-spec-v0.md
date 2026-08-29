@@ -332,6 +332,41 @@ Example request:
 }
 ```
 
+## `tool.execute` with MCP tools
+
+MCP tools are invoked through the existing `tool.execute` JSON-RPC method using
+normalized ids:
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 14,
+  "method": "tool.execute",
+  "params": {
+    "task_id": "task_<uuid>",
+    "mode_id": "reviewer",
+    "tool_id": "mcp.github.search_code",
+    "input": { "query": "bounded" }
+  }
+}
+```
+
+`task_id` is required for MCP tools so Runtime can resolve task-pinned
+`ModeResolved` policy and MCP catalog provenance. Runtime returns
+`Completed`, `Denied`, or `Failed` in the existing `ToolExecuteResult` shape.
+Completed MCP output is bounded to fingerprints, status, content item count,
+server id, tool name, server/config identity fingerprint, protocol version, and
+catalog provenance. Runtime must not return raw MCP server command
+configuration, credentials, environment values, secret headers, unbounded
+schemas, prompts, provider responses, absolute paths, or arbitrary server text
+as authority evidence.
+
+Denied results include unknown task/server/tool, missing `mcp_tool_access`,
+tool outside the Mode Pack allow-list, missing structured server config, or
+catalog mismatch with task-pinned provenance. Failed results include stdio
+process failure, protocol error, malformed schema, oversized schema, and
+timeout. See `mcp-client-spec-v0.md`.
+
 The built-in tool registry requires `ReadWorkspace`; after that primary tool
 permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it
 reads `.brownie/codebase-index/current.json`, query ledger evidence, or file
@@ -1555,12 +1590,22 @@ states: `persisted`, `not_persisted`, or `unknown`.
 When the matching journey checkpoint exists and its task objective fingerprint
 matches, the result returns bounded task/run/journey handles, the journey
 fingerprint, and a persisted-identity recommendation for the existing scoped
-resume contract. When no matching journey checkpoint exists, the result returns
-`not_persisted` so the supervisor may retry the original
-`brownie run "<objective>"` without violating objective idempotency. Conflicting
-checkpoint identity or objective fingerprint returns `unknown` and no next
-invocation. The probe is read-only and does not expose raw objectives, prompts,
-provider responses, file content, command output, environment values, or paths.
+resume contract. New journey admission also stores the bounded recovery
+identity in the durable task record before the journey checkpoint is written.
+When no matching journey checkpoint exists, the runtime must inspect durable
+task records before returning `not_persisted`. If exactly one task record
+contains a matching recovery identity, the result is `persisted` with bounded
+task/run handles even though the journey checkpoint crash window was not
+completed. If durable task evidence conflicts, appears duplicated, or an older
+task without recovery identity has the same objective fingerprint, the result is
+`unknown` and exposes no task/run handles. `not_persisted` is returned only when
+runtime-owned durable evidence proves that neither a matching journey checkpoint
+nor a matching or conflicting task admission artifact exists for the recovery
+identity, so the supervisor may retry the original `brownie run "<objective>"`
+without violating objective idempotency. Conflicting checkpoint identity or
+objective fingerprint also returns `unknown` and no next invocation. The probe
+is read-only, idempotent, and does not expose raw objectives, prompts, provider
+responses, file content, command output, environment values, or paths.
 
 ## M50.2 headless journey route resume
 

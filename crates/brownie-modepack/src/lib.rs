@@ -6,10 +6,11 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use brownie_agentmodes::{
-    CompiledModePolicy, CompiledPolicyArtifact, ModePermissions, WorkspaceWriteScope,
-    HANDOFF_TARGET_ALL_MODEPACK_MODES,
+    CompiledMcpServerAccess, CompiledModePolicy, CompiledPolicyArtifact, ModePermissions,
+    WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
 pub const WORKSPACE_MODEPACK_PATH: &str = ".brownie/modepack.json";
@@ -20,6 +21,13 @@ const MAX_MODE_ID_REFERENCE_CHARS: usize = 64;
 const MAX_POLICY_ARTIFACTS: usize = 64;
 const MAX_POLICY_ARTIFACT_CONTENT_CHARS: usize = 32_000;
 const MAX_POLICY_ARTIFACT_PATH_CHARS: usize = 256;
+pub const MAX_MCP_SERVERS: usize = 8;
+pub const MAX_MCP_TOOLS_PER_MODE_SERVER: usize = 32;
+pub const MAX_MCP_SERVER_ID_CHARS: usize = 64;
+pub const MAX_MCP_TOOL_NAME_CHARS: usize = 96;
+pub const MAX_MCP_COMMAND_CHARS: usize = 512;
+pub const MAX_MCP_ARGS: usize = 32;
+pub const MAX_MCP_ARG_CHARS: usize = 512;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModePackEntrypoints {
@@ -41,6 +49,7 @@ pub struct ModePackSnapshot {
     pub capability_ceiling: ModePackCapabilityCeiling,
     pub entrypoints: ModePackEntrypoints,
     pub global_policy_artifacts: Vec<CompiledPolicyArtifact>,
+    pub mcp_servers: Vec<ModePackMcpServerConfig>,
     pub modes: Vec<CompiledModePolicy>,
 }
 
@@ -59,6 +68,7 @@ pub struct ModePackCapabilityCeiling {
     pub service_control: bool,
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
+    pub mcp_tool_access: bool,
 }
 
 impl Default for ModePackCapabilityCeiling {
@@ -66,12 +76,22 @@ impl Default for ModePackCapabilityCeiling {
         Self {
             workspace_write: true,
             process_exec: true,
-            network_access: false,
-            service_control: false,
-            destructive: false,
+            network_access: true,
+            service_control: true,
+            destructive: true,
             can_spawn_subtasks: true,
+            mcp_tool_access: true,
         }
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModePackMcpServerConfig {
+    pub server_id: String,
+    pub transport: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub config_identity_fingerprint: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,7 +137,17 @@ struct RawModePack {
     entrypoints: RawModePackEntrypoints,
     #[serde(default)]
     global_policy_artifacts: Vec<CompiledPolicyArtifact>,
+    #[serde(default)]
+    mcp_servers: std::collections::BTreeMap<String, RawMcpServerConfig>,
     modes: Vec<RawModePolicy>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawMcpServerConfig {
+    transport: String,
+    command: String,
+    #[serde(default)]
+    args: Vec<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -147,7 +177,22 @@ struct RawModePolicy {
     #[serde(default)]
     allowed_handoff_targets: Vec<String>,
     #[serde(default)]
+    mcp: RawModeMcpAccess,
+    #[serde(default)]
     completion_rules: Vec<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct RawModeMcpAccess {
+    #[serde(default)]
+    servers: Vec<RawModeMcpServerAccess>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawModeMcpServerAccess {
+    id: String,
+    #[serde(default)]
+    tools: Vec<String>,
 }
 
 pub fn load_workspace_modepack(
@@ -208,6 +253,11 @@ fn compile_snapshot(
         bail!("modepack must contain at least one mode");
     }
 
+    let mcp_servers = validate_mcp_servers(raw.mcp_servers)?;
+    let mcp_server_ids = mcp_servers
+        .iter()
+        .map(|server| server.server_id.clone())
+        .collect::<HashSet<_>>();
     let mut seen = HashSet::new();
     let mut modes = Vec::with_capacity(raw.modes.len());
     for raw_mode in raw.modes {
@@ -226,6 +276,12 @@ fn compile_snapshot(
         };
         let workspace_write_scopes = if permissions.workspace_write {
             raw_mode.workspace_write_scopes
+        } else {
+            Vec::new()
+        };
+        let mcp_access = validate_mode_mcp_access(&mode_id, raw_mode.mcp, &mcp_server_ids)?;
+        let mcp_access = if permissions.mcp_tool_access {
+            mcp_access
         } else {
             Vec::new()
         };
@@ -257,6 +313,7 @@ fn compile_snapshot(
             permissions,
             workspace_write_scopes,
             allowed_handoff_targets,
+            mcp_access,
             completion_rules: raw_mode
                 .completion_rules
                 .into_iter()
@@ -275,6 +332,7 @@ fn compile_snapshot(
         capability_ceiling: options.capability_ceiling,
         entrypoints,
         global_policy_artifacts,
+        mcp_servers,
         modes,
     })
 }
@@ -294,14 +352,21 @@ fn effective_permissions(
     let process_exec = declared.process_exec
         && trusted_side_effect_source
         && options.capability_ceiling.process_exec;
-    // In the v0 external Mode Pack contract these high-risk bits are reserved
-    // protocol fields, not grantable runtime execution authority.
-    let network_access = false;
-    let service_control = false;
-    let destructive = false;
+    let network_access = declared.network_access
+        && trusted_side_effect_source
+        && options.capability_ceiling.network_access;
+    let service_control = declared.service_control
+        && trusted_side_effect_source
+        && options.capability_ceiling.service_control;
+    let destructive = declared.destructive
+        && trusted_side_effect_source
+        && options.capability_ceiling.destructive;
     let can_spawn_subtasks = declared.can_spawn_subtasks
         && trusted_side_effect_source
         && options.capability_ceiling.can_spawn_subtasks;
+    let mcp_tool_access = declared.mcp_tool_access
+        && trusted_side_effect_source
+        && options.capability_ceiling.mcp_tool_access;
     ModePermissions {
         read_only: declared.read_only
             || !(workspace_write
@@ -309,7 +374,8 @@ fn effective_permissions(
                 || network_access
                 || service_control
                 || destructive
-                || can_spawn_subtasks),
+                || can_spawn_subtasks
+                || mcp_tool_access),
         workspace_write,
         process_exec,
         network_access,
@@ -317,6 +383,7 @@ fn effective_permissions(
         destructive,
         can_spawn_subtasks,
         codebase_index: declared.codebase_index,
+        mcp_tool_access,
     }
 }
 
@@ -326,6 +393,144 @@ fn non_empty(field: &str, value: String) -> Result<String> {
         bail!("modepack {field} must not be empty");
     }
     Ok(trimmed.to_string())
+}
+
+fn validate_mcp_servers(
+    raw: std::collections::BTreeMap<String, RawMcpServerConfig>,
+) -> Result<Vec<ModePackMcpServerConfig>> {
+    if raw.len() > MAX_MCP_SERVERS {
+        bail!("modepack mcp_servers exceeds server limit");
+    }
+    raw.into_iter()
+        .map(|(server_id, config)| {
+            let server_id = validate_mcp_identifier(
+                "mcp_servers server id",
+                &server_id,
+                MAX_MCP_SERVER_ID_CHARS,
+            )?;
+            let transport = non_empty("mcp_servers[].transport", config.transport)?;
+            if transport != "stdio" {
+                bail!("modepack mcp_servers[{server_id}].transport is unsupported: {transport}");
+            }
+            let command = validate_mcp_text(
+                "mcp_servers[].command",
+                config.command,
+                MAX_MCP_COMMAND_CHARS,
+            )?;
+            if config.args.len() > MAX_MCP_ARGS {
+                bail!("modepack mcp_servers[{server_id}].args exceeds argument limit");
+            }
+            let args = config
+                .args
+                .into_iter()
+                .map(|arg| validate_mcp_text("mcp_servers[].args[]", arg, MAX_MCP_ARG_CHARS))
+                .collect::<Result<Vec<_>>>()?;
+            let config_identity_fingerprint =
+                mcp_config_identity_fingerprint(&server_id, &transport, &command, &args);
+            Ok(ModePackMcpServerConfig {
+                server_id,
+                transport,
+                command,
+                args,
+                config_identity_fingerprint,
+            })
+        })
+        .collect()
+}
+
+fn validate_mode_mcp_access(
+    mode_id: &str,
+    raw: RawModeMcpAccess,
+    known_servers: &HashSet<String>,
+) -> Result<Vec<CompiledMcpServerAccess>> {
+    if raw.servers.len() > MAX_MCP_SERVERS {
+        bail!("modepack mode {mode_id} mcp.servers exceeds server limit");
+    }
+    let mut seen_servers = HashSet::new();
+    raw.servers
+        .into_iter()
+        .map(|server| {
+            let server_id =
+                validate_mcp_identifier("mcp.servers[].id", &server.id, MAX_MCP_SERVER_ID_CHARS)?;
+            if !known_servers.contains(&server_id) {
+                bail!("modepack mode {mode_id} references unknown MCP server: {server_id}");
+            }
+            if !seen_servers.insert(server_id.clone()) {
+                bail!("modepack mode {mode_id} has duplicate MCP server: {server_id}");
+            }
+            if server.tools.is_empty() {
+                bail!(
+                    "modepack mode {mode_id} MCP server {server_id} must allow at least one tool"
+                );
+            }
+            if server.tools.len() > MAX_MCP_TOOLS_PER_MODE_SERVER {
+                bail!("modepack mode {mode_id} MCP server {server_id} exceeds tool limit");
+            }
+            let mut seen_tools = HashSet::new();
+            let mut tools = server
+                .tools
+                .into_iter()
+                .map(|tool| {
+                    validate_mcp_identifier("mcp.servers[].tools[]", &tool, MAX_MCP_TOOL_NAME_CHARS)
+                })
+                .collect::<Result<Vec<_>>>()?;
+            tools.sort();
+            for tool in &tools {
+                if !seen_tools.insert(tool.clone()) {
+                    bail!(
+                        "modepack mode {mode_id} MCP server {server_id} has duplicate tool: {tool}"
+                    );
+                }
+            }
+            Ok(CompiledMcpServerAccess { server_id, tools })
+        })
+        .collect()
+}
+
+fn validate_mcp_identifier(field: &str, value: &str, max_chars: usize) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        bail!("modepack {field} must not be empty");
+    }
+    if value.chars().count() > max_chars {
+        bail!("modepack {field} exceeds length limit");
+    }
+    if !value
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+    {
+        bail!("modepack {field} must be a bounded MCP identifier");
+    }
+    Ok(value.to_string())
+}
+
+fn validate_mcp_text(field: &str, value: String, max_chars: usize) -> Result<String> {
+    let value = non_empty(field, value)?;
+    if value.chars().count() > max_chars || value.contains('\n') || value.contains('\r') {
+        bail!("modepack {field} is not a bounded single-line value");
+    }
+    Ok(value)
+}
+
+fn mcp_config_identity_fingerprint(
+    server_id: &str,
+    transport: &str,
+    command: &str,
+    args: &[String],
+) -> String {
+    let canonical = serde_json::json!({
+        "version": "modepack_mcp_server_config_identity_v1",
+        "server_id": server_id,
+        "transport": transport,
+        "command": command,
+        "args": args,
+    });
+    format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))
+}
+
+fn hex_sha256(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    digest.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn validate_prompt_section(
@@ -407,7 +612,9 @@ fn validate_policy_artifact_relative_path(value: String) -> Result<String> {
 }
 
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
-    if permissions.read_only && (permissions.workspace_write || permissions.process_exec) {
+    if permissions.read_only
+        && (permissions.workspace_write || permissions.process_exec || permissions.mcp_tool_access)
+    {
         bail!("mode {mode_id} declares read_only=true with side-effect capabilities");
     }
     Ok(())
@@ -972,7 +1179,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_modepack_options_preserve_grantable_side_effects_with_ceiling() {
+    fn trusted_modepack_options_preserve_declared_side_effects_with_ceiling() {
         let content = r#"{
           "name": "trusted-agentmodes",
           "schema_version": 1,
@@ -1008,6 +1215,7 @@ mod tests {
                     service_control: true,
                     destructive: false,
                     can_spawn_subtasks: true,
+                    mcp_tool_access: true,
                 },
             },
         )
@@ -1021,7 +1229,7 @@ mod tests {
         assert!(integrator.permissions.workspace_write);
         assert!(!integrator.permissions.process_exec);
         assert!(!integrator.permissions.network_access);
-        assert!(!integrator.permissions.service_control);
+        assert!(integrator.permissions.service_control);
         assert!(!integrator.permissions.destructive);
         assert!(integrator.permissions.can_spawn_subtasks);
         assert!(integrator.permissions.codebase_index);
@@ -1029,52 +1237,6 @@ mod tests {
             integrator.allowed_handoff_targets.as_deref(),
             Some([HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()].as_slice())
         );
-    }
-
-    #[test]
-    fn trusted_modepack_options_narrow_reserved_side_effect_permissions() {
-        let content = r#"{
-          "name": "trusted-agentmodes",
-          "schema_version": 1,
-          "modes": [
-            {
-              "mode_id": "external-network-service-destructive",
-              "display_name": "External Reserved",
-              "role_definition": "Should not gain reserved authority from declarations.",
-              "permissions": {
-                "read_only": false,
-                "workspace_write": false,
-                "process_exec": false,
-                "network_access": true,
-                "service_control": true,
-                "destructive": true,
-                "can_spawn_subtasks": false,
-                "codebase_index": true
-              }
-            }
-          ]
-        }"#;
-
-        let snapshot = load_modepack_from_str_with_options(
-            content,
-            ".brownie/modepack.json",
-            ModePackLoadOptions::trusted_signed_active_modepack(),
-        )
-        .expect("trusted reserved declarations should compile as narrowed policy");
-
-        let policy = &snapshot.modes[0];
-        assert_eq!(
-            snapshot.source_trust,
-            ModePackSourceTrust::TrustedSignedActiveModePack
-        );
-        assert!(policy.permissions.read_only);
-        assert!(!policy.permissions.network_access);
-        assert!(!policy.permissions.service_control);
-        assert!(!policy.permissions.destructive);
-        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::AccessNetwork).allowed);
-        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::ControlService).allowed);
-        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::DestructiveOperation).allowed);
-        assert!(policy.permissions.codebase_index);
     }
 
     #[test]
@@ -1598,5 +1760,148 @@ customModes:
             .to_string();
 
         assert!(error.contains("read_only=true with side-effect capabilities"));
+    }
+
+    #[test]
+    fn trusted_modepack_preserves_structured_mcp_allow_list() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "github": {
+              "transport": "stdio",
+              "command": "/bin/echo",
+              "args": ["{}"]
+            }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Review with a bounded MCP catalog.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "github", "tools": ["get_file_contents", "search_code"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let snapshot = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted structured MCP policy");
+        let policy = &snapshot.modes[0];
+
+        assert!(policy.permissions.mcp_tool_access);
+        assert_eq!(policy.mcp_access[0].server_id, "github");
+        assert_eq!(
+            policy.mcp_access[0].tools,
+            vec!["get_file_contents".to_string(), "search_code".to_string()]
+        );
+        assert!(snapshot.mcp_servers[0]
+            .config_identity_fingerprint
+            .starts_with("sha256:"));
+    }
+
+    #[test]
+    fn untrusted_workspace_modepack_cannot_grant_mcp_execution() {
+        let modepack = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "local": { "transport": "stdio", "command": "/bin/echo" }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Repository prose cannot grant MCP.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "local", "tools": ["search"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+
+        let snapshot = load_modepack_from_str_with_options(
+            modepack,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::untrusted_repository_local(),
+        )
+        .expect("untrusted structured MCP policy narrows");
+        let policy = &snapshot.modes[0];
+
+        assert!(!policy.permissions.mcp_tool_access);
+        assert!(policy.mcp_access.is_empty());
+    }
+
+    #[test]
+    fn rejects_unknown_or_duplicate_mcp_policy_entries() {
+        let duplicate_tool = r#"{
+          "name": "mcp-pack",
+          "schema_version": 1,
+          "mcp_servers": {
+            "github": { "transport": "stdio", "command": "/bin/echo" }
+          },
+          "modes": [
+            {
+              "mode_id": "reviewer",
+              "display_name": "Reviewer",
+              "role_definition": "Duplicate MCP tools fail closed.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": false,
+                "service_control": false,
+                "destructive": false,
+                "can_spawn_subtasks": false,
+                "mcp_tool_access": true
+              },
+              "mcp": {
+                "servers": [
+                  { "id": "github", "tools": ["search", "search"] }
+                ]
+              }
+            }
+          ]
+        }"#;
+        let error = load_modepack_from_str(duplicate_tool, ".brownie/modepack.json")
+            .expect_err("duplicate tool should fail")
+            .to_string();
+        assert!(error.contains("duplicate tool"));
+
+        let unknown_server =
+            duplicate_tool.replace("\"github\", \"tools\"", "\"missing\", \"tools\"");
+        let error = load_modepack_from_str(&unknown_server, ".brownie/modepack.json")
+            .expect_err("unknown server should fail")
+            .to_string();
+        assert!(error.contains("unknown MCP server"));
     }
 }

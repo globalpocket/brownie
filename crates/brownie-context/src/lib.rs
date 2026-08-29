@@ -392,6 +392,18 @@ fn format_mode_policy_summary(payload: &serde_json::Value) -> String {
         })
         .filter(|targets| !targets.is_empty())
         .unwrap_or_else(|| "- <none>".to_string());
+    let mcp_tool_catalogs = payload
+        .get("mcp_tool_catalogs")
+        .and_then(|value| value.as_array())
+        .map(|catalogs| {
+            catalogs
+                .iter()
+                .filter_map(format_mcp_tool_catalog)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|catalogs| !catalogs.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
 
     format!(
         "Mode Policy:
@@ -407,7 +419,10 @@ codebase_index: {}
 network_access: {}
 service_control: {}
 destructive: {}
-read_only: {}",
+read_only: {}
+mcp_tool_access: {}
+mcp_tool_catalogs:
+{mcp_tool_catalogs}",
         permission_bool("workspace_write"),
         permission_bool("process_exec"),
         permission_bool("can_spawn_subtasks"),
@@ -415,7 +430,8 @@ read_only: {}",
         permission_bool("network_access"),
         permission_bool("service_control"),
         permission_bool("destructive"),
-        permission_bool("read_only")
+        permission_bool("read_only"),
+        permission_bool("mcp_tool_access")
     )
 }
 
@@ -427,6 +443,37 @@ fn format_workspace_write_scope(scope: &serde_json::Value) -> Option<String> {
         .unwrap_or("<none>");
     Some(format!(
         "- file_regex: {file_regex}\n  description: {description}"
+    ))
+}
+
+fn format_mcp_tool_catalog(catalog: &serde_json::Value) -> Option<String> {
+    let server_id = catalog.get("server_id")?.as_str()?;
+    let protocol_version = catalog.get("protocol_version")?.as_str()?;
+    let config_fingerprint = catalog
+        .get("server_config_identity_fingerprint")?
+        .as_str()?;
+    let catalog_fingerprint = catalog.get("catalog_fingerprint")?.as_str()?;
+    let tools = catalog
+        .get("tools")?
+        .as_array()?
+        .iter()
+        .filter_map(format_mcp_tool_catalog_entry)
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(format!(
+        "- server_id: {server_id}\n  protocol_version: {protocol_version}\n  server_config_identity_fingerprint: {config_fingerprint}\n  catalog_fingerprint: {catalog_fingerprint}\n  tools:\n{tools}"
+    ))
+}
+
+fn format_mcp_tool_catalog_entry(tool: &serde_json::Value) -> Option<String> {
+    let tool_id = tool.get("tool_id")?.as_str()?;
+    let input_schema_fingerprint = tool.get("input_schema_fingerprint")?.as_str()?;
+    let output_schema_fingerprint = tool
+        .get("output_schema_fingerprint")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
+    Some(format!(
+        "  - tool_id: {tool_id}\n    input_schema_fingerprint: {input_schema_fingerprint}\n    output_schema_fingerprint: {output_schema_fingerprint}"
     ))
 }
 

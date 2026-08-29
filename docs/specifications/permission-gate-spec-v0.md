@@ -14,8 +14,15 @@ Phase 1.4 introduces the runtime permission gate foundation. The gate is a runti
 - `DestructiveOperation` — controlled by `destructive`.
 - `SpawnSubtask` — controlled by `can_spawn_subtasks`.
 - `IndexCodebase` — controlled by `codebase_index`.
+- `UseMcpTool` — controlled by `mcp_tool_access` plus structured MCP allow-list provenance.
 
 The `read_only` field is informational for summaries. Individual capabilities are authoritative for gate decisions. Prompt text, role definitions, and completion rules cannot grant permissions that are not present in the compiled mode policy.
+
+MCP tool execution is a runtime action, not a text-derived capability. A mode
+must have compiled `mcp_tool_access`, the server/tool pair must appear in the
+structured Mode Pack allow-list, and the current catalog entry must match
+task-pinned MCP provenance before Runtime may call a normalized
+`mcp.<server_id>.<tool_name>` tool. See `mcp-client-spec-v0.md`.
 
 MP-3.1 adds scoped workspace-write checks for compiled AgentModes policy. When a
 mode has `workspace_write=true` and no `workspace_write_scopes`, the action bit
@@ -40,13 +47,8 @@ and `process_exec` bits into the same permission snapshot shape used by built-in
 modes. `RuntimePermissionGate` remains the final authority for `WriteWorkspace`
 and `ExecuteProcess`, including active Mode Pack snapshots and task-pinned
 `ModeResolved` policy. Contradictory `read_only=true` plus side-effect
-capability declarations are invalid. External `network_access`,
-`service_control`, and `destructive` declarations are reserved in v0 and are
-narrowed out of effective Mode Pack policy for both trusted active and
-untrusted repository-local sources, so `AccessNetwork`, `ControlService`, and
-`DestructiveOperation` remain denied for external Mode Pack-authored modes.
-Runtime-owned provider transport is separate from generic external Mode Pack
-authority.
+capability declarations are invalid, and unsupported external network, service
+control, and destructive capabilities remain fail-closed.
 
 M9.2 adds `IndexCodebase` as the runtime action for `codebase.index.build`.
 The check is performed in Rust before scanning. The action allows bounded

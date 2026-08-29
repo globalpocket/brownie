@@ -2020,6 +2020,8 @@ pub struct ActiveModePackPolicySnapshot {
     #[serde(default)]
     pub workspace_write_scopes: Vec<serde_json::Value>,
     pub allowed_handoff_targets: Option<Vec<String>>,
+    #[serde(default)]
+    pub mcp_access: Vec<serde_json::Value>,
     pub completion_rules: Vec<String>,
     pub policy_fingerprint: String,
 }

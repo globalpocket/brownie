@@ -107,6 +107,24 @@ The store defines future task-scoped event kinds: `ToolExecutionRequested`, `Too
 
 Standalone `tool.execute` does not write run ledger events in Phase 1.7 because it is not attached to a task/run. A future task-scoped execution path may use these event kinds when automatic execution is introduced.
 
+## MCP tools
+
+MCP tools use the same `tool.execute` boundary with normalized ids of the form
+`mcp.<server_id>.<tool_name>`. Unlike older standalone native tool calls, MCP
+execution requires `task_id` so Runtime can use the task-pinned `ModeResolved`
+policy and MCP catalog provenance admitted for that task.
+
+Runtime denies MCP execution when the task is unknown, the mode lacks
+`UseMcpTool`/`mcp_tool_access`, the server/tool pair is absent from the compiled
+Mode Pack allow-list, the structured server configuration is missing, or the
+current `tools/list` catalog no longer matches the task-pinned schema/config
+fingerprints. `tools/call` is attempted only after those checks pass.
+
+MCP stdio server launch is runtime-owned and request-scoped in this phase. MCP
+server descriptions, schemas, command names, response text, and AgentModes prose
+cannot grant permission or widen tool routing authority. See
+`mcp-client-spec-v0.md`.
+
 ## Phase 1.8 task-scoped read-only execution
 
 Phase 1.8 introduces task-scoped execution for approved assistant `workspace.read` tool intents only. Assistant tool intent requests may include an `input` object; omitted input is treated as `{}`, and non-object input is rejected before permission evaluation.

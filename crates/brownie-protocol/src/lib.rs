@@ -150,6 +150,8 @@ pub struct ModePermissionsSummary {
     pub destructive: bool,
     pub can_spawn_subtasks: bool,
     pub codebase_index: bool,
+    #[serde(default)]
+    pub mcp_tool_access: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -648,6 +650,7 @@ pub enum RuntimeActionName {
     DestructiveOperation,
     SpawnSubtask,
     IndexCodebase,
+    UseMcpTool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -739,6 +742,8 @@ pub struct ToolSummary {
 pub struct ToolExecuteParams {
     pub mode_id: String,
     pub tool_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
     pub input: serde_json::Value,
 }
 
