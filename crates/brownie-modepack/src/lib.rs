@@ -499,8 +499,9 @@ fn validate_handoff_targets(
 mod tests {
     use super::*;
     use brownie_agentmodes::{
-        compile_agentmodes_modepack_to_json, AgentModesCompileOptions, RuntimeAction,
-        RuntimePermissionGate,
+        compile_agentmodes_modepack_from_root, compile_agentmodes_modepack_to_json,
+        AgentModesCompileOptions, RuntimeAction, RuntimePermissionGate,
+        CURRENT_AGENTMODES_COMPATIBILITY_BASELINE,
     };
 
     #[test]
@@ -1210,21 +1211,12 @@ customModes:
 
     #[test]
     fn validates_current_agentmodes_pack_scale_when_source_is_available() {
-        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
-        if !modes_dir.exists() {
+        let Some(source_root) = current_agentmodes_root_for_test() else {
             return;
-        }
-        let mut documents = Vec::new();
-        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
-                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
-            }
-        }
-        documents.sort();
-        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
-        let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_yaml_documents(
-            document_refs,
+        };
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        let modepack = compile_agentmodes_modepack_from_root(
+            &source_root,
             AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
                 delegation_coordinators: vec![
@@ -1237,10 +1229,37 @@ customModes:
         )
         .expect("compile current AgentModes mode pack");
         let json = serde_json::to_string_pretty(&modepack).expect("serialize modepack");
-        let snapshot =
-            load_modepack_from_str(&json, ".brownie/modepack.json").expect("validate modepack");
+        let snapshot = load_modepack_from_str_with_options(
+            &json,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("validate modepack");
 
-        assert!(snapshot.modes.len() > MAX_HANDOFF_TARGETS);
+        assert_eq!(snapshot.modes.len(), baseline.expected_compiled_mode_count);
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "rule"),
+            baseline.expected_rule_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "skill"),
+            baseline.expected_skill_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "command"),
+            baseline.expected_command_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&snapshot.global_policy_artifacts, "contract"),
+            baseline.expected_contract_count
+        );
+        assert!(snapshot
+            .global_policy_artifacts
+            .iter()
+            .any(
+                |artifact| artifact.relative_path == "skills/tdd-quality-gate/SKILL.md"
+                    && artifact.content_fingerprint.starts_with("sha256:")
+            ));
         let orchestrator = snapshot
             .modes
             .iter()
@@ -1257,6 +1276,154 @@ customModes:
             .expect("user response composer");
         assert!(!RuntimePermissionGate::check(composer, RuntimeAction::SpawnSubtask).allowed);
         assert_eq!(composer.allowed_handoff_targets, None);
+    }
+
+    static CURRENT_AGENTMODES_CHECKOUT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn current_agentmodes_root_for_test() -> Option<std::path::PathBuf> {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        let explicit_root = std::env::var_os(baseline.root_env).map(std::path::PathBuf::from);
+        let required = current_agentmodes_required_for_test();
+
+        if let Some(root) = explicit_root {
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        if required {
+            let _guard = CURRENT_AGENTMODES_CHECKOUT_LOCK
+                .lock()
+                .expect("AgentModes compatibility checkout lock");
+            let root = current_agentmodes_managed_checkout_for_test("brownie-modepack");
+            prepare_current_agentmodes_checkout_for_test(&root);
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
+        if !root.join("modes").is_dir()
+            || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
+        {
+            return None;
+        }
+
+        Some(root)
+    }
+
+    fn current_agentmodes_required_for_test() -> bool {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        truthy_env(baseline.required_env) || truthy_env("CI")
+    }
+
+    fn truthy_env(name: &str) -> bool {
+        std::env::var(name)
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    }
+
+    fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        assert!(
+            root.join("modes").is_dir(),
+            "{} must point to a checked-out {} repository",
+            baseline.root_env,
+            baseline.repository
+        );
+        assert_eq!(
+            current_agentmodes_revision(root).as_deref(),
+            Some(baseline.revision),
+            "AgentModes compatibility baseline revision drifted"
+        );
+        assert!(
+            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
+            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+        );
+    }
+
+    fn current_agentmodes_managed_checkout_for_test(namespace: &str) -> std::path::PathBuf {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        std::env::temp_dir()
+            .join("brownie-agentmodes-compat")
+            .join(format!(
+                "{}-{}-{}",
+                namespace,
+                std::process::id(),
+                baseline.revision
+            ))
+    }
+
+    fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
+            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+        {
+            return;
+        }
+        if root.exists() {
+            std::fs::remove_dir_all(root).expect("remove stale AgentModes compatibility checkout");
+        }
+        std::fs::create_dir_all(root.parent().expect("AgentModes checkout parent"))
+            .expect("create AgentModes compatibility checkout parent");
+        let repository_url = format!("https://github.com/{}.git", baseline.repository);
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("clone")
+                .arg("--no-checkout")
+                .arg(&repository_url)
+                .arg(root),
+            "clone AgentModes compatibility baseline",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("fetch")
+                .arg("--depth")
+                .arg("1")
+                .arg("origin")
+                .arg(baseline.revision),
+            "fetch AgentModes compatibility baseline revision",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("checkout")
+                .arg("--detach")
+                .arg(baseline.revision),
+            "checkout AgentModes compatibility baseline revision",
+        );
+    }
+
+    fn assert_git_status_for_test(command: &mut std::process::Command, label: &str) {
+        let status = command
+            .status()
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert!(status.success(), "{label} failed with status {status}");
+    }
+
+    fn current_agentmodes_revision(root: &std::path::Path) -> Option<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn policy_artifact_category_count(
+        artifacts: &[CompiledPolicyArtifact],
+        category: &str,
+    ) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.category == category)
+            .count()
     }
 
     #[test]

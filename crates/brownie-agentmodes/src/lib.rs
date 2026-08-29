@@ -14,11 +14,38 @@ pub const COMPATIBILITY_TARGET: &str = "AgentModes";
 pub const DEFAULT_MODE_ID: &str = "orchestrator";
 pub const AGENTMODES_MODEPACK_SCHEMA_VERSION: u64 = 1;
 pub const HANDOFF_TARGET_ALL_MODEPACK_MODES: &str = "$modepack/*";
+pub const CURRENT_AGENTMODES_COMPATIBILITY_BASELINE: AgentModesCompatibilityBaseline =
+    AgentModesCompatibilityBaseline {
+        repository: "globalpocket/AgentModes",
+        revision: "39c7391cf6e711f0a21b14c21bdf557cd12d701e",
+        root_env: "BROWNIE_AGENTMODES_COMPAT_ROOT",
+        required_env: "BROWNIE_AGENTMODES_COMPAT_REQUIRED",
+        expected_mode_file_count: 28,
+        expected_compiled_mode_count: 86,
+        expected_rule_count: 1,
+        expected_skill_count: 7,
+        expected_command_count: 5,
+        expected_contract_count: 13,
+    };
 const MAX_MODE_ID_CHARS: usize = 64;
 const MAX_MODE_TEXT_CHARS: usize = 32_000;
 const MAX_POLICY_ARTIFACTS: usize = 64;
 const MAX_POLICY_ARTIFACT_CONTENT_CHARS: usize = 32_000;
 const MAX_POLICY_ARTIFACT_PATH_CHARS: usize = 256;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentModesCompatibilityBaseline {
+    pub repository: &'static str,
+    pub revision: &'static str,
+    pub root_env: &'static str,
+    pub required_env: &'static str,
+    pub expected_mode_file_count: usize,
+    pub expected_compiled_mode_count: usize,
+    pub expected_rule_count: usize,
+    pub expected_skill_count: usize,
+    pub expected_command_count: usize,
+    pub expected_contract_count: usize,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompiledModePolicy {
@@ -293,24 +320,62 @@ pub fn compile_agentmodes_modepack_to_json(
     serde_json::to_string_pretty(&modepack).context("failed to serialize AgentModes Mode Pack JSON")
 }
 
+pub fn compile_agentmodes_modepack_from_root(
+    root: impl AsRef<Path>,
+    mut options: AgentModesCompileOptions,
+) -> Result<AgentModesModePack> {
+    if !options.global_policy_artifacts.is_empty() {
+        bail!("AgentModes root compilation owns global_policy_artifacts");
+    }
+    let root = root.as_ref();
+    options.global_policy_artifacts = compile_agentmodes_policy_artifacts_from_root(root)?;
+    let documents = collect_agentmodes_mode_yaml_documents_from_root(root)?;
+    let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
+    compile_agentmodes_modepack_from_yaml_documents(document_refs, options)
+}
+
 pub fn compile_agentmodes_policy_artifacts_from_root(
     root: impl AsRef<Path>,
 ) -> Result<Vec<CompiledPolicyArtifact>> {
     let root = root.as_ref();
     let mut files = Vec::new();
-    for (category, directory) in [
-        ("rule", "rules"),
-        ("skill", "skills"),
-        ("command", "commands"),
-        ("contract", "docs/contracts"),
-    ] {
-        collect_policy_artifact_files(root, category, directory, &mut files)?;
-    }
+    collect_direct_markdown_policy_artifact_files(root, "rule", "rules", &mut files)?;
+    collect_recursive_skill_policy_artifact_files(root, &mut files)?;
+    collect_direct_markdown_policy_artifact_files(root, "command", "commands", &mut files)?;
+    collect_direct_markdown_policy_artifact_files(root, "contract", "docs/contracts", &mut files)?;
     files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
     if files.len() > MAX_POLICY_ARTIFACTS {
         bail!("AgentModes policy artifact count exceeds limit");
     }
-    Ok(files)
+    validate_agentmodes_policy_artifacts(files)
+}
+
+fn collect_agentmodes_mode_yaml_documents_from_root(root: &Path) -> Result<Vec<String>> {
+    let dir = root.join("modes");
+    ensure_policy_artifact_directory_safe(&dir, "modes")?;
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&dir).with_context(|| "failed to read AgentModes modes directory")? {
+        let path = entry
+            .with_context(|| "failed to read AgentModes modes directory")?
+            .path();
+        let metadata = fs::symlink_metadata(&path).with_context(|| {
+            format!("failed to inspect AgentModes mode file {}", path.display())
+        })?;
+        if metadata.file_type().is_symlink() {
+            bail!("AgentModes mode file must not be a symlink");
+        }
+        if metadata.is_file() && path.extension().and_then(|value| value.to_str()) == Some("yaml") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    paths
+        .into_iter()
+        .map(|path| {
+            fs::read_to_string(&path)
+                .with_context(|| format!("failed to read AgentModes mode file {}", path.display()))
+        })
+        .collect()
 }
 
 fn compile_agentmodes_document(
@@ -423,7 +488,7 @@ fn compile_agentmodes_document(
     })
 }
 
-fn collect_policy_artifact_files(
+fn collect_direct_markdown_policy_artifact_files(
     root: &Path,
     category: &str,
     directory: &str,
@@ -433,6 +498,7 @@ fn collect_policy_artifact_files(
     if !dir.exists() {
         return Ok(());
     }
+    ensure_policy_artifact_directory_safe(&dir, directory)?;
     let mut paths = Vec::new();
     for entry in fs::read_dir(&dir)
         .with_context(|| format!("failed to read AgentModes policy directory {directory}"))?
@@ -440,31 +506,124 @@ fn collect_policy_artifact_files(
         let path = entry
             .with_context(|| format!("failed to read AgentModes policy directory {directory}"))?
             .path();
-        if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("md") {
+        let metadata = fs::symlink_metadata(&path).with_context(|| {
+            format!(
+                "failed to inspect AgentModes policy artifact path {}",
+                path.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            bail!("AgentModes policy artifact path must not be a symlink");
+        }
+        if metadata.is_file() && path.extension().and_then(|value| value.to_str()) == Some("md") {
             paths.push(path);
         }
     }
     paths.sort();
     for path in paths {
-        let relative_path = relative_policy_artifact_path(root, &path)?;
-        let content = fs::read_to_string(&path).with_context(|| {
-            format!("failed to read AgentModes policy artifact {relative_path}")
-        })?;
-        let content = bounded_policy_artifact_content(&relative_path, content)?;
-        let title = path
-            .file_stem()
-            .and_then(|value| value.to_str())
-            .unwrap_or(category)
-            .replace(['-', '_'], " ");
-        artifacts.push(CompiledPolicyArtifact {
-            category: category.to_string(),
-            relative_path,
-            title,
-            content_fingerprint: sha256_fingerprint(content.as_bytes()),
-            content,
-        });
+        push_policy_artifact(root, category, &path, artifacts)?;
     }
     Ok(())
+}
+
+fn collect_recursive_skill_policy_artifact_files(
+    root: &Path,
+    artifacts: &mut Vec<CompiledPolicyArtifact>,
+) -> Result<()> {
+    let dir = root.join("skills");
+    if !dir.exists() {
+        return Ok(());
+    }
+    ensure_policy_artifact_directory_safe(&dir, "skills")?;
+    let mut paths = Vec::new();
+    collect_recursive_skill_paths(&dir, &mut paths)?;
+    paths.sort();
+    for path in paths {
+        push_policy_artifact(root, "skill", &path, artifacts)?;
+    }
+    Ok(())
+}
+
+fn collect_recursive_skill_paths(dir: &Path, paths: &mut Vec<std::path::PathBuf>) -> Result<()> {
+    let mut entries = fs::read_dir(dir)
+        .with_context(|| {
+            format!(
+                "failed to read AgentModes skill directory {}",
+                dir.display()
+            )
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .with_context(|| {
+            format!(
+                "failed to read AgentModes skill directory {}",
+                dir.display()
+            )
+        })?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path).with_context(|| {
+            format!(
+                "failed to inspect AgentModes skill artifact path {}",
+                path.display()
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            bail!("AgentModes skill artifact path must not be a symlink");
+        }
+        if metadata.is_dir() {
+            collect_recursive_skill_paths(&path, paths)?;
+        } else if metadata.is_file()
+            && path.file_name().and_then(|value| value.to_str()) == Some("SKILL.md")
+        {
+            paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn ensure_policy_artifact_directory_safe(dir: &Path, directory: &str) -> Result<()> {
+    let metadata = fs::symlink_metadata(dir)
+        .with_context(|| format!("failed to inspect AgentModes policy directory {directory}"))?;
+    if metadata.file_type().is_symlink() {
+        bail!("AgentModes policy directory {directory} must not be a symlink");
+    }
+    if !metadata.is_dir() {
+        bail!("AgentModes policy directory {directory} must be a directory");
+    }
+    Ok(())
+}
+
+fn push_policy_artifact(
+    root: &Path,
+    category: &str,
+    path: &Path,
+    artifacts: &mut Vec<CompiledPolicyArtifact>,
+) -> Result<()> {
+    let relative_path = relative_policy_artifact_path(root, path)?;
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("failed to read AgentModes policy artifact {relative_path}"))?;
+    let content = bounded_policy_artifact_content(&relative_path, content)?;
+    let title = policy_artifact_title(category, path);
+    artifacts.push(CompiledPolicyArtifact {
+        category: category.to_string(),
+        relative_path,
+        title,
+        content_fingerprint: sha256_fingerprint(content.as_bytes()),
+        content,
+    });
+    Ok(())
+}
+
+fn policy_artifact_title(category: &str, path: &Path) -> String {
+    let title_part = if category == "skill" {
+        path.parent()
+            .and_then(|parent| parent.file_name())
+            .and_then(|value| value.to_str())
+    } else {
+        path.file_stem().and_then(|value| value.to_str())
+    };
+    title_part.unwrap_or(category).replace(['-', '_'], " ")
 }
 
 fn relative_policy_artifact_path(root: &Path, path: &Path) -> Result<String> {
@@ -1570,16 +1729,302 @@ customModes:
     }
 
     #[test]
-    fn compiles_current_agentmodes_global_policy_artifacts_when_source_is_available() {
-        let root = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes");
-        if !root.join("modes").exists() {
-            return;
-        }
+    fn compiles_recursive_skill_artifacts_with_deterministic_relative_paths() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("rules")).expect("rules");
+        std::fs::create_dir_all(root.join("commands")).expect("commands");
+        std::fs::create_dir_all(root.join("docs/contracts")).expect("contracts");
+        std::fs::create_dir_all(root.join("skills/zeta-skill")).expect("zeta skill");
+        std::fs::create_dir_all(root.join("skills/alpha-skill/nested")).expect("alpha skill");
+        std::fs::write(root.join("rules/00-runtime.md"), "Rules stay global.").expect("rule");
+        std::fs::write(root.join("commands/tdd.md"), "Command catalog only.").expect("command");
+        std::fs::write(
+            root.join("docs/contracts/task-packet-v1.md"),
+            "Contract catalog only.",
+        )
+        .expect("contract");
+        std::fs::write(
+            root.join("skills/zeta-skill/SKILL.md"),
+            "Zeta skill catalog only.",
+        )
+        .expect("zeta");
+        std::fs::write(
+            root.join("skills/alpha-skill/nested/SKILL.md"),
+            "Nested alpha skill catalog only.",
+        )
+        .expect("alpha");
+        std::fs::write(
+            root.join("skills/alpha-skill/notes.md"),
+            "Not a skill artifact.",
+        )
+        .expect("notes");
 
         let artifacts =
-            compile_agentmodes_policy_artifacts_from_root(root).expect("compiled policy artifacts");
+            compile_agentmodes_policy_artifacts_from_root(root).expect("compiled artifacts");
+        let paths = artifacts
+            .iter()
+            .map(|artifact| artifact.relative_path.as_str())
+            .collect::<Vec<_>>();
+        let mut sorted = paths.clone();
+        sorted.sort();
+
+        assert_eq!(paths, sorted);
+        assert!(artifacts.iter().any(|artifact| {
+            artifact.category == "skill"
+                && artifact.relative_path == "skills/alpha-skill/nested/SKILL.md"
+                && artifact.title == "nested"
+                && artifact.content_fingerprint.starts_with("sha256:")
+        }));
+        assert!(artifacts.iter().any(|artifact| {
+            artifact.category == "skill"
+                && artifact.relative_path == "skills/zeta-skill/SKILL.md"
+                && artifact.title == "zeta skill"
+        }));
+        assert!(!paths.contains(&"skills/alpha-skill/notes.md"));
+        assert!(paths.contains(&"rules/00-runtime.md"));
+        assert!(paths.contains(&"commands/tdd.md"));
+        assert!(paths.contains(&"docs/contracts/task-packet-v1.md"));
+    }
+
+    #[test]
+    fn rejects_oversized_recursive_skill_artifacts_fail_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("skills/too-large")).expect("skill dir");
+        std::fs::write(
+            root.join("skills/too-large/SKILL.md"),
+            "x".repeat(MAX_POLICY_ARTIFACT_CONTENT_CHARS + 1),
+        )
+        .expect("skill");
+
+        let error = compile_agentmodes_policy_artifacts_from_root(root)
+            .expect_err("oversized skill should fail closed")
+            .to_string();
+
+        assert!(error.contains("exceeds content size limit"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_symlinked_recursive_skill_artifacts_fail_closed() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        std::fs::create_dir_all(root.join("skills/linked")).expect("skill dir");
+        std::fs::write(root.join("outside.md"), "Escaped skill.").expect("outside");
+        std::os::unix::fs::symlink(root.join("outside.md"), root.join("skills/linked/SKILL.md"))
+            .expect("symlink");
+
+        let error = compile_agentmodes_policy_artifacts_from_root(root)
+            .expect_err("symlinked skill should fail closed")
+            .to_string();
+
+        assert!(error.contains("symlink"));
+    }
+
+    static CURRENT_AGENTMODES_CHECKOUT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn current_agentmodes_required_for_test() -> bool {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        truthy_env(baseline.required_env) || truthy_env("CI")
+    }
+
+    fn truthy_env(name: &str) -> bool {
+        std::env::var(name)
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    }
+
+    fn current_agentmodes_root_for_test() -> Option<std::path::PathBuf> {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        let explicit_root = std::env::var_os(baseline.root_env).map(std::path::PathBuf::from);
+        let required = current_agentmodes_required_for_test();
+
+        if let Some(root) = explicit_root {
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        if required {
+            let _guard = CURRENT_AGENTMODES_CHECKOUT_LOCK
+                .lock()
+                .expect("AgentModes compatibility checkout lock");
+            let root = current_agentmodes_managed_checkout_for_test("brownie-agentmodes");
+            prepare_current_agentmodes_checkout_for_test(&root);
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
+        if !root.join("modes").is_dir()
+            || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
+        {
+            return None;
+        }
+
+        Some(root)
+    }
+
+    fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        assert!(
+            root.join("modes").is_dir(),
+            "{} must point to a checked-out {} repository",
+            baseline.root_env,
+            baseline.repository
+        );
+        assert_eq!(
+            current_agentmodes_revision(root).as_deref(),
+            Some(baseline.revision),
+            "AgentModes compatibility baseline revision drifted"
+        );
+        assert!(
+            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
+            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+        );
+    }
+
+    fn current_agentmodes_managed_checkout_for_test(namespace: &str) -> std::path::PathBuf {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        std::env::temp_dir()
+            .join("brownie-agentmodes-compat")
+            .join(format!(
+                "{}-{}-{}",
+                namespace,
+                std::process::id(),
+                baseline.revision
+            ))
+    }
+
+    fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
+            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+        {
+            return;
+        }
+        if root.exists() {
+            std::fs::remove_dir_all(root).expect("remove stale AgentModes compatibility checkout");
+        }
+        std::fs::create_dir_all(root.parent().expect("AgentModes checkout parent"))
+            .expect("create AgentModes compatibility checkout parent");
+        let repository_url = format!("https://github.com/{}.git", baseline.repository);
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("clone")
+                .arg("--no-checkout")
+                .arg(&repository_url)
+                .arg(root),
+            "clone AgentModes compatibility baseline",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("fetch")
+                .arg("--depth")
+                .arg("1")
+                .arg("origin")
+                .arg(baseline.revision),
+            "fetch AgentModes compatibility baseline revision",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("checkout")
+                .arg("--detach")
+                .arg(baseline.revision),
+            "checkout AgentModes compatibility baseline revision",
+        );
+    }
+
+    fn assert_git_status_for_test(command: &mut std::process::Command, label: &str) {
+        let status = command
+            .status()
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert!(status.success(), "{label} failed with status {status}");
+    }
+
+    fn current_agentmodes_revision(root: &std::path::Path) -> Option<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn policy_artifact_category_count(
+        artifacts: &[CompiledPolicyArtifact],
+        category: &str,
+    ) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.category == category)
+            .count()
+    }
+
+    fn current_agentmodes_mode_file_count(root: &std::path::Path) -> usize {
+        std::fs::read_dir(root.join("modes"))
+            .expect("read AgentModes modes")
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().extension().and_then(|value| value.to_str()) == Some("yaml")
+            })
+            .count()
+    }
+
+    #[test]
+    fn current_agentmodes_compatibility_baseline_metadata_is_pinned() {
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        assert_eq!(baseline.repository, "globalpocket/AgentModes");
+        assert_eq!(
+            baseline.revision,
+            "39c7391cf6e711f0a21b14c21bdf557cd12d701e"
+        );
+        assert_eq!(baseline.root_env, "BROWNIE_AGENTMODES_COMPAT_ROOT");
+        assert_eq!(baseline.required_env, "BROWNIE_AGENTMODES_COMPAT_REQUIRED");
+        assert_eq!(baseline.expected_mode_file_count, 28);
+        assert_eq!(baseline.expected_compiled_mode_count, 86);
+        assert_eq!(baseline.expected_rule_count, 1);
+        assert_eq!(baseline.expected_skill_count, 7);
+        assert_eq!(baseline.expected_command_count, 5);
+        assert_eq!(baseline.expected_contract_count, 13);
+    }
+
+    #[test]
+    fn compiles_current_agentmodes_global_policy_artifacts_when_source_is_available() {
+        let Some(root) = current_agentmodes_root_for_test() else {
+            return;
+        };
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+
+        let artifacts = compile_agentmodes_policy_artifacts_from_root(&root)
+            .expect("compiled policy artifacts");
 
         assert!(!artifacts.is_empty());
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "rule"),
+            baseline.expected_rule_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "skill"),
+            baseline.expected_skill_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "command"),
+            baseline.expected_command_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&artifacts, "contract"),
+            baseline.expected_contract_count
+        );
         assert!(artifacts.iter().any(|artifact| artifact.relative_path
             == "rules/00-agentmodes-compact-mode-contract.md"
             && artifact.category == "rule"));
@@ -1587,6 +2032,9 @@ customModes:
             .iter()
             .any(|artifact| artifact.relative_path == "commands/analysis.md"
                 && artifact.category == "command"));
+        assert!(artifacts.iter().any(|artifact| artifact.relative_path
+            == "skills/tdd-quality-gate/SKILL.md"
+            && artifact.category == "skill"));
         assert!(artifacts.iter().any(|artifact| artifact.relative_path
             == "docs/contracts/task-packet-v1.md"
             && artifact.category == "contract"));
@@ -1603,22 +2051,18 @@ customModes:
 
     #[test]
     fn compiles_current_agentmodes_pack_scale_when_source_is_available() {
-        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
-        if !modes_dir.exists() {
+        let Some(root) = current_agentmodes_root_for_test() else {
             return;
-        }
-        let mut documents = Vec::new();
-        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
-                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
-            }
-        }
-        documents.sort();
-        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
+        };
+        let baseline = CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
 
-        let modepack = compile_agentmodes_modepack_from_yaml_documents(
-            document_refs,
+        assert_eq!(
+            current_agentmodes_mode_file_count(&root),
+            baseline.expected_mode_file_count
+        );
+
+        let modepack = compile_agentmodes_modepack_from_root(
+            &root,
             AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
                 delegation_coordinators: vec![
@@ -1631,7 +2075,23 @@ customModes:
         )
         .expect("compile current AgentModes mode pack");
 
-        assert!(modepack.modes.len() > 16);
+        assert_eq!(modepack.modes.len(), baseline.expected_compiled_mode_count);
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "rule"),
+            baseline.expected_rule_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "skill"),
+            baseline.expected_skill_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "command"),
+            baseline.expected_command_count
+        );
+        assert_eq!(
+            policy_artifact_category_count(&modepack.global_policy_artifacts, "contract"),
+            baseline.expected_contract_count
+        );
         let orchestrator = modepack
             .modes
             .iter()

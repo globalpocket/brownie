@@ -71,6 +71,17 @@ Mode Pack permission policy, mode instructions, then task/objective input.
 Prompt text never grants side-effect permissions; `RuntimePermissionGate`
 remains authoritative.
 
+MP-3.2G distinguishes default global policy from artifact catalogs. Task-pinned
+Mode Pack provenance may contain `rule`, `skill`, `command`, and `contract`
+artifacts, but only `rule` artifacts are materialized by default into protected
+system policy. Skills, commands, and contracts remain catalog entries until a
+structured compatibility selection explicitly requests them. Prompt construction
+must therefore preserve catalog provenance without globally injecting unrelated
+skill, command, or contract bodies into every LLM request.
+Pinned real-AgentModes CI coverage must prove the default orchestrator prompt
+path reaches provider request creation with those catalog semantics and without
+persisting raw prompt text or developer-local AgentModes source paths.
+
 MP-3.1 requires prompt budgeting to preserve protected runtime policy and
 task-pinned Mode Pack policy before truncatable context. `ContextMaterializer`
 may reduce materialized ledger summary entries below the requested
