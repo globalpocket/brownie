@@ -12375,19 +12375,56 @@ fn resolve_task_start_policy(
     }
 }
 
+enum HeadlessJourneyEntrypointResolution {
+    BuiltinBootstrapFallback,
+    ModePackDefault(String),
+}
+
 fn resolve_headless_journey_entrypoint_mode_id(
     store: &BrownieStore,
-) -> Result<Option<String>, String> {
+) -> Result<HeadlessJourneyEntrypointResolution, String> {
     if let Some(snapshot) = store
         .read_active_modepack_snapshot()
         .map_err(|error| format!("active modepack snapshot load failed: {error}"))?
     {
-        return Ok(snapshot.summary.default_entrypoint);
+        let Some(mode_id) = snapshot
+            .summary
+            .default_entrypoint
+            .map(|mode_id| mode_id.trim().to_string())
+            .filter(|mode_id| !mode_id.is_empty())
+        else {
+            return Err(
+                "invalid params: configured active modepack has no usable default entrypoint"
+                    .to_string(),
+            );
+        };
+        return Ok(HeadlessJourneyEntrypointResolution::ModePackDefault(
+            mode_id,
+        ));
+    }
+    if store.has_active_modepack_state() {
+        return Err("invalid params: configured active modepack snapshot is missing".to_string());
     }
 
-    Ok(load_workspace_modepack(store.workspace_root())
+    let Some(snapshot) = load_workspace_modepack(store.workspace_root())
         .map_err(|error| format!("modepack load failed: {error}"))?
-        .and_then(|snapshot| snapshot.entrypoints.default))
+    else {
+        return Ok(HeadlessJourneyEntrypointResolution::BuiltinBootstrapFallback);
+    };
+    let Some(mode_id) = snapshot
+        .entrypoints
+        .default
+        .map(|mode_id| mode_id.trim().to_string())
+        .filter(|mode_id| !mode_id.is_empty())
+    else {
+        return Err(
+            "invalid params: configured workspace modepack has no usable default entrypoint"
+                .to_string(),
+        );
+    };
+    Ok(HeadlessJourneyEntrypointResolution::ModePackDefault(
+        mode_id,
+    ))
 }
 
 fn workspace_mode_policies(store: &BrownieStore) -> Result<Vec<CompiledModePolicy>, String> {
@@ -23963,6 +24000,225 @@ mod tests {
             store.tasks().list_tasks().expect("tasks").len(),
             task_count_after_first_drive
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn headless_run_drive_configured_workspace_modepack_without_entrypoint_fails_closed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        write_test_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.noentry","drive_id":"mp32e.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured Mode Pack without a default entrypoint"}}}}"#;
+        let error = parse_line(request).error.expect("entrypoint error");
+
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("configured workspace modepack has no usable default entrypoint"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("mp32e.noentry.journey")
+            .expect("journey checkpoint")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn headless_run_drive_configured_invalid_workspace_modepack_fails_closed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        let brownie_dir = temp.path().join(".brownie");
+        std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
+        std::fs::write(
+            brownie_dir.join("modepack.json"),
+            r#"{
+              "name": "invalid-entrypoint-agentmodes",
+              "schema_version": 1,
+              "entrypoints": {
+                "default": "missing-mode"
+              },
+              "modes": [
+                {
+                  "mode_id": "reviewer-lite",
+                  "display_name": "Reviewer Lite",
+                  "role_definition": "Review local changes without writing files.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  },
+                  "completion_rules": ["Stop after reporting local review findings."]
+                }
+              ]
+            }"#,
+        )
+        .expect("modepack");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.invalid","drive_id":"mp32e.invalid.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.invalid.journey","authorize_journey_start":true,"task_start":{"goal":"Run through invalid configured Mode Pack"}}}}"#;
+        let error = parse_line(request).error.expect("entrypoint error");
+
+        assert_eq!(error.code, -32602);
+        assert!(error.message.contains("modepack load failed"));
+        assert!(error.message.contains("entrypoints.default"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("mp32e.invalid.journey")
+            .expect("journey checkpoint")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn headless_run_drive_configured_active_modepack_without_entrypoint_fails_closed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        let snapshot = load_workspace_modepack_with_options(
+            store.workspace_root(),
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted modepack load")
+        .expect("modepack");
+        let activated_at = codebase_index_timestamp().expect("timestamp");
+        let policy_snapshots = snapshot
+            .modes
+            .iter()
+            .map(|policy| {
+                let policy_fingerprint = external_modepack_policy_fingerprint(
+                    &snapshot.name,
+                    snapshot.schema_version,
+                    policy,
+                );
+                ActiveModePackPolicySnapshot {
+                    mode_id: policy.mode_id.clone(),
+                    display_name: policy.display_name.clone(),
+                    role_definition: policy.role_definition.clone(),
+                    when_to_use: policy.when_to_use.clone(),
+                    description: policy.description.clone(),
+                    prompt_sections: mode_prompt_sections_payload(policy),
+                    verification_responsibility: policy.verification_responsibility.clone(),
+                    instruction_fingerprint: policy.instruction_fingerprint.clone(),
+                    permissions: mode_permissions_payload(policy),
+                    workspace_write_scopes: mode_workspace_write_scopes_payload(policy),
+                    allowed_handoff_targets: policy.allowed_handoff_targets.clone(),
+                    completion_rules: policy.completion_rules.clone(),
+                    policy_fingerprint,
+                }
+            })
+            .collect::<Vec<_>>();
+        let mode_ids = policy_snapshots
+            .iter()
+            .map(|policy| policy.mode_id.clone())
+            .collect::<Vec<_>>();
+        let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
+            &snapshot.name,
+            snapshot.schema_version,
+            None,
+            &policy_snapshots,
+        );
+        let activation_fingerprint = active_modepack_activation_fingerprint(
+            &snapshot.name,
+            snapshot.schema_version,
+            &compiled_policy_fingerprint,
+            &mode_ids,
+            None,
+        );
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: format!(
+                        "modepack_activation_{}",
+                        &activation_fingerprint[7..23]
+                    ),
+                    activation_fingerprint,
+                    modepack_name: snapshot.name,
+                    schema_version: snapshot.schema_version,
+                    source_kind: "workspace_modepack".to_string(),
+                    source_path: WORKSPACE_MODEPACK_PATH.to_string(),
+                    mode_count: mode_ids.len(),
+                    mode_ids,
+                    default_entrypoint: None,
+                    compiled_policy_fingerprint,
+                    activated_at,
+                    activation_event_id: String::new(),
+                },
+                policies: policy_snapshots,
+            })
+            .expect("active snapshot without entrypoint");
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.noentry","drive_id":"mp32e.active.noentry.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.noentry.journey","authorize_journey_start":true,"task_start":{"goal":"Run through configured active Mode Pack without a default entrypoint"}}}}"#;
+        let error = parse_line(request).error.expect("entrypoint error");
+
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("configured active modepack has no usable default entrypoint"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("mp32e.active.noentry.journey")
+            .expect("journey checkpoint")
+            .is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn headless_run_drive_missing_configured_active_modepack_snapshot_fails_closed() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        clear_llm_env_for_test();
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
+        std::fs::remove_file(temp.path().join(".brownie/modepack-active/current.json"))
+            .expect("remove active snapshot");
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live modepack");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32e.active.missing","drive_id":"mp32e.active.missing.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32e.active.missing.journey","authorize_journey_start":true,"task_start":{"goal":"Run through a missing configured active Mode Pack snapshot"}}}}"#;
+        let error = parse_line(request).error.expect("entrypoint error");
+
+        assert_eq!(error.code, -32602);
+        assert!(error
+            .message
+            .contains("configured active modepack snapshot is missing"));
+        assert!(store.tasks().list_tasks().expect("tasks").is_empty());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("mp32e.active.missing.journey")
+            .expect("journey checkpoint")
+            .is_none());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();

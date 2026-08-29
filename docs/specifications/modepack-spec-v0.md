@@ -128,10 +128,12 @@ For the CLI primary run path, `brownie run "<objective>"` starts a headless
 journey without a CLI-selected mode. The runtime resolves that omitted journey
 task mode to the active Mode Pack snapshot's `entrypoints.default` when present.
 If no active snapshot exists, the runtime may resolve the local workspace Mode
-Pack default. If no Mode Pack default exists, the legacy built-in headless
-fallback remains `implementer`. Direct low-level `task.start` omitted-mode
-behavior remains the built-in runtime default policy and is not a Mode Pack
-workflow selector.
+Pack default. If no Mode Pack is configured, the legacy built-in headless
+bootstrap fallback remains `implementer`. If a Mode Pack is configured but is
+invalid, stale, or lacks a usable default entrypoint, the runtime fails closed
+before task creation or journey mutation instead of silently routing to a
+built-in workflow. Direct low-level `task.start` omitted-mode behavior remains
+the built-in runtime default policy and is not a Mode Pack workflow selector.
 
 Active Mode Pack snapshot summaries store `default_entrypoint`, and active
 compiled-policy and activation fingerprints include it. Journey start
