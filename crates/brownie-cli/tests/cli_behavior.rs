@@ -522,6 +522,146 @@ fn inspect_run_invokes_fixed_runtime_method_and_prints_json_result() {
 }
 
 #[test]
+fn inspect_recovery_invokes_runtime_probe_and_projects_three_state_json_contract() {
+    let runtime = fake_runtime(
+        "inspect-recovery-json",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"admission_state":"persisted","session_id":"cli.run.recover","drive_id":"cli.run.recover.drive","journey_id":"cli.run.recover.journey","objective_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","task_id":"task-recover","run_id":"run-recover","recovery_recommendation":"continue_with_scoped_resume_after_persisted_identity_confirmation","next_runtime_invocation":null}}"#,
+    );
+    let capture = runtime.with_file_name("request.json");
+
+    let output = Command::new(brownie())
+        .args([
+            "--json",
+            "inspect",
+            "recovery",
+            "cli.run.recover",
+            "cli.run.recover.drive",
+            "cli.run.recover.journey",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["ok"], true);
+    assert_eq!(payload["command"], "inspect recovery");
+    assert_eq!(payload["recovery"]["admission_state"], "persisted");
+    assert_eq!(payload["recovery"]["task_id"], "task-recover");
+    assert_eq!(payload["recovery"]["run_id"], "run-recover");
+    assert_eq!(payload["recovery"]["controller_action"], "resume");
+    assert_eq!(payload["recovery"]["next_invocation"]["command"], "resume");
+    assert_eq!(payload["automation"]["admission_state"], "persisted");
+    assert!(!stdout.contains("Recover exact failed run identity"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+
+    let request = fs::read_to_string(capture).unwrap();
+    let request: serde_json::Value = serde_json::from_str(&request).unwrap();
+    assert_eq!(request["method"], "headless.run.recovery_probe");
+    assert_eq!(
+        request["params"],
+        serde_json::json!({
+            "authorize_recovery_probe": true,
+            "session_id": "cli.run.recover",
+            "drive_id": "cli.run.recover.drive",
+            "journey_id": "cli.run.recover.journey",
+            "objective_fingerprint": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        })
+    );
+}
+
+#[test]
+fn inspect_recovery_projects_not_persisted_without_objective_text() {
+    let runtime = fake_runtime(
+        "inspect-recovery-not-persisted",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"admission_state":"not_persisted","session_id":"cli.run.missing","drive_id":"cli.run.missing.drive","journey_id":"cli.run.missing.journey","objective_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","recovery_recommendation":"retry_original_run_with_same_objective_allowed","next_runtime_invocation":null}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args([
+            "--json",
+            "inspect",
+            "recovery",
+            "cli.run.missing",
+            "cli.run.missing.drive",
+            "cli.run.missing.journey",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["recovery"]["admission_state"], "not_persisted");
+    assert_eq!(payload["recovery"]["task_id"], serde_json::Value::Null);
+    assert_eq!(payload["recovery"]["run_id"], serde_json::Value::Null);
+    assert_eq!(payload["recovery"]["controller_action"], "run");
+    assert_eq!(payload["recovery"]["next_invocation"]["command"], "run");
+    assert_eq!(
+        payload["recovery"]["next_invocation"]["arguments"][0],
+        "<original-objective>"
+    );
+    assert!(!stdout.contains("original objective"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+}
+
+#[test]
+fn inspect_recovery_projects_unknown_without_automatic_next_invocation() {
+    let runtime = fake_runtime(
+        "inspect-recovery-unknown",
+        r#"{"jsonrpc":"2.0","id":1,"result":{"admission_state":"unknown","session_id":"cli.run.unknown","drive_id":"cli.run.unknown.drive","journey_id":"cli.run.unknown.journey","objective_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","recovery_recommendation":"supervisor_reconcile_or_probe_runtime_state","next_runtime_invocation":null}}"#,
+    );
+
+    let output = Command::new(brownie())
+        .args([
+            "--json",
+            "inspect",
+            "recovery",
+            "cli.run.unknown",
+            "cli.run.unknown.drive",
+            "cli.run.unknown.journey",
+            "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["recovery"]["admission_state"], "unknown");
+    assert_eq!(
+        payload["recovery"]["controller_action"],
+        "return_to_supervisor"
+    );
+    assert!(payload["recovery"]["next_invocation"].is_null());
+    assert_eq!(payload["automation"]["task_id"], serde_json::Value::Null);
+    assert_eq!(payload["automation"]["run_id"], serde_json::Value::Null);
+    assert!(!stdout.contains("provider_response"));
+    assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
+}
+
+#[test]
 fn inspect_task_json_uses_stable_public_projection() {
     let runtime = fake_runtime(
         "inspect-task-json",

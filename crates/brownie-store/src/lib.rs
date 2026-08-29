@@ -12,14 +12,14 @@ use brownie_protocol::{
     HeadlessRunAdvanceResult, HeadlessRunCompletionFinalization, HeadlessRunDriveResult,
     HeadlessRunJourneyExecutionMetadata, HeadlessRunJourneyObjectiveContextMetadata,
     HeadlessRunObjectiveProposalAuthorizationPreflight, HeadlessRunProgressCheckpoint,
-    LlmProviderFailureRetryProvenance, ModePackActiveSnapshotSummary,
-    ModePackApproveCandidateResult, ModePackApprovedCandidateSummary,
-    ModePackCandidateProvenanceSummary, ModePackCandidateSummary, ModePackFetchCandidateResult,
-    ModePackRegistryUpdateSelectionSummary, ModePackReplaceActiveResult,
-    ModePackRevokedSignerSummary, ModePackRollbackActiveResult, ModePackSelectRegistryUpdateResult,
-    ModePackTrustedSignerSummary, ModePackUpdateAdmissionSummary,
-    ModePackVerifyCandidateProvenanceResult, PatchApplyRecoveryProvenance,
-    ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
+    HeadlessRunRecoveryIdentityEvidence, LlmProviderFailureRetryProvenance,
+    ModePackActiveSnapshotSummary, ModePackApproveCandidateResult,
+    ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
+    ModePackFetchCandidateResult, ModePackRegistryUpdateSelectionSummary,
+    ModePackReplaceActiveResult, ModePackRevokedSignerSummary, ModePackRollbackActiveResult,
+    ModePackSelectRegistryUpdateResult, ModePackTrustedSignerSummary,
+    ModePackUpdateAdmissionSummary, ModePackVerifyCandidateProvenanceResult,
+    PatchApplyRecoveryProvenance, ProductContinuationProvenance, ProductLoopStopRecoveryProvenance,
     ProductObjectiveContinuationProvenance, ProposalApplyResult, RecoveryCycleChildProvenance,
     TaskRecord, TaskStartParams, TaskStatus, VerificationRecoveryProvenance,
     VerificationRecoveryRetryProvenance,
@@ -3029,6 +3029,22 @@ impl TaskStore {
     }
 
     pub fn start_task(&self, params: TaskStartParams) -> Result<TaskRecord> {
+        self.start_task_with_recovery_identity(params, None)
+    }
+
+    pub fn start_task_with_headless_run_recovery_identity(
+        &self,
+        params: TaskStartParams,
+        recovery_identity: HeadlessRunRecoveryIdentityEvidence,
+    ) -> Result<TaskRecord> {
+        self.start_task_with_recovery_identity(params, Some(recovery_identity))
+    }
+
+    fn start_task_with_recovery_identity(
+        &self,
+        params: TaskStartParams,
+        headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
+    ) -> Result<TaskRecord> {
         let now = timestamp()?;
         let task_id = format!("task_{}", Uuid::new_v4());
         let run_id = format!("run_{}", Uuid::new_v4());
@@ -3052,6 +3068,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3063,6 +3080,21 @@ impl TaskStore {
         self.append_task_event(&record, LedgerEventKind::TaskStarted)?;
 
         Ok(record)
+    }
+
+    pub fn find_task_by_headless_run_recovery_identity(
+        &self,
+        recovery_identity: &HeadlessRunRecoveryIdentityEvidence,
+    ) -> Result<Vec<TaskRecord>> {
+        let mut matches = self
+            .list_tasks()?
+            .into_iter()
+            .filter(|record| {
+                record.headless_run_recovery_identity.as_ref() == Some(recovery_identity)
+            })
+            .collect::<Vec<_>>();
+        matches.sort_by(|a, b| a.task_id.cmp(&b.task_id).then(a.run_id.cmp(&b.run_id)));
+        Ok(matches)
     }
 
     pub fn start_child_task(&self, params: ChildTaskStartParams) -> Result<TaskRecord> {
@@ -3089,6 +3121,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3158,6 +3191,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3236,6 +3270,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3321,6 +3356,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3425,6 +3461,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3521,6 +3558,7 @@ impl TaskStore {
             product_continuation_provenance: Some(params.provenance),
             product_objective_continuation_provenance: params.objective_continuation_provenance,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };
@@ -3626,6 +3664,7 @@ impl TaskStore {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: Some(params.provenance),
+            headless_run_recovery_identity: None,
             created_at: now.clone(),
             updated_at: now,
         };

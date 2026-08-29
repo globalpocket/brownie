@@ -54,6 +54,20 @@ fn cli_objective_recovery_fingerprint(objective: &str) -> String {
     format!("sha256:{}", hex_sha256(&seed))
 }
 
+fn headless_run_recovery_identity_evidence(
+    admission: &HeadlessRunJourneyAdmission,
+    session_id: &str,
+    drive_id: &str,
+    objective: &str,
+) -> HeadlessRunRecoveryIdentityEvidence {
+    HeadlessRunRecoveryIdentityEvidence {
+        session_id: session_id.to_string(),
+        drive_id: drive_id.to_string(),
+        journey_id: admission.journey_id.clone(),
+        objective_fingerprint: cli_objective_recovery_fingerprint(objective),
+    }
+}
+
 fn sleep_after_headless_journey_started_for_test() {
     if !cfg!(debug_assertions) {
         return;
@@ -387,27 +401,51 @@ fn headless_journey_start_checkpoint_for_admission(
         };
         let policy = resolve_task_start_policy(task_start.mode_id.as_deref(), store)
             .map_err(|message| error_response(id.clone(), -32602, &message))?;
-        let start_response = handle_task_start(
-            id.clone(),
-            Some(json!({
-                "goal": task_start.goal.clone(),
-                "mode_id": task_start.mode_id.clone(),
-            })),
+        let recovery_identity = headless_run_recovery_identity_evidence(
+            admission,
+            session_id,
+            drive_id,
+            &task_start.goal,
         );
-        let Some(start_value) = start_response.result else {
-            return Err(JsonRpcResponse {
-                jsonrpc: JSONRPC_VERSION.to_string(),
-                id: id.clone(),
-                result: None,
-                error: start_response.error,
-            });
-        };
-        let start_result: TaskStartResult =
-            serde_json::from_value(start_value).map_err(|error| {
+        let record = store
+            .tasks()
+            .start_task_with_headless_run_recovery_identity(
+                TaskStartParams {
+                    goal: task_start.goal.clone(),
+                    mode_id: Some(policy.mode_id.clone()),
+                    verification_recovery_source: None,
+                    patch_apply_recovery_source: None,
+                    verification_recovery_retry_source: None,
+                    llm_provider_failure_retry_source: None,
+                    product_continuation_source: None,
+                },
+                recovery_identity,
+            )
+            .map_err(|error| {
                 error_response(id.clone(), -32603, &format!("internal error: {error}"))
             })?;
-        (start_result.task_id, start_result.run_id, policy, true)
+        if let Err(error) = append_mode_resolved_event(store, &record, &policy) {
+            return Err(error_response(
+                id.clone(),
+                -32603,
+                &format!("internal error: {error}"),
+            ));
+        }
+        (record.task_id, record.run_id, policy, true)
     };
+    #[cfg(test)]
+    if cleanup_started_task
+        && std::env::var_os(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+        )
+        .is_some()
+    {
+        return Err(error_response(
+            id.clone(),
+            -32603,
+            "internal error: simulated crash after headless task persistence before journey checkpoint",
+        ));
+    }
     if let Some(context) = admission.objective_context.as_ref() {
         validate_headless_journey_objective_context(store, &policy, context).map_err(
             |rejection| {
@@ -3527,6 +3565,78 @@ pub(super) fn handle_headless_run_recovery_probe(
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
     let Some(checkpoint) = checkpoint else {
+        let recovery_identity = HeadlessRunRecoveryIdentityEvidence {
+            session_id: params.session_id.clone(),
+            drive_id: params.drive_id.clone(),
+            journey_id: params.journey_id.clone(),
+            objective_fingerprint: params.objective_fingerprint.clone(),
+        };
+        let matching_tasks = match store
+            .tasks()
+            .find_task_by_headless_run_recovery_identity(&recovery_identity)
+        {
+            Ok(tasks) => tasks,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        if matching_tasks.len() == 1 {
+            let task = matching_tasks
+                .into_iter()
+                .next()
+                .expect("single matching task");
+            return result_response(
+                id,
+                json!(HeadlessRunRecoveryProbeResult {
+                    admission_state: "persisted".to_string(),
+                    session_id: params.session_id,
+                    drive_id: params.drive_id,
+                    journey_id: params.journey_id,
+                    objective_fingerprint: params.objective_fingerprint,
+                    task_id: Some(task.task_id),
+                    run_id: Some(task.run_id),
+                    journey_fingerprint: None,
+                    recovery_recommendation:
+                        "continue_with_scoped_resume_after_persisted_identity_confirmation"
+                            .to_string(),
+                    next_runtime_invocation: None,
+                }),
+            );
+        }
+        let tasks = match store.tasks().list_tasks() {
+            Ok(tasks) => tasks,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
+        let conflicting_identity = tasks.iter().any(|task| {
+            task.headless_run_recovery_identity
+                .as_ref()
+                .map(|identity| {
+                    identity.session_id == params.session_id
+                        && identity.drive_id == params.drive_id
+                        && identity.journey_id == params.journey_id
+                })
+                .unwrap_or(false)
+        });
+        let legacy_objective_match = tasks.iter().any(|task| {
+            task.headless_run_recovery_identity.is_none()
+                && cli_objective_recovery_fingerprint(&task.goal) == params.objective_fingerprint
+        });
+        if !matching_tasks.is_empty() || conflicting_identity || legacy_objective_match {
+            return result_response(
+                id,
+                json!(HeadlessRunRecoveryProbeResult {
+                    admission_state: "unknown".to_string(),
+                    session_id: params.session_id,
+                    drive_id: params.drive_id,
+                    journey_id: params.journey_id,
+                    objective_fingerprint: params.objective_fingerprint,
+                    task_id: None,
+                    run_id: None,
+                    journey_fingerprint: None,
+                    recovery_recommendation: "supervisor_reconcile_or_probe_runtime_state"
+                        .to_string(),
+                    next_runtime_invocation: None,
+                }),
+            );
+        }
         return result_response(
             id,
             json!(HeadlessRunRecoveryProbeResult {
@@ -3548,9 +3658,22 @@ pub(super) fn handle_headless_run_recovery_probe(
         Ok(task) => task,
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let recovery_identity = HeadlessRunRecoveryIdentityEvidence {
+        session_id: params.session_id.clone(),
+        drive_id: params.drive_id.clone(),
+        journey_id: params.journey_id.clone(),
+        objective_fingerprint: params.objective_fingerprint.clone(),
+    };
     let objective_matches = task
         .as_ref()
-        .map(|task| cli_objective_recovery_fingerprint(&task.goal) == params.objective_fingerprint)
+        .map(|task| {
+            task.headless_run_recovery_identity
+                .as_ref()
+                .map(|persisted| persisted == &recovery_identity)
+                .unwrap_or_else(|| {
+                    cli_objective_recovery_fingerprint(&task.goal) == params.objective_fingerprint
+                })
+        })
         .unwrap_or(false);
     if checkpoint.session_id != params.session_id
         || checkpoint.drive_id != params.drive_id

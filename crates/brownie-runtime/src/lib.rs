@@ -67,7 +67,8 @@ use brownie_protocol::{
     HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
     HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
     HeadlessRunProductEvidenceMatrix, HeadlessRunProductRemainingGapSelection,
-    HeadlessRunProgressCheckpoint, HeadlessRunRecoveryProbeParams, HeadlessRunRecoveryProbeResult,
+    HeadlessRunProgressCheckpoint, HeadlessRunRecoveryIdentityEvidence,
+    HeadlessRunRecoveryProbeParams, HeadlessRunRecoveryProbeResult,
     HeadlessRunSelectedProductGapClosureEvidence, HeadlessRunSelectedProductGapClosureRequest,
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
     LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
@@ -26128,6 +26129,122 @@ mod tests {
         assert!(conflict.get("task_id").is_none());
         assert!(conflict.get("run_id").is_none());
         assert!(conflict.get("next_runtime_invocation").is_none());
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_recovery_probe_reconciles_task_only_crash_window_idempotently() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+            "1",
+        );
+        let objective = "Recover admission after task-only crash window";
+        let objective_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(
+                [
+                    b"brownie-cli-objective-fingerprint-v1\0".as_slice(),
+                    objective.as_bytes()
+                ]
+                .concat()
+                .as_slice()
+            )
+        );
+        let admission_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.crash",
+                "drive_id": "cli.run.crash.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.crash.journey",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": objective,
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        })
+        .to_string();
+
+        let crash = parse_line(&admission_request);
+        assert!(crash.result.is_none());
+        std::env::remove_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+        );
+
+        let store = BrownieStore::new(temp.path());
+        let tasks = store.tasks().list_tasks().expect("task-only crash state");
+        assert_eq!(tasks.len(), 1);
+        assert!(tasks[0].headless_run_recovery_identity.is_some());
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.run.crash.journey")
+            .expect("journey checkpoint lookup")
+            .is_none());
+
+        let probe_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.run.recovery_probe",
+            "params": {
+                "authorize_recovery_probe": true,
+                "session_id": "cli.run.crash",
+                "drive_id": "cli.run.crash.drive",
+                "journey_id": "cli.run.crash.journey",
+                "objective_fingerprint": objective_fingerprint
+            }
+        })
+        .to_string();
+        let first_probe = parse_line(&probe_request)
+            .result
+            .expect("first recovery probe");
+        assert_eq!(first_probe["admission_state"], "persisted");
+        assert_ne!(first_probe["admission_state"], "not_persisted");
+        assert_eq!(first_probe["task_id"], tasks[0].task_id);
+        assert_eq!(first_probe["run_id"], tasks[0].run_id);
+        assert!(first_probe.get("journey_fingerprint").is_none());
+        assert!(
+            first_probe
+                .to_string()
+                .contains("Recover admission after task-only crash window")
+                == false
+        );
+
+        let second_probe = parse_line(&probe_request)
+            .result
+            .expect("second recovery probe");
+        assert_eq!(second_probe, first_probe);
+
+        let conflicting_probe = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.run.recovery_probe",
+            "params": {
+                "authorize_recovery_probe": true,
+                "session_id": "cli.run.crash",
+                "drive_id": "cli.run.crash.drive",
+                "journey_id": "cli.run.crash.journey",
+                "objective_fingerprint": format!("sha256:{}", "f".repeat(64))
+            }
+        })
+        .to_string();
+        let conflict = parse_line(&conflicting_probe)
+            .result
+            .expect("conflicting recovery probe");
+        assert_eq!(conflict["admission_state"], "unknown");
+        assert!(conflict.get("task_id").is_none());
+        assert!(conflict.get("run_id").is_none());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }

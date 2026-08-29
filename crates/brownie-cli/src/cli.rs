@@ -30,8 +30,18 @@ pub enum HelpTopic {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InspectTarget {
-    Task { task_id: String },
-    Run { run_id: String },
+    Task {
+        task_id: String,
+    },
+    Run {
+        run_id: String,
+    },
+    Recovery {
+        session_id: String,
+        drive_id: String,
+        journey_id: String,
+        objective_fingerprint: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -126,6 +136,7 @@ impl Cli {
             "  status                   Show current runtime status",
             "  inspect task <task-id>   Inspect a task",
             "  inspect run <run-id>     Inspect a run",
+            "  inspect recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>",
             "  list tasks               List tasks",
             "  mode list                List available modes",
             "",
@@ -200,10 +211,12 @@ impl Cli {
                 "Usage:",
                 "  brownie inspect task <task-id>",
                 "  brownie inspect run <run-id>",
+                "  brownie inspect recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>",
                 "  brownie --json inspect task <task-id>",
                 "  brownie --json inspect run <run-id>",
+                "  brownie --json inspect recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>",
                 "",
-                "Inspects bounded task or run state through fixed runtime methods.",
+                "Inspects bounded task, run, or run-recovery state through fixed runtime methods.",
                 "",
                 "Boundary:",
                 "  The CLI renders runtime-provided summaries and does not read raw ledger files.",
@@ -298,10 +311,27 @@ fn parse_inspect(args: &[String]) -> Result<CliCommand, CliError> {
                 run_id: id.to_string(),
             },
         }),
+        [kind, session_id, drive_id, journey_id, objective_fingerprint]
+            if kind == "recovery"
+                && !session_id.trim().is_empty()
+                && !drive_id.trim().is_empty()
+                && !journey_id.trim().is_empty()
+                && !objective_fingerprint.trim().is_empty() =>
+        {
+            Ok(CliCommand::Inspect {
+                target: InspectTarget::Recovery {
+                    session_id: session_id.to_string(),
+                    drive_id: drive_id.to_string(),
+                    journey_id: journey_id.to_string(),
+                    objective_fingerprint: objective_fingerprint.to_string(),
+                },
+            })
+        }
         [kind] if kind == "task" => Err(CliError::MissingValue("task-id")),
         [kind] if kind == "run" => Err(CliError::MissingValue("run-id")),
+        [kind] if kind == "recovery" => Err(CliError::MissingValue("recovery-identity")),
         _ => Err(CliError::InvalidCommand(
-            "inspect expects task <task-id> or run <run-id>".to_string(),
+            "inspect expects task <task-id>, run <run-id>, or recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>".to_string(),
         )),
     }
 }
