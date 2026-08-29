@@ -46,6 +46,14 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
 }
 
+fn cli_objective_recovery_fingerprint(objective: &str) -> String {
+    let mut seed =
+        Vec::with_capacity(b"brownie-cli-objective-fingerprint-v1\0".len() + objective.len());
+    seed.extend_from_slice(b"brownie-cli-objective-fingerprint-v1\0");
+    seed.extend_from_slice(objective.as_bytes());
+    format!("sha256:{}", hex_sha256(&seed))
+}
+
 fn sleep_after_headless_journey_started_for_test() {
     if !cfg!(debug_assertions) {
         return;
@@ -3467,6 +3475,118 @@ pub(super) fn headless_run_checkpoint_is_progress_overview_boundary(
         headless_run_checkpoint_next_route_kind(checkpoint),
         None | Some(HeadlessContinueRouteKind::InspectProgressOverview)
             | Some(HeadlessContinueRouteKind::RefreshProgressOverview)
+    )
+}
+
+pub(super) fn handle_headless_run_recovery_probe(
+    id: Value,
+    params: Option<Value>,
+) -> JsonRpcResponse<Value> {
+    let params: HeadlessRunRecoveryProbeParams = match parse_params(params) {
+        Ok(params) => params,
+        Err(message) => return error_response(id, -32602, &message),
+    };
+    if !params.authorize_recovery_probe {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: authorize_recovery_probe must be true",
+        );
+    }
+    for (field, value) in [
+        ("session_id", params.session_id.as_str()),
+        ("drive_id", params.drive_id.as_str()),
+        ("journey_id", params.journey_id.as_str()),
+    ] {
+        if !is_valid_headless_run_id(value) {
+            return error_response(
+                id,
+                -32602,
+                &format!("invalid params: {field} must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters"),
+            );
+        }
+    }
+    if !is_sha256_fingerprint(&params.objective_fingerprint) {
+        return error_response(
+            id,
+            -32602,
+            "invalid params: objective_fingerprint must be a sha256 fingerprint",
+        );
+    }
+
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let checkpoint = match store
+        .tasks()
+        .read_headless_journey_start_checkpoint(&params.journey_id)
+    {
+        Ok(checkpoint) => checkpoint,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let Some(checkpoint) = checkpoint else {
+        return result_response(
+            id,
+            json!(HeadlessRunRecoveryProbeResult {
+                admission_state: "not_persisted".to_string(),
+                session_id: params.session_id,
+                drive_id: params.drive_id,
+                journey_id: params.journey_id,
+                objective_fingerprint: params.objective_fingerprint,
+                task_id: None,
+                run_id: None,
+                journey_fingerprint: None,
+                recovery_recommendation: "retry_original_run_with_same_objective_allowed"
+                    .to_string(),
+                next_runtime_invocation: None,
+            }),
+        );
+    };
+    let task = match store.tasks().get_task(&checkpoint.task_id) {
+        Ok(task) => task,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let objective_matches = task
+        .as_ref()
+        .map(|task| cli_objective_recovery_fingerprint(&task.goal) == params.objective_fingerprint)
+        .unwrap_or(false);
+    if checkpoint.session_id != params.session_id
+        || checkpoint.drive_id != params.drive_id
+        || !objective_matches
+    {
+        return result_response(
+            id,
+            json!(HeadlessRunRecoveryProbeResult {
+                admission_state: "unknown".to_string(),
+                session_id: params.session_id,
+                drive_id: params.drive_id,
+                journey_id: params.journey_id,
+                objective_fingerprint: params.objective_fingerprint,
+                task_id: None,
+                run_id: None,
+                journey_fingerprint: None,
+                recovery_recommendation: "supervisor_reconcile_or_probe_runtime_state".to_string(),
+                next_runtime_invocation: None,
+            }),
+        );
+    }
+
+    result_response(
+        id,
+        json!(HeadlessRunRecoveryProbeResult {
+            admission_state: "persisted".to_string(),
+            session_id: params.session_id.clone(),
+            drive_id: params.drive_id,
+            journey_id: params.journey_id.clone(),
+            objective_fingerprint: params.objective_fingerprint,
+            task_id: Some(checkpoint.task_id),
+            run_id: Some(checkpoint.run_id),
+            journey_fingerprint: Some(checkpoint.journey_fingerprint.clone()),
+            recovery_recommendation:
+                "continue_with_scoped_resume_after_persisted_identity_confirmation".to_string(),
+            next_runtime_invocation: None,
+        }),
     )
 }
 

@@ -423,6 +423,22 @@ fn run_uses_objective_transport_timeout_class() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("\"code\":\"runtime_timeout\""));
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["controller_action"], "return_to_supervisor");
+    assert_eq!(payload["process_admission_state"], "unknown");
+    assert!(payload["next_invocation"].is_null());
+    let recovery_identity = payload["recovery_identity"].as_object().unwrap();
+    let session_id = recovery_identity["session_id"].as_str().unwrap();
+    assert!(session_id.starts_with("cli.run."));
+    assert_eq!(recovery_identity["drive_id"], format!("{session_id}.drive"));
+    assert_eq!(
+        recovery_identity["journey_id"],
+        format!("{session_id}.journey")
+    );
+    assert!(recovery_identity["objective_fingerprint"]
+        .as_str()
+        .unwrap()
+        .starts_with("sha256:"));
 }
 
 #[test]
@@ -2229,13 +2245,37 @@ fn installed_timeout_resume_continues_exact_persisted_cli_journey_without_duplic
     assert_eq!(timeout_payload["error"]["code"], "runtime_timeout");
     assert_eq!(timeout_payload["automation"]["schema_version"], 1);
     assert_eq!(timeout_payload["automation"]["outcome_scope"], "process");
-    assert_eq!(timeout_payload["automation"]["controller_action"], "retry");
-    assert_eq!(timeout_payload["automation"]["continuation_required"], true);
+    assert_eq!(
+        timeout_payload["automation"]["controller_action"],
+        "return_to_supervisor"
+    );
+    assert_eq!(
+        timeout_payload["automation"]["continuation_required"],
+        false
+    );
     assert_eq!(timeout_payload["automation"]["retryable"], true);
     assert_eq!(
-        timeout_payload["automation"]["next_invocation"]["command"],
-        "resume"
+        timeout_payload["automation"]["process_admission_state"],
+        "unknown"
     );
+    assert_eq!(
+        timeout_payload["automation"]["recovery_recommendation"],
+        "supervisor_reconcile_or_probe_runtime_state"
+    );
+    assert!(timeout_payload["automation"]["next_invocation"].is_null());
+    let recovery_identity = timeout_payload["automation"]["recovery_identity"]
+        .as_object()
+        .expect("recovery identity");
+    let session_id = recovery_identity["session_id"].as_str().unwrap();
+    assert!(session_id.starts_with("cli.run."));
+    assert_eq!(recovery_identity["drive_id"], format!("{session_id}.drive"));
+    assert_eq!(
+        recovery_identity["journey_id"],
+        format!("{session_id}.journey")
+    );
+    let objective_fingerprint = recovery_identity["objective_fingerprint"].as_str().unwrap();
+    assert!(objective_fingerprint.starts_with("sha256:"));
+    assert!(!timeout_stdout.contains(objective));
 
     let tasks_after_timeout = invoke_runtime_json(
         &runtime,

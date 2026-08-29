@@ -1549,6 +1549,34 @@ pub struct HeadlessRunJourneyTaskStartEnvelope {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
+pub struct HeadlessRunRecoveryProbeParams {
+    pub authorize_recovery_probe: bool,
+    pub session_id: String,
+    pub drive_id: String,
+    pub journey_id: String,
+    pub objective_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunRecoveryProbeResult {
+    pub admission_state: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub journey_id: String,
+    pub objective_fingerprint: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub journey_fingerprint: Option<String>,
+    pub recovery_recommendation: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_runtime_invocation: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
 pub struct ProductObjectiveContinuationJourneySource {
     pub continuation_task_id: String,
     pub continuation_run_id: String,

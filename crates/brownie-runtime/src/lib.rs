@@ -66,13 +66,14 @@ use brownie_protocol::{
     HeadlessRunProductCompletionDecision, HeadlessRunProductCompletionDecisionRequest,
     HeadlessRunProductEvidenceArtifact, HeadlessRunProductEvidenceDerivationRequest,
     HeadlessRunProductEvidenceMatrix, HeadlessRunProductRemainingGapSelection,
-    HeadlessRunProgressCheckpoint, HeadlessRunSelectedProductGapClosureEvidence,
-    HeadlessRunSelectedProductGapClosureRequest, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    LedgerEventSummary, LlmHealthParams, LlmHealthResult, LlmProviderFailureOutcome,
-    LlmProviderFailureRetryAdmission, LlmProviderFailureRetryProvenance,
-    LlmProviderFailureRetryRunTarget, LlmProviderFailureRetrySource, LlmRequestBudgetSummary,
-    LlmStatusResult, ModeGetParams, ModeListResult, ModePackActivateParams, ModePackActivateResult,
-    ModePackActiveSnapshotSummary, ModePackApproveCandidateParams, ModePackApproveCandidateResult,
+    HeadlessRunProgressCheckpoint, HeadlessRunRecoveryProbeParams, HeadlessRunRecoveryProbeResult,
+    HeadlessRunSelectedProductGapClosureEvidence, HeadlessRunSelectedProductGapClosureRequest,
+    JsonRpcError, JsonRpcRequest, JsonRpcResponse, LedgerEventSummary, LlmHealthParams,
+    LlmHealthResult, LlmProviderFailureOutcome, LlmProviderFailureRetryAdmission,
+    LlmProviderFailureRetryProvenance, LlmProviderFailureRetryRunTarget,
+    LlmProviderFailureRetrySource, LlmRequestBudgetSummary, LlmStatusResult, ModeGetParams,
+    ModeListResult, ModePackActivateParams, ModePackActivateResult, ModePackActiveSnapshotSummary,
+    ModePackApproveCandidateParams, ModePackApproveCandidateResult,
     ModePackApprovedCandidateSummary, ModePackCandidateProvenanceSummary, ModePackCandidateSummary,
     ModePackDnsBindingSummary, ModePackFetchCandidateParams, ModePackFetchCandidateResult,
     ModePackRegistryUpdateSelectionSummary, ModePackRegistryUpdateSelectionTarget,
@@ -427,6 +428,7 @@ const METHOD_TASK_LIST: &str = "task.list";
 const METHOD_HEADLESS_CONTINUE_ONCE: &str = "headless.continue_once";
 const METHOD_HEADLESS_RUN_ADVANCE: &str = "headless.run.advance";
 const METHOD_HEADLESS_RUN_DRIVE: &str = "headless.run.drive";
+const METHOD_HEADLESS_RUN_RECOVERY_PROBE: &str = "headless.run.recovery_probe";
 const HEADLESS_CONTINUE_MAX_BUDGET_STEPS: u8 = 3;
 const HEADLESS_RUN_DRIVE_MAX_ADVANCES: u8 = 3;
 const PRODUCT_COMPLETION_DECISION_REQUIRED_CATEGORIES: &[&str] = &[
@@ -626,6 +628,9 @@ pub fn handle_jsonrpc_request(request: JsonRpcRequest) -> JsonRpcResponse<Value>
         METHOD_HEADLESS_CONTINUE_ONCE => handle_headless_continue_once(request.id, request.params),
         METHOD_HEADLESS_RUN_ADVANCE => handle_headless_run_advance(request.id, request.params),
         METHOD_HEADLESS_RUN_DRIVE => handle_headless_run_drive(request.id, request.params),
+        METHOD_HEADLESS_RUN_RECOVERY_PROBE => {
+            handle_headless_run_recovery_probe(request.id, request.params)
+        }
         METHOD_MODE_LIST => handle_mode_list(request.id),
         METHOD_MODE_GET => handle_mode_get(request.id, request.params),
         METHOD_MODEPACK_ACTIVATE => handle_modepack_activate(request.id, request.params),
@@ -25920,6 +25925,121 @@ mod tests {
             store.tasks().list_tasks().expect("tasks").len(),
             task_count_after_admission
         );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_recovery_probe_distinguishes_not_persisted_and_persisted_identity() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let objective = "Recover exact failed run identity";
+        let objective_fingerprint = format!(
+            "sha256:{}",
+            hex_sha256(
+                [
+                    b"brownie-cli-objective-fingerprint-v1\0".as_slice(),
+                    objective.as_bytes()
+                ]
+                .concat()
+                .as_slice()
+            )
+        );
+
+        let missing_probe = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.recovery_probe",
+            "params": {
+                "authorize_recovery_probe": true,
+                "session_id": "cli.run.recover",
+                "drive_id": "cli.run.recover.drive",
+                "journey_id": "cli.run.recover.journey",
+                "objective_fingerprint": objective_fingerprint
+            }
+        })
+        .to_string();
+        let missing = parse_line(&missing_probe)
+            .result
+            .expect("missing recovery probe result");
+        assert_eq!(missing["admission_state"], "not_persisted");
+        assert_eq!(
+            missing["recovery_recommendation"],
+            "retry_original_run_with_same_objective_allowed"
+        );
+        assert!(missing.get("task_id").is_none());
+        assert!(missing.get("next_runtime_invocation").is_none());
+
+        let admission_request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.recover",
+                "drive_id": "cli.run.recover.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.recover.journey",
+                    "authorize_journey_start": true,
+                    "task_start": {
+                        "goal": objective,
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        })
+        .to_string();
+        let admitted = parse_line(&admission_request)
+            .result
+            .expect("admission result");
+        assert_eq!(admitted["status"], "task_executed");
+
+        let persisted = parse_line(&missing_probe)
+            .result
+            .expect("persisted recovery probe result");
+        assert_eq!(persisted["admission_state"], "persisted");
+        assert!(persisted["task_id"].as_str().is_some());
+        assert!(persisted["run_id"].as_str().is_some());
+        assert_eq!(
+            persisted["recovery_recommendation"],
+            "continue_with_scoped_resume_after_persisted_identity_confirmation"
+        );
+        assert!(persisted.get("next_runtime_invocation").is_none());
+        assert!(
+            persisted
+                .to_string()
+                .contains("Recover exact failed run identity")
+                == false
+        );
+
+        let conflicting_probe = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "headless.run.recovery_probe",
+            "params": {
+                "authorize_recovery_probe": true,
+                "session_id": "cli.run.recover.other",
+                "drive_id": "cli.run.recover.drive",
+                "journey_id": "cli.run.recover.journey",
+                "objective_fingerprint": objective_fingerprint
+            }
+        })
+        .to_string();
+        let conflict = parse_line(&conflicting_probe)
+            .result
+            .expect("conflicting recovery probe result");
+        assert_eq!(conflict["admission_state"], "unknown");
+        assert_eq!(
+            conflict["recovery_recommendation"],
+            "supervisor_reconcile_or_probe_runtime_state"
+        );
+        assert!(conflict.get("task_id").is_none());
+        assert!(conflict.get("run_id").is_none());
+        assert!(conflict.get("next_runtime_invocation").is_none());
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
