@@ -74,10 +74,12 @@ fn headless_journey_effective_task_start(
         .unwrap_or_default()
         .is_empty()
     {
-        effective.mode_id = Some(
-            resolve_headless_journey_entrypoint_mode_id(store)?
-                .unwrap_or_else(|| "implementer".to_string()),
-        );
+        effective.mode_id = Some(match resolve_headless_journey_entrypoint_mode_id(store)? {
+            HeadlessJourneyEntrypointResolution::BuiltinBootstrapFallback => {
+                "implementer".to_string()
+            }
+            HeadlessJourneyEntrypointResolution::ModePackDefault(mode_id) => mode_id,
+        });
     }
     Ok(effective)
 }

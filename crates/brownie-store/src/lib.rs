@@ -81,6 +81,11 @@ impl BrownieStore {
         })?))
     }
 
+    pub fn has_active_modepack_state(&self) -> bool {
+        self.active_modepack_current_path().exists()
+            || self.active_modepack_dir().join("ledger.jsonl").exists()
+    }
+
     pub fn commit_active_modepack_snapshot(
         &self,
         snapshot: &ActiveModePackSnapshot,
