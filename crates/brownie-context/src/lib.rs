@@ -1433,6 +1433,7 @@ mod tests {
             product_continuation_provenance: None,
             product_objective_continuation_provenance: None,
             product_loop_stop_recovery_provenance: None,
+            headless_run_recovery_identity: None,
             created_at: "2026-01-01T00:00:00Z".into(),
             updated_at: "2026-01-01T00:00:01Z".into(),
         }

@@ -256,6 +256,9 @@ fn command_name(command: &CliCommand) -> &'static str {
         CliCommand::Inspect {
             target: InspectTarget::Run { .. },
         } => "inspect run",
+        CliCommand::Inspect {
+            target: InspectTarget::Recovery { .. },
+        } => "inspect recovery",
         CliCommand::List {
             target: ListTarget::Tasks,
         } => "list tasks",

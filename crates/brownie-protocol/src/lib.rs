@@ -5347,6 +5347,14 @@ pub struct ProductLoopStopRecoveryProvenance {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessRunRecoveryIdentityEvidence {
+    pub session_id: String,
+    pub drive_id: String,
+    pub journey_id: String,
+    pub objective_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LedgerEventSummary {
     pub event_id: String,
     pub task_id: String,
@@ -5385,6 +5393,8 @@ pub struct TaskRecord {
     pub product_objective_continuation_provenance: Option<ProductObjectiveContinuationProvenance>,
     #[serde(default)]
     pub product_loop_stop_recovery_provenance: Option<ProductLoopStopRecoveryProvenance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub headless_run_recovery_identity: Option<HeadlessRunRecoveryIdentityEvidence>,
     pub created_at: String,
     pub updated_at: String,
 }

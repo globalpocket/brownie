@@ -22,6 +22,7 @@ const PROPOSAL_INSPECT_METHOD: &str = "proposal.inspect";
 const HEADLESS_CONTINUE_ONCE_METHOD: &str = "headless.continue_once";
 const HEADLESS_RUN_ADVANCE_METHOD: &str = "headless.run.advance";
 const HEADLESS_RUN_DRIVE_METHOD: &str = "headless.run.drive";
+const HEADLESS_RUN_RECOVERY_PROBE_METHOD: &str = "headless.run.recovery_probe";
 const RUNTIME_PATH_ENV: &str = "BROWNIE_RUNTIME_PATH";
 const RUNTIME_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_TIMEOUT_MS";
 const RUNTIME_OBJECTIVE_TIMEOUT_MS_ENV: &str = "BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS";
@@ -189,6 +190,21 @@ impl RuntimeClient {
             CliCommand::Inspect {
                 target: InspectTarget::Run { run_id },
             } => self.runtime_run_inspect(run_id, json),
+            CliCommand::Inspect {
+                target:
+                    InspectTarget::Recovery {
+                        session_id,
+                        drive_id,
+                        journey_id,
+                        objective_fingerprint,
+                    },
+            } => self.runtime_recovery_inspect(
+                session_id,
+                drive_id,
+                journey_id,
+                objective_fingerprint,
+                json,
+            ),
             CliCommand::List {
                 target: ListTarget::Tasks,
             } => self.runtime_task_list(json),
@@ -344,6 +360,37 @@ impl RuntimeClient {
         }
 
         bounded_output(render_run_inspect(&result)?)
+    }
+
+    fn runtime_recovery_inspect(
+        &self,
+        session_id: &str,
+        drive_id: &str,
+        journey_id: &str,
+        objective_fingerprint: &str,
+        json_output: bool,
+    ) -> Result<String, RuntimeClientError> {
+        let result = self.call_runtime_value(
+            HEADLESS_RUN_RECOVERY_PROBE_METHOD,
+            Some(json!({
+                "authorize_recovery_probe": true,
+                "session_id": session_id,
+                "drive_id": drive_id,
+                "journey_id": journey_id,
+                "objective_fingerprint": objective_fingerprint
+            })),
+            RuntimeRequestClass::ReadOnly,
+        )?;
+        validate_headless_run_recovery_probe_result(&result)?;
+        if json_output {
+            return json_result(
+                "inspect recovery",
+                "recovery",
+                recovery_probe_payload(&result)?,
+            );
+        }
+
+        bounded_output(render_recovery_probe_result(&result)?)
     }
 
     fn runtime_task_list(&self, json_output: bool) -> Result<String, RuntimeClientError> {
@@ -828,6 +875,73 @@ fn run_inspect_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     Ok(project_run_summary(run, progress)?)
 }
 
+fn recovery_probe_payload(result: &Value) -> Result<Value, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let admission_state = display_string(object, "admission_state")?;
+    let recovery_recommendation = display_string(object, "recovery_recommendation")?;
+    let mut payload = serde_json::Map::new();
+    for key in [
+        "admission_state",
+        "session_id",
+        "drive_id",
+        "journey_id",
+        "objective_fingerprint",
+        "recovery_recommendation",
+    ] {
+        payload.insert(
+            key.to_string(),
+            bounded_json_string(object.get(key).ok_or(RuntimeClientError::InvalidResponse)?)?,
+        );
+    }
+    for key in ["task_id", "run_id", "journey_fingerprint"] {
+        if let Some(value) = object.get(key) {
+            payload.insert(key.to_string(), bounded_json_optional_string(value)?);
+        } else {
+            payload.insert(key.to_string(), Value::Null);
+        }
+    }
+    let next_invocation = match admission_state.as_str() {
+        "persisted" => json!({
+            "command": "resume",
+            "arguments": []
+        }),
+        "not_persisted" => json!({
+            "command": "run",
+            "arguments": ["<original-objective>"]
+        }),
+        "unknown" => Value::Null,
+        _ => return Err(RuntimeClientError::InvalidResponse),
+    };
+    let controller_action = match admission_state.as_str() {
+        "persisted" => "resume",
+        "not_persisted" => "run",
+        "unknown" => "return_to_supervisor",
+        _ => return Err(RuntimeClientError::InvalidResponse),
+    };
+    payload.insert("controller_action".to_string(), json!(controller_action));
+    payload.insert("next_invocation".to_string(), next_invocation.clone());
+    payload.insert(
+        "automation".to_string(),
+        json!({
+            "schema_version": 1,
+            "outcome_scope": "recovery_probe",
+            "status": admission_state,
+            "class": "recovery_probe",
+            "outcome_source": "runtime",
+            "admission_state": admission_state,
+            "task_id": object.get("task_id").cloned().unwrap_or(Value::Null),
+            "run_id": object.get("run_id").cloned().unwrap_or(Value::Null),
+            "journey_id": object.get("journey_id").cloned().unwrap_or(Value::Null),
+            "controller_action": controller_action,
+            "recovery_recommendation": recovery_recommendation,
+            "next_invocation": next_invocation,
+        }),
+    );
+    Ok(Value::Object(payload))
+}
+
 fn task_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
     let object = result
         .as_object()
@@ -1120,6 +1234,50 @@ fn validate_task_inspect_result(result: &Value) -> Result<(), RuntimeClientError
 
 fn validate_run_inspect_result(result: &Value) -> Result<(), RuntimeClientError> {
     object_field(result, "run")?;
+    Ok(())
+}
+
+fn validate_headless_run_recovery_probe_result(result: &Value) -> Result<(), RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let admission_state = required_display_string(object, "admission_state")?;
+    if !matches!(
+        admission_state.as_str(),
+        "persisted" | "not_persisted" | "unknown"
+    ) {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
+    for key in [
+        "session_id",
+        "drive_id",
+        "journey_id",
+        "objective_fingerprint",
+        "recovery_recommendation",
+    ] {
+        required_display_string(object, key)?;
+    }
+    validate_sha256_fingerprint(&display_string(object, "objective_fingerprint")?)?;
+    optional_bounded_string(object, "task_id")?;
+    optional_bounded_string(object, "run_id")?;
+    if let Some(value) = object
+        .get("journey_fingerprint")
+        .filter(|value| !value.is_null())
+    {
+        validate_sha256_fingerprint(&bounded_string(value)?)?;
+    }
+    if admission_state == "unknown"
+        && (object
+            .get("task_id")
+            .filter(|value| !value.is_null())
+            .is_some()
+            || object
+                .get("run_id")
+                .filter(|value| !value.is_null())
+                .is_some())
+    {
+        return Err(RuntimeClientError::InvalidResponse);
+    }
     Ok(())
 }
 
@@ -1575,6 +1733,22 @@ fn bounded_json_next_invocation(value: &Value) -> Result<Value, RuntimeClientErr
         )?,
         "arguments": []
     }))
+}
+
+fn render_recovery_probe_result(result: &Value) -> Result<String, RuntimeClientError> {
+    let object = result
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let admission_state = display_string(object, "admission_state")?;
+    let session_id = display_string(object, "session_id")?;
+    let drive_id = display_string(object, "drive_id")?;
+    let journey_id = display_string(object, "journey_id")?;
+    let recommendation = display_string(object, "recovery_recommendation")?;
+    let task_id = display_optional_string(object, "task_id")?;
+    let run_id = display_optional_string(object, "run_id")?;
+    Ok(format!(
+        "recovery\n  admission: {admission_state}\n  session: {session_id}\n  drive: {drive_id}\n  journey: {journey_id}\n  task: {task_id}\n  runtime_run: {run_id}\n  next: {recommendation}\n"
+    ))
 }
 
 fn render_run_result(result: &Value) -> Result<String, RuntimeClientError> {

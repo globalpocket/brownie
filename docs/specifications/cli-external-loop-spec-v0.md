@@ -184,6 +184,14 @@ for the attempted runtime request. It still uses
 `next_invocation` null, and sets
 `recovery_recommendation = "supervisor_reconcile_or_probe_runtime_state"` until
 runtime-owned evidence can prove `persisted`, `not_persisted`, or `unknown`.
+The bounded CLI recovery surface is
+`brownie [--json] inspect recovery <session-id> <drive-id> <journey-id> <objective-fingerprint>`.
+It invokes the runtime-owned recovery probe with only the emitted recovery
+identity, preserves the machine-readable three-state admission result, and does
+not require the external controller to build raw JSON-RPC. Only a `persisted`
+probe result may connect to the existing scoped resume contract; only
+`not_persisted` may permit the supervisor to retry the original objective; and
+`unknown` returns control to the supervisor without automatic run or resume.
 
 A retryable process-level failure from `brownie resume` may expose
 `next_invocation.command = "resume"` because the process-level invocation is
