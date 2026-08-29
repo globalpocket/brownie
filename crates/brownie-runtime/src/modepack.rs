@@ -3016,10 +3016,12 @@ where
         .iter()
         .map(|policy| policy.mode_id.clone())
         .collect::<Vec<_>>();
+    let global_policy_artifacts = modepack_global_policy_artifacts_payload(&snapshot);
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
         snapshot.entrypoints.default_mode_id(),
+        &global_policy_artifacts,
         &policies,
     );
     let summary = ModePackCandidateSummary {
@@ -3678,6 +3680,7 @@ pub(super) fn approve_remote_modepack_candidate(
         &recompiled.name,
         recompiled.schema_version,
         recompiled.entrypoints.default_mode_id(),
+        &modepack_global_policy_artifacts_payload(&recompiled),
         &policy_snapshots,
     );
     if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
@@ -4020,6 +4023,7 @@ pub(super) fn verify_modepack_candidate_provenance(
         &recompiled.name,
         recompiled.schema_version,
         recompiled.entrypoints.default_mode_id(),
+        &modepack_global_policy_artifacts_payload(&recompiled),
         &policy_snapshots,
     );
     if compiled_policy_fingerprint != params.expected_compiled_policy_fingerprint {
@@ -4790,10 +4794,12 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
         .iter()
         .map(|policy| policy.mode_id.clone())
         .collect::<Vec<_>>();
+    let global_policy_artifacts = modepack_global_policy_artifacts_payload(&snapshot);
     let actual_compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
         snapshot.entrypoints.default_mode_id(),
+        &global_policy_artifacts,
         &policies,
     );
     if actual_compiled_policy_fingerprint != compiled_policy_fingerprint {
@@ -4843,7 +4849,11 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
         activation_event_id: String::new(),
     };
     Ok((
-        ActiveModePackSnapshot { summary, policies },
+        ActiveModePackSnapshot {
+            summary,
+            global_policy_artifacts,
+            policies,
+        },
         approved.summary,
     ))
 }
@@ -4906,10 +4916,12 @@ pub(super) fn build_active_modepack_snapshot(
         .iter()
         .map(|policy| policy.mode_id.clone())
         .collect::<Vec<_>>();
+    let global_policy_artifacts = modepack_global_policy_artifacts_payload(&snapshot);
     let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
         &snapshot.name,
         snapshot.schema_version,
         snapshot.entrypoints.default_mode_id(),
+        &global_policy_artifacts,
         &policy_snapshots,
     );
     let activation_fingerprint = active_modepack_activation_fingerprint(
@@ -4935,6 +4947,7 @@ pub(super) fn build_active_modepack_snapshot(
     };
     Ok(ActiveModePackSnapshot {
         summary,
+        global_policy_artifacts,
         policies: policy_snapshots,
     })
 }
@@ -4968,18 +4981,28 @@ pub(super) fn mode_prompt_sections_payload(policy: &CompiledModePolicy) -> Vec<V
         .collect()
 }
 
+pub(super) fn modepack_global_policy_artifacts_payload(snapshot: &ModePackSnapshot) -> Vec<Value> {
+    snapshot
+        .global_policy_artifacts
+        .iter()
+        .map(|artifact| json!(artifact))
+        .collect()
+}
+
 pub(super) fn active_modepack_compiled_policy_fingerprint(
     modepack_name: &str,
     schema_version: u64,
     default_entrypoint: Option<&str>,
+    global_policy_artifacts: &[Value],
     policies: &[ActiveModePackPolicySnapshot],
 ) -> String {
     let canonical = json!({
-        "version": "active_modepack_compiled_policy_fingerprint_v2",
+        "version": "active_modepack_compiled_policy_fingerprint_v3",
         "modepack_name": modepack_name,
         "schema_version": schema_version,
         "source_path": WORKSPACE_MODEPACK_PATH,
         "default_entrypoint": default_entrypoint,
+        "global_policy_artifacts": global_policy_artifacts,
         "policies": policies,
     });
     format!("sha256:{}", hex_sha256(canonical.to_string().as_bytes()))

@@ -42,7 +42,7 @@ use brownie_llm::{
 use brownie_modepack::{load_modepack_from_str, load_workspace_modepack_with_options};
 use brownie_modepack::{
     load_modepack_from_str_with_options, load_workspace_modepack, ModePackLoadOptions,
-    WORKSPACE_MODEPACK_PATH,
+    ModePackSnapshot, WORKSPACE_MODEPACK_PATH,
 };
 use brownie_protocol::{
     BoundedCargoDiagnostic, ChildInspectConsumedParentJoinRecoverySummary,
@@ -12731,6 +12731,7 @@ fn external_modepack_task_provenance_payload(
             "modepack_name": snapshot.summary.modepack_name,
             "schema_version": snapshot.summary.schema_version,
             "source_path": snapshot.summary.source_path,
+            "global_policy_artifacts": snapshot.global_policy_artifacts,
             "mode_id": policy.mode_id,
             "policy_fingerprint": policy.policy_fingerprint,
             "activation_fingerprint": snapshot.summary.activation_fingerprint,
@@ -12757,6 +12758,7 @@ fn external_modepack_task_provenance_payload(
         "modepack_name": snapshot.name,
         "schema_version": snapshot.schema_version,
         "source_path": WORKSPACE_MODEPACK_PATH,
+        "global_policy_artifacts": modepack_global_policy_artifacts_payload(&snapshot),
         "mode_id": policy.mode_id,
         "policy_fingerprint": policy_fingerprint,
     })))
@@ -16010,6 +16012,15 @@ mod tests {
               "entrypoints": {
                 "default": "orchestrator"
               },
+              "global_policy_artifacts": [
+                {
+                  "category": "rule",
+                  "relative_path": "rules/runtime-safety.md",
+                  "title": "Runtime Safety",
+                  "content": "AgentModes global rules remain protected workflow policy only.",
+                  "content_fingerprint": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+              ],
               "modes": [
                 {
                   "mode_id": "orchestrator",
@@ -16198,6 +16209,7 @@ mod tests {
             &snapshot.name,
             snapshot.schema_version,
             snapshot.entrypoints.default_mode_id(),
+            &[],
             &policy_snapshots,
         );
         let activation_fingerprint = active_modepack_activation_fingerprint(
@@ -16226,6 +16238,7 @@ mod tests {
                     activated_at,
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: policy_snapshots,
             })
             .expect("trusted active snapshot");
@@ -24138,6 +24151,7 @@ mod tests {
             &snapshot.name,
             snapshot.schema_version,
             None,
+            &[],
             &policy_snapshots,
         );
         let activation_fingerprint = active_modepack_activation_fingerprint(
@@ -24166,6 +24180,7 @@ mod tests {
                     activated_at,
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: policy_snapshots,
             })
             .expect("active snapshot without entrypoint");
@@ -26293,6 +26308,7 @@ mod tests {
                     activated_at: "2026-08-18T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
             .expect("active snapshot");
@@ -26324,6 +26340,7 @@ mod tests {
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
             candidate_snapshot.entrypoints.default_mode_id(),
+            &[],
             &candidate_snapshot
                 .modes
                 .iter()
@@ -52670,6 +52687,16 @@ mod tests {
             mode_resolved["external_modepack_task_provenance"]["mode_id"],
             "orchestrator"
         );
+        assert_eq!(
+            mode_resolved["external_modepack_task_provenance"]["global_policy_artifacts"][0]
+                ["relative_path"],
+            "rules/runtime-safety.md"
+        );
+        assert_eq!(
+            mode_resolved["external_modepack_task_provenance"]["global_policy_artifacts"][0]
+                ["content"],
+            "AgentModes global rules remain protected workflow policy only."
+        );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
@@ -52927,6 +52954,7 @@ mod tests {
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
             .expect("active snapshot");
@@ -53072,6 +53100,7 @@ mod tests {
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
             .expect("active snapshot");
@@ -53299,6 +53328,7 @@ mod tests {
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
             candidate_snapshot.entrypoints.default_mode_id(),
+            &[],
             &candidate_snapshot
                 .modes
                 .iter()
@@ -53375,6 +53405,7 @@ mod tests {
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
             .expect("active snapshot");
@@ -54382,6 +54413,7 @@ mod tests {
             &candidate_snapshot.name,
             candidate_snapshot.schema_version,
             candidate_snapshot.entrypoints.default_mode_id(),
+            &[],
             &candidate_snapshot
                 .modes
                 .iter()
@@ -54457,6 +54489,8 @@ mod tests {
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                global_policy_artifacts: Vec::new(),
+
                 policies: Vec::new(),
             })
             .expect("active snapshot");

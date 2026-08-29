@@ -471,6 +471,19 @@ fn format_mode_instruction_material(payload: &serde_json::Value) -> String {
         })
         .filter(|sections| !sections.is_empty())
         .unwrap_or_else(|| "- <none>".to_string());
+    let global_policy_artifacts = payload
+        .get("external_modepack_task_provenance")
+        .and_then(|value| value.get("global_policy_artifacts"))
+        .and_then(|value| value.as_array())
+        .map(|artifacts| {
+            artifacts
+                .iter()
+                .filter_map(format_global_policy_artifact)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|artifacts| !artifacts.is_empty())
+        .unwrap_or_else(|| "- <none>".to_string());
     let completion_rules = payload
         .get("completion_rules")
         .and_then(|value| value.as_array())
@@ -495,6 +508,8 @@ verification_responsibility: {verification_responsibility}
 instruction_fingerprint: {instruction_fingerprint}
 prompt_sections:
 {prompt_sections}
+global_policy_artifacts:
+{global_policy_artifacts}
 completion_rules:
 {completion_rules}"
     )
@@ -507,6 +522,17 @@ fn format_prompt_section(section: &serde_json::Value) -> Option<String> {
     let content = section.get("content")?.as_str()?;
     Some(format!(
         "- title: {title}\n  source: {source}\n  content_fingerprint: {fingerprint}\n  content:\n{content}"
+    ))
+}
+
+fn format_global_policy_artifact(artifact: &serde_json::Value) -> Option<String> {
+    let category = artifact.get("category")?.as_str()?;
+    let relative_path = artifact.get("relative_path")?.as_str()?;
+    let title = artifact.get("title")?.as_str()?;
+    let fingerprint = artifact.get("content_fingerprint")?.as_str()?;
+    let content = artifact.get("content")?.as_str()?;
+    Some(format!(
+        "- category: {category}\n  relative_path: {relative_path}\n  title: {title}\n  content_fingerprint: {fingerprint}\n  content:\n{content}"
     ))
 }
 
@@ -1753,6 +1779,15 @@ mod tests {
                         "destructive": false,
                         "can_spawn_subtasks": false,
                         "codebase_index": false
+                    },
+                    "external_modepack_task_provenance": {
+                        "global_policy_artifacts": [{
+                            "category": "rule",
+                            "relative_path": "rules/runtime-safety.md",
+                            "title": "Runtime Safety",
+                            "content_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                            "content": "Global rules are protected policy text only."
+                        }]
                     }
                 })),
             }],
@@ -1773,6 +1808,15 @@ mod tests {
             .content
             .contains("Runtime Safety Invariants:"));
         assert!(prompt.messages[0].content.contains(custom_instruction));
+        assert!(prompt.messages[0]
+            .content
+            .contains("global_policy_artifacts:"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("relative_path: rules/runtime-safety.md"));
+        assert!(prompt.messages[0]
+            .content
+            .contains("Global rules are protected policy text only."));
         assert!(!prompt.messages[1].content.contains(custom_instruction));
 
         let truncated = SlidingWindowTruncator::truncate(

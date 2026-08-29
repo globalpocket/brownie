@@ -1,6 +1,8 @@
 //! AgentModes compatibility crate.
 
 use std::collections::HashSet;
+use std::fs;
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 use regex::Regex;
@@ -14,6 +16,9 @@ pub const AGENTMODES_MODEPACK_SCHEMA_VERSION: u64 = 1;
 pub const HANDOFF_TARGET_ALL_MODEPACK_MODES: &str = "$modepack/*";
 const MAX_MODE_ID_CHARS: usize = 64;
 const MAX_MODE_TEXT_CHARS: usize = 32_000;
+const MAX_POLICY_ARTIFACTS: usize = 64;
+const MAX_POLICY_ARTIFACT_CONTENT_CHARS: usize = 32_000;
+const MAX_POLICY_ARTIFACT_PATH_CHARS: usize = 256;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CompiledModePolicy {
@@ -43,6 +48,15 @@ pub struct CompiledPromptSection {
     pub title: String,
     pub content: String,
     pub source: String,
+    pub content_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct CompiledPolicyArtifact {
+    pub category: String,
+    pub relative_path: String,
+    pub title: String,
+    pub content: String,
     pub content_fingerprint: String,
 }
 
@@ -91,6 +105,7 @@ pub struct AgentModesCompileOptions {
     pub modepack_name: Option<String>,
     pub default_entrypoint: Option<String>,
     pub delegation_coordinators: Vec<String>,
+    pub global_policy_artifacts: Vec<CompiledPolicyArtifact>,
     pub source_trust: AgentModesSourceTrust,
     pub capability_ceiling: AgentModesCapabilityCeiling,
 }
@@ -131,6 +146,8 @@ pub struct AgentModesModePack {
     pub schema_version: u64,
     #[serde(default, skip_serializing_if = "AgentModesEntrypoints::is_empty")]
     pub entrypoints: AgentModesEntrypoints,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub global_policy_artifacts: Vec<CompiledPolicyArtifact>,
     pub modes: Vec<CompiledModePolicy>,
 }
 
@@ -276,6 +293,26 @@ pub fn compile_agentmodes_modepack_to_json(
     serde_json::to_string_pretty(&modepack).context("failed to serialize AgentModes Mode Pack JSON")
 }
 
+pub fn compile_agentmodes_policy_artifacts_from_root(
+    root: impl AsRef<Path>,
+) -> Result<Vec<CompiledPolicyArtifact>> {
+    let root = root.as_ref();
+    let mut files = Vec::new();
+    for (category, directory) in [
+        ("rule", "rules"),
+        ("skill", "skills"),
+        ("command", "commands"),
+        ("contract", "docs/contracts"),
+    ] {
+        collect_policy_artifact_files(root, category, directory, &mut files)?;
+    }
+    files.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    if files.len() > MAX_POLICY_ARTIFACTS {
+        bail!("AgentModes policy artifact count exceeds limit");
+    }
+    Ok(files)
+}
+
 fn compile_agentmodes_document(
     raw: RawAgentModesDocument,
     options: AgentModesCompileOptions,
@@ -374,12 +411,157 @@ fn compile_agentmodes_document(
         })
         .collect::<Result<Vec<_>>>()?;
 
+    let global_policy_artifacts =
+        validate_agentmodes_policy_artifacts(options.global_policy_artifacts)?;
+
     Ok(AgentModesModePack {
         name,
         schema_version: AGENTMODES_MODEPACK_SCHEMA_VERSION,
         entrypoints: AgentModesEntrypoints { default },
+        global_policy_artifacts,
         modes,
     })
+}
+
+fn collect_policy_artifact_files(
+    root: &Path,
+    category: &str,
+    directory: &str,
+    artifacts: &mut Vec<CompiledPolicyArtifact>,
+) -> Result<()> {
+    let dir = root.join(directory);
+    if !dir.exists() {
+        return Ok(());
+    }
+    let mut paths = Vec::new();
+    for entry in fs::read_dir(&dir)
+        .with_context(|| format!("failed to read AgentModes policy directory {directory}"))?
+    {
+        let path = entry
+            .with_context(|| format!("failed to read AgentModes policy directory {directory}"))?
+            .path();
+        if path.is_file() && path.extension().and_then(|value| value.to_str()) == Some("md") {
+            paths.push(path);
+        }
+    }
+    paths.sort();
+    for path in paths {
+        let relative_path = relative_policy_artifact_path(root, &path)?;
+        let content = fs::read_to_string(&path).with_context(|| {
+            format!("failed to read AgentModes policy artifact {relative_path}")
+        })?;
+        let content = bounded_policy_artifact_content(&relative_path, content)?;
+        let title = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or(category)
+            .replace(['-', '_'], " ");
+        artifacts.push(CompiledPolicyArtifact {
+            category: category.to_string(),
+            relative_path,
+            title,
+            content_fingerprint: sha256_fingerprint(content.as_bytes()),
+            content,
+        });
+    }
+    Ok(())
+}
+
+fn relative_policy_artifact_path(root: &Path, path: &Path) -> Result<String> {
+    let relative = path.strip_prefix(root).with_context(|| {
+        format!(
+            "AgentModes policy artifact escaped root: {}",
+            path.display()
+        )
+    })?;
+    let relative = normalize_relative_policy_artifact_path(relative)?;
+    validate_policy_artifact_relative_path("policy_artifacts[].relative_path", relative)
+}
+
+fn normalize_relative_policy_artifact_path(path: &Path) -> Result<String> {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => {
+                let Some(part) = part.to_str() else {
+                    bail!("AgentModes policy artifact path must be UTF-8");
+                };
+                parts.push(part.to_string());
+            }
+            _ => bail!("AgentModes policy artifact path must be relative and normalized"),
+        }
+    }
+    Ok(parts.join("/"))
+}
+
+fn validate_agentmodes_policy_artifacts(
+    artifacts: Vec<CompiledPolicyArtifact>,
+) -> Result<Vec<CompiledPolicyArtifact>> {
+    if artifacts.len() > MAX_POLICY_ARTIFACTS {
+        bail!("AgentModes policy artifact count exceeds limit");
+    }
+    let mut seen = HashSet::new();
+    artifacts
+        .into_iter()
+        .map(|artifact| {
+            let category = validate_policy_artifact_category(artifact.category)?;
+            let relative_path = validate_policy_artifact_relative_path(
+                "policy_artifacts[].relative_path",
+                artifact.relative_path,
+            )?;
+            if !seen.insert(relative_path.clone()) {
+                bail!("duplicate AgentModes policy artifact path: {relative_path}");
+            }
+            let title = bounded_agentmodes_field("policy_artifacts[].title", artifact.title)?;
+            let content = bounded_policy_artifact_content(&relative_path, artifact.content)?;
+            let content_fingerprint = bounded_agentmodes_field(
+                "policy_artifacts[].content_fingerprint",
+                artifact.content_fingerprint,
+            )?;
+            Ok(CompiledPolicyArtifact {
+                category,
+                relative_path,
+                title,
+                content,
+                content_fingerprint,
+            })
+        })
+        .collect()
+}
+
+fn validate_policy_artifact_category(category: String) -> Result<String> {
+    let category = non_empty_agentmodes_field("policy_artifacts[].category", category)?;
+    match category.as_str() {
+        "rule" | "skill" | "command" | "contract" => Ok(category),
+        other => bail!("AgentModes policy artifact category is unsupported: {other}"),
+    }
+}
+
+fn validate_policy_artifact_relative_path(field: &str, value: String) -> Result<String> {
+    let value = non_empty_agentmodes_field(field, value)?;
+    if value.chars().count() > MAX_POLICY_ARTIFACT_PATH_CHARS {
+        bail!("AgentModes {field} exceeds path length limit");
+    }
+    if value.starts_with('/')
+        || value.contains('\\')
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!("AgentModes {field} must be a normalized relative path");
+    }
+    if !value.ends_with(".md") {
+        bail!("AgentModes {field} must reference a markdown policy artifact");
+    }
+    Ok(value)
+}
+
+fn bounded_policy_artifact_content(field: &str, value: String) -> Result<String> {
+    let value = non_empty_agentmodes_field(field, value)?;
+    if value.chars().count() > MAX_POLICY_ARTIFACT_CONTENT_CHARS {
+        bail!("AgentModes policy artifact {field} exceeds content size limit");
+    }
+    Ok(value)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -1343,16 +1525,80 @@ customModes:
     fn serializes_compiled_agentmodes_modepack_with_bounded_prompt_policy() {
         let json = compile_agentmodes_modepack_to_json(
             representative_agentmodes_yaml(),
-            AgentModesCompileOptions::default(),
+            AgentModesCompileOptions {
+                global_policy_artifacts: vec![CompiledPolicyArtifact {
+                    category: "rule".to_string(),
+                    relative_path: "rules/runtime-safety.md".to_string(),
+                    title: "Runtime Safety".to_string(),
+                    content: "Global rules remain protected prompt policy only.".to_string(),
+                    content_fingerprint: "sha256:test-global-rule".to_string(),
+                }],
+                ..AgentModesCompileOptions::default()
+            },
         )
         .expect("serialized AgentModes Mode Pack");
 
         assert!(json.contains("\"schema_version\": 1"));
         assert!(json.contains("\"default\": \"orchestrator\""));
+        assert!(json.contains("\"global_policy_artifacts\""));
+        assert!(json.contains("\"relative_path\": \"rules/runtime-safety.md\""));
         assert!(json.contains("\"prompt_sections\""));
         assert!(json.contains("Delegate to specialists"));
         assert!(json.contains("Make the smallest safe diff"));
         assert!(json.contains("\"instruction_fingerprint\""));
+    }
+
+    #[test]
+    fn rejects_unsafe_agentmodes_policy_artifacts_fail_closed() {
+        let error = compile_agentmodes_modepack_from_yaml(
+            representative_agentmodes_yaml(),
+            AgentModesCompileOptions {
+                global_policy_artifacts: vec![CompiledPolicyArtifact {
+                    category: "rule".to_string(),
+                    relative_path: "../secrets.md".to_string(),
+                    title: "Escaped".to_string(),
+                    content: "Bad path.".to_string(),
+                    content_fingerprint: "sha256:test".to_string(),
+                }],
+                ..AgentModesCompileOptions::default()
+            },
+        )
+        .expect_err("unsafe artifact should fail")
+        .to_string();
+
+        assert!(error.contains("must be a normalized relative path"));
+    }
+
+    #[test]
+    fn compiles_current_agentmodes_global_policy_artifacts_when_source_is_available() {
+        let root = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes");
+        if !root.join("modes").exists() {
+            return;
+        }
+
+        let artifacts =
+            compile_agentmodes_policy_artifacts_from_root(root).expect("compiled policy artifacts");
+
+        assert!(!artifacts.is_empty());
+        assert!(artifacts.iter().any(|artifact| artifact.relative_path
+            == "rules/00-agentmodes-compact-mode-contract.md"
+            && artifact.category == "rule"));
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact.relative_path == "commands/analysis.md"
+                && artifact.category == "command"));
+        assert!(artifacts.iter().any(|artifact| artifact.relative_path
+            == "docs/contracts/task-packet-v1.md"
+            && artifact.category == "contract"));
+        assert!(artifacts.iter().all(|artifact| {
+            !artifact.relative_path.starts_with('/')
+                && !artifact.relative_path.contains("..")
+                && artifact.content_fingerprint.starts_with("sha256:")
+                && !artifact.content.is_empty()
+        }));
+        assert!(!artifacts
+            .iter()
+            .any(|artifact| artifact.relative_path.contains(".DS_Store")));
     }
 
     #[test]
