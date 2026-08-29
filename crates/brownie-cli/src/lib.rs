@@ -2,7 +2,7 @@ pub mod cli;
 pub mod runtime_client;
 
 use cli::{Cli, CliCommand, CliError, InspectTarget, ListTarget, ModeTarget};
-use runtime_client::{RuntimeClient, RuntimeClientError};
+use runtime_client::{RunRecoveryIdentity, RuntimeClient, RuntimeClientError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
@@ -41,6 +41,7 @@ where
             &error.to_string(),
             json_requested,
             "unknown",
+            None,
         ),
     }
 }
@@ -76,40 +77,58 @@ fn execute(cli: Cli) -> CliOutput {
 }
 
 fn runtime_error_output(error: RuntimeClientError, json: bool, command: &'static str) -> CliOutput {
-    let (exit_code, code, message) = match error {
+    let (exit_code, code, message, recovery_identity) = match error {
         RuntimeClientError::RuntimeUnavailable => (
             ExitCode::RuntimeUnavailable,
             "runtime_unavailable",
             "runtime binary is unavailable",
+            None,
         ),
         RuntimeClientError::UnsupportedCommand => (
             ExitCode::RuntimeUnavailable,
             "runtime_unavailable",
             "runtime command is not implemented in this CLI slice",
+            None,
         ),
         RuntimeClientError::CommunicationFailed => (
             ExitCode::InternalCommunication,
             "runtime_communication_failed",
             "runtime communication failed",
+            None,
         ),
         RuntimeClientError::TimedOut => (
             ExitCode::InternalCommunication,
             "runtime_timeout",
             "runtime request timed out",
+            None,
+        ),
+        RuntimeClientError::RunCommunicationFailedAdmissionUnknown(recovery_identity) => (
+            ExitCode::InternalCommunication,
+            "runtime_communication_failed",
+            "runtime communication failed",
+            Some(recovery_identity),
+        ),
+        RuntimeClientError::RunTimedOutAdmissionUnknown(recovery_identity) => (
+            ExitCode::InternalCommunication,
+            "runtime_timeout",
+            "runtime request timed out",
+            Some(recovery_identity),
         ),
         RuntimeClientError::InvalidResponse => (
             ExitCode::InternalCommunication,
             "runtime_invalid_response",
             "runtime returned an invalid response",
+            None,
         ),
         RuntimeClientError::RuntimeError => (
             ExitCode::InternalCommunication,
             "runtime_error",
             "runtime returned an error",
+            None,
         ),
     };
 
-    error_output(exit_code, code, message, json, command)
+    error_output(exit_code, code, message, json, command, recovery_identity)
 }
 
 fn error_output(
@@ -118,10 +137,14 @@ fn error_output(
     message: &str,
     json: bool,
     command: &'static str,
+    recovery_identity: Option<RunRecoveryIdentity>,
 ) -> CliOutput {
     if json {
         let retryable = matches!(code, "runtime_communication_failed" | "runtime_timeout");
-        let controller_action = if retryable {
+        let unknown_run_admission = retryable && command == "run";
+        let controller_action = if unknown_run_admission {
+            "return_to_supervisor"
+        } else if retryable {
             "retry"
         } else {
             "return_to_supervisor"
@@ -131,7 +154,7 @@ fn error_output(
         } else {
             "terminal_failure"
         };
-        let next_invocation = if retryable && matches!(command, "run" | "resume") {
+        let next_invocation = if retryable && command == "resume" {
             serde_json::json!({
                 "command": "resume",
                 "arguments": []
@@ -139,13 +162,36 @@ fn error_output(
         } else {
             serde_json::Value::Null
         };
+        let process_admission_state = if unknown_run_admission {
+            "unknown"
+        } else {
+            "not_applicable"
+        };
+        let recovery_recommendation = if unknown_run_admission {
+            "supervisor_reconcile_or_probe_runtime_state"
+        } else if retryable {
+            "retry_same_process_invocation"
+        } else {
+            "return_to_supervisor"
+        };
+        let recovery_identity_json =
+            recovery_identity
+                .as_ref()
+                .map_or(serde_json::Value::Null, |identity| {
+                    serde_json::json!({
+                        "session_id": identity.session_id,
+                        "drive_id": identity.drive_id,
+                        "journey_id": identity.journey_id,
+                        "objective_fingerprint": identity.objective_fingerprint,
+                    })
+                });
         let payload = serde_json::json!({
             "ok": false,
             "command": command,
             "status": code,
             "next_action": controller_action,
             "stop_reason": code,
-            "continuation_required": retryable && matches!(command, "run" | "resume"),
+            "continuation_required": retryable && command == "resume",
             "completed": false,
             "blocked": false,
             "retryable": retryable,
@@ -153,6 +199,9 @@ fn error_output(
             "controller_action": controller_action,
             "stop_class": stop_class,
             "next_invocation": next_invocation.clone(),
+            "process_admission_state": process_admission_state,
+            "recovery_recommendation": recovery_recommendation,
+            "recovery_identity": recovery_identity_json.clone(),
             "automation": {
                 "schema_version": 1,
                 "outcome_scope": "process",
@@ -164,14 +213,17 @@ fn error_output(
                 "journey_id": null,
                 "next_action": controller_action,
                 "stop_reason": code,
-                "continuation_required": retryable && matches!(command, "run" | "resume"),
+                "continuation_required": retryable && command == "resume",
                 "completed": false,
                 "blocked": false,
                 "retryable": retryable,
                 "terminal_failure": !retryable,
                 "controller_action": controller_action,
                 "stop_class": stop_class,
-                "next_invocation": next_invocation
+                "next_invocation": next_invocation,
+                "process_admission_state": process_admission_state,
+                "recovery_recommendation": recovery_recommendation,
+                "recovery_identity": recovery_identity_json
             },
             "error": {
                 "code": code,
@@ -380,6 +432,64 @@ mod tests {
         assert_eq!(payload["automation"]["schema_version"], 1);
         assert_eq!(payload["automation"]["outcome_scope"], "process");
         assert!(output.stderr.is_empty());
+    }
+
+    #[test]
+    fn json_run_transport_timeout_reports_unknown_admission_without_unscoped_resume() {
+        let output = runtime_error_output(RuntimeClientError::TimedOut, true, "run");
+        assert_eq!(output.exit_code, ExitCode::InternalCommunication);
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["command"], "run");
+        assert_eq!(payload["status"], "runtime_timeout");
+        assert_eq!(payload["retryable"], true);
+        assert_eq!(payload["terminal_failure"], false);
+        assert_eq!(payload["controller_action"], "return_to_supervisor");
+        assert_eq!(payload["continuation_required"], false);
+        assert!(payload["next_invocation"].is_null());
+        assert_eq!(payload["process_admission_state"], "unknown");
+        assert_eq!(
+            payload["recovery_recommendation"],
+            "supervisor_reconcile_or_probe_runtime_state"
+        );
+        assert_eq!(payload["automation"]["task_id"], serde_json::Value::Null);
+        assert_eq!(payload["automation"]["run_id"], serde_json::Value::Null);
+        assert_eq!(payload["automation"]["journey_id"], serde_json::Value::Null);
+        assert!(payload["automation"]["next_invocation"].is_null());
+        assert_eq!(payload["automation"]["process_admission_state"], "unknown");
+    }
+
+    #[test]
+    fn json_run_communication_failure_does_not_resume_unrelated_journey() {
+        let output = runtime_error_output(RuntimeClientError::CommunicationFailed, true, "run");
+        assert_eq!(output.exit_code, ExitCode::InternalCommunication);
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["status"], "runtime_communication_failed");
+        assert_eq!(payload["retryable"], true);
+        assert_eq!(payload["controller_action"], "return_to_supervisor");
+        assert_eq!(payload["continuation_required"], false);
+        assert!(payload["next_invocation"].is_null());
+        assert_eq!(payload["process_admission_state"], "unknown");
+        assert_eq!(
+            payload["automation"]["recovery_recommendation"],
+            "supervisor_reconcile_or_probe_runtime_state"
+        );
+    }
+
+    #[test]
+    fn json_resume_transport_failure_can_retry_scoped_resume_invocation() {
+        let output = runtime_error_output(RuntimeClientError::TimedOut, true, "resume");
+        assert_eq!(output.exit_code, ExitCode::InternalCommunication);
+        let payload: serde_json::Value = serde_json::from_str(&output.stdout).unwrap();
+        assert_eq!(payload["command"], "resume");
+        assert_eq!(payload["retryable"], true);
+        assert_eq!(payload["controller_action"], "retry");
+        assert_eq!(payload["continuation_required"], true);
+        assert_eq!(payload["next_invocation"]["command"], "resume");
+        assert_eq!(
+            payload["recovery_recommendation"],
+            "retry_same_process_invocation"
+        );
+        assert_eq!(payload["process_admission_state"], "not_applicable");
     }
 
     #[test]

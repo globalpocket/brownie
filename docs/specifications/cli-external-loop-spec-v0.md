@@ -169,9 +169,27 @@ failure and runtime timeout are retryable process failures. Invalid invocation,
 runtime unavailable, runtime error, and invalid runtime response are
 non-retryable unless an external supervisor changes configuration or code.
 Process-level error automation uses `schema_version = 1`,
-`outcome_scope = "process"`, and the finite controller actions above. For a
-retryable failed `run` or `resume` process invocation, `next_invocation.command`
-is `resume` so an external loop does not duplicate objective admission.
+`outcome_scope = "process"`, and the finite controller actions above.
+
+A retryable process-level failure from `brownie run "<objective>"` has unknown
+objective admission unless the runtime returned task/run/journey identity before
+the transport failed. Unknown run admission must not prescribe an unscoped
+`brownie resume`, because that can resume an older unrelated journey, and must
+not prescribe blind `brownie run` replay, because that can duplicate an objective
+that was admitted before response loss. When the CLI generated a bounded run
+identity before dispatch, the process-level JSON includes `recovery_identity`
+with the `session_id`, `drive_id`, `journey_id`, and objective fingerprint used
+for the attempted runtime request. It still uses
+`process_admission_state = "unknown"`, leaves `task_id`, `run_id`, and
+`next_invocation` null, and sets
+`recovery_recommendation = "supervisor_reconcile_or_probe_runtime_state"` until
+runtime-owned evidence can prove `persisted`, `not_persisted`, or `unknown`.
+
+A retryable process-level failure from `brownie resume` may expose
+`next_invocation.command = "resume"` because the process-level invocation is
+already a continuation attempt and does not admit a new objective. Successful
+runtime-owned objective outcomes continue to use `controller_action = "resume"`
+and `next_invocation.command = "resume"` when bounded progress should continue.
 
 ## Exit Code Contract
 

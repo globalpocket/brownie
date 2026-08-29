@@ -76,14 +76,38 @@ pub enum RuntimeTransport {
     JsonRpcHostProcess,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunRecoveryIdentity {
+    pub session_id: String,
+    pub drive_id: String,
+    pub journey_id: String,
+    pub objective_fingerprint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeClientError {
     RuntimeUnavailable,
     UnsupportedCommand,
     CommunicationFailed,
     TimedOut,
+    RunCommunicationFailedAdmissionUnknown(RunRecoveryIdentity),
+    RunTimedOutAdmissionUnknown(RunRecoveryIdentity),
     InvalidResponse,
     RuntimeError,
+}
+
+impl RuntimeClientError {
+    fn with_run_admission_unknown(self, recovery_identity: RunRecoveryIdentity) -> Self {
+        match self {
+            RuntimeClientError::CommunicationFailed => {
+                RuntimeClientError::RunCommunicationFailedAdmissionUnknown(recovery_identity)
+            }
+            RuntimeClientError::TimedOut => {
+                RuntimeClientError::RunTimedOutAdmissionUnknown(recovery_identity)
+            }
+            error => error,
+        }
+    }
 }
 
 impl Default for RuntimeClient {
@@ -180,11 +204,15 @@ impl RuntimeClient {
         objective: &str,
         json_output: bool,
     ) -> Result<String, RuntimeClientError> {
-        let result = self.call_runtime_value(
-            HEADLESS_RUN_DRIVE_METHOD,
-            Some(cli_run_drive_params(objective)?),
-            RuntimeRequestClass::ObjectiveExecution,
-        )?;
+        let params = cli_run_drive_params(objective)?;
+        let recovery_identity = run_recovery_identity_from_params(&params)?;
+        let result = self
+            .call_runtime_value(
+                HEADLESS_RUN_DRIVE_METHOD,
+                Some(params),
+                RuntimeRequestClass::ObjectiveExecution,
+            )
+            .map_err(|error| error.with_run_admission_unknown(recovery_identity))?;
         validate_headless_run_drive_result(&result)?;
         let result = self.follow_parent_join_routes_if_available(result)?;
         let result = self.follow_objective_proposal_preflight_route_if_available(result)?;
@@ -2341,6 +2369,40 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
             }
         }
     }))
+}
+
+fn run_recovery_identity_from_params(
+    params: &Value,
+) -> Result<RunRecoveryIdentity, RuntimeClientError> {
+    let object = params
+        .as_object()
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let admission = object
+        .get("journey_admission")
+        .and_then(Value::as_object)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let task_start = admission
+        .get("task_start")
+        .and_then(Value::as_object)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let goal = task_start
+        .get("goal")
+        .and_then(Value::as_str)
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    Ok(RunRecoveryIdentity {
+        session_id: required_display_string(object, "session_id")?,
+        drive_id: required_display_string(object, "drive_id")?,
+        journey_id: required_display_string(admission, "journey_id")?,
+        objective_fingerprint: stable_cli_objective_fingerprint(goal),
+    })
+}
+
+fn stable_cli_objective_fingerprint(objective: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(b"brownie-cli-objective-fingerprint-v1\0");
+    hasher.update(objective.as_bytes());
+    let digest = hasher.finalize();
+    format!("sha256:{}", hex_prefix(&digest, 32))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

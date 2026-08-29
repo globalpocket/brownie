@@ -1543,6 +1543,25 @@ not a scheduler, generic workflow engine, automatic apply/recovery/provider/
 Mode Pack/parent-join step, shell/git/network/service expansion, VSIX policy
 decision, or raw prompt/provider/file/content/output/environment/path exposure.
 
+## M50.1.1 headless run recovery probe
+
+`headless.run.recovery_probe` lets an external supervisor reconcile a lost
+`brownie run` response without guessing. The caller supplies
+`authorize_recovery_probe=true`, the bounded `session_id`, `drive_id`,
+`journey_id`, and objective fingerprint generated for the attempted run. The
+runtime reads durable journey/task state and returns one of three admission
+states: `persisted`, `not_persisted`, or `unknown`.
+
+When the matching journey checkpoint exists and its task objective fingerprint
+matches, the result returns bounded task/run/journey handles, the journey
+fingerprint, and a persisted-identity recommendation for the existing scoped
+resume contract. When no matching journey checkpoint exists, the result returns
+`not_persisted` so the supervisor may retry the original
+`brownie run "<objective>"` without violating objective idempotency. Conflicting
+checkpoint identity or objective fingerprint returns `unknown` and no next
+invocation. The probe is read-only and does not expose raw objectives, prompts,
+provider responses, file content, command output, environment values, or paths.
+
 ## M50.2 headless journey route resume
 
 `headless.run.drive` can resume one already-admitted journey across the
