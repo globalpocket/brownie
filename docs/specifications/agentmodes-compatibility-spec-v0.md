@@ -190,6 +190,29 @@ bounded. Explicit smaller caller budgets remain valid protocol input, but they
 fail closed rather than dropping runtime policy, task-pinned Mode Pack policy,
 or compiled AgentModes instructions.
 
+MP-3.2F adds a bounded global policy artifact surface for real AgentModes
+content outside `modes/*.yaml`. The compatibility compiler may collect markdown
+artifacts from `rules`, `skills`, `commands`, and `docs/contracts` using
+normalized relative paths, stable categories, bounded content, and content
+fingerprints. These artifacts are protected workflow policy material only:
+their prose, command text, skill text, and contracts cannot grant workspace
+write, process execution, network/service access, destructive actions, or
+subtask spawning.
+
+Global policy artifacts are serialized into the generated Mode Pack as
+`global_policy_artifacts` and must pass normal Mode Pack validation before they
+can be activated. Runtime permission remains derived from structured mode
+policy, source trust, runtime ceilings, and `RuntimePermissionGate`, not from
+artifact text or AgentModes-specific Rust mode ids.
+
+When a Mode Pack is activated, its global policy artifacts are included in the
+active snapshot fingerprint surface and later written into task-pinned
+`ModeResolved` provenance for the selected external mode. Context
+materialization renders the task-pinned artifact content in the protected
+system-policy region alongside compiled mode instructions. Ledger evidence uses
+relative artifact identities and bounded content; absolute AgentModes source
+paths and raw Mode Pack JSON are not required for replay.
+
 ## M12.1 handoff target compatibility
 
 `CompiledModePolicy` now carries optional `allowed_handoff_targets` evidence for

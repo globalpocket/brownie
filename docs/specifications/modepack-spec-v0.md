@@ -212,6 +212,22 @@ materialization renders the task-pinned scopes and handoff targets in protected
 system policy. This makes prompt budgeting and prompt construction consume the
 same effective policy surface as runtime permission checks.
 
+Mode Packs may include top-level `global_policy_artifacts` for bounded workflow
+policy that applies across modes. Each artifact has a stable category
+(`rule`, `skill`, `command`, or `contract`), a normalized markdown
+`relative_path`, a title, bounded content, and a content fingerprint. These
+artifacts are validated as protected policy metadata only. They do not grant
+workspace write, process execution, network/service access, destructive
+operation, or subtask authority, and they do not bypass source-trust narrowing
+or `RuntimePermissionGate`.
+
+Active snapshots include the validated `global_policy_artifacts` collection in
+the compiled-policy fingerprint surface. Task admission copies the active
+snapshot's artifacts into `ModeResolved` external Mode Pack provenance, and
+prompt construction renders them as protected Mode Pack instruction material.
+Running tasks therefore keep the global policy artifact set selected at task
+start instead of reading live files after admission.
+
 When no explicit compiler default entrypoint is supplied, the generated Mode
 Pack selects `orchestrator` only if that slug exists. Explicit compiler defaults
 must resolve to a compiled mode id. Duplicate slugs, blank required fields,

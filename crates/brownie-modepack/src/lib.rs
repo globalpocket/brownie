@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
 use brownie_agentmodes::{
-    CompiledModePolicy, ModePermissions, WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
+    CompiledModePolicy, CompiledPolicyArtifact, ModePermissions, WorkspaceWriteScope,
+    HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
 use serde::Deserialize;
 
@@ -16,6 +17,9 @@ pub const MODEPACK_SCHEMA_VERSION: u64 = 1;
 const MAX_HANDOFF_TARGETS: usize = 16;
 const MAX_HANDOFF_TARGET_CHARS: usize = 64;
 const MAX_MODE_ID_REFERENCE_CHARS: usize = 64;
+const MAX_POLICY_ARTIFACTS: usize = 64;
+const MAX_POLICY_ARTIFACT_CONTENT_CHARS: usize = 32_000;
+const MAX_POLICY_ARTIFACT_PATH_CHARS: usize = 256;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ModePackEntrypoints {
@@ -36,6 +40,7 @@ pub struct ModePackSnapshot {
     pub source_trust: ModePackSourceTrust,
     pub capability_ceiling: ModePackCapabilityCeiling,
     pub entrypoints: ModePackEntrypoints,
+    pub global_policy_artifacts: Vec<CompiledPolicyArtifact>,
     pub modes: Vec<CompiledModePolicy>,
 }
 
@@ -110,6 +115,8 @@ struct RawModePack {
     schema_version: u64,
     #[serde(default)]
     entrypoints: RawModePackEntrypoints,
+    #[serde(default)]
+    global_policy_artifacts: Vec<CompiledPolicyArtifact>,
     modes: Vec<RawModePolicy>,
 }
 
@@ -258,6 +265,7 @@ fn compile_snapshot(
         });
     }
     let entrypoints = validate_entrypoints(raw.entrypoints, &seen)?;
+    let global_policy_artifacts = validate_policy_artifacts(raw.global_policy_artifacts)?;
 
     Ok(ModePackSnapshot {
         name,
@@ -266,6 +274,7 @@ fn compile_snapshot(
         source_trust: options.source_trust,
         capability_ceiling: options.capability_ceiling,
         entrypoints,
+        global_policy_artifacts,
         modes,
     })
 }
@@ -335,6 +344,70 @@ fn validate_prompt_section(
             section.content_fingerprint,
         )?,
     })
+}
+
+fn validate_policy_artifacts(
+    artifacts: Vec<CompiledPolicyArtifact>,
+) -> Result<Vec<CompiledPolicyArtifact>> {
+    if artifacts.len() > MAX_POLICY_ARTIFACTS {
+        bail!("modepack global_policy_artifacts exceeds count limit");
+    }
+    let mut seen = HashSet::new();
+    artifacts
+        .into_iter()
+        .map(|artifact| {
+            let category = validate_policy_artifact_category(artifact.category)?;
+            let relative_path = validate_policy_artifact_relative_path(artifact.relative_path)?;
+            if !seen.insert(relative_path.clone()) {
+                bail!("duplicate modepack global_policy_artifacts path: {relative_path}");
+            }
+            let title = non_empty("global_policy_artifacts[].title", artifact.title)?;
+            let content = non_empty("global_policy_artifacts[].content", artifact.content)?;
+            if content.chars().count() > MAX_POLICY_ARTIFACT_CONTENT_CHARS {
+                bail!("modepack global_policy_artifacts[].content exceeds content size limit");
+            }
+            let content_fingerprint = non_empty(
+                "global_policy_artifacts[].content_fingerprint",
+                artifact.content_fingerprint,
+            )?;
+            Ok(CompiledPolicyArtifact {
+                category,
+                relative_path,
+                title,
+                content,
+                content_fingerprint,
+            })
+        })
+        .collect()
+}
+
+fn validate_policy_artifact_category(category: String) -> Result<String> {
+    let category = non_empty("global_policy_artifacts[].category", category)?;
+    match category.as_str() {
+        "rule" | "skill" | "command" | "contract" => Ok(category),
+        other => bail!("modepack global_policy_artifacts category is unsupported: {other}"),
+    }
+}
+
+fn validate_policy_artifact_relative_path(value: String) -> Result<String> {
+    let value = non_empty("global_policy_artifacts[].relative_path", value)?;
+    if value.chars().count() > MAX_POLICY_ARTIFACT_PATH_CHARS {
+        bail!("modepack global_policy_artifacts[].relative_path exceeds path length limit");
+    }
+    if value.starts_with('/')
+        || value.contains('\\')
+        || value
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+    {
+        bail!(
+            "modepack global_policy_artifacts[].relative_path must be a normalized relative path"
+        );
+    }
+    if !value.ends_with(".md") {
+        bail!("modepack global_policy_artifacts[].relative_path must reference markdown");
+    }
+    Ok(value)
 }
 
 fn validate_permissions(mode_id: &str, permissions: &ModePermissions) -> Result<()> {
@@ -1034,6 +1107,105 @@ customModes:
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::AccessNetwork).allowed);
+    }
+
+    #[test]
+    fn preserves_bounded_global_policy_artifacts() {
+        let snapshot = load_modepack_from_str(
+            r#"{
+              "name": "policy-artifacts",
+              "schema_version": 1,
+              "global_policy_artifacts": [
+                {
+                  "category": "rule",
+                  "relative_path": "rules/runtime-safety.md",
+                  "title": "Runtime Safety",
+                  "content": "Global policy text is protected prompt material only.",
+                  "content_fingerprint": "sha256:test-runtime-safety"
+                },
+                {
+                  "category": "contract",
+                  "relative_path": "docs/contracts/task-packet-v1.md",
+                  "title": "Task Packet",
+                  "content": "Contract text cannot grant runtime side effects.",
+                  "content_fingerprint": "sha256:test-contract"
+                }
+              ],
+              "modes": [
+                {
+                  "mode_id": "reader",
+                  "display_name": "Reader",
+                  "role_definition": "Read policy only.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+            ".brownie/modepack.json",
+        )
+        .expect("valid policy artifacts");
+
+        assert_eq!(snapshot.global_policy_artifacts.len(), 2);
+        assert_eq!(
+            snapshot.global_policy_artifacts[0].relative_path,
+            "rules/runtime-safety.md"
+        );
+        assert_eq!(snapshot.global_policy_artifacts[1].category, "contract");
+        assert!(
+            !RuntimePermissionGate::check(&snapshot.modes[0], RuntimeAction::WriteWorkspace)
+                .allowed
+        );
+        assert!(
+            !RuntimePermissionGate::check(&snapshot.modes[0], RuntimeAction::ExecuteProcess)
+                .allowed
+        );
+    }
+
+    #[test]
+    fn rejects_unsafe_global_policy_artifact_paths() {
+        let error = load_modepack_from_str(
+            r#"{
+              "name": "policy-artifacts",
+              "schema_version": 1,
+              "global_policy_artifacts": [
+                {
+                  "category": "rule",
+                  "relative_path": "../runtime-safety.md",
+                  "title": "Runtime Safety",
+                  "content": "Bad path.",
+                  "content_fingerprint": "sha256:test"
+                }
+              ],
+              "modes": [
+                {
+                  "mode_id": "reader",
+                  "display_name": "Reader",
+                  "role_definition": "Read policy only.",
+                  "permissions": {
+                    "read_only": true,
+                    "workspace_write": false,
+                    "process_exec": false,
+                    "network_access": false,
+                    "service_control": false,
+                    "destructive": false,
+                    "can_spawn_subtasks": false
+                  }
+                }
+              ]
+            }"#,
+            ".brownie/modepack.json",
+        )
+        .expect_err("unsafe policy artifact path should fail")
+        .to_string();
+
+        assert!(error.contains("must be a normalized relative path"));
     }
 
     #[test]

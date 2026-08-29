@@ -1086,6 +1086,7 @@ fn modepack_candidate_activation_fingerprint_from_approved_candidate(
         &snapshot.name,
         snapshot.schema_version,
         snapshot.entrypoints.default_mode_id(),
+        &modepack_global_policy_artifacts_payload(&snapshot),
         &policies,
     );
     if actual_compiled_policy_fingerprint != compiled_policy_fingerprint
