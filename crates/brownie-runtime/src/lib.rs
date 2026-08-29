@@ -53018,6 +53018,56 @@ mod tests {
     }
 
     #[test]
+    fn trusted_active_modepack_denies_reserved_side_effect_capabilities() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_untrusted_all_side_effects_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
+        std::fs::remove_file(temp.path().join(".brownie/modepack.json"))
+            .expect("remove live candidate");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let mode = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"mode.get","params":{"mode_id":"external-integrator"}}"#,
+        )
+        .result
+        .expect("mode get");
+        assert_eq!(mode["permissions"]["workspace_write"], true);
+        assert_eq!(mode["permissions"]["process_exec"], true);
+        assert_eq!(mode["permissions"]["network_access"], false);
+        assert_eq!(mode["permissions"]["service_control"], false);
+        assert_eq!(mode["permissions"]["destructive"], false);
+        assert_eq!(mode["permissions"]["can_spawn_subtasks"], true);
+
+        for (id, action) in [
+            (2, "AccessNetwork"),
+            (3, "ControlService"),
+            (4, "DestructiveOperation"),
+        ] {
+            let permission = parse_line(
+                &json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "method": "permission.check",
+                    "params": {
+                        "mode_id": "external-integrator",
+                        "action": action
+                    }
+                })
+                .to_string(),
+            );
+            assert_eq!(
+                permission.result.expect("permission result")["allowed"],
+                false,
+                "{action} should remain reserved for trusted active external Mode Packs"
+            );
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn active_snapshot_and_task_policy_preserve_repository_local_side_effect_denial() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();

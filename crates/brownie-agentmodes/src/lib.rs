@@ -1391,6 +1391,10 @@ customModes:
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ExecuteProcess).allowed);
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::AccessNetwork).allowed);
+        assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::ControlService).allowed);
+        assert!(
+            !RuntimePermissionGate::check(reviewer, RuntimeAction::DestructiveOperation).allowed
+        );
         assert!(!RuntimePermissionGate::check(reviewer, RuntimeAction::SpawnSubtask).allowed);
 
         let code = modepack
@@ -1400,6 +1404,9 @@ customModes:
             .expect("code");
         assert!(RuntimePermissionGate::check(code, RuntimeAction::WriteWorkspace).allowed);
         assert!(!RuntimePermissionGate::check(code, RuntimeAction::ExecuteProcess).allowed);
+        assert!(!RuntimePermissionGate::check(code, RuntimeAction::AccessNetwork).allowed);
+        assert!(!RuntimePermissionGate::check(code, RuntimeAction::ControlService).allowed);
+        assert!(!RuntimePermissionGate::check(code, RuntimeAction::DestructiveOperation).allowed);
     }
 
     #[test]

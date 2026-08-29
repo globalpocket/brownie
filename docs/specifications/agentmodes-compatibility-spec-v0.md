@@ -87,7 +87,10 @@ bits into `CompiledModePolicy` for editor, tester, and integrator-style modes.
 The compiled permission bits, not the prompt text, role definition, or completion
 rules, decide whether `RuntimePermissionGate` allows workspace writes or process
 execution. External network access, service control, and destructive capability
-requests remain invalid and fail closed during Mode Pack validation.
+requests remain reserved v0 protocol fields and fail closed in effective Mode
+Pack policy, including trusted active snapshots and untrusted repository-local
+ingress. AgentModes rules, skills, commands, contracts, prose, or groups cannot
+grant these reserved capabilities.
 
 ## MP-2 default entrypoint compatibility
 

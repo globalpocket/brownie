@@ -77,10 +77,12 @@ MP-1 allows external Mode Packs to declare trusted `workspace_write` and
 `process_exec` capability bits for editor, tester, and integrator-style modes.
 `read_only` is summary metadata and must not be combined with side-effect
 capabilities. Network access, service control, and destructive operations remain
-declared capability bits only; they cannot authorize a side effect unless source
-trust and the runtime capability ceiling preserve them. The runtime compiles
-declared capability bits into effective policy data and continues to require
-every side effect to pass `RuntimePermissionGate`; prompt text, role
+reserved protocol fields in v0; raw external Mode Pack declarations are narrowed
+out of effective runtime policy for trusted and untrusted sources. A future
+runtime feature may define a separate opt-in contract, but source trust alone
+cannot preserve these bits as executable authority in this campaign. The runtime
+compiles declared capability bits into effective policy data and continues to
+require every side effect to pass `RuntimePermissionGate`; prompt text, role
 definitions, and completion rules cannot grant capability authority.
 MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
 generic workspace editing, generic process execution, Git capability, delegation

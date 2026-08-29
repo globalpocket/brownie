@@ -66,9 +66,9 @@ impl Default for ModePackCapabilityCeiling {
         Self {
             workspace_write: true,
             process_exec: true,
-            network_access: true,
-            service_control: true,
-            destructive: true,
+            network_access: false,
+            service_control: false,
+            destructive: false,
             can_spawn_subtasks: true,
         }
     }
@@ -294,15 +294,11 @@ fn effective_permissions(
     let process_exec = declared.process_exec
         && trusted_side_effect_source
         && options.capability_ceiling.process_exec;
-    let network_access = declared.network_access
-        && trusted_side_effect_source
-        && options.capability_ceiling.network_access;
-    let service_control = declared.service_control
-        && trusted_side_effect_source
-        && options.capability_ceiling.service_control;
-    let destructive = declared.destructive
-        && trusted_side_effect_source
-        && options.capability_ceiling.destructive;
+    // In the v0 external Mode Pack contract these high-risk bits are reserved
+    // protocol fields, not grantable runtime execution authority.
+    let network_access = false;
+    let service_control = false;
+    let destructive = false;
     let can_spawn_subtasks = declared.can_spawn_subtasks
         && trusted_side_effect_source
         && options.capability_ceiling.can_spawn_subtasks;
@@ -976,7 +972,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_modepack_options_preserve_declared_side_effects_with_ceiling() {
+    fn trusted_modepack_options_preserve_grantable_side_effects_with_ceiling() {
         let content = r#"{
           "name": "trusted-agentmodes",
           "schema_version": 1,
@@ -1025,7 +1021,7 @@ mod tests {
         assert!(integrator.permissions.workspace_write);
         assert!(!integrator.permissions.process_exec);
         assert!(!integrator.permissions.network_access);
-        assert!(integrator.permissions.service_control);
+        assert!(!integrator.permissions.service_control);
         assert!(!integrator.permissions.destructive);
         assert!(integrator.permissions.can_spawn_subtasks);
         assert!(integrator.permissions.codebase_index);
@@ -1033,6 +1029,52 @@ mod tests {
             integrator.allowed_handoff_targets.as_deref(),
             Some([HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()].as_slice())
         );
+    }
+
+    #[test]
+    fn trusted_modepack_options_narrow_reserved_side_effect_permissions() {
+        let content = r#"{
+          "name": "trusted-agentmodes",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "external-network-service-destructive",
+              "display_name": "External Reserved",
+              "role_definition": "Should not gain reserved authority from declarations.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": false,
+                "process_exec": false,
+                "network_access": true,
+                "service_control": true,
+                "destructive": true,
+                "can_spawn_subtasks": false,
+                "codebase_index": true
+              }
+            }
+          ]
+        }"#;
+
+        let snapshot = load_modepack_from_str_with_options(
+            content,
+            ".brownie/modepack.json",
+            ModePackLoadOptions::trusted_signed_active_modepack(),
+        )
+        .expect("trusted reserved declarations should compile as narrowed policy");
+
+        let policy = &snapshot.modes[0];
+        assert_eq!(
+            snapshot.source_trust,
+            ModePackSourceTrust::TrustedSignedActiveModePack
+        );
+        assert!(policy.permissions.read_only);
+        assert!(!policy.permissions.network_access);
+        assert!(!policy.permissions.service_control);
+        assert!(!policy.permissions.destructive);
+        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::AccessNetwork).allowed);
+        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::ControlService).allowed);
+        assert!(!RuntimePermissionGate::check(policy, RuntimeAction::DestructiveOperation).allowed);
+        assert!(policy.permissions.codebase_index);
     }
 
     #[test]
