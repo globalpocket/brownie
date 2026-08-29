@@ -213,20 +213,30 @@ system policy. This makes prompt budgeting and prompt construction consume the
 same effective policy surface as runtime permission checks.
 
 Mode Packs may include top-level `global_policy_artifacts` for bounded workflow
-policy that applies across modes. Each artifact has a stable category
-(`rule`, `skill`, `command`, or `contract`), a normalized markdown
-`relative_path`, a title, bounded content, and a content fingerprint. These
-artifacts are validated as protected policy metadata only. They do not grant
-workspace write, process execution, network/service access, destructive
-operation, or subtask authority, and they do not bypass source-trust narrowing
-or `RuntimePermissionGate`.
+policy and artifact catalogs. Each artifact has a stable category (`rule`,
+`skill`, `command`, or `contract`), a normalized markdown `relative_path`, a
+title, bounded content, and a content fingerprint. AgentModes skill artifacts
+use the recursive `skills/**/SKILL.md` layout and are cataloged by relative path
+instead of being flattened into direct `skills/*.md` files. These artifacts are
+validated as protected policy metadata only. They do not grant workspace write,
+process execution, network/service access, destructive operation, or subtask
+authority, and they do not bypass source-trust narrowing or
+`RuntimePermissionGate`.
 
 Active snapshots include the validated `global_policy_artifacts` collection in
 the compiled-policy fingerprint surface. Task admission copies the active
-snapshot's artifacts into `ModeResolved` external Mode Pack provenance, and
-prompt construction renders them as protected Mode Pack instruction material.
-Running tasks therefore keep the global policy artifact set selected at task
-start instead of reading live files after admission.
+snapshot's artifacts into `ModeResolved` external Mode Pack provenance. Prompt
+construction materializes `rule` artifacts by default as protected global policy
+but does not insert unrelated `skill`, `command`, or `contract` content into
+every request. Those categories remain task-pinned catalogs until selected by
+structured compatibility metadata or an explicit workflow invocation path.
+Running tasks therefore keep the artifact set selected at task start instead of
+reading live files after admission.
+MP-3.2G required compatibility tests must resolve the pinned AgentModes
+baseline revision through either an explicit root or a managed temporary
+checkout, then run the real compile, validation, activation, prompt, and handoff
+tests with the compatibility source marked required so missing source cannot
+silently skip coverage.
 
 When no explicit compiler default entrypoint is supplied, the generated Mode
 Pack selects `orchestrator` only if that slug exists. Explicit compiler defaults

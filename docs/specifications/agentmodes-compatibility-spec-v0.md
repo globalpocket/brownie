@@ -5,6 +5,11 @@
 Brownie must run AgentModes configuration with stable, runtime-enforced semantics.
 
 AgentModes is an external compatibility target. It is not vendored into the Brownie repository.
+The pinned MP-3.2G compatibility baseline is `globalpocket/AgentModes` at
+`39c7391cf6e711f0a21b14c21bdf557cd12d701e`; required compatibility tests must
+resolve exactly that revision, using either an explicit root or a managed
+temporary checkout, and fail rather than silently skipping real compatibility
+coverage when the source tree is missing or at another revision.
 
 ## Pipeline
 
@@ -190,14 +195,16 @@ bounded. Explicit smaller caller budgets remain valid protocol input, but they
 fail closed rather than dropping runtime policy, task-pinned Mode Pack policy,
 or compiled AgentModes instructions.
 
-MP-3.2F adds a bounded global policy artifact surface for real AgentModes
-content outside `modes/*.yaml`. The compatibility compiler may collect markdown
-artifacts from `rules`, `skills`, `commands`, and `docs/contracts` using
-normalized relative paths, stable categories, bounded content, and content
-fingerprints. These artifacts are protected workflow policy material only:
-their prose, command text, skill text, and contracts cannot grant workspace
-write, process execution, network/service access, destructive actions, or
-subtask spawning.
+MP-3.2F adds a bounded policy artifact surface for real AgentModes content
+outside `modes/*.yaml`. The compatibility compiler may collect markdown
+artifacts from `rules`, `commands`, and `docs/contracts`, and MP-3.2G extends
+skill collection to the real AgentModes layout `skills/**/SKILL.md`. Collection
+uses normalized relative paths, stable categories, bounded content, content
+fingerprints, deterministic ordering, and fail-closed symlink/root-escape
+rejection. These artifacts are protected workflow policy material only: their
+prose, command text, skill text, and contracts cannot grant workspace write,
+process execution, network/service access, destructive actions, or subtask
+spawning.
 
 Global policy artifacts are serialized into the generated Mode Pack as
 `global_policy_artifacts` and must pass normal Mode Pack validation before they
@@ -205,13 +212,17 @@ can be activated. Runtime permission remains derived from structured mode
 policy, source trust, runtime ceilings, and `RuntimePermissionGate`, not from
 artifact text or AgentModes-specific Rust mode ids.
 
-When a Mode Pack is activated, its global policy artifacts are included in the
-active snapshot fingerprint surface and later written into task-pinned
-`ModeResolved` provenance for the selected external mode. Context
-materialization renders the task-pinned artifact content in the protected
-system-policy region alongside compiled mode instructions. Ledger evidence uses
-relative artifact identities and bounded content; absolute AgentModes source
-paths and raw Mode Pack JSON are not required for replay.
+When a Mode Pack is activated, its policy artifacts are included in the active
+snapshot fingerprint surface and later written into task-pinned `ModeResolved`
+provenance for the selected external mode. Context materialization treats
+categories differently: `rule` artifacts are default protected global policy,
+while `skill`, `command`, and `contract` artifacts remain a task-pinned catalog
+unless a structured compatibility selection explicitly materializes them. Ledger
+evidence uses relative artifact identities and bounded content; absolute
+AgentModes source paths and raw Mode Pack JSON are not required for replay.
+Real compatibility tests use Brownie-managed baseline metadata for expected
+mode-file, compiled-mode, rule, skill, command, and contract counts so revision
+drift or missing recursive artifacts fails before MP-4.
 
 ## M12.1 handoff target compatibility
 

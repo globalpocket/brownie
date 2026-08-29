@@ -16205,11 +16205,12 @@ mod tests {
             .iter()
             .map(|policy| policy.mode_id.clone())
             .collect::<Vec<_>>();
+        let global_policy_artifacts = modepack_global_policy_artifacts_payload(&snapshot);
         let compiled_policy_fingerprint = active_modepack_compiled_policy_fingerprint(
             &snapshot.name,
             snapshot.schema_version,
             snapshot.entrypoints.default_mode_id(),
-            &[],
+            &global_policy_artifacts,
             &policy_snapshots,
         );
         let activation_fingerprint = active_modepack_activation_fingerprint(
@@ -16238,7 +16239,7 @@ mod tests {
                     activated_at,
                     activation_event_id: String::new(),
                 },
-                global_policy_artifacts: Vec::new(),
+                global_policy_artifacts,
                 policies: policy_snapshots,
             })
             .expect("trusted active snapshot");
@@ -16303,24 +16304,22 @@ mod tests {
         .expect("modepack");
     }
 
+    struct CurrentAgentModesFixture {
+        source_root: std::path::PathBuf,
+        mode_count: usize,
+        rule_count: usize,
+        skill_count: usize,
+        command_count: usize,
+        contract_count: usize,
+    }
+
     fn write_current_agentmodes_modepack_if_available(
         workspace_root: &std::path::Path,
-    ) -> Option<usize> {
-        let modes_dir = std::path::Path::new("/Users/satoshitanaka/Documents/AgentModes/modes");
-        if !modes_dir.exists() {
-            return None;
-        }
-        let mut documents = Vec::new();
-        for entry in std::fs::read_dir(modes_dir).expect("read AgentModes modes dir") {
-            let path = entry.expect("dir entry").path();
-            if path.extension().and_then(|value| value.to_str()) == Some("yaml") {
-                documents.push(std::fs::read_to_string(path).expect("read AgentModes mode file"));
-            }
-        }
-        documents.sort();
-        let document_refs = documents.iter().map(String::as_str).collect::<Vec<_>>();
-        let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_yaml_documents(
-            document_refs,
+    ) -> Option<CurrentAgentModesFixture> {
+        let source_root = current_agentmodes_root_for_test()?;
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        let modepack = brownie_agentmodes::compile_agentmodes_modepack_from_root(
+            &source_root,
             brownie_agentmodes::AgentModesCompileOptions {
                 modepack_name: Some("current-agentmodes".to_string()),
                 delegation_coordinators: vec![
@@ -16332,7 +16331,31 @@ mod tests {
             },
         )
         .expect("compile current AgentModes mode pack");
-        let mode_count = modepack.modes.len();
+        let fixture = CurrentAgentModesFixture {
+            source_root,
+            mode_count: modepack.modes.len(),
+            rule_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "rule",
+            ),
+            skill_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "skill",
+            ),
+            command_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "command",
+            ),
+            contract_count: modepack_policy_artifact_category_count(
+                &modepack.global_policy_artifacts,
+                "contract",
+            ),
+        };
+        assert_eq!(fixture.mode_count, baseline.expected_compiled_mode_count);
+        assert_eq!(fixture.rule_count, baseline.expected_rule_count);
+        assert_eq!(fixture.skill_count, baseline.expected_skill_count);
+        assert_eq!(fixture.command_count, baseline.expected_command_count);
+        assert_eq!(fixture.contract_count, baseline.expected_contract_count);
         let brownie_dir = workspace_root.join(".brownie");
         std::fs::create_dir_all(&brownie_dir).expect("brownie dir");
         std::fs::write(
@@ -16340,7 +16363,157 @@ mod tests {
             serde_json::to_string_pretty(&modepack).expect("serialize modepack"),
         )
         .expect("write modepack");
-        Some(mode_count)
+        Some(fixture)
+    }
+
+    fn current_agentmodes_root_for_test() -> Option<std::path::PathBuf> {
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        let explicit_root = std::env::var_os(baseline.root_env).map(std::path::PathBuf::from);
+        let required = current_agentmodes_required_for_test();
+
+        if let Some(root) = explicit_root {
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        if required {
+            let root = current_agentmodes_managed_checkout_for_test("brownie-runtime");
+            prepare_current_agentmodes_checkout_for_test(&root);
+            assert_current_agentmodes_root_for_test(&root);
+            return Some(root);
+        }
+
+        let root = std::path::PathBuf::from("/Users/satoshitanaka/Documents/AgentModes");
+        if !root.join("modes").is_dir()
+            || current_agentmodes_revision(&root).as_deref() != Some(baseline.revision)
+        {
+            return None;
+        }
+
+        Some(root)
+    }
+
+    fn current_agentmodes_required_for_test() -> bool {
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        truthy_env(baseline.required_env) || truthy_env("CI")
+    }
+
+    fn truthy_env(name: &str) -> bool {
+        std::env::var(name)
+            .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+            .unwrap_or(false)
+    }
+
+    fn assert_current_agentmodes_root_for_test(root: &std::path::Path) {
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        assert!(
+            root.join("modes").is_dir(),
+            "{} must point to a checked-out {} repository",
+            baseline.root_env,
+            baseline.repository
+        );
+        assert_eq!(
+            current_agentmodes_revision(root).as_deref(),
+            Some(baseline.revision),
+            "AgentModes compatibility baseline revision drifted"
+        );
+        assert!(
+            root.join("skills/tdd-quality-gate/SKILL.md").is_file(),
+            "AgentModes compatibility baseline must include recursive SKILL.md artifacts"
+        );
+    }
+
+    fn current_agentmodes_managed_checkout_for_test(namespace: &str) -> std::path::PathBuf {
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        std::env::temp_dir()
+            .join("brownie-agentmodes-compat")
+            .join(format!(
+                "{}-{}-{}",
+                namespace,
+                std::process::id(),
+                baseline.revision
+            ))
+    }
+
+    fn prepare_current_agentmodes_checkout_for_test(root: &std::path::Path) {
+        let baseline = brownie_agentmodes::CURRENT_AGENTMODES_COMPATIBILITY_BASELINE;
+        if current_agentmodes_revision(root).as_deref() == Some(baseline.revision)
+            && root.join("skills/tdd-quality-gate/SKILL.md").is_file()
+        {
+            return;
+        }
+        if root.exists() {
+            std::fs::remove_dir_all(root).expect("remove stale AgentModes compatibility checkout");
+        }
+        std::fs::create_dir_all(root.parent().expect("AgentModes checkout parent"))
+            .expect("create AgentModes compatibility checkout parent");
+        let repository_url = format!("https://github.com/{}.git", baseline.repository);
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("clone")
+                .arg("--no-checkout")
+                .arg(&repository_url)
+                .arg(root),
+            "clone AgentModes compatibility baseline",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("fetch")
+                .arg("--depth")
+                .arg("1")
+                .arg("origin")
+                .arg(baseline.revision),
+            "fetch AgentModes compatibility baseline revision",
+        );
+        assert_git_status_for_test(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .arg("checkout")
+                .arg("--detach")
+                .arg(baseline.revision),
+            "checkout AgentModes compatibility baseline revision",
+        );
+    }
+
+    fn assert_git_status_for_test(command: &mut std::process::Command, label: &str) {
+        let status = command
+            .status()
+            .unwrap_or_else(|error| panic!("{label}: {error}"));
+        assert!(status.success(), "{label} failed with status {status}");
+    }
+
+    fn current_agentmodes_revision(root: &std::path::Path) -> Option<String> {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .arg("rev-parse")
+            .arg("HEAD")
+            .output()
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn modepack_policy_artifact_category_count(
+        artifacts: &[brownie_agentmodes::CompiledPolicyArtifact],
+        category: &str,
+    ) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.category == category)
+            .count()
+    }
+
+    fn json_policy_artifact_category_count(artifacts: &[Value], category: &str) -> usize {
+        artifacts
+            .iter()
+            .filter(|artifact| artifact.get("category").and_then(Value::as_str) == Some(category))
+            .count()
     }
 
     fn write_changed_test_handoff_modepack(workspace_root: &std::path::Path) {
@@ -33259,7 +33432,7 @@ mod tests {
     fn current_agentmodes_pack_activates_with_repository_local_trust_narrowing() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
-        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
             return;
         };
         std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
@@ -33270,10 +33443,29 @@ mod tests {
         assert!(activated.error.is_none());
         let snapshot = &activated.result.expect("activation result")["snapshot"];
         assert_eq!(snapshot["modepack_name"], "current-agentmodes");
-        assert!(snapshot["mode_count"].as_u64().unwrap_or_default() > 16);
         assert_eq!(
             snapshot["mode_count"].as_u64().unwrap_or_default(),
-            mode_count as u64
+            fixture.mode_count as u64
+        );
+        let active = BrownieStore::new(temp.path())
+            .read_active_modepack_snapshot()
+            .expect("active snapshot")
+            .expect("active snapshot");
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "rule"),
+            fixture.rule_count
+        );
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "skill"),
+            fixture.skill_count
+        );
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "command"),
+            fixture.command_count
+        );
+        assert_eq!(
+            json_policy_artifact_category_count(&active.global_policy_artifacts, "contract"),
+            fixture.contract_count
         );
 
         let run = parse_line(
@@ -33304,6 +33496,21 @@ mod tests {
         assert!(mode_resolved["prompt_sections"]
             .as_array()
             .is_some_and(|sections| !sections.is_empty()));
+        let artifacts = mode_resolved["external_modepack_task_provenance"]
+            ["global_policy_artifacts"]
+            .as_array()
+            .expect("task-pinned artifact catalog");
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact["category"] == "skill"
+                && artifact["relative_path"] == "skills/tdd-quality-gate/SKILL.md"
+                && artifact["content_fingerprint"]
+                    .as_str()
+                    .is_some_and(|value| value.starts_with("sha256:"))));
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact["category"] == "contract"
+                && artifact["relative_path"] == "docs/contracts/task-packet-v1.md"));
 
         let composer_policy = resolve_workspace_mode_policy(&store, "user-response-composer")
             .expect("resolve composer")
@@ -33320,7 +33527,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
         let temp = tempfile::tempdir().expect("tempdir");
-        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
             return;
         };
         let store = BrownieStore::new(temp.path());
@@ -33336,7 +33543,7 @@ mod tests {
             activated["snapshot"]["mode_count"]
                 .as_u64()
                 .unwrap_or_default(),
-            mode_count as u64
+            fixture.mode_count as u64
         );
         let activation_fingerprint = activated["snapshot"]["activation_fingerprint"]
             .as_str()
@@ -33379,6 +33586,28 @@ mod tests {
             .as_array()
             .is_some_and(|sections| !sections.is_empty()));
         assert_eq!(mode_payload["allowed_handoff_targets"], Value::Null);
+        let artifacts = mode_payload["external_modepack_task_provenance"]
+            ["global_policy_artifacts"]
+            .as_array()
+            .expect("task-pinned artifact catalog");
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "rule")
+                .count(),
+            fixture.rule_count
+        );
+        assert_eq!(
+            artifacts
+                .iter()
+                .filter(|artifact| artifact["category"] == "skill")
+                .count(),
+            fixture.skill_count
+        );
+        assert!(artifacts
+            .iter()
+            .any(|artifact| artifact["category"] == "command"
+                && artifact["relative_path"] == "commands/tdd-quality-gate.md"));
 
         let prompt_payload = events
             .iter()
@@ -33392,7 +33621,7 @@ mod tests {
             .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
 
         let ledger_json = serde_json::to_string(&events).expect("ledger json");
-        assert!(!ledger_json.contains("/Users/satoshitanaka/Documents/AgentModes"));
+        assert!(!ledger_json.contains(fixture.source_root.to_string_lossy().as_ref()));
         assert!(!ledger_json.contains("raw_modepack_json"));
         assert!(!ledger_json.contains("raw_prompt"));
         assert!(!ledger_json.contains("provider_response"));
@@ -33407,7 +33636,7 @@ mod tests {
         let _guard = ENV_LOCK.lock().expect("env lock");
         clear_llm_env_for_test();
         let temp = tempfile::tempdir().expect("tempdir");
-        let Some(mode_count) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
             return;
         };
         let store = BrownieStore::new(temp.path());
@@ -33422,7 +33651,7 @@ mod tests {
             activated["snapshot"]["mode_count"]
                 .as_u64()
                 .unwrap_or_default(),
-            mode_count as u64
+            fixture.mode_count as u64
         );
         let started = parse_line(
             r#"{"jsonrpc":"2.0","id":2,"method":"task.start","params":{"goal":"Exercise explicit small prompt budget with current AgentModes orchestrator","mode_id":"orchestrator"}}"#,
@@ -33446,12 +33675,137 @@ mod tests {
             .iter()
             .any(|event| event.kind == LedgerEventKind::LlmRequestCreated));
         let ledger_json = serde_json::to_string(&events).expect("ledger json");
-        assert!(!ledger_json.contains("/Users/satoshitanaka/Documents/AgentModes"));
+        assert!(!ledger_json.contains(fixture.source_root.to_string_lossy().as_ref()));
         assert!(!ledger_json.contains("raw_prompt"));
         assert!(!ledger_json.contains("provider_response"));
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn current_agentmodes_new_task_alias_uses_pinned_trusted_active_handoff_admission() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let Some(fixture) = write_current_agentmodes_modepack_if_available(temp.path()) else {
+            return;
+        };
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
+
+        let parent = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Real AgentModes parent orchestration".into(),
+                mode_id: Some("orchestrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start parent");
+        let policy = resolve_workspace_mode_policy(&store, "orchestrator")
+            .expect("resolve orchestrator")
+            .expect("orchestrator policy");
+        assert_eq!(
+            policy.allowed_handoff_targets,
+            Some(vec![HANDOFF_TARGET_ALL_MODEPACK_MODES.to_string()])
+        );
+
+        let allowed = "new_task(\"reviewer\", \"Review real AgentModes bounded child admission.\")";
+        append_tool_intent_events(&store, &parent, &policy, allowed)
+            .expect("append allowed current AgentModes alias intent");
+        handle_approved_workspace_intents(&store, &parent, &policy, allowed)
+            .expect("handle allowed current AgentModes alias intent");
+
+        let parent_events = store
+            .tasks()
+            .read_ledger_events(&parent.run_id)
+            .expect("parent events");
+        let queued = parent_events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued)
+            .and_then(|event| event.payload.as_ref())
+            .expect("queued payload");
+        assert_eq!(queued["tool_id"], "subtask.spawn");
+        assert_eq!(queued["requested_mode_id"], "reviewer");
+        assert!(queued.get("input").is_none());
+        let source_candidate_id = queued["subtask_id"]
+            .as_str()
+            .expect("subtask id")
+            .to_string();
+        store
+            .tasks()
+            .append_task_event_with_payload(
+                &parent,
+                LedgerEventKind::SubtaskDispatchHandoffEnvelopeRecorded,
+                Some(json!({
+                    "handoff_envelope_status": "Accepted",
+                    "handoff_envelope_id": "handoff_envelope_current_agentmodes_alias",
+                    "handoff_envelope_fingerprint": format!("sha256:{}", "c".repeat(64)),
+                    "candidate_ids": [source_candidate_id],
+                })),
+            )
+            .expect("append handoff envelope");
+        let child = materialize_controlled_child_task_from_handoff_envelope(&store, &parent)
+            .expect("materialize child")
+            .expect("child");
+        assert_eq!(child.mode_id.as_deref(), Some("reviewer"));
+        let child_events = store
+            .tasks()
+            .read_ledger_events(&child.run_id)
+            .expect("child events");
+        let provenance = &child_events[0]
+            .payload
+            .as_ref()
+            .expect("child started payload")["external_modepack_child_provenance"];
+        assert_eq!(provenance["mode_id"], "reviewer");
+        assert_eq!(provenance["modepack_name"], "current-agentmodes");
+        assert!(provenance["policy_fingerprint"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("sha256:")));
+
+        let composer = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Composer must not dispatch".into(),
+                mode_id: Some("user-response-composer".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start composer");
+        let composer_policy = resolve_workspace_mode_policy(&store, "user-response-composer")
+            .expect("resolve composer")
+            .expect("composer policy");
+        let denied = "new_task(\"reviewer\", \"This non-dispatch mode must be denied.\")";
+        append_tool_intent_events(&store, &composer, &composer_policy, denied)
+            .expect("append denied current AgentModes alias intent");
+        handle_approved_workspace_intents(&store, &composer, &composer_policy, denied)
+            .expect("handle denied current AgentModes alias intent");
+        let composer_events = store
+            .tasks()
+            .read_ledger_events(&composer.run_id)
+            .expect("composer events");
+        assert!(composer_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::ToolIntentDenied));
+        assert!(!composer_events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SubtaskOrchestrationQueued));
+
+        let ledger_json = serde_json::to_string(&(parent_events, child_events, composer_events))
+            .expect("ledger json");
+        assert!(!ledger_json.contains("new_task("));
+        assert!(!ledger_json.contains(fixture.source_root.to_string_lossy().as_ref()));
+        assert!(!ledger_json.contains("raw_prompt"));
+        assert!(!ledger_json.contains("provider_response"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
     }
 
     #[test]
@@ -34694,6 +35048,8 @@ mod tests {
             "BROWNIE_LLM_MAX_MESSAGES",
             "BROWNIE_LLM_REQUEST_TIMEOUT_MS",
             "BROWNIE_LLM_RESPONSE_PREVIEW_CHARS",
+            "BROWNIE_LLM_SENSITIVE_GUARD",
+            "BROWNIE_TEST_LLM_API_KEY",
         ] {
             std::env::remove_var(key);
         }

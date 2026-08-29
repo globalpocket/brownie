@@ -527,6 +527,9 @@ fn format_prompt_section(section: &serde_json::Value) -> Option<String> {
 
 fn format_global_policy_artifact(artifact: &serde_json::Value) -> Option<String> {
     let category = artifact.get("category")?.as_str()?;
+    if category != "rule" {
+        return None;
+    }
     let relative_path = artifact.get("relative_path")?.as_str()?;
     let title = artifact.get("title")?.as_str()?;
     let fingerprint = artifact.get("content_fingerprint")?.as_str()?;
@@ -1826,6 +1829,85 @@ mod tests {
             },
         );
         assert!(truncated.messages[0].content.contains(custom_instruction));
+    }
+
+    #[test]
+    fn modepack_catalog_artifacts_are_not_globally_materialized() {
+        let input = ContextMaterializerInput {
+            task: task_record(),
+            ledger_events: vec![LedgerEvent {
+                event_id: "event_1".into(),
+                task_id: "task_1".into(),
+                run_id: "run_1".into(),
+                kind: LedgerEventKind::ModeResolved,
+                timestamp: "2026-01-01T00:00:00Z".into(),
+                payload: Some(serde_json::json!({
+                    "mode_id": "orchestrator",
+                    "display_name": "AgentModes Orchestrator",
+                    "role_definition": "You are a workflow orchestrator.",
+                    "prompt_sections": [],
+                    "permissions": {
+                        "read_only": true,
+                        "workspace_write": false,
+                        "process_exec": false,
+                        "network_access": false,
+                        "service_control": false,
+                        "destructive": false,
+                        "can_spawn_subtasks": false,
+                        "codebase_index": false
+                    },
+                    "external_modepack_task_provenance": {
+                        "global_policy_artifacts": [
+                            {
+                                "category": "rule",
+                                "relative_path": "rules/00-agentmodes-compact-mode-contract.md",
+                                "title": "Global Rule",
+                                "content_fingerprint": format!("sha256:{}", "1".repeat(64)),
+                                "content": "Global rules are protected by default."
+                            },
+                            {
+                                "category": "skill",
+                                "relative_path": "skills/tdd-quality-gate/SKILL.md",
+                                "title": "TDD Quality Gate",
+                                "content_fingerprint": format!("sha256:{}", "2".repeat(64)),
+                                "content": "Skill content requires explicit selection."
+                            },
+                            {
+                                "category": "command",
+                                "relative_path": "commands/tdd-quality-gate.md",
+                                "title": "TDD Quality Gate Command",
+                                "content_fingerprint": format!("sha256:{}", "3".repeat(64)),
+                                "content": "Command content requires explicit invocation."
+                            },
+                            {
+                                "category": "contract",
+                                "relative_path": "docs/contracts/task-packet-v1.md",
+                                "title": "Task Packet",
+                                "content_fingerprint": format!("sha256:{}", "4".repeat(64)),
+                                "content": "Contract content requires explicit reference."
+                            }
+                        ]
+                    }
+                })),
+            }],
+            child_completion_summaries: vec![],
+            selected_index_context: None,
+            verification_recovery_context: None,
+            context_budget: None,
+        };
+
+        let materialized = ContextMaterializer::materialize(input);
+        let prompt = PromptBuilder::build(materialized);
+        let system = &prompt.messages[0].content;
+
+        assert!(system.contains("Global rules are protected by default."));
+        assert!(system.contains("relative_path: rules/00-agentmodes-compact-mode-contract.md"));
+        assert!(!system.contains("Skill content requires explicit selection."));
+        assert!(!system.contains("skills/tdd-quality-gate/SKILL.md"));
+        assert!(!system.contains("Command content requires explicit invocation."));
+        assert!(!system.contains("commands/tdd-quality-gate.md"));
+        assert!(!system.contains("Contract content requires explicit reference."));
+        assert!(!system.contains("docs/contracts/task-packet-v1.md"));
     }
 
     #[test]
