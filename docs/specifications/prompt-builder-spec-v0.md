@@ -89,6 +89,15 @@ policy, and mode instructions. It must not expose raw MCP server command
 configuration, credentials, environment values, secret headers, or unbounded
 schema text, and MCP descriptions are never permission sources.
 
+When a task-scoped MCP `tools/call` has completed, ContextMaterializer may add
+bounded text result context to the next agent prompt. That context is labeled as
+untrusted tool data, bounded by item count, per-item chars, and total chars, and
+appears below runtime safety policy and task-pinned Mode Pack policy. Unsupported
+or blob-like MCP content is summarized as bounded metadata or rejected. Prompt
+materialization must not include raw JSON-RPC responses, raw schemas, raw
+provider responses, credentials, environment values, absolute paths, canonical
+paths, or raw file content.
+
 MP-3.1 requires prompt budgeting to preserve protected runtime policy and
 task-pinned Mode Pack policy before truncatable context. `ContextMaterializer`
 may reduce materialized ledger summary entries below the requested

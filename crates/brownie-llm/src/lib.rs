@@ -350,8 +350,26 @@ impl FakeLlm {
             && prompt.contains("mcp.github.search_code")
             && prompt.contains("completed")
         {
+            if prompt_text.contains("MCP_RESULT_7f91c2") {
+                return LlmResponse {
+                    content:
+                        "Fake LLM final response after using MCP search_code result: MCP_RESULT_7f91c2."
+                            .to_string(),
+                };
+            }
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "mcp.github.search_code",
+                    "reason": "MCP result context did not contain the required bounded result token.",
+                    "input": { "query": "bounded" }
+                }]
+            });
             return LlmResponse {
-                content: "Fake LLM final response after using MCP search_code result.".to_string(),
+                content: format!(
+                    "Fake LLM missing MCP result context with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
             };
         }
         if prompt.contains("tool execution:")

@@ -1693,10 +1693,18 @@ pub(super) fn handle_headless_continue_once(
         Ok(None) => return error_response(id, -32603, "internal error: selected task not found"),
         Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
     };
+    let selected_replayable_mcp_interruption =
+        match task_run_has_replayable_mcp_result_before_second_pass(&store, &selected_record) {
+            Ok(value) => value,
+            Err(message) => {
+                return error_response(id, -32603, &format!("internal error: {message}"))
+            }
+        };
     if !matches!(
         selected_record.status,
         TaskStatus::Created | TaskStatus::Queued
-    ) {
+    ) && !selected_replayable_mcp_interruption
+    {
         let next_route = headless_continue_route_refresh(
             "Selected task was no longer runnable after candidate selection; refresh progress.",
             &progress_overview,
@@ -1990,11 +1998,22 @@ fn scoped_headless_continue_once_candidate_task_ids(
     }
 
     let allowed_task_ids = scoped_allowed_task_ids(tasks, &matching_checkpoints);
-    Ok(candidate_task_ids
+    let mut scoped_candidate_task_ids = candidate_task_ids
         .iter()
         .filter(|task_id| allowed_task_ids.contains(task_id.as_str()))
         .cloned()
-        .collect())
+        .collect::<Vec<_>>();
+    for task in tasks {
+        if task.status == TaskStatus::Running
+            && allowed_task_ids.contains(task.task_id.as_str())
+            && task_run_has_replayable_mcp_result_before_second_pass(store, task)?
+        {
+            scoped_candidate_task_ids.push(task.task_id.clone());
+        }
+    }
+    scoped_candidate_task_ids.sort();
+    scoped_candidate_task_ids.dedup();
+    Ok(scoped_candidate_task_ids)
 }
 
 fn selected_headless_journey_context(

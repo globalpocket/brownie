@@ -17,6 +17,16 @@ and completion/finalization. Repeated intentional `run` invocations may create
 independent objectives; external loops that intend to continue an active
 objective should call `brownie resume` after the initial admission.
 
+For a `run` invocation, the CLI generates bounded invocation identities,
+including an `admission_id`, and passes them to the runtime's
+`headless.run.drive` journey admission. The CLI does not use that id as an
+authority source. Runtime persists or reconciles the objective admission through
+its durable checkpoint/reservation contract, detects conflicts, and guarantees
+that same-`admission_id` retries and concurrent requests do not create duplicate
+root tasks. If the CLI process loses the response after runtime admission, a
+supervisor must use the runtime recovery probe or retry the same admission only
+under the runtime's replay/conflict semantics.
+
 `brownie resume` selects an eligible CLI-created headless execution from durable
 runtime evidence and performs bounded progress. It must not rely on the previous
 CLI process, conversation context, or in-memory state. If the runtime exposes a
@@ -189,9 +199,15 @@ The bounded CLI recovery surface is
 It invokes the runtime-owned recovery probe with only the emitted recovery
 identity, preserves the machine-readable three-state admission result, and does
 not require the external controller to build raw JSON-RPC. Only a `persisted`
-probe result may connect to the existing scoped resume contract; only
-`not_persisted` may permit the supervisor to retry the original objective; and
-`unknown` returns control to the supervisor without automatic run or resume.
+probe result may connect to the existing scoped resume contract. In that case,
+the generated resume invocation carries the runtime-provided `session_id`,
+`journey_id`, `task_id`, and `run_id` scope back to the runtime, and the runtime
+must validate all four before continuing. The CLI must not replace that scoped
+resume with a broad newest-task search, goal-text search, or unscoped
+`brownie resume`, because a newer journey may exist in the same workspace. Only
+`not_persisted` may permit the supervisor to retry the original objective under
+the same admission identity; `unknown` returns control to the supervisor without
+automatic run or resume.
 
 A retryable process-level failure from `brownie resume` may expose
 `next_invocation.command = "resume"` because the process-level invocation is

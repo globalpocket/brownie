@@ -41,6 +41,7 @@ const MODEPACK_ACTIVE_SNAPSHOTS_DIR: &str = "snapshots";
 const MODEPACK_CANDIDATES_DIR: &str = "modepack-candidates";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
+const HEADLESS_OBJECTIVE_ADMISSION_LOCK_STALE_AFTER: Duration = Duration::from_secs(5);
 const CODEBASE_INDEX_LOCK_STALE_AFTER_SECONDS: i64 = 30 * 60;
 
 #[derive(Debug, Clone)]
@@ -2537,6 +2538,15 @@ pub struct HeadlessObjectiveAdmissionCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessObjectiveAdmissionReservation {
+    pub admission_id: String,
+    pub material_fingerprint: String,
+    pub journey_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessJourneyExecutionCheckpoint {
     pub journey_id: String,
     pub session_id: String,
@@ -4424,6 +4434,41 @@ impl TaskStore {
         }
     }
 
+    pub fn read_headless_objective_admission_reservation(
+        &self,
+        admission_id: &str,
+    ) -> Result<Option<HeadlessObjectiveAdmissionReservation>> {
+        let path = self.headless_objective_admission_reservation_path(admission_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_objective_admission_reservation(
+        &self,
+        reservation: &HeadlessObjectiveAdmissionReservation,
+    ) -> Result<()> {
+        let path = self.headless_objective_admission_reservation_path(&reservation.admission_id);
+        if let Some(existing) =
+            self.read_headless_objective_admission_reservation(&reservation.admission_id)?
+        {
+            if existing == *reservation {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless objective admission reservation for {}",
+                reservation.admission_id
+            );
+        }
+        let body = serde_json::to_string_pretty(reservation)
+            .context("failed to serialize headless objective admission reservation")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
     pub fn write_headless_objective_admission_checkpoint(
         &self,
         checkpoint: &HeadlessObjectiveAdmissionCheckpoint,
@@ -4443,6 +4488,15 @@ impl TaskStore {
         let body = serde_json::to_string_pretty(checkpoint)
             .context("failed to serialize headless objective admission checkpoint")?;
         write_file_atomically(&path, body.as_bytes())
+    }
+
+    pub fn with_headless_objective_admission_lock<T>(
+        &self,
+        admission_id: &str,
+        f: impl FnOnce() -> Result<T>,
+    ) -> Result<T> {
+        let _lock = self.acquire_headless_objective_admission_lock(admission_id)?;
+        f()
     }
 
     pub fn remove_headless_objective_admission_checkpoint(
@@ -4663,6 +4717,78 @@ impl TaskStore {
         )
     }
 
+    fn acquire_headless_objective_admission_lock(
+        &self,
+        admission_id: &str,
+    ) -> Result<RunAdmissionLock> {
+        let checkpoint_path = self.headless_objective_admission_path(admission_id);
+        let parent = checkpoint_path.parent().with_context(|| {
+            format!(
+                "failed to resolve headless objective admission lock parent for {}",
+                checkpoint_path.display()
+            )
+        })?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+        let lock_path = parent.join(format!("{admission_id}.lock"));
+        for _ in 0..RUN_ADMISSION_LOCK_RETRIES {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    writeln!(file, "{}", timestamp()?)
+                        .context("failed to write headless objective admission lock")?;
+                    return Ok(RunAdmissionLock { path: lock_path });
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => {
+                    if self
+                        .should_reclaim_headless_objective_admission_lock(&lock_path, admission_id)
+                        .unwrap_or(false)
+                    {
+                        match fs::remove_file(&lock_path) {
+                            Ok(()) => continue,
+                            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+                            Err(_) => {}
+                        }
+                    }
+                    thread::sleep(RUN_ADMISSION_LOCK_SLEEP);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .with_context(|| format!("failed to acquire {}", lock_path.display()));
+                }
+            }
+        }
+        bail!(
+            "headless objective admission lock remained busy after {} attempts: {}",
+            RUN_ADMISSION_LOCK_RETRIES,
+            lock_path.display()
+        )
+    }
+
+    fn should_reclaim_headless_objective_admission_lock(
+        &self,
+        lock_path: &Path,
+        admission_id: &str,
+    ) -> Result<bool> {
+        if self
+            .read_headless_objective_admission_checkpoint(admission_id)?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let Ok(metadata) = fs::metadata(lock_path) else {
+            return Ok(false);
+        };
+        let Ok(modified) = metadata.modified() else {
+            return Ok(false);
+        };
+        let age = modified.elapsed().unwrap_or_default();
+        Ok(age >= HEADLESS_OBJECTIVE_ADMISSION_LOCK_STALE_AFTER)
+    }
+
     fn runs_dir(&self) -> PathBuf {
         self.workspace_root.join(WORKSPACE_STATE_DIR).join(RUNS_DIR)
     }
@@ -4679,6 +4805,13 @@ impl TaskStore {
             .join(WORKSPACE_STATE_DIR)
             .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
             .join(format!("{admission_id}.json"))
+    }
+
+    fn headless_objective_admission_reservation_path(&self, admission_id: &str) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
+            .join(format!("{admission_id}.reservation.json"))
     }
 
     fn headless_run_session_current_path(&self, session_id: &str) -> PathBuf {

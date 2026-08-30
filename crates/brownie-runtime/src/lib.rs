@@ -285,8 +285,8 @@ use brownie_store::{
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
     HeadlessModePackSelectedCandidateReplacementCheckpoint, HeadlessObjectiveAdmissionCheckpoint,
-    HeadlessObjectiveApplyVerificationCheckpoint, HeadlessObjectiveCompletionAcceptanceCheckpoint,
-    HeadlessObjectiveProposalApplyCheckpoint,
+    HeadlessObjectiveAdmissionReservation, HeadlessObjectiveApplyVerificationCheckpoint,
+    HeadlessObjectiveCompletionAcceptanceCheckpoint, HeadlessObjectiveProposalApplyCheckpoint,
     HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
     HeadlessRunCompletionFinalizationCheckpoint, HeadlessRunSessionCheckpoint,
     HeadlessRunSessionDriveCheckpoint, LedgerEvent, LedgerEventKind,
@@ -1857,8 +1857,16 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             None => None,
         };
 
+    let resume_interrupted_mcp_second_pass =
+        match task_run_has_replayable_mcp_result_before_second_pass(&store, &record) {
+            Ok(value) => value,
+            Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+        };
     let admission = match validate_task_run_admission(&record, &store) {
         Ok(admission) => admission,
+        Err(TaskRunAdmissionRejection::InvalidParams(_)) if resume_interrupted_mcp_second_pass => {
+            TaskRunAdmission::Standard
+        }
         Err(rejection) => {
             return match rejection {
                 TaskRunAdmissionRejection::InvalidParams(message) => {
@@ -1901,6 +1909,7 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
             }
             Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
         },
+        None if resume_interrupted_mcp_second_pass => record.clone(),
         None => match store.tasks().update_task_status(
             &record.task_id,
             TaskStatus::Running,
@@ -2133,6 +2142,31 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         handle_approved_workspace_intents(&store, &running, &policy, &result.llm_response.content)
     {
         return error_response(id, -32603, &format!("internal error: {error}"));
+    }
+    #[cfg(test)]
+    if std::env::var_os("BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS").is_some()
+    {
+        let mcp_completed = store
+            .tasks()
+            .read_ledger_events(&running.run_id)
+            .map(|events| {
+                events.iter().any(|event| {
+                    event.kind == LedgerEventKind::ToolExecutionCompleted
+                        && event
+                            .payload
+                            .as_ref()
+                            .and_then(|payload| payload.get("mcp"))
+                            .is_some()
+                })
+            })
+            .unwrap_or(false);
+        if mcp_completed {
+            return error_response(
+                id,
+                -32603,
+                "internal error: simulated crash after MCP tool execution before second-pass prompt",
+            );
+        }
     }
     let verification_recovery_repair = if is_verification_recovery_task {
         match verification_recovery_repair_outcome_for_run(&store, &running, false) {
@@ -2468,6 +2502,38 @@ fn handle_task_run(id: Value, params: Option<Value>) -> JsonRpcResponse<Value> {
         }
         Err(error) => error_response(id, -32603, &format!("internal error: {error}")),
     }
+}
+
+fn task_run_has_replayable_mcp_result_before_second_pass(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> Result<bool, String> {
+    if record.status != TaskStatus::Running {
+        return Ok(false);
+    }
+    let events = store
+        .tasks()
+        .read_ledger_events(&record.run_id)
+        .map_err(|error| error.to_string())?;
+    if events.iter().any(|event| {
+        matches!(
+            event.kind,
+            LedgerEventKind::SecondPassLlmResponseReceived
+                | LedgerEventKind::AgentLoopCompleted
+                | LedgerEventKind::TaskCompleted
+                | LedgerEventKind::TaskFailed
+        )
+    }) {
+        return Ok(false);
+    }
+    Ok(events.iter().any(|event| {
+        event.kind == LedgerEventKind::ToolExecutionCompleted
+            && event
+                .payload
+                .as_ref()
+                .and_then(|payload| payload.get("mcp"))
+                .is_some()
+    }))
 }
 
 fn handle_verification_recovery_retry_task_run(
@@ -24332,6 +24398,369 @@ mod tests {
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_same_objective_admission_id_concurrent_requests_create_one_root_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.concurrent",
+                "drive_id": "cli.run.concurrent.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.concurrent.journey",
+                    "authorize_journey_start": true,
+                    "admission_id": "cli.run.concurrent.admission",
+                    "task_start": {
+                        "goal": "Admit this concurrent objective exactly once",
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        })
+        .to_string();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let mut handles = Vec::new();
+        for _ in 0..2 {
+            let request = request.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                parse_line(&request)
+            }));
+        }
+        barrier.wait();
+        let responses = handles
+            .into_iter()
+            .map(|handle| handle.join().expect("concurrent request joined"))
+            .collect::<Vec<_>>();
+        let unexpected_errors = responses
+            .iter()
+            .filter_map(|response| response.error.as_ref())
+            .filter(|error| {
+                !error
+                    .message
+                    .contains("conflicting headless run session checkpoint")
+            })
+            .collect::<Vec<_>>();
+        assert!(unexpected_errors.is_empty(), "{responses:?}");
+
+        let store = BrownieStore::new(temp.path());
+        let tasks = store.tasks().list_tasks().expect("tasks");
+        assert_eq!(tasks.len(), 1);
+        let checkpoint = store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.concurrent.admission")
+            .expect("checkpoint read")
+            .expect("checkpoint present");
+        assert_eq!(checkpoint.task_id, tasks[0].task_id);
+        assert_eq!(checkpoint.run_id, tasks[0].run_id);
+        let journeys = store
+            .tasks()
+            .list_headless_journey_start_checkpoints()
+            .expect("journeys");
+        assert_eq!(journeys.len(), 1);
+        assert_eq!(journeys[0].task_id, tasks[0].task_id);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+    }
+
+    #[test]
+    fn headless_run_drive_objective_admission_reconciles_task_only_crash_without_duplicate_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.crash.task",
+                "drive_id": "cli.run.crash.task.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.crash.task.journey",
+                    "authorize_journey_start": true,
+                    "admission_id": "cli.run.crash.task.admission",
+                    "task_start": {
+                        "goal": "Recover after task persistence",
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        });
+        std::env::set_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+            "1",
+        );
+        let crashed = parse_line(&request.to_string());
+        assert!(crashed.result.is_none());
+        assert!(crashed
+            .error
+            .expect("task-persist crash")
+            .message
+            .contains("simulated crash after headless task persistence"));
+        std::env::remove_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+        );
+        let task_after_crash = store.tasks().list_tasks().expect("tasks after crash");
+        assert_eq!(task_after_crash.len(), 1);
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.run.crash.task.journey")
+            .expect("journey checkpoint after crash")
+            .is_none());
+        assert!(store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.crash.task.admission")
+            .expect("objective checkpoint after crash")
+            .is_none());
+
+        let replay = parse_line(&request.to_string())
+            .result
+            .expect("crash replay result");
+        assert_eq!(replay["status"], "task_executed");
+        assert_eq!(replay["journey"]["task_id"], task_after_crash[0].task_id);
+        assert_eq!(replay["journey"]["run_id"], task_after_crash[0].run_id);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+        let checkpoint = store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.crash.task.admission")
+            .expect("objective checkpoint")
+            .expect("objective checkpoint present");
+        assert_eq!(checkpoint.task_id, task_after_crash[0].task_id);
+        let started_events = store
+            .tasks()
+            .read_ledger_events(&task_after_crash[0].run_id)
+            .expect("events")
+            .into_iter()
+            .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+            .count();
+        assert_eq!(started_events, 1);
+
+        let mut conflicting = request.clone();
+        conflicting["id"] = json!(2);
+        conflicting["params"]["journey_admission"]["task_start"]["goal"] =
+            json!("Changed objective after task crash");
+        let conflict = parse_line(&conflicting.to_string());
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict")
+            .message
+            .contains("admission_id conflicts"));
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+    }
+
+    #[test]
+    fn headless_run_drive_objective_admission_backfills_after_journey_checkpoint_crash() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.crash.journey",
+                "drive_id": "cli.run.crash.journey.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.crash.journey.id",
+                    "authorize_journey_start": true,
+                    "admission_id": "cli.run.crash.journey.admission",
+                    "task_start": {
+                        "goal": "Recover after journey checkpoint",
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        });
+        std::env::set_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
+            "1",
+        );
+        let crashed = parse_line(&request.to_string());
+        assert!(crashed.result.is_none());
+        assert!(crashed
+            .error
+            .expect("journey-checkpoint crash")
+            .message
+            .contains("simulated crash after headless journey checkpoint"));
+        std::env::remove_var(
+            "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
+        );
+        let tasks = store.tasks().list_tasks().expect("tasks after crash");
+        assert_eq!(tasks.len(), 1);
+        assert!(store
+            .tasks()
+            .read_headless_journey_start_checkpoint("cli.run.crash.journey.id")
+            .expect("journey checkpoint")
+            .is_some());
+        assert!(store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.crash.journey.admission")
+            .expect("objective checkpoint")
+            .is_none());
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&tasks[0].run_id)
+                .expect("events")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            0
+        );
+
+        let replay = parse_line(&request.to_string())
+            .result
+            .expect("journey checkpoint replay result");
+        assert_eq!(replay["status"], "task_executed");
+        assert_eq!(replay["journey"]["task_id"], tasks[0].task_id);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+        let checkpoint = store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.crash.journey.admission")
+            .expect("objective checkpoint")
+            .expect("objective checkpoint present");
+        assert_eq!(checkpoint.task_id, tasks[0].task_id);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&tasks[0].run_id)
+                .expect("events")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            1
+        );
+
+        let mut conflicting = request.clone();
+        conflicting["id"] = json!(2);
+        conflicting["params"]["journey_admission"]["journey_id"] =
+            json!("cli.run.crash.journey.changed");
+        let conflict = parse_line(&conflicting.to_string());
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict")
+            .message
+            .contains("admission_id conflicts"));
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
+    }
+
+    #[test]
+    fn headless_run_drive_objective_admission_replays_checkpoint_before_event_without_duplicate() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.crash.objective",
+                "drive_id": "cli.run.crash.objective.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.crash.objective.journey",
+                    "authorize_journey_start": true,
+                    "admission_id": "cli.run.crash.objective.admission",
+                    "task_start": {
+                        "goal": "Recover after objective checkpoint",
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        });
+        std::env::set_var(
+            "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
+            "1",
+        );
+        let crashed = parse_line(&request.to_string());
+        assert!(crashed.result.is_none());
+        assert!(crashed
+            .error
+            .expect("objective-checkpoint crash")
+            .message
+            .contains("simulated crash after objective admission checkpoint"));
+        std::env::remove_var(
+            "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
+        );
+        let tasks = store.tasks().list_tasks().expect("tasks after crash");
+        assert_eq!(tasks.len(), 1);
+        assert!(store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.crash.objective.admission")
+            .expect("objective checkpoint")
+            .is_some());
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&tasks[0].run_id)
+                .expect("events")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            0
+        );
+
+        let replay = parse_line(&request.to_string())
+            .result
+            .expect("objective checkpoint replay result");
+        assert_eq!(replay["status"], "task_executed");
+        assert_eq!(replay["journey"]["task_id"], tasks[0].task_id);
+        assert_eq!(store.tasks().list_tasks().expect("tasks").len(), 1);
+        assert_eq!(
+            store
+                .tasks()
+                .read_ledger_events(&tasks[0].run_id)
+                .expect("events")
+                .into_iter()
+                .filter(|event| event.kind == LedgerEventKind::HeadlessJourneyStarted)
+                .count(),
+            1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        std::env::remove_var("BROWNIE_LLM_PROVIDER");
     }
 
     #[test]
@@ -59247,6 +59676,10 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_STRICT",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
+                "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
+                "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+                "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
+                "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
             ] {
                 std::env::remove_var(key);
             }
@@ -59265,6 +59698,10 @@ mod phase_2_3_tests {
                 "BROWNIE_LLM_STRICT",
                 "BROWNIE_LLM_ALLOW_TASK_RUN_NETWORK",
                 "BROWNIE_TEST_LLM_API_KEY",
+                "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
+                "BROWNIE_TEST_CRASH_AFTER_HEADLESS_TASK_PERSIST_BEFORE_JOURNEY_CHECKPOINT",
+                "BROWNIE_TEST_CRASH_AFTER_HEADLESS_JOURNEY_CHECKPOINT_BEFORE_OBJECTIVE_ADMISSION_CHECKPOINT",
+                "BROWNIE_TEST_CRASH_AFTER_OBJECTIVE_ADMISSION_CHECKPOINT_BEFORE_JOURNEY_EVENT",
             ] {
                 std::env::remove_var(key);
             }
@@ -60926,6 +61363,69 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_stdio_tool_call_materializes_bounded_result_context_without_raw_response() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "oversized_result");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use bounded MCP result context","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute");
+
+        assert_eq!(response["status"], json!("Completed"));
+        let mcp = &response["output"]["mcp"];
+        assert!(mcp["result_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert_eq!(mcp["is_error"], json!(false));
+        assert_eq!(mcp["content_item_count"], json!(2));
+        assert_eq!(mcp["materialized_content_item_count"], json!(2));
+        assert_eq!(mcp["content_truncated"], json!(true));
+        assert!(
+            mcp["text_chars"].as_u64().unwrap() > mcp["materialized_text_chars"].as_u64().unwrap()
+        );
+        assert!(mcp["materialized_text_chars"].as_u64().unwrap() <= 8192);
+        let items = mcp["content_items"].as_array().expect("content items");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["type"], json!("text"));
+        assert!(items[0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("MCP_RESULT_7f91c2"));
+        assert!(items[0]["materialized_text_chars"].as_u64().unwrap() <= 2048);
+        assert_eq!(items[1]["type"], json!("image"));
+        assert_eq!(items[1]["unsupported"], json!(true));
+        let output_json = serde_json::to_string(&response).expect("response json");
+        assert!(!output_json.contains("RAW_JSON_RPC_RESPONSE_MARKER"));
+        assert!(!output_json.contains("BINARY_PAYLOAD_SHOULD_NOT_REACH_PROMPT"));
+        assert!(!output_json.contains(r#""jsonrpc":"2.0""#));
+        assert!(!output_json.contains(r#""method":"tools/call""#));
+    }
+
+    #[test]
     fn mcp_stdio_requests_include_2026_07_28_required_client_metadata() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -61095,8 +61595,109 @@ content-length: {}
             event.kind == LedgerEventKind::SecondPassLlmResponseReceived
                 && serde_json::to_string(event.payload.as_ref().expect("payload"))
                     .expect("payload json")
-                    .contains("MCP search_code result")
+                    .contains("MCP_RESULT_7f91c2")
         }));
+        let second_pass_prompt = events
+            .iter()
+            .find(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt)
+            .and_then(|event| event.payload.as_ref())
+            .expect("second-pass prompt payload");
+        assert!(serde_json::to_string(second_pass_prompt)
+            .expect("second-pass prompt json")
+            .contains("MCP_RESULT_7f91c2"));
+        let ledger_json = serde_json::to_string(&events).expect("ledger json");
+        assert!(!ledger_json.contains(r#""jsonrpc":"2.0""#));
+        assert!(!ledger_json.contains(r#""method":"tools/call""#));
+    }
+
+    #[test]
+    fn task_run_replays_completed_mcp_tool_result_after_pre_second_pass_crash() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let drive_request = r#"{"jsonrpc":"2.0","id":1,"method":"headless.run.drive","params":{"authorize":true,"session_id":"mp32p.mcp.replay","drive_id":"mp32p.mcp.replay.drive","expected_start_session_sequence":0,"max_advances":1,"max_steps_per_advance":1,"context_budget":{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0},"journey_admission":{"journey_id":"mp32p.mcp.replay.journey","authorize_journey_start":true,"admission_id":"mp32p.mcp.replay.admission","task_start":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}}}"#;
+        std::env::set_var(
+            "BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS",
+            "1",
+        );
+        let interrupted = parse_line(drive_request);
+        assert!(interrupted.error.is_some());
+        std::env::remove_var("BROWNIE_TEST_CRASH_AFTER_MCP_TOOL_EXECUTION_BEFORE_SECOND_PASS");
+
+        let store = BrownieStore::new(temp.path());
+        let tasks = store.tasks().list_tasks().expect("tasks after crash");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].status, TaskStatus::Running);
+        let task_id = tasks[0].task_id.as_str();
+        let run_id = tasks[0].run_id.as_str();
+        let progress = parse_line(r#"{"jsonrpc":"2.0","id":2,"method":"task.list"}"#)
+            .result
+            .expect("progress")["progress_overview"]
+            .clone();
+        let replay_request = format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"headless.continue_once","params":{{"authorize":true,"expected_progress_fingerprint":"{}","expected_aggregate_sequence":{},"continuation_id":"mp32p.mcp.replay.scoped","continuation_scope":{{"session_id":"mp32p.mcp.replay","journey_id":"mp32p.mcp.replay.journey","task_id":"{task_id}","run_id":"{run_id}"}},"context_budget":{{"max_prompt_chars":4096,"max_ledger_events":16,"max_selected_index_chars":0}}}}}}"#,
+            progress["source_fingerprint"]
+                .as_str()
+                .expect("progress fingerprint"),
+            progress["aggregate_sequence"]
+                .as_u64()
+                .expect("aggregate sequence"),
+        );
+        let replay = parse_line(&replay_request);
+        if replay.error.is_some() {
+            panic!("replay error: {:?}", replay.error);
+        }
+        let replay_result = replay.result.expect("replay result");
+        assert_eq!(
+            replay_result["status"],
+            json!("task_executed"),
+            "{replay_result}"
+        );
+        assert_eq!(
+            replay_result["task_run_result"]["status"],
+            json!("Completed"),
+            "{replay_result}"
+        );
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(
+            mcp_log
+                .lines()
+                .filter(|line| *line == "tools/call:search_code")
+                .count(),
+            1
+        );
+        let events = store.tasks().read_ledger_events(run_id).expect("events");
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SecondPassLlmResponseReceived
+                && serde_json::to_string(event.payload.as_ref().expect("payload"))
+                    .expect("payload json")
+                    .contains("MCP_RESULT_7f91c2")
+        }));
+        let completed_count = events
+            .iter()
+            .filter(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        == Some(&json!("mcp.github.search_code"))
+            })
+            .count();
+        assert_eq!(completed_count, 1);
     }
 
     #[test]
@@ -61707,7 +62308,24 @@ case "$request" in
     ;;
   *tools/call*)
     printf '%s\n' "tools/call:search_code" >> "$log"
-    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"MCP_RESULT_7f91c2"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
+    ;;
+esac
+"#
+            }
+            "oversized_result" => {
+                r#"#!/bin/sh
+read request
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    big=$(printf '%9000s' y | tr ' ' y)
+    printf '{"jsonrpc":"2.0","id":1,"result":{"raw_marker":"RAW_JSON_RPC_RESPONSE_MARKER","content":[{"type":"text","text":"MCP_RESULT_7f91c2:%s"},{"type":"image","data":"BINARY_PAYLOAD_SHOULD_NOT_REACH_PROMPT","mimeType":"image/png"}],"isError":false}}\n' "$big"
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
