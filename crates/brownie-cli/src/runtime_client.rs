@@ -2603,6 +2603,7 @@ fn cli_run_drive_params(objective: &str) -> Result<Value, RuntimeClientError> {
         "journey_admission": {
             "journey_id": format!("{session_id}.journey"),
             "authorize_journey_start": true,
+            "admission_id": format!("{session_id}.admission"),
             "task_start": {
                 "goal": objective
             }

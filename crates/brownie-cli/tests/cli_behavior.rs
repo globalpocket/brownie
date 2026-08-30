@@ -638,6 +638,14 @@ fn inspect_recovery_projects_not_persisted_without_objective_text() {
     assert_eq!(payload["recovery"]["run_id"], serde_json::Value::Null);
     assert_eq!(payload["recovery"]["controller_action"], "run");
     assert_eq!(payload["recovery"]["next_invocation"]["command"], "run");
+    assert_eq!(payload["automation"]["admission_state"], "not_persisted");
+    assert_eq!(payload["automation"]["controller_action"], "run");
+    assert_eq!(
+        payload["automation"]["next_invocation"],
+        payload["recovery"]["next_invocation"]
+    );
+    assert_eq!(payload["automation"]["task_id"], serde_json::Value::Null);
+    assert_eq!(payload["automation"]["run_id"], serde_json::Value::Null);
     assert_eq!(
         payload["recovery"]["next_invocation"]["arguments"][0],
         "<original-objective>"
@@ -681,6 +689,12 @@ fn inspect_recovery_projects_unknown_without_automatic_next_invocation() {
         "return_to_supervisor"
     );
     assert!(payload["recovery"]["next_invocation"].is_null());
+    assert_eq!(payload["automation"]["admission_state"], "unknown");
+    assert_eq!(
+        payload["automation"]["controller_action"],
+        "return_to_supervisor"
+    );
+    assert!(payload["automation"]["next_invocation"].is_null());
     assert_eq!(payload["automation"]["task_id"], serde_json::Value::Null);
     assert_eq!(payload["automation"]["run_id"], serde_json::Value::Null);
     assert!(!stdout.contains("provider_response"));
@@ -2432,6 +2446,113 @@ fn installed_resume_continues_persisted_cli_journey_after_lost_response() {
     assert!(!stdout.contains(prefix.to_string_lossy().as_ref()));
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
     assert!(!stdout.contains("BROWNIE_WORKSPACE_ROOT"));
+
+    fs::remove_dir_all(repository).unwrap();
+    fs::remove_dir_all(prefix).unwrap();
+}
+
+#[test]
+fn installed_run_timeout_retry_uses_same_admission_without_duplicate_task() {
+    let (installed, prefix) = install_real_cli_with_sibling_runtime("installed-admission-retry");
+    let runtime = installed_runtime_from_prefix(&prefix);
+    let repository = ordinary_git_repository("installed-admission-retry-repo");
+    let objective = "Implement README update";
+
+    let timed_out = Command::new(&installed)
+        .args(["--json", "run", objective])
+        .current_dir(&repository)
+        .env_remove("BROWNIE_RUNTIME_PATH")
+        .env_remove("BROWNIE_WORKSPACE_ROOT")
+        .env("BROWNIE_RUNTIME_OBJECTIVE_TIMEOUT_MS", "8000")
+        .env(
+            "BROWNIE_TEST_SLEEP_AFTER_HEADLESS_JOURNEY_STARTED_MS",
+            "15000",
+        )
+        .output()
+        .unwrap();
+    assert!(!timed_out.status.success());
+    assert_eq!(timed_out.status.code(), Some(70));
+    assert!(timed_out.stderr.is_empty());
+    let timeout_stdout = String::from_utf8(timed_out.stdout).unwrap();
+    let timeout_payload: serde_json::Value = serde_json::from_str(&timeout_stdout).unwrap();
+    assert_eq!(
+        timeout_payload["automation"]["process_admission_state"],
+        "unknown"
+    );
+    let recovery_identity = timeout_payload["automation"]["recovery_identity"]
+        .as_object()
+        .expect("recovery identity");
+    let session_id = recovery_identity["session_id"].as_str().unwrap();
+    let drive_id = recovery_identity["drive_id"].as_str().unwrap();
+    let journey_id = recovery_identity["journey_id"].as_str().unwrap();
+    assert_eq!(drive_id, format!("{session_id}.drive"));
+    assert_eq!(journey_id, format!("{session_id}.journey"));
+    assert!(!timeout_stdout.contains(objective));
+    assert!(!timeout_stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!timeout_stdout.contains(prefix.to_string_lossy().as_ref()));
+
+    let tasks_after_timeout = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":1,"method":"task.list"}),
+        &[],
+    );
+    let timed_out_task = single_task_by_goal(&tasks_after_timeout, objective);
+    let timed_out_task_id = timed_out_task["task_id"].as_str().unwrap().to_string();
+    let task_count_after_timeout = tasks_after_timeout["result"]["tasks"]
+        .as_array()
+        .unwrap()
+        .len();
+
+    let retry_request = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "headless.run.drive",
+        "params": {
+            "authorize": true,
+            "session_id": session_id,
+            "drive_id": drive_id,
+            "expected_start_session_sequence": 0,
+            "max_advances": 1,
+            "max_steps_per_advance": 1,
+            "journey_admission": {
+                "journey_id": journey_id,
+                "authorize_journey_start": true,
+                "admission_id": format!("{session_id}.admission"),
+                "task_start": {
+                    "goal": objective
+                }
+            }
+        }
+    });
+    let retry = invoke_runtime_json(&runtime, &repository, &retry_request, &[]);
+    assert!(
+        retry.get("result").is_some(),
+        "retry should replay or continue the admitted journey: {retry}"
+    );
+    assert_eq!(retry["result"]["journey"]["task_id"], timed_out_task_id);
+    assert_eq!(retry["result"]["journey"]["session_id"], session_id);
+    assert_eq!(retry["result"]["journey"]["drive_id"], drive_id);
+    assert_eq!(retry["result"]["journey"]["journey_id"], journey_id);
+
+    let tasks_after_retry = invoke_runtime_json(
+        &runtime,
+        &repository,
+        &serde_json::json!({"jsonrpc":"2.0","id":3,"method":"task.list"}),
+        &[],
+    );
+    assert_eq!(
+        tasks_after_retry["result"]["tasks"]
+            .as_array()
+            .unwrap()
+            .len(),
+        task_count_after_timeout
+    );
+    let retried_task = single_task_by_goal(&tasks_after_retry, objective);
+    assert_eq!(retried_task["task_id"], timed_out_task_id);
+    let retry_stdout = retry.to_string();
+    assert!(!retry_stdout.contains(repository.to_string_lossy().as_ref()));
+    assert!(!retry_stdout.contains(prefix.to_string_lossy().as_ref()));
 
     fs::remove_dir_all(repository).unwrap();
     fs::remove_dir_all(prefix).unwrap();

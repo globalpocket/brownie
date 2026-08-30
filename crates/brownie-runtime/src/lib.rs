@@ -284,7 +284,7 @@ use brownie_store::{
     HeadlessModePackSelectedCandidateApprovalCheckpoint,
     HeadlessModePackSelectedCandidateFetchCheckpoint,
     HeadlessModePackSelectedCandidateProvenanceVerificationCheckpoint,
-    HeadlessModePackSelectedCandidateReplacementCheckpoint,
+    HeadlessModePackSelectedCandidateReplacementCheckpoint, HeadlessObjectiveAdmissionCheckpoint,
     HeadlessObjectiveApplyVerificationCheckpoint, HeadlessObjectiveCompletionAcceptanceCheckpoint,
     HeadlessObjectiveProposalApplyCheckpoint,
     HeadlessObjectiveProposalAuthorizationPreflightCheckpoint,
@@ -24212,6 +24212,123 @@ mod tests {
                 .filter(|event| event.kind == LedgerEventKind::HeadlessRunSessionDriveCompleted)
                 .count(),
             1
+        );
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
+    fn headless_run_drive_objective_admission_id_replays_and_conflicts_without_duplicate_task() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        let store = BrownieStore::new(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+
+        let request = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "headless.run.drive",
+            "params": {
+                "authorize": true,
+                "session_id": "cli.run.idem",
+                "drive_id": "cli.run.idem.drive",
+                "expected_start_session_sequence": 0,
+                "max_advances": 1,
+                "max_steps_per_advance": 1,
+                "journey_admission": {
+                    "journey_id": "cli.run.idem.journey",
+                    "authorize_journey_start": true,
+                    "admission_id": "cli.run.idem.admission",
+                    "task_start": {
+                        "goal": "Admit this objective exactly once",
+                        "mode_id": "implementer"
+                    }
+                }
+            }
+        });
+        let first = parse_line(&request.to_string())
+            .result
+            .expect("first objective admission result");
+        assert_eq!(first["status"], "task_executed");
+        assert_eq!(first["journey"]["replayed"], false);
+        let task_count_after_first = store.tasks().list_tasks().expect("tasks").len();
+        assert_eq!(task_count_after_first, 1);
+
+        let replay = parse_line(&request.to_string())
+            .result
+            .expect("objective admission replay");
+        assert_eq!(replay["replayed"], true);
+        assert_eq!(replay["journey"]["replayed"], true);
+        assert_eq!(replay["journey"]["task_id"], first["journey"]["task_id"]);
+        assert_eq!(replay["journey"]["run_id"], first["journey"]["run_id"]);
+        assert_eq!(
+            replay["journey"]["journey_fingerprint"],
+            first["journey"]["journey_fingerprint"]
+        );
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first
+        );
+
+        let checkpoint = store
+            .tasks()
+            .read_headless_objective_admission_checkpoint("cli.run.idem.admission")
+            .expect("objective admission checkpoint")
+            .expect("objective admission checkpoint present");
+        assert_eq!(checkpoint.task_id, first["journey"]["task_id"]);
+        assert_eq!(checkpoint.run_id, first["journey"]["run_id"]);
+        assert!(checkpoint.material_fingerprint.starts_with("sha256:"));
+        let checkpoint_body = serde_json::to_string(&checkpoint).expect("checkpoint json");
+        assert!(!checkpoint_body.contains("Admit this objective exactly once"));
+        assert!(!checkpoint_body.contains(temp.path().to_string_lossy().as_ref()));
+
+        store
+            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
+                summary: ModePackActiveSnapshotSummary {
+                    activation_id: "modepack_activation_changed_material".to_string(),
+                    activation_fingerprint: format!("sha256:{}", "8".repeat(64)),
+                    modepack_name: "changed-admission-material".to_string(),
+                    schema_version: 1,
+                    source_kind: "workspace_modepack".to_string(),
+                    source_path: WORKSPACE_MODEPACK_PATH.to_string(),
+                    mode_count: 0,
+                    mode_ids: Vec::new(),
+                    default_entrypoint: None,
+                    compiled_policy_fingerprint: format!("sha256:{}", "9".repeat(64)),
+                    activated_at: "2026-08-30T14:33:25Z".to_string(),
+                    activation_event_id: String::new(),
+                },
+                mcp_servers: Vec::new(),
+                global_policy_artifacts: Vec::new(),
+                policies: Vec::new(),
+            })
+            .expect("changed active modepack snapshot");
+        let changed_modepack_conflict = parse_line(&request.to_string());
+        assert!(changed_modepack_conflict.result.is_none());
+        assert!(changed_modepack_conflict
+            .error
+            .expect("changed modepack conflict")
+            .message
+            .contains("admission_id conflicts"));
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first
+        );
+
+        let mut conflicting = request.clone();
+        conflicting["id"] = json!(2);
+        conflicting["params"]["journey_admission"]["task_start"]["goal"] =
+            json!("Changed objective must not reuse the admission identity");
+        let conflict = parse_line(&conflicting.to_string());
+        assert!(conflict.result.is_none());
+        assert!(conflict
+            .error
+            .expect("conflict error")
+            .message
+            .contains("admission_id conflicts"));
+        assert_eq!(
+            store.tasks().list_tasks().expect("tasks").len(),
+            task_count_after_first
         );
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");

@@ -36,6 +36,7 @@ fn headless_run_drive_should_scope_normal_continuation(params: &HeadlessRunDrive
 fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmission) -> String {
     let seed = json!({
         "journey_id": admission.journey_id,
+        "admission_id": admission.admission_id,
         "task_start": admission.task_start,
         "product_objective_continuation_source": admission.product_objective_continuation_source,
         "objective_context_fingerprint": admission
@@ -44,6 +45,44 @@ fn headless_journey_task_start_fingerprint(admission: &HeadlessRunJourneyAdmissi
             .map(headless_journey_objective_context_fingerprint),
     });
     format!("sha256:{}", hex_sha256(seed.to_string().as_bytes()))
+}
+
+fn headless_objective_admission_material_fingerprint(
+    store: &BrownieStore,
+    admission: &HeadlessRunJourneyAdmission,
+    session_id: &str,
+    drive_id: &str,
+    task_start_fingerprint: &str,
+    id: &Value,
+) -> Result<String, JsonRpcResponse<Value>> {
+    let active_modepack_activation_fingerprint = store
+        .read_active_modepack_snapshot()
+        .map_err(|error| error_response(id.clone(), -32603, &format!("internal error: {error}")))?
+        .map(|snapshot| snapshot.summary.activation_fingerprint)
+        .unwrap_or_else(|| "builtin-bootstrap-fallback".to_string());
+    let workspace_root_fingerprint = format!(
+        "sha256:{}",
+        hex_sha256(store.workspace_root().to_string_lossy().as_bytes())
+    );
+    let seed = json!({
+        "version": "headless_objective_admission_material_v1",
+        "admission_id": admission.admission_id,
+        "journey_id": admission.journey_id,
+        "session_id": session_id,
+        "drive_id": drive_id,
+        "task_start_fingerprint": task_start_fingerprint,
+        "objective_context_fingerprint": admission
+            .objective_context
+            .as_ref()
+            .map(headless_journey_objective_context_fingerprint),
+        "product_objective_continuation_source": admission.product_objective_continuation_source,
+        "active_modepack_activation_fingerprint": active_modepack_activation_fingerprint,
+        "workspace_root_fingerprint": workspace_root_fingerprint,
+    });
+    Ok(format!(
+        "sha256:{}",
+        hex_sha256(seed.to_string().as_bytes())
+    ))
 }
 
 fn cli_objective_recovery_fingerprint(objective: &str) -> String {
@@ -78,7 +117,7 @@ fn sleep_after_headless_journey_started_for_test() {
     let Ok(ms) = raw.parse::<u64>() else {
         return;
     };
-    let ms = ms.min(5_000);
+    let ms = ms.min(15_000);
     if ms > 0 {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
@@ -252,6 +291,11 @@ fn validate_headless_journey_admission(
     if !is_valid_headless_run_id(&admission.journey_id) {
         return Err("invalid params: journey_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
     }
+    if let Some(admission_id) = admission.admission_id.as_deref() {
+        if !is_valid_headless_run_id(admission_id) {
+            return Err("invalid params: admission_id must be 1-48 ASCII alphanumeric, dash, underscore, colon, or dot characters".to_string());
+        }
+    }
     if !admission.authorize_journey_start {
         return Err("invalid params: authorize_journey_start must be true".to_string());
     }
@@ -304,6 +348,59 @@ fn headless_journey_start_checkpoint_for_admission(
     drive_id: &str,
     id: &Value,
 ) -> Result<HeadlessJourneyStartCheckpoint, JsonRpcResponse<Value>> {
+    if let Some(admission_id) = admission.admission_id.as_deref() {
+        if let Some(existing_admission) = store
+            .tasks()
+            .read_headless_objective_admission_checkpoint(admission_id)
+            .map_err(|error| {
+                error_response(id.clone(), -32603, &format!("internal error: {error}"))
+            })?
+        {
+            let Some(existing_journey) = store
+                .tasks()
+                .read_headless_journey_start_checkpoint(&existing_admission.journey_id)
+                .map_err(|error| {
+                    error_response(id.clone(), -32603, &format!("internal error: {error}"))
+                })?
+            else {
+                return Err(error_response(
+                    id.clone(),
+                    -32603,
+                    "internal error: objective admission checkpoint references missing journey",
+                ));
+            };
+            let task_start_fingerprint =
+                headless_journey_task_start_fingerprint_for_persisted_journey(
+                    store,
+                    admission,
+                    &existing_journey,
+                    id,
+                )?;
+            let material_fingerprint = headless_objective_admission_material_fingerprint(
+                store,
+                admission,
+                session_id,
+                drive_id,
+                &task_start_fingerprint,
+                id,
+            )?;
+            if existing_admission.material_fingerprint != material_fingerprint
+                || existing_admission.session_id != session_id
+                || existing_admission.drive_id != drive_id
+                || existing_admission.journey_id != admission.journey_id
+                || existing_admission.task_id != existing_journey.task_id
+                || existing_admission.run_id != existing_journey.run_id
+                || existing_admission.journey_fingerprint != existing_journey.journey_fingerprint
+            {
+                return Err(error_response(
+                    id.clone(),
+                    -32602,
+                    "invalid params: admission_id conflicts with persisted objective admission checkpoint",
+                ));
+            }
+            return Ok(existing_journey);
+        }
+    }
     if let Some(existing) = store
         .tasks()
         .read_headless_journey_start_checkpoint(&admission.journey_id)
@@ -580,6 +677,29 @@ fn headless_journey_start_checkpoint_for_admission(
         objective_context: objective_context_metadata,
         product_objective_continuation_provenance,
     };
+    let objective_admission_checkpoint =
+        if let Some(admission_id) = admission.admission_id.as_deref() {
+            let material_fingerprint = headless_objective_admission_material_fingerprint(
+                store,
+                admission,
+                session_id,
+                drive_id,
+                &checkpoint.task_start_fingerprint,
+                id,
+            )?;
+            Some(HeadlessObjectiveAdmissionCheckpoint {
+                admission_id: admission_id.to_string(),
+                material_fingerprint,
+                journey_id: checkpoint.journey_id.clone(),
+                session_id: checkpoint.session_id.clone(),
+                drive_id: checkpoint.drive_id.clone(),
+                task_id: checkpoint.task_id.clone(),
+                run_id: checkpoint.run_id.clone(),
+                journey_fingerprint: checkpoint.journey_fingerprint.clone(),
+            })
+        } else {
+            None
+        };
     #[cfg(test)]
     if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_CHECKPOINT_WRITE").is_some() {
         let cleanup = if cleanup_started_task {
@@ -618,6 +738,40 @@ fn headless_journey_start_checkpoint_for_admission(
             };
             error_response(id.clone(), -32603, &message)
         })?;
+    if let Some(objective_admission_checkpoint) = objective_admission_checkpoint.as_ref() {
+        store
+            .tasks()
+            .write_headless_objective_admission_checkpoint(objective_admission_checkpoint)
+            .map_err(|error| {
+                let admission_cleanup = store
+                    .tasks()
+                    .remove_headless_journey_start_checkpoint(&checkpoint);
+                let task_cleanup = if cleanup_started_task {
+                    store
+                        .tasks()
+                        .remove_task_run(&checkpoint.task_id, &checkpoint.run_id)
+                } else {
+                    Ok(())
+                };
+                let message = match (admission_cleanup, task_cleanup) {
+                    (Ok(()), Ok(())) => format!(
+                        "internal error: objective admission checkpoint commit failed: {error}"
+                    ),
+                    (admission_result, task_result) => format!(
+                        "internal error: objective admission checkpoint commit failed: {error}; checkpoint cleanup: {}; task cleanup: {}",
+                        admission_result
+                            .err()
+                            .map(|cleanup_error| cleanup_error.to_string())
+                            .unwrap_or_else(|| "ok".to_string()),
+                        task_result
+                            .err()
+                            .map(|cleanup_error| cleanup_error.to_string())
+                            .unwrap_or_else(|| "ok".to_string())
+                    ),
+                };
+                error_response(id.clone(), -32603, &message)
+            })?;
+    }
     if let Some(record) = store
         .tasks()
         .get_task(&checkpoint.task_id)
@@ -625,6 +779,14 @@ fn headless_journey_start_checkpoint_for_admission(
     {
         #[cfg(test)]
         if std::env::var_os("BROWNIE_TEST_FAIL_HEADLESS_JOURNEY_STARTED_APPEND").is_some() {
+            let admission_cleanup = objective_admission_checkpoint
+                .as_ref()
+                .map(|checkpoint| {
+                    store
+                        .tasks()
+                        .remove_headless_objective_admission_checkpoint(checkpoint)
+                })
+                .unwrap_or_else(|| Ok(()));
             let checkpoint_cleanup = store
                 .tasks()
                 .remove_headless_journey_start_checkpoint(&checkpoint);
@@ -635,12 +797,16 @@ fn headless_journey_start_checkpoint_for_admission(
             } else {
                 Ok(())
             };
-            let message = match (checkpoint_cleanup, task_cleanup) {
-                (Ok(()), Ok(())) => {
+            let message = match (admission_cleanup, checkpoint_cleanup, task_cleanup) {
+                (Ok(()), Ok(()), Ok(())) => {
                     "internal error: simulated HeadlessJourneyStarted append failure".to_string()
                 }
-                (checkpoint_result, task_result) => format!(
-                    "internal error: simulated HeadlessJourneyStarted append failure; checkpoint cleanup: {}; task cleanup: {}",
+                (admission_result, checkpoint_result, task_result) => format!(
+                    "internal error: simulated HeadlessJourneyStarted append failure; objective admission cleanup: {}; checkpoint cleanup: {}; task cleanup: {}",
+                    admission_result
+                        .err()
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "ok".to_string()),
                     checkpoint_result
                         .err()
                         .map(|error| error.to_string())
@@ -691,6 +857,14 @@ fn headless_journey_start_checkpoint_for_admission(
                 Some(event_payload),
             )
             .map_err(|error| {
+                let admission_cleanup = objective_admission_checkpoint
+                    .as_ref()
+                    .map(|checkpoint| {
+                        store
+                            .tasks()
+                            .remove_headless_objective_admission_checkpoint(checkpoint)
+                    })
+                    .unwrap_or_else(|| Ok(()));
                 let checkpoint_cleanup = store
                     .tasks()
                     .remove_headless_journey_start_checkpoint(&checkpoint);
@@ -701,12 +875,16 @@ fn headless_journey_start_checkpoint_for_admission(
                 } else {
                     Ok(())
                 };
-                let message = match (checkpoint_cleanup, task_cleanup) {
-                    (Ok(()), Ok(())) => {
+                let message = match (admission_cleanup, checkpoint_cleanup, task_cleanup) {
+                    (Ok(()), Ok(()), Ok(())) => {
                         format!("internal error: journey admission event commit failed: {error}")
                     }
-                    (checkpoint_result, task_result) => format!(
-                        "internal error: journey admission event commit failed: {error}; checkpoint cleanup: {}; task cleanup: {}",
+                    (admission_result, checkpoint_result, task_result) => format!(
+                        "internal error: journey admission event commit failed: {error}; objective admission cleanup: {}; checkpoint cleanup: {}; task cleanup: {}",
+                        admission_result
+                            .err()
+                            .map(|cleanup_error| cleanup_error.to_string())
+                            .unwrap_or_else(|| "ok".to_string()),
                         checkpoint_result
                             .err()
                             .map(|cleanup_error| cleanup_error.to_string())
@@ -3261,6 +3439,7 @@ fn handle_headless_journey_execution(
         let admission = HeadlessRunJourneyAdmission {
             journey_id: execution.journey_id.clone(),
             authorize_journey_start: true,
+            admission_id: None,
             task_start: Some(task_start.clone()),
             objective_context: None,
             product_objective_continuation_source: None,
