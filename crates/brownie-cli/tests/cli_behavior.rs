@@ -559,7 +559,33 @@ fn inspect_recovery_invokes_runtime_probe_and_projects_three_state_json_contract
     assert_eq!(payload["recovery"]["run_id"], "run-recover");
     assert_eq!(payload["recovery"]["controller_action"], "resume");
     assert_eq!(payload["recovery"]["next_invocation"]["command"], "resume");
+    assert_eq!(
+        payload["recovery"]["next_invocation"]["arguments"],
+        serde_json::json!([
+            "--session-id",
+            "cli.run.recover",
+            "--journey-id",
+            "cli.run.recover.journey",
+            "--task-id",
+            "task-recover",
+            "--run-id",
+            "run-recover"
+        ])
+    );
+    assert_eq!(
+        payload["recovery"]["next_invocation"]["scope"],
+        serde_json::json!({
+            "session_id": "cli.run.recover",
+            "journey_id": "cli.run.recover.journey",
+            "task_id": "task-recover",
+            "run_id": "run-recover"
+        })
+    );
     assert_eq!(payload["automation"]["admission_state"], "persisted");
+    assert_eq!(
+        payload["automation"]["next_invocation"],
+        payload["recovery"]["next_invocation"]
+    );
     assert!(!stdout.contains("Recover exact failed run identity"));
     assert!(!stdout.contains("BROWNIE_RUNTIME_PATH"));
 
@@ -1645,6 +1671,76 @@ fn resume_invokes_task_list_then_headless_continue_once_and_prints_bounded_human
         })
     );
     assert!(requests[1]["params"].get("context_budget").is_none());
+}
+
+#[test]
+fn recovery_scoped_resume_does_not_resume_unrelated_latest_journey() {
+    let runtime = fake_runtime_sequence(
+        "resume-recovery-scope",
+        &[
+            r#"{"jsonrpc":"2.0","id":1,"result":{"tasks":[{"task_id":"task-recover","run_id":"run-recover","status":"Created"},{"task_id":"task-newer","run_id":"run-newer","status":"Created"}],"progress_overview":{"source_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7,"task_count":2,"root_task_ids":["task-recover","task-newer"],"runnable_task_ids":["task-recover","task-newer"],"blocked_task_ids":[],"terminal_task_ids":[],"parent_join_ready_task_ids":[],"status_counts":{"created":2,"queued":0,"running":0,"completed":0,"failed":0,"cancelled":0},"stage_counts":[],"next_action_sets":[],"blocked_sets":[],"headless_route_candidates":[],"selected_headless_route":{"session_id":"cli.run.newer","journey_id":"cli.run.newer.journey","task_id":"task-newer","run_id":"run-newer","journey_fingerprint":"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","next_session_sequence":2,"progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","aggregate_sequence":7},"nodes":[],"edges":[]}}}"#,
+            r#"{"jsonrpc":"2.0","id":1,"result":{"status":"task_executed","decision_id":"decision-recover","continuation_id":"cli.resume.recover","selected_task_id":"task-recover","selected_run_id":"run-recover","candidate_count":1,"expected_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","expected_aggregate_sequence":7,"current_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","current_aggregate_sequence":7,"post_progress_fingerprint":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","post_aggregate_sequence":8,"stale":false,"replayed":false,"task_run_result":null,"proposal_apply_result":null,"next_route":null,"selected_headless_journey_context":{"kind":"headless_journey_context","selection_source":"continuation_scope","journey_id":"cli.run.recover.journey","session_id":"cli.run.recover","drive_id":"cli.run.recover.drive","task_id":"task-recover","run_id":"run-recover","selected_task_id":"task-recover","selected_run_id":"run-recover","task_start_fingerprint":"sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","start_progress_fingerprint":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","start_aggregate_sequence":7,"journey_fingerprint":"sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","has_session_checkpoint":true,"current_session_sequence":1,"next_action":"drive_headless_journey"},"next_action":"inspect_progress_overview"}}"#,
+        ],
+    );
+    let capture = runtime.with_file_name("requests.ndjson");
+
+    let output = Command::new(brownie())
+        .args([
+            "--json",
+            "resume",
+            "--session-id",
+            "cli.run.recover",
+            "--journey-id",
+            "cli.run.recover.journey",
+            "--task-id",
+            "task-recover",
+            "--run-id",
+            "run-recover",
+        ])
+        .env("BROWNIE_RUNTIME_PATH", &runtime)
+        .env(
+            "BROWNIE_RUNTIME_TIMEOUT_MS",
+            READ_ONLY_FAKE_RUNTIME_TIMEOUT_MS,
+        )
+        .env("BROWNIE_FAKE_RUNTIME_CAPTURE", &capture)
+        .output()
+        .unwrap();
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(payload["resume"]["selected_task_id"], "task-recover");
+    assert_eq!(payload["resume"]["selected_run_id"], "run-recover");
+    assert_eq!(payload["resume"]["headless_session_id"], "cli.run.recover");
+    assert_eq!(
+        payload["resume"]["headless_journey_id"],
+        "cli.run.recover.journey"
+    );
+
+    let requests = fs::read_to_string(capture).unwrap();
+    let requests: Vec<serde_json::Value> = requests
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["method"], "task.list");
+    assert_eq!(requests[1]["method"], "headless.continue_once");
+    assert_eq!(
+        requests[1]["params"]["continuation_scope"],
+        serde_json::json!({
+            "session_id": "cli.run.recover",
+            "journey_id": "cli.run.recover.journey",
+            "task_id": "task-recover",
+            "run_id": "run-recover"
+        })
+    );
+    assert_eq!(requests[1]["params"]["max_steps"], 1);
+    assert_eq!(
+        requests[1]["params"]["expected_progress_fingerprint"],
+        "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    );
+    assert_eq!(requests[1]["params"]["expected_aggregate_sequence"], 7);
 }
 
 #[test]

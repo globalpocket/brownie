@@ -1,6 +1,6 @@
 //! Minimal runtime-owned MCP client for stdio tools.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
@@ -231,7 +231,12 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
         let _ = tx.send(result);
     });
     let line = match rx.recv_timeout(Duration::from_millis(MCP_STDIO_TIMEOUT_MS)) {
-        Ok(result) => result?,
+        Ok(Ok(line)) => line,
+        Ok(Err(error)) => {
+            let _ = terminate_process_tree(&mut child);
+            let _ = reader.join();
+            return Err(error);
+        }
         Err(mpsc::RecvTimeoutError::Timeout) => {
             let (succeeded, reason) = terminate_process_tree(&mut child);
             let _ = reader.join();
@@ -255,14 +260,29 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
 
 fn read_stdio_response(stdout: std::process::ChildStdout) -> Result<String> {
     let mut reader = BufReader::new(stdout);
-    let mut line = String::new();
-    reader
-        .read_line(&mut line)
-        .context("failed to read MCP stdio response")?;
-    if line.len() > MAX_MCP_RESPONSE_BYTES {
-        bail!("MCP stdio response exceeds byte limit");
+    let mut bytes = Vec::new();
+    let mut chunk = [0_u8; 4096];
+    loop {
+        let read = reader
+            .read(&mut chunk)
+            .context("failed to read MCP stdio response")?;
+        if read == 0 {
+            break;
+        }
+        if let Some(newline_index) = chunk[..read].iter().position(|byte| *byte == b'\n') {
+            let line_bytes = newline_index + 1;
+            if bytes.len().saturating_add(line_bytes) > MAX_MCP_RESPONSE_BYTES {
+                bail!("MCP stdio response exceeds byte limit");
+            }
+            bytes.extend_from_slice(&chunk[..line_bytes]);
+            break;
+        }
+        if bytes.len().saturating_add(read) > MAX_MCP_RESPONSE_BYTES {
+            bail!("MCP stdio response exceeds byte limit");
+        }
+        bytes.extend_from_slice(&chunk[..read]);
     }
-    Ok(line)
+    String::from_utf8(bytes).context("MCP stdio response is not valid UTF-8")
 }
 
 #[cfg(unix)]

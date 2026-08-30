@@ -36,6 +36,7 @@ const HEADLESS_JOURNEY_EXECUTIONS_DIR: &str = "headless-journey-executions";
 const HEADLESS_JOURNEYS_DIR: &str = "headless-journeys";
 const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
 const MODEPACK_ACTIVE_DIR: &str = "modepack-active";
+const MODEPACK_ACTIVE_SNAPSHOTS_DIR: &str = "snapshots";
 const MODEPACK_CANDIDATES_DIR: &str = "modepack-candidates";
 const RUN_ADMISSION_LOCK_RETRIES: usize = 200;
 const RUN_ADMISSION_LOCK_SLEEP: Duration = Duration::from_millis(10);
@@ -81,6 +82,29 @@ impl BrownieStore {
         })?))
     }
 
+    pub fn read_active_modepack_snapshot_by_fingerprint(
+        &self,
+        activation_fingerprint: &str,
+    ) -> Result<Option<ActiveModePackSnapshot>> {
+        let path = self.active_modepack_snapshot_archive_path(activation_fingerprint);
+        if path.exists() {
+            let content = fs::read_to_string(&path)
+                .with_context(|| format!("failed to read {}", path.display()))?;
+            let snapshot: ActiveModePackSnapshot = serde_json::from_str(&content)
+                .with_context(|| format!("failed to parse {}", path.display()))?;
+            if snapshot.summary.activation_fingerprint != activation_fingerprint {
+                bail!("archived active modepack snapshot fingerprint mismatch");
+            }
+            return Ok(Some(snapshot));
+        }
+        if let Some(current) = self.read_active_modepack_snapshot()? {
+            if current.summary.activation_fingerprint == activation_fingerprint {
+                return Ok(Some(current));
+            }
+        }
+        Ok(None)
+    }
+
     pub fn has_active_modepack_state(&self) -> bool {
         self.active_modepack_current_path().exists()
             || self.active_modepack_dir().join("ledger.jsonl").exists()
@@ -116,6 +140,7 @@ impl BrownieStore {
             .context("failed to serialize active modepack snapshot")?;
         write_file_atomically(&root.join("current.json"), body.as_bytes())
             .context("failed to write active modepack snapshot")?;
+        self.archive_active_modepack_snapshot(&committed)?;
         let event = ActiveModePackLedgerEvent {
             event_id: committed.summary.activation_event_id.clone(),
             kind: "ModePackActivated".to_string(),
@@ -167,6 +192,8 @@ impl BrownieStore {
             .context("failed to serialize active modepack snapshot")?;
         write_file_atomically(&root.join("current.json"), body.as_bytes())
             .context("failed to write replacement active modepack snapshot")?;
+        self.archive_active_modepack_snapshot(&previous)?;
+        self.archive_active_modepack_snapshot(&replacement)?;
         let verified = self
             .read_active_modepack_snapshot()
             .context("failed to verify replacement active modepack snapshot")?
@@ -190,7 +217,6 @@ impl BrownieStore {
             payload: serde_json::json!({
                 "previous_snapshot": previous.summary,
                 "replacement_snapshot": replacement.summary,
-                "previous_snapshot_full": previous,
                 "update_admission": update_admission,
             }),
         };
@@ -258,6 +284,8 @@ impl BrownieStore {
             .context("failed to serialize rollback active modepack snapshot")?;
         write_file_atomically(&root.join("current.json"), restored_body.as_bytes())
             .context("failed to write rollback active modepack snapshot")?;
+        self.archive_active_modepack_snapshot(&current)?;
+        self.archive_active_modepack_snapshot(&rollback_snapshot)?;
         let verified = self
             .read_active_modepack_snapshot()
             .context("failed to verify rollback active modepack snapshot")?
@@ -472,13 +500,27 @@ impl BrownieStore {
         for event in self.read_active_modepack_events()? {
             match event.kind.as_str() {
                 "ModePackReplaced" => {
-                    let Some(value) = event.payload.get("previous_snapshot_full").cloned() else {
+                    let Some(summary) =
+                        event
+                            .payload
+                            .get("previous_snapshot")
+                            .cloned()
+                            .and_then(|value| {
+                                serde_json::from_value::<ModePackActiveSnapshotSummary>(value).ok()
+                            })
+                    else {
                         latest = None;
                         saw_summary_only_replacement = true;
                         continue;
                     };
-                    let snapshot: ActiveModePackSnapshot = serde_json::from_value(value)
-                        .context("failed to parse rollback-capable previous modepack snapshot")?;
+                    let Some(snapshot) = self.read_active_modepack_snapshot_by_fingerprint(
+                        &summary.activation_fingerprint,
+                    )?
+                    else {
+                        latest = None;
+                        saw_summary_only_replacement = true;
+                        continue;
+                    };
                     latest = Some(snapshot);
                     saw_summary_only_replacement = false;
                 }
@@ -490,7 +532,7 @@ impl BrownieStore {
             }
         }
         if saw_summary_only_replacement {
-            bail!("latest active modepack replacement evidence is summary-only");
+            bail!("latest active modepack replacement private snapshot is missing");
         }
         Ok(latest)
     }
@@ -1493,6 +1535,32 @@ impl BrownieStore {
 
     fn active_modepack_current_path(&self) -> PathBuf {
         self.active_modepack_dir().join("current.json")
+    }
+
+    fn active_modepack_snapshot_archive_path(&self, activation_fingerprint: &str) -> PathBuf {
+        let file_name = activation_fingerprint
+            .strip_prefix("sha256:")
+            .unwrap_or(activation_fingerprint);
+        self.active_modepack_dir()
+            .join(MODEPACK_ACTIVE_SNAPSHOTS_DIR)
+            .join(format!("{file_name}.json"))
+    }
+
+    fn archive_active_modepack_snapshot(&self, snapshot: &ActiveModePackSnapshot) -> Result<()> {
+        let path =
+            self.active_modepack_snapshot_archive_path(&snapshot.summary.activation_fingerprint);
+        if path.exists() {
+            return Ok(());
+        }
+        let parent = path
+            .parent()
+            .context("active modepack snapshot archive path has no parent")?;
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+        let body = serde_json::to_string_pretty(snapshot)
+            .context("failed to serialize archived active modepack snapshot")?;
+        write_file_atomically(&path, body.as_bytes())
+            .context("failed to write archived active modepack snapshot")
     }
 
     fn modepack_candidates_dir(&self) -> PathBuf {

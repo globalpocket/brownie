@@ -168,13 +168,6 @@ pub(super) fn handle_tool_execute(id: Value, params: Option<Value>) -> JsonRpcRe
 }
 
 fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResult> {
-    let Some((server_id, tool_name)) = mcp_client::split_normalized_tool_id(&params.tool_id) else {
-        return Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
-            status: ToolExecuteStatus::Failed,
-            output: json!({ "reason": "Malformed MCP tool id." }),
-        });
-    };
     let Some(task_id) = params.task_id.as_deref() else {
         return Ok(ToolExecuteResult {
             tool_id: params.tool_id,
@@ -200,17 +193,34 @@ fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResu
             })
         }
     };
+    execute_mcp_tool_for_record(&store, &record, &policy, params.tool_id, params.input)
+}
+
+fn execute_mcp_tool_for_record(
+    store: &BrownieStore,
+    record: &TaskRecord,
+    policy: &CompiledModePolicy,
+    tool_id: String,
+    input: Value,
+) -> anyhow::Result<ToolExecuteResult> {
+    let Some((server_id, tool_name)) = mcp_client::split_normalized_tool_id(&tool_id) else {
+        return Ok(ToolExecuteResult {
+            tool_id,
+            status: ToolExecuteStatus::Failed,
+            output: json!({ "reason": "Malformed MCP tool id." }),
+        });
+    };
     let decision = RuntimePermissionGate::check_mcp_tool(&policy, server_id, tool_name);
     if !decision.allowed {
         return Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Denied,
             output: json!({ "reason": decision.reason }),
         });
     }
     let Some(config) = mcp_server_config_for_policy(&store, &record, server_id)? else {
         return Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Denied,
             output: json!({ "reason": "MCP server is not configured by structured Mode Pack policy." }),
         });
@@ -219,7 +229,7 @@ fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResu
         Ok(catalog) => catalog,
         Err(error) => {
             return Ok(ToolExecuteResult {
-                tool_id: params.tool_id,
+                tool_id,
                 status: ToolExecuteStatus::Failed,
                 output: json!({ "reason": format!("MCP tools/list failed: {error}") }),
             })
@@ -228,24 +238,24 @@ fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResu
     let Some(catalog_entry) = catalog
         .tools
         .iter()
-        .find(|entry| entry.tool_name == tool_name && entry.tool_id == params.tool_id)
+        .find(|entry| entry.tool_name == tool_name && entry.tool_id == tool_id)
     else {
         return Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Denied,
             output: json!({ "reason": "MCP tool is outside the validated server catalog." }),
         });
     };
     if !pinned_mcp_catalog_allows(&store, &record, catalog_entry)? {
         return Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Denied,
             output: json!({ "reason": "MCP tool catalog does not match task-pinned provenance." }),
         });
     }
-    match mcp_client::call_tool(&config, tool_name, params.input) {
+    match mcp_client::call_tool(&config, tool_name, input) {
         Ok(output) => Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Completed,
             output: json!({
                 "mcp": output,
@@ -261,7 +271,7 @@ fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResu
             }),
         }),
         Err(error) => Ok(ToolExecuteResult {
-            tool_id: params.tool_id,
+            tool_id,
             status: ToolExecuteStatus::Failed,
             output: json!({ "reason": format!("MCP tools/call failed: {error}") }),
         }),
@@ -396,12 +406,11 @@ fn mcp_server_config_for_policy(
     let Some(expected_activation_fingerprint) = expected_activation_fingerprint else {
         return Ok(None);
     };
-    let Some(snapshot) = store.read_active_modepack_snapshot()? else {
+    let Some(snapshot) =
+        store.read_active_modepack_snapshot_by_fingerprint(expected_activation_fingerprint)?
+    else {
         return Ok(None);
     };
-    if snapshot.summary.activation_fingerprint != expected_activation_fingerprint {
-        return Ok(None);
-    }
     Ok(snapshot
         .mcp_servers
         .into_iter()
@@ -955,15 +964,16 @@ pub(super) fn handle_approved_workspace_intents(
             None => false,
         };
     for decision in evaluation.items {
-        let controlled_execution_tool = matches!(
+        let builtin_controlled_execution_tool = matches!(
             decision.tool_id.as_str(),
             WORKSPACE_READ_TOOL_ID
                 | VERIFICATION_CARGO_FMT_CHECK_TOOL_ID
                 | VERIFICATION_CARGO_CHECK_TOOL_ID
                 | VERIFICATION_CARGO_TEST_TOOL_ID
         );
+        let mcp_execution_tool = mcp_client::split_normalized_tool_id(&decision.tool_id).is_some();
         if !decision.allowed {
-            if controlled_execution_tool {
+            if builtin_controlled_execution_tool {
                 append_controlled_tool_execution_denied(store, record, policy, &decision)?;
             }
             continue;
@@ -987,7 +997,11 @@ pub(super) fn handle_approved_workspace_intents(
             append_subtask_orchestration_queued(store, record, policy, &decision)?;
             continue;
         }
-        if !controlled_execution_tool {
+        if mcp_execution_tool {
+            append_approved_mcp_tool_execution(store, record, policy, decision)?;
+            continue;
+        }
+        if !builtin_controlled_execution_tool {
             continue;
         }
         store.tasks().append_task_event_with_payload(
@@ -1035,6 +1049,73 @@ pub(super) fn handle_approved_workspace_intents(
             Some(tool_execution_ledger_payload(&result)),
         )?;
     }
+    Ok(())
+}
+
+fn append_approved_mcp_tool_execution(
+    store: &BrownieStore,
+    record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
+    decision: ToolIntentDecision,
+) -> anyhow::Result<()> {
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionRequested,
+        Some(json!({
+            "tool_id": decision.tool_id,
+            "input_summary": summarize_intent_input(&decision.input),
+        })),
+    )?;
+    let Some((server_id, tool_name)) = mcp_client::split_normalized_tool_id(&decision.tool_id)
+    else {
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolExecutionFailed,
+            Some(json!({
+                "tool_id": decision.tool_id,
+                "status": "Failed",
+                "reason": "Malformed MCP tool id.",
+            })),
+        )?;
+        return Ok(());
+    };
+    let permission = RuntimePermissionGate::check_mcp_tool(policy, server_id, tool_name);
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::ToolExecutionPermissionChecked,
+        Some(json!({
+            "tool_id": decision.tool_id,
+            "required_action": runtime_action_name(&permission.action),
+            "allowed": permission.allowed,
+            "reason": permission.reason,
+            "server_id": server_id,
+            "tool_name": tool_name,
+        })),
+    )?;
+    if !permission.allowed {
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::ToolExecutionDenied,
+            Some(json!({
+                "tool_id": decision.tool_id,
+                "status": "Denied",
+                "reason": permission.reason,
+            })),
+        )?;
+        return Ok(());
+    }
+    let result =
+        execute_mcp_tool_for_record(store, record, policy, decision.tool_id, decision.input)?;
+    let kind = match result.status {
+        ToolExecuteStatus::Completed => LedgerEventKind::ToolExecutionCompleted,
+        ToolExecuteStatus::Denied => LedgerEventKind::ToolExecutionDenied,
+        ToolExecuteStatus::Failed => LedgerEventKind::ToolExecutionFailed,
+    };
+    store.tasks().append_task_event_with_payload(
+        record,
+        kind,
+        Some(tool_execute_result_ledger_payload(&result)),
+    )?;
     Ok(())
 }
 
@@ -3268,6 +3349,69 @@ pub(super) fn tool_execution_ledger_payload(result: &brownie_tools::ToolExecutio
     }
     if let Some(reason) = result.output.get("reason") {
         payload.insert("reason".to_string(), reason.clone());
+    }
+    Value::Object(payload)
+}
+
+pub(super) fn tool_execute_result_ledger_payload(result: &ToolExecuteResult) -> Value {
+    let mut payload = serde_json::Map::new();
+    payload.insert("tool_id".to_string(), json!(result.tool_id));
+    payload.insert(
+        "status".to_string(),
+        json!(match result.status {
+            ToolExecuteStatus::Completed => "Completed",
+            ToolExecuteStatus::Denied => "Denied",
+            ToolExecuteStatus::Failed => "Failed",
+        }),
+    );
+    if let Some(reason) = result.output.get("reason").and_then(Value::as_str) {
+        payload.insert("reason".to_string(), json!(preview_tool_output(reason)));
+    }
+    if let Some(mcp) = result.output.get("mcp").and_then(Value::as_object) {
+        let mut mcp_payload = serde_json::Map::new();
+        for key in [
+            "server_id",
+            "tool_name",
+            "protocol_version",
+            "server_config_identity_fingerprint",
+            "result_fingerprint",
+            "is_error",
+            "content_item_count",
+            "content_truncated",
+        ] {
+            if let Some(value) = mcp.get(key) {
+                mcp_payload.insert(key.to_string(), value.clone());
+            }
+        }
+        if let Some(items) = mcp.get("content_items").and_then(Value::as_array) {
+            let bounded_items = items.iter().take(8).cloned().collect::<Vec<_>>();
+            mcp_payload.insert("content_items".to_string(), json!(bounded_items));
+        }
+        payload.insert("mcp".to_string(), Value::Object(mcp_payload));
+    }
+    if let Some(provenance) = result
+        .output
+        .get("catalog_provenance")
+        .and_then(Value::as_object)
+    {
+        let mut provenance_payload = serde_json::Map::new();
+        for key in [
+            "server_id",
+            "tool_name",
+            "input_schema_fingerprint",
+            "output_schema_fingerprint",
+            "server_config_identity_fingerprint",
+            "protocol_version",
+            "catalog_fingerprint",
+        ] {
+            if let Some(value) = provenance.get(key) {
+                provenance_payload.insert(key.to_string(), value.clone());
+            }
+        }
+        payload.insert(
+            "catalog_provenance".to_string(),
+            Value::Object(provenance_payload),
+        );
     }
     Value::Object(payload)
 }

@@ -347,11 +347,37 @@ impl FakeLlm {
             };
         }
         if prompt.contains("tool execution:")
+            && prompt.contains("mcp.github.search_code")
+            && prompt.contains("completed")
+        {
+            return LlmResponse {
+                content: "Fake LLM final response after using MCP search_code result.".to_string(),
+            };
+        }
+        if prompt.contains("tool execution:")
             && prompt.contains("workspace.read")
             && (prompt.contains("completed") || prompt.contains("bytes_read="))
         {
             return LlmResponse {
                 content: "Fake LLM final response after reading workspace context.".to_string(),
+            };
+        }
+        if prompt.contains("mcp.github.search_code")
+            && contains_any(&request_signal, &["mcp", "search_code"])
+        {
+            let intent = serde_json::json!({
+                "tool_requests": [{
+                    "tool_id": "mcp.github.search_code",
+                    "reason": "Use the task-pinned MCP search tool.",
+                    "input": { "query": "bounded" }
+                }]
+            });
+            return LlmResponse {
+                content: format!(
+                    "Fake LLM MCP tool request with {} messages.\n\n```brownie-tool-intent\n{}\n```",
+                    request.messages.len(),
+                    serde_json::to_string_pretty(&intent).expect("fake intent serializes")
+                ),
             };
         }
 

@@ -2364,6 +2364,11 @@ impl ToolPlanEvaluator {
 mod tests {
     use super::*;
     use brownie_agentmodes::BuiltinModeRegistry;
+    use brownie_modepack::{
+        load_modepack_from_str_with_options, ModePackCapabilityCeiling, ModePackLoadOptions,
+        ModePackSourceTrust,
+    };
+
     #[test]
     fn builtin_tool_registry_lists_required_tools() {
         let ids: Vec<_> = BuiltinToolRegistry::list()
@@ -2387,6 +2392,70 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn modepack_reserved_v0_side_effects_cannot_enable_builtin_tool_authority() {
+        let content = r#"{
+          "name": "workspace-invariant-side-effects",
+          "schema_version": 1,
+          "modes": [
+            {
+              "mode_id": "external-integrator",
+              "display_name": "External Integrator",
+              "role_definition": "Trusted external policy declares every side effect.",
+              "permissions": {
+                "read_only": false,
+                "workspace_write": true,
+                "process_exec": true,
+                "network_access": true,
+                "service_control": true,
+                "destructive": true,
+                "can_spawn_subtasks": true,
+                "codebase_index": true,
+                "mcp_tool_access": true
+              },
+              "allowed_handoff_targets": ["$modepack/*"]
+            }
+          ]
+        }"#;
+        let snapshot = load_modepack_from_str_with_options(
+            content,
+            ".brownie/modepack.json",
+            ModePackLoadOptions {
+                source_trust: ModePackSourceTrust::TrustedSignedActiveModePack,
+                capability_ceiling: ModePackCapabilityCeiling {
+                    workspace_write: true,
+                    process_exec: true,
+                    network_access: true,
+                    service_control: true,
+                    destructive: true,
+                    can_spawn_subtasks: true,
+                    mcp_tool_access: true,
+                },
+            },
+        )
+        .expect("trusted modepack should compile");
+        let policy = snapshot
+            .modes
+            .iter()
+            .find(|mode| mode.mode_id == "external-integrator")
+            .expect("external-integrator");
+
+        assert!(policy.permissions.workspace_write);
+        assert!(policy.permissions.process_exec);
+        assert!(policy.permissions.can_spawn_subtasks);
+        assert!(policy.permissions.mcp_tool_access);
+
+        for tool_id in ["network.access", "service.control", "destructive.operation"] {
+            let tool = BuiltinToolRegistry::get(tool_id).expect("builtin tool");
+            let decision = RuntimePermissionGate::check(policy, tool.required_action.clone());
+            assert!(
+                !decision.allowed,
+                "{tool_id} must remain denied for trusted external Mode Packs in v0"
+            );
+        }
+    }
+
     #[test]
     fn planner_includes_expected_items() {
         let plan = ToolPlanner::plan(ToolPlanningInput {

@@ -57824,7 +57824,8 @@ mod tests {
                 .expect("active ledger");
         assert_eq!(active_ledger.lines().count(), 3);
         assert!(active_ledger.contains("ModePackRolledBack"));
-        assert!(active_ledger.contains("previous_snapshot_full"));
+        assert!(!active_ledger.contains("previous_snapshot_full"));
+        assert!(!active_ledger.contains("replacement_snapshot_full"));
         assert!(!active_ledger.contains("raw_modepack_json"));
         assert!(!active_ledger.contains("Changed reviewer role"));
         assert!(!active_ledger.contains(temp.path().to_string_lossy().as_ref()));
@@ -57905,13 +57906,21 @@ mod tests {
             .join("\n")
             + "\n";
         std::fs::write(&ledger_path, legacy_ledger).expect("legacy ledger");
+        let rollback_archive_file =
+            temp.path()
+                .join(".brownie/modepack-active/snapshots")
+                .join(format!(
+                    "{}.json",
+                    rollback_fingerprint.trim_start_matches("sha256:")
+                ));
+        std::fs::remove_file(rollback_archive_file).expect("remove rollback private snapshot");
 
         let legacy = parse_line(&format!(
             r#"{{"jsonrpc":"2.0","id":6,"method":"modepack.rollbackActive","params":{{"authorize_rollback":true,"expected_current_activation_fingerprint":"{replacement_fingerprint}","expected_rollback_activation_fingerprint":"{rollback_fingerprint}"}}}}"#
         ));
         let error = legacy.error.expect("legacy evidence");
         assert_eq!(error.code, -32603);
-        assert!(error.message.contains("summary-only"));
+        assert!(error.message.contains("private snapshot is missing"));
 
         let active_ledger =
             std::fs::read_to_string(temp.path().join(".brownie/modepack-active/ledger.jsonl"))
@@ -60888,6 +60897,92 @@ content-length: {}
     }
 
     #[test]
+    fn task_run_agent_loop_executes_approved_mcp_tool_and_continues() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let _guard = EnvGuard::clear();
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        std::env::set_var("BROWNIE_LLM_PROVIDER", "fake");
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP search_code through the normal agent loop","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let run_id = start["run_id"].as_str().expect("run id");
+        let run = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"task.run","params":{{"task_id":"{task_id}"}}}}"#
+        ));
+        if run.error.is_some() {
+            panic!("run error: {:?}", run.error);
+        }
+        assert_eq!(run.result.unwrap()["status"], json!("Completed"));
+
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert!(mcp_log.lines().filter(|line| *line == "tools/list").count() >= 2);
+        assert_eq!(
+            mcp_log
+                .lines()
+                .filter(|line| *line == "tools/call:search_code")
+                .count(),
+            1
+        );
+
+        let events = BrownieStore::new(temp.path())
+            .tasks()
+            .read_ledger_events(run_id)
+            .expect("events");
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::ToolIntentApproved
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("tool_id"))
+                    == Some(&json!("mcp.github.search_code"))
+        }));
+        let completed = events
+            .iter()
+            .find(|event| {
+                event.kind == LedgerEventKind::ToolExecutionCompleted
+                    && event
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.get("tool_id"))
+                        == Some(&json!("mcp.github.search_code"))
+            })
+            .expect("mcp execution completed");
+        let completed_payload = completed.payload.as_ref().expect("completed payload");
+        assert_eq!(completed_payload["status"], json!("Completed"));
+        assert_eq!(
+            completed_payload["catalog_provenance"]["server_id"],
+            json!("github")
+        );
+        assert!(completed_payload["mcp"]["result_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:"));
+        assert!(events
+            .iter()
+            .any(|event| event.kind == LedgerEventKind::SecondPassPromptBuilt));
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::SecondPassLlmResponseReceived
+                && serde_json::to_string(event.payload.as_ref().expect("payload"))
+                    .expect("payload json")
+                    .contains("MCP search_code result")
+        }));
+    }
+
+    #[test]
     fn mcp_tool_rejects_unknown_server_tool_and_mode_without_capability() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -61027,6 +61122,37 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_stdio_oversized_no_newline_response_fails_bounded_and_cleans_up_process() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "oversized_no_newline_pid");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start_response = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        );
+        let error = start_response.error.expect("oversized no-newline error");
+        assert!(error.message.contains("exceeds byte limit"));
+        assert!(!error.message.contains("xxxxxxxxxxxxxxxxxxxxxxxx"));
+        let pid = std::fs::read_to_string(temp.path().join("mcp-oversized.pid"))
+            .expect("pid file")
+            .trim()
+            .parse::<u32>()
+            .expect("pid");
+        assert!(
+            !process_exists(pid),
+            "MCP oversized no-newline response left process {pid} alive"
+        );
+    }
+
+    #[test]
     fn mcp_authorization_replay_is_deterministic() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -61161,6 +61287,115 @@ content-length: {}
             response["output"]["catalog_provenance"]["server_id"],
             json!("github")
         );
+    }
+
+    #[test]
+    fn mcp_execution_replays_task_pinned_config_after_later_activation_change() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let original_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack(
+            temp.path(),
+            original_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        let activation_a = commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use activation A MCP config","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let replacement_server = write_fake_mcp_server(temp.path(), "exit");
+        write_mcp_modepack(
+            temp.path(),
+            replacement_server.to_str().unwrap(),
+            "other_tool",
+            true,
+        );
+        let activation_b = replace_trusted_mcp_active_snapshot(temp.path(), &activation_a);
+        assert_ne!(activation_a, activation_b);
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute from pinned activation");
+
+        assert_eq!(response["status"], json!("Completed"));
+        let mcp_log = std::fs::read_to_string(temp.path().join("mcp-count.log")).expect("mcp log");
+        assert_eq!(
+            mcp_log
+                .lines()
+                .filter(|line| *line == "tools/call:search_code")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn mcp_execution_fails_closed_when_task_pinned_config_archive_is_missing() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let original_server = write_fake_mcp_server(temp.path(), "counting");
+        write_mcp_modepack(
+            temp.path(),
+            original_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        let activation_a = commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use activation A MCP config","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let replacement_server = write_fake_mcp_server(temp.path(), "ok");
+        write_mcp_modepack(
+            temp.path(),
+            replacement_server.to_str().unwrap(),
+            "other_tool",
+            true,
+        );
+        let activation_b = replace_trusted_mcp_active_snapshot(temp.path(), &activation_a);
+        assert_ne!(activation_a, activation_b);
+        let archive_file = temp
+            .path()
+            .join(".brownie/modepack-active/snapshots")
+            .join(format!(
+                "{}.json",
+                activation_a.trim_start_matches("sha256:")
+            ));
+        std::fs::remove_file(archive_file).expect("remove activation A private snapshot");
+
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("missing pinned activation config");
+
+        assert_eq!(response["status"], json!("Denied"));
+        assert!(response["output"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("structured Mode Pack policy"));
     }
 
     #[test]
@@ -61312,6 +61547,14 @@ read request
 sleep 30
 "#
             }
+            "oversized_no_newline_pid" => {
+                r#"#!/bin/sh
+printf '%s\n' "$$" > "$(dirname "$0")/mcp-oversized.pid"
+read request
+dd if=/dev/zero bs=4096 count=40 2>/dev/null | tr '\0' x
+sleep 30
+"#
+            }
             "exit" => {
                 r#"#!/bin/sh
 exit 7
@@ -61332,6 +61575,25 @@ case "$request" in
     ;;
   *)
     printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing required MCP 2026-07-28 client metadata"}}'
+    ;;
+esac
+"#
+            }
+            "counting" => {
+                r#"#!/bin/sh
+read request
+log="$(dirname "$0")/mcp-count.log"
+case "$request" in
+  *tools/list*)
+    printf '%s\n' "tools/list" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' "tools/call:search_code" >> "$log"
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"unknown"}}'
     ;;
 esac
 "#
@@ -61395,8 +61657,36 @@ esac
         .expect("changed fake mcp server");
     }
 
-    fn commit_trusted_mcp_active_snapshot(workspace_root: &std::path::Path) {
+    fn commit_trusted_mcp_active_snapshot(workspace_root: &std::path::Path) -> String {
         let store = BrownieStore::new(workspace_root);
+        let snapshot = build_trusted_mcp_active_snapshot(workspace_root);
+        let activation_fingerprint = snapshot.summary.activation_fingerprint.clone();
+        store
+            .commit_active_modepack_snapshot(&snapshot)
+            .expect("active mcp snapshot");
+        activation_fingerprint
+    }
+
+    fn replace_trusted_mcp_active_snapshot(
+        workspace_root: &std::path::Path,
+        expected_current_activation_fingerprint: &str,
+    ) -> String {
+        let store = BrownieStore::new(workspace_root);
+        let snapshot = build_trusted_mcp_active_snapshot(workspace_root);
+        let activation_fingerprint = snapshot.summary.activation_fingerprint.clone();
+        store
+            .replace_active_modepack_snapshot(
+                expected_current_activation_fingerprint,
+                &snapshot,
+                None,
+            )
+            .expect("replace active mcp snapshot");
+        activation_fingerprint
+    }
+
+    fn build_trusted_mcp_active_snapshot(
+        workspace_root: &std::path::Path,
+    ) -> ActiveModePackSnapshot {
         let snapshot = load_workspace_modepack_with_options(
             workspace_root,
             ModePackLoadOptions::trusted_signed_active_modepack(),
@@ -61451,29 +61741,24 @@ esac
             snapshot.entrypoints.default_mode_id(),
         );
         let mcp_servers = modepack_mcp_servers_payload(&snapshot);
-        store
-            .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
-                summary: brownie_protocol::ModePackActiveSnapshotSummary {
-                    activation_id: format!(
-                        "modepack_activation_{}",
-                        &activation_fingerprint[7..23]
-                    ),
-                    activation_fingerprint,
-                    modepack_name: snapshot.name,
-                    schema_version: snapshot.schema_version,
-                    source_kind: "workspace_modepack".to_string(),
-                    source_path: brownie_modepack::WORKSPACE_MODEPACK_PATH.to_string(),
-                    mode_count: mode_ids.len(),
-                    mode_ids,
-                    default_entrypoint: snapshot.entrypoints.default.clone(),
-                    compiled_policy_fingerprint,
-                    activated_at,
-                    activation_event_id: String::new(),
-                },
-                mcp_servers,
-                global_policy_artifacts,
-                policies: policy_snapshots,
-            })
-            .expect("active mcp snapshot");
+        ActiveModePackSnapshot {
+            summary: brownie_protocol::ModePackActiveSnapshotSummary {
+                activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
+                activation_fingerprint,
+                modepack_name: snapshot.name,
+                schema_version: snapshot.schema_version,
+                source_kind: "workspace_modepack".to_string(),
+                source_path: brownie_modepack::WORKSPACE_MODEPACK_PATH.to_string(),
+                mode_count: mode_ids.len(),
+                mode_ids,
+                default_entrypoint: snapshot.entrypoints.default.clone(),
+                compiled_policy_fingerprint,
+                activated_at,
+                activation_event_id: String::new(),
+            },
+            mcp_servers,
+            global_policy_artifacts,
+            policies: policy_snapshots,
+        }
     }
 }
