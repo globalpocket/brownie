@@ -1,4 +1,4 @@
-use crate::cli::{CliCommand, InspectTarget, ListTarget, ModeTarget};
+use crate::cli::{CliCommand, InspectTarget, ListTarget, ModeTarget, ResumeScope};
 use brownie_protocol::{JsonRpcResponse, RuntimeStatus};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -182,7 +182,7 @@ impl RuntimeClient {
     pub fn invoke(&self, command: &CliCommand, json: bool) -> Result<String, RuntimeClientError> {
         match command {
             CliCommand::Run { objective } => self.runtime_run(objective, json),
-            CliCommand::Resume => self.runtime_resume(json),
+            CliCommand::Resume { scope } => self.runtime_resume(scope.as_ref(), json),
             CliCommand::Status => self.runtime_status(json),
             CliCommand::Inspect {
                 target: InspectTarget::Task { task_id },
@@ -244,7 +244,11 @@ impl RuntimeClient {
         bounded_output(render_run_result(&result)?)
     }
 
-    fn runtime_resume(&self, json_output: bool) -> Result<String, RuntimeClientError> {
+    fn runtime_resume(
+        &self,
+        recovery_scope: Option<&ResumeScope>,
+        json_output: bool,
+    ) -> Result<String, RuntimeClientError> {
         let task_list = self.call_runtime_value(
             TASK_LIST_METHOD,
             Some(cli_resume_task_list_params()),
@@ -252,7 +256,7 @@ impl RuntimeClient {
         )?;
         validate_task_list_result(&task_list)?;
         let result = if let Some((resume_params, resume_candidate)) =
-            cli_resume_advance_params(&task_list)?
+            cli_resume_advance_params(&task_list, recovery_scope)?
         {
             let result = self.call_runtime_value(
                 HEADLESS_RUN_ADVANCE_METHOD,
@@ -262,7 +266,7 @@ impl RuntimeClient {
             validate_headless_run_advance_result(&result)?;
             self.continue_resumed_headless_journey_if_available(result, &resume_candidate)?
         } else {
-            let resume_params = cli_resume_params(&task_list)?;
+            let resume_params = cli_resume_params(&task_list, recovery_scope)?;
             let result = self.call_runtime_value(
                 HEADLESS_CONTINUE_ONCE_METHOD,
                 Some(resume_params),
@@ -903,10 +907,7 @@ fn recovery_probe_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         }
     }
     let next_invocation = match admission_state.as_str() {
-        "persisted" => json!({
-            "command": "resume",
-            "arguments": []
-        }),
+        "persisted" => recovery_scoped_resume_next_invocation(object)?,
         "not_persisted" => json!({
             "command": "run",
             "arguments": ["<original-objective>"]
@@ -940,6 +941,44 @@ fn recovery_probe_payload(result: &Value) -> Result<Value, RuntimeClientError> {
         }),
     );
     Ok(Value::Object(payload))
+}
+
+fn recovery_scoped_resume_next_invocation(
+    object: &serde_json::Map<String, Value>,
+) -> Result<Value, RuntimeClientError> {
+    let session_id = required_display_string(object, "session_id")?;
+    let journey_id = required_display_string(object, "journey_id")?;
+    let task_id = object
+        .get("task_id")
+        .filter(|value| !value.is_null())
+        .map(bounded_string)
+        .transpose()?
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    let run_id = object
+        .get("run_id")
+        .filter(|value| !value.is_null())
+        .map(bounded_string)
+        .transpose()?
+        .ok_or(RuntimeClientError::InvalidResponse)?;
+    Ok(json!({
+        "command": "resume",
+        "arguments": [
+            "--session-id",
+            session_id,
+            "--journey-id",
+            journey_id,
+            "--task-id",
+            task_id,
+            "--run-id",
+            run_id
+        ],
+        "scope": {
+            "session_id": session_id,
+            "journey_id": journey_id,
+            "task_id": task_id,
+            "run_id": run_id
+        }
+    }))
 }
 
 fn task_list_payload(result: &Value) -> Result<Value, RuntimeClientError> {
@@ -2408,10 +2447,20 @@ fn cli_resume_task_list_params() -> Value {
 
 fn cli_resume_advance_params(
     task_list: &Value,
+    recovery_scope: Option<&ResumeScope>,
 ) -> Result<Option<(Value, CliResumeRouteCandidate)>, RuntimeClientError> {
     let Some(candidate) = cli_resume_selected_route_candidate(task_list)? else {
         return Ok(None);
     };
+    if let Some(scope) = recovery_scope {
+        if candidate.session_id != scope.session_id
+            || candidate.journey_id != scope.journey_id
+            || candidate.task_id != scope.task_id
+            || candidate.run_id != scope.run_id
+        {
+            return Ok(None);
+        }
+    }
     let advance_id = stable_cli_resume_id(
         &candidate.progress_fingerprint,
         candidate.aggregate_sequence,
@@ -2505,21 +2554,37 @@ fn cli_resume_selected_route_candidate(
     }))
 }
 
-fn cli_resume_params(task_list: &Value) -> Result<Value, RuntimeClientError> {
+fn cli_resume_params(
+    task_list: &Value,
+    recovery_scope: Option<&ResumeScope>,
+) -> Result<Value, RuntimeClientError> {
     let progress = object_field(task_list, "progress_overview")?;
     let progress_fingerprint = required_display_string(progress, "source_fingerprint")?;
     let aggregate_sequence = required_u64(progress, "aggregate_sequence")?;
     let continuation_id = stable_cli_resume_id(&progress_fingerprint, aggregate_sequence);
+    let continuation_scope = recovery_scope.map_or_else(
+        || {
+            json!({
+                "session_id_prefix": CLI_RUN_SESSION_PREFIX,
+                "latest_matching_session": true
+            })
+        },
+        |scope| {
+            json!({
+                "session_id": scope.session_id,
+                "journey_id": scope.journey_id,
+                "task_id": scope.task_id,
+                "run_id": scope.run_id
+            })
+        },
+    );
     Ok(json!({
         "authorize": true,
         "expected_progress_fingerprint": progress_fingerprint,
         "expected_aggregate_sequence": aggregate_sequence,
         "continuation_id": continuation_id,
         "max_steps": CLI_RESUME_MAX_STEPS,
-        "continuation_scope": {
-            "session_id_prefix": CLI_RUN_SESSION_PREFIX,
-            "latest_matching_session": true
-        }
+        "continuation_scope": continuation_scope
     }))
 }
 
@@ -4635,7 +4700,7 @@ mod tests {
                 "terminal_task_ids": []
             }
         });
-        let params = cli_resume_params(&task_list).unwrap();
+        let params = cli_resume_params(&task_list, None).unwrap();
         assert_eq!(params["authorize"], true);
         assert_eq!(
             params["expected_progress_fingerprint"],

@@ -11,11 +11,19 @@ pub enum CliCommand {
     Help { topic: Option<HelpTopic> },
     Version,
     Run { objective: String },
-    Resume,
+    Resume { scope: Option<ResumeScope> },
     Status,
     Inspect { target: InspectTarget },
     List { target: ListTarget },
     Mode { target: ModeTarget },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResumeScope {
+    pub session_id: String,
+    pub journey_id: String,
+    pub task_id: String,
+    pub run_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,7 +118,7 @@ impl Cli {
                 let objective = join_required_tail(&args[1..], "objective")?;
                 CliCommand::Run { objective }
             }
-            "resume" => no_args(&args, CliCommand::Resume)?,
+            "resume" => parse_resume(&args[1..])?,
             "status" => no_args(&args, CliCommand::Status)?,
             "inspect" => parse_inspect(&args[1..])?,
             "list" => parse_list(&args[1..])?,
@@ -180,9 +188,11 @@ impl Cli {
                 "",
                 "Usage:",
                 "  brownie resume",
+                "  brownie resume --session-id <session-id> --journey-id <journey-id> --task-id <task-id> --run-id <run-id>",
                 "  brownie --json resume",
                 "",
                 "Asks the Rust runtime to continue the latest eligible CLI-created objective once.",
+                "Scoped resume is emitted by recovery inspection after persisted journey identity is confirmed.",
                 "One invocation performs bounded progress, persists through the runtime, and exits.",
                 "JSON output includes an automation object and controller_action for external loops.",
                 "",
@@ -271,6 +281,34 @@ fn no_args(args: &[String], command: CliCommand) -> Result<CliCommand, CliError>
             "{} does not accept extra arguments",
             args[0]
         )))
+    }
+}
+
+fn parse_resume(args: &[String]) -> Result<CliCommand, CliError> {
+    match args {
+        [] => Ok(CliCommand::Resume { scope: None }),
+        [session_flag, session_id, journey_flag, journey_id, task_flag, task_id, run_flag, run_id]
+            if session_flag == "--session-id"
+                && journey_flag == "--journey-id"
+                && task_flag == "--task-id"
+                && run_flag == "--run-id"
+                && !session_id.trim().is_empty()
+                && !journey_id.trim().is_empty()
+                && !task_id.trim().is_empty()
+                && !run_id.trim().is_empty() =>
+        {
+            Ok(CliCommand::Resume {
+                scope: Some(ResumeScope {
+                    session_id: session_id.to_string(),
+                    journey_id: journey_id.to_string(),
+                    task_id: task_id.to_string(),
+                    run_id: run_id.to_string(),
+                }),
+            })
+        }
+        _ => Err(CliError::InvalidCommand(
+            "resume expects no arguments or a complete recovery scope".to_string(),
+        )),
     }
 }
 

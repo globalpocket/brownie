@@ -248,7 +248,7 @@ fn error_output(
 fn command_name(command: &CliCommand) -> &'static str {
     match command {
         CliCommand::Run { .. } => "run",
-        CliCommand::Resume => "resume",
+        CliCommand::Resume { .. } => "resume",
         CliCommand::Status => "status",
         CliCommand::Inspect {
             target: InspectTarget::Task { .. },
