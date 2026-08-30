@@ -365,7 +365,18 @@ Denied results include unknown task/server/tool, missing `mcp_tool_access`,
 tool outside the Mode Pack allow-list, missing structured server config, or
 catalog mismatch with task-pinned provenance. Failed results include stdio
 process failure, protocol error, malformed schema, oversized schema, and
-timeout. See `mcp-client-spec-v0.md`.
+timeout. Timeout and protocol-failure paths terminate the request-scoped stdio
+server process before returning. See `mcp-client-spec-v0.md`.
+
+For admitted tasks, `tool.intent.parse` may include `task_id`. When present,
+Runtime resolves the task-pinned `ModeResolved` policy and MCP catalog evidence,
+adds those dynamic MCP tools to the same intent evaluator used for built-in
+tools, and applies `RuntimePermissionGate` before returning summaries. The
+response remains bounded: it may expose tool id, action, decision, request
+reason, and input summary, but never raw tool input, raw schema text, server
+configuration, credentials, absolute paths, environment values, provider
+response text, or MCP response content. MCP tools outside the task-pinned
+catalog are rejected as unknown tools.
 
 The built-in tool registry requires `ReadWorkspace`; after that primary tool
 permission passes, the runtime checks `RuntimeAction::IndexCodebase` before it

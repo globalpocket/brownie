@@ -9,7 +9,7 @@ use brownie_agentmodes::{
     CompiledMcpServerAccess, CompiledModePolicy, CompiledPolicyArtifact, ModePermissions,
     WorkspaceWriteScope, HANDOFF_TARGET_ALL_MODEPACK_MODES,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const DEFAULT_MODEPACK_NAME: &str = "agentmodes";
@@ -76,16 +76,16 @@ impl Default for ModePackCapabilityCeiling {
         Self {
             workspace_write: true,
             process_exec: true,
-            network_access: true,
-            service_control: true,
-            destructive: true,
+            network_access: false,
+            service_control: false,
+            destructive: false,
             can_spawn_subtasks: true,
             mcp_tool_access: true,
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ModePackMcpServerConfig {
     pub server_id: String,
     pub transport: String,
@@ -352,15 +352,9 @@ fn effective_permissions(
     let process_exec = declared.process_exec
         && trusted_side_effect_source
         && options.capability_ceiling.process_exec;
-    let network_access = declared.network_access
-        && trusted_side_effect_source
-        && options.capability_ceiling.network_access;
-    let service_control = declared.service_control
-        && trusted_side_effect_source
-        && options.capability_ceiling.service_control;
-    let destructive = declared.destructive
-        && trusted_side_effect_source
-        && options.capability_ceiling.destructive;
+    let network_access = false;
+    let service_control = false;
+    let destructive = false;
     let can_spawn_subtasks = declared.can_spawn_subtasks
         && trusted_side_effect_source
         && options.capability_ceiling.can_spawn_subtasks;
@@ -1179,7 +1173,7 @@ mod tests {
     }
 
     #[test]
-    fn trusted_modepack_options_preserve_declared_side_effects_with_ceiling() {
+    fn trusted_modepack_options_preserve_grantable_effects_but_deny_reserved_v0_side_effects() {
         let content = r#"{
           "name": "trusted-agentmodes",
           "schema_version": 1,
@@ -1211,9 +1205,9 @@ mod tests {
                 capability_ceiling: ModePackCapabilityCeiling {
                     workspace_write: true,
                     process_exec: false,
-                    network_access: false,
+                    network_access: true,
                     service_control: true,
-                    destructive: false,
+                    destructive: true,
                     can_spawn_subtasks: true,
                     mcp_tool_access: true,
                 },
@@ -1229,7 +1223,7 @@ mod tests {
         assert!(integrator.permissions.workspace_write);
         assert!(!integrator.permissions.process_exec);
         assert!(!integrator.permissions.network_access);
-        assert!(integrator.permissions.service_control);
+        assert!(!integrator.permissions.service_control);
         assert!(!integrator.permissions.destructive);
         assert!(integrator.permissions.can_spawn_subtasks);
         assert!(integrator.permissions.codebase_index);

@@ -1783,7 +1783,9 @@ impl ToolIntentParser {
                 ));
                 continue;
             }
-            if BuiltinToolRegistry::get(&tool_id_value).is_none() {
+            if BuiltinToolRegistry::get(&tool_id_value).is_none()
+                && !is_dynamic_mcp_tool_candidate(&tool_id_value)
+            {
                 rejected.push(rejection(
                     Some(tool_id_value),
                     "Unknown tool id.",
@@ -1864,6 +1866,16 @@ impl ToolIntentParser {
             summary,
         }
     }
+}
+
+fn is_dynamic_mcp_tool_candidate(tool_id: &str) -> bool {
+    let Some(rest) = tool_id.strip_prefix("mcp.") else {
+        return false;
+    };
+    let Some((server_id, tool_name)) = rest.split_once('.') else {
+        return false;
+    };
+    !server_id.is_empty() && !tool_name.is_empty() && !tool_name.contains('.')
 }
 
 fn rejection(tool_id: Option<String>, reason: impl Into<String>, code: &str) -> RejectedToolIntent {
@@ -2200,10 +2212,24 @@ pub struct ToolIntentEvaluator;
 
 impl ToolIntentEvaluator {
     pub fn evaluate(policy: &CompiledModePolicy, parsed: ParsedToolIntent) -> ToolIntentEvaluation {
+        Self::evaluate_with_dynamic_tools(policy, parsed, &[])
+    }
+
+    pub fn evaluate_with_dynamic_tools(
+        policy: &CompiledModePolicy,
+        parsed: ParsedToolIntent,
+        dynamic_tools: &[ToolDefinition],
+    ) -> ToolIntentEvaluation {
         let mut rejected = parsed.rejected;
         let mut items = Vec::new();
         for request in parsed.requests {
-            let Some(definition) = BuiltinToolRegistry::get(&request.tool_id) else {
+            let definition = BuiltinToolRegistry::get(&request.tool_id).or_else(|| {
+                dynamic_tools
+                    .iter()
+                    .find(|tool| tool.tool_id == request.tool_id)
+                    .cloned()
+            });
+            let Some(definition) = definition else {
                 rejected.push(RejectedToolIntent {
                     tool_id: Some(request.tool_id),
                     reason: "Unknown tool id.".to_string(),

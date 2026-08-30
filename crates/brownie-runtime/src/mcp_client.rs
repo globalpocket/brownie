@@ -1,7 +1,7 @@
 //! Minimal runtime-owned MCP client for stdio tools.
 
 use std::io::{BufRead, BufReader, Write};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
@@ -17,6 +17,8 @@ const MCP_STDIO_TIMEOUT_MS: u64 = 2_000;
 const MAX_MCP_RESPONSE_BYTES: usize = 131_072;
 const MAX_MCP_SCHEMA_BYTES: usize = 16_384;
 const MAX_MCP_DESCRIPTION_CHARS: usize = 1_000;
+const MAX_MCP_SCHEMA_SUMMARY_FIELDS: usize = 32;
+const MAX_MCP_SCHEMA_TYPE_CHARS: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct McpToolCatalogEntry {
@@ -28,8 +30,19 @@ pub struct McpToolCatalogEntry {
     pub input_schema_fingerprint: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_schema_fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input_schema_summary: Vec<McpToolInputFieldSummary>,
     pub server_config_identity_fingerprint: String,
     pub protocol_version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct McpToolInputFieldSummary {
+    pub name: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(rename = "type")]
+    pub value_type: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -66,6 +79,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             }
         }),
     )?;
+    validate_response_envelope(&response, 1, "MCP tools/list")?;
     if response.get("error").is_some() {
         bail!("MCP tools/list returned protocol error");
     }
@@ -96,6 +110,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             .filter(|value| value.is_object())
             .context("MCP tool inputSchema must be an object")?;
         let input_schema_fingerprint = bounded_schema_fingerprint(input_schema)?;
+        let input_schema_summary = bounded_input_schema_summary(input_schema)?;
         let output_schema_fingerprint = object
             .get("outputSchema")
             .map(|schema| {
@@ -121,6 +136,7 @@ pub fn list_tools(config: &ModePackMcpServerConfig) -> Result<McpToolCatalog> {
             description,
             input_schema_fingerprint,
             output_schema_fingerprint,
+            input_schema_summary,
             server_config_identity_fingerprint: config.config_identity_fingerprint.clone(),
             protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         });
@@ -164,6 +180,7 @@ pub fn call_tool(
             }
         }),
     )?;
+    validate_response_envelope(&response, 1, "MCP tools/call")?;
     if response.get("error").is_some() {
         bail!("MCP tools/call returned protocol error");
     }
@@ -186,22 +203,14 @@ fn stdio_request(config: &ModePackMcpServerConfig, request: Value) -> Result<Val
     if config.transport != "stdio" {
         bail!("unsupported MCP transport");
     }
-    let config = config.clone();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        let result = stdio_request_inner(&config, request);
-        let _ = tx.send(result);
-    });
-    rx.recv_timeout(Duration::from_millis(MCP_STDIO_TIMEOUT_MS))
-        .unwrap_or_else(|_| Err(anyhow::anyhow!("MCP stdio request timed out")))
-}
-
-fn stdio_request_inner(config: &ModePackMcpServerConfig, request: Value) -> Result<Value> {
-    let mut child = Command::new(&config.command)
+    let mut command = Command::new(&config.command);
+    command
         .args(&config.args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    configure_process_tree_timeout(&mut command);
+    let mut child = command
         .spawn()
         .with_context(|| format!("failed to start MCP stdio server {}", config.server_id))?;
     {
@@ -211,10 +220,40 @@ fn stdio_request_inner(config: &ModePackMcpServerConfig, request: Value) -> Resu
             .context("MCP server stdin unavailable")?;
         writeln!(stdin, "{}", request)?;
     }
+    drop(child.stdin.take());
     let stdout = child
         .stdout
         .take()
         .context("MCP server stdout unavailable")?;
+    let (tx, rx) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let result = read_stdio_response(stdout);
+        let _ = tx.send(result);
+    });
+    let line = match rx.recv_timeout(Duration::from_millis(MCP_STDIO_TIMEOUT_MS)) {
+        Ok(result) => result?,
+        Err(mpsc::RecvTimeoutError::Timeout) => {
+            let (succeeded, reason) = terminate_process_tree(&mut child);
+            let _ = reader.join();
+            bail!(
+                "MCP stdio request timed out; process_tree_kill_attempted=true process_tree_kill_succeeded={succeeded} process_tree_kill_reason={reason}"
+            );
+        }
+        Err(mpsc::RecvTimeoutError::Disconnected) => {
+            let _ = terminate_process_tree(&mut child);
+            let _ = reader.join();
+            bail!("MCP stdio response reader disconnected");
+        }
+    };
+    let _ = terminate_process_tree(&mut child);
+    let _ = reader.join();
+    if line.trim().is_empty() {
+        bail!("MCP stdio server returned empty response");
+    }
+    serde_json::from_str(&line).context("MCP stdio response is not valid JSON")
+}
+
+fn read_stdio_response(stdout: std::process::ChildStdout) -> Result<String> {
     let mut reader = BufReader::new(stdout);
     let mut line = String::new();
     reader
@@ -223,12 +262,63 @@ fn stdio_request_inner(config: &ModePackMcpServerConfig, request: Value) -> Resu
     if line.len() > MAX_MCP_RESPONSE_BYTES {
         bail!("MCP stdio response exceeds byte limit");
     }
+    Ok(line)
+}
+
+#[cfg(unix)]
+fn configure_process_tree_timeout(command: &mut Command) {
+    use std::os::unix::process::CommandExt;
+    command.process_group(0);
+}
+
+#[cfg(not(unix))]
+fn configure_process_tree_timeout(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn terminate_process_tree(child: &mut Child) -> (bool, &'static str) {
+    unsafe extern "C" {
+        fn kill(pid: i32, sig: i32) -> i32;
+    }
+    const SIGKILL: i32 = 9;
+    let pid = child.id() as i32;
+    let signaled = unsafe { kill(-pid, SIGKILL) == 0 };
     let _ = child.kill();
     let _ = child.wait();
-    if line.trim().is_empty() {
-        bail!("MCP stdio server returned empty response");
+    if signaled {
+        (true, "process_tree_kill_signaled")
+    } else {
+        (false, "process_tree_kill_failed")
     }
-    serde_json::from_str(&line).context("MCP stdio response is not valid JSON")
+}
+
+#[cfg(not(unix))]
+fn terminate_process_tree(child: &mut Child) -> (bool, &'static str) {
+    let killed = child.kill().is_ok();
+    let _ = child.wait();
+    if killed {
+        (true, "process_kill_signaled")
+    } else {
+        (false, "process_tree_timeout_unsupported")
+    }
+}
+
+fn validate_response_envelope(response: &Value, request_id: i64, context: &str) -> Result<()> {
+    let object = response
+        .as_object()
+        .with_context(|| format!("{context} response must be a JSON-RPC object"))?;
+    if object.get("jsonrpc").and_then(Value::as_str) != Some("2.0") {
+        bail!("{context} response has invalid jsonrpc version");
+    }
+    if object.get("id").and_then(Value::as_i64) != Some(request_id) {
+        bail!("{context} response id does not match request id");
+    }
+    let has_result = object.contains_key("result");
+    let has_error = object.contains_key("error");
+    match (has_result, has_error) {
+        (true, true) => bail!("{context} response cannot contain both result and error"),
+        (false, false) => bail!("{context} response missing result or error"),
+        _ => Ok(()),
+    }
 }
 
 fn validate_tool_name(name: &str) -> Result<()> {
@@ -251,6 +341,54 @@ fn bounded_schema_fingerprint(schema: &Value) -> Result<String> {
         bail!("MCP tool schema exceeds byte limit");
     }
     Ok(fingerprint_bytes(text.as_bytes()))
+}
+
+fn bounded_input_schema_summary(schema: &Value) -> Result<Vec<McpToolInputFieldSummary>> {
+    let object = schema
+        .as_object()
+        .context("MCP input schema must be an object")?;
+    let required = object
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(Value::as_str)
+                .map(ToString::to_string)
+                .collect::<std::collections::HashSet<_>>()
+        })
+        .unwrap_or_default();
+    let Some(properties) = object.get("properties").and_then(Value::as_object) else {
+        return Ok(Vec::new());
+    };
+    if properties.len() > MAX_MCP_SCHEMA_SUMMARY_FIELDS {
+        bail!("MCP input schema summary exceeds field limit");
+    }
+    let mut names = properties.keys().collect::<Vec<_>>();
+    names.sort();
+    let mut fields = Vec::with_capacity(names.len());
+    for name in names {
+        validate_tool_name(name)?;
+        let value_type = properties
+            .get(name)
+            .and_then(|property| property.get("type"))
+            .and_then(Value::as_str)
+            .filter(|value| {
+                !value.is_empty()
+                    && value.chars().count() <= MAX_MCP_SCHEMA_TYPE_CHARS
+                    && value
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+            })
+            .unwrap_or("unknown")
+            .to_string();
+        fields.push(McpToolInputFieldSummary {
+            name: name.clone(),
+            required: required.contains(name),
+            value_type,
+        });
+    }
+    Ok(fields)
 }
 
 fn fingerprint_json(value: &Value) -> String {
@@ -291,5 +429,6 @@ fn client_meta() -> Value {
             "name": "brownie-runtime",
             "version": env!("CARGO_PKG_VERSION"),
         },
+        "io.modelcontextprotocol/clientCapabilities": {},
     })
 }

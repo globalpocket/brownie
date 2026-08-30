@@ -37,13 +37,52 @@ pub(super) fn handle_tool_intent_parse(id: Value, params: Option<Value>) -> Json
         Ok(params) => params,
         Err(message) => return error_response(id, -32602, &message),
     };
-    let policy = match BuiltinModeRegistry::get(&params.mode_id) {
-        Some(policy) => policy,
-        None => return error_response(id, -32602, "invalid params: unknown mode_id"),
+    let store = match BrownieStore::from_env_or_cwd() {
+        Ok(store) => store,
+        Err(error) => return error_response(id, -32603, &format!("internal error: {error}")),
+    };
+    let (policy, dynamic_tools) = match params.task_id.as_deref() {
+        Some(task_id) => {
+            let record = match store.tasks().get_task(task_id) {
+                Ok(Some(record)) => record,
+                Ok(None) => return error_response(id, -32602, "invalid params: task not found"),
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            let policy = match resolve_policy_for_task_run(&record, &store) {
+                Ok(policy) => policy,
+                Err(message) => {
+                    return error_response(id, -32603, &format!("internal error: {message}"))
+                }
+            };
+            if policy.mode_id != params.mode_id {
+                return error_response(
+                    id,
+                    -32602,
+                    "invalid params: mode_id does not match task policy",
+                );
+            }
+            let dynamic_tools = match pinned_mcp_dynamic_tool_definitions(&store, &record) {
+                Ok(tools) => tools,
+                Err(error) => {
+                    return error_response(id, -32603, &format!("internal error: {error}"))
+                }
+            };
+            (policy, dynamic_tools)
+        }
+        None => {
+            let policy = match BuiltinModeRegistry::get(&params.mode_id) {
+                Some(policy) => policy,
+                None => return error_response(id, -32602, "invalid params: unknown mode_id"),
+            };
+            (policy, Vec::new())
+        }
     };
     let parsed = ToolIntentParser::parse_assistant_content(&params.assistant_content);
     let parser_summary = parsed.summary.clone();
-    let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
+    let evaluation =
+        ToolIntentEvaluator::evaluate_with_dynamic_tools(&policy, parsed, &dynamic_tools);
     result_response(
         id,
         json!(ToolIntentParseResult {
@@ -169,7 +208,7 @@ fn execute_mcp_tool(params: ToolExecuteParams) -> anyhow::Result<ToolExecuteResu
             output: json!({ "reason": decision.reason }),
         });
     }
-    let Some(config) = mcp_server_config_for_policy(&store, server_id)? else {
+    let Some(config) = mcp_server_config_for_policy(&store, &record, server_id)? else {
         return Ok(ToolExecuteResult {
             tool_id: params.tool_id,
             status: ToolExecuteStatus::Denied,
@@ -274,20 +313,101 @@ fn pinned_mcp_catalog_allows(
     }))
 }
 
+fn pinned_mcp_dynamic_tool_definitions(
+    store: &BrownieStore,
+    record: &TaskRecord,
+) -> anyhow::Result<Vec<ToolDefinition>> {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let Some(payload) = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+    else {
+        return Ok(Vec::new());
+    };
+    Ok(mcp_dynamic_tool_definitions_from_payload(payload))
+}
+
+fn mcp_dynamic_tool_definitions_from_payload(payload: &Value) -> Vec<ToolDefinition> {
+    payload
+        .get("mcp_tool_catalogs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|catalog| catalog.get("tools").and_then(Value::as_array))
+        .flatten()
+        .filter_map(|tool| {
+            let tool_id = tool.get("tool_id")?.as_str()?.to_string();
+            let server_id = tool.get("server_id")?.as_str()?.to_string();
+            let tool_name = tool.get("tool_name")?.as_str()?.to_string();
+            let description = tool
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("Task-pinned MCP tool from bounded runtime catalog.")
+                .to_string();
+            let fields = tool
+                .get("input_schema_summary")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(|field| {
+                    let name = field.get("name")?.as_str()?.to_string();
+                    let required = field
+                        .get("required")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false);
+                    let value_type = field
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown");
+                    Some(ToolInputField {
+                        name,
+                        required,
+                        description: format!("MCP input field type={value_type}."),
+                    })
+                })
+                .collect::<Vec<_>>();
+            Some(ToolDefinition {
+                tool_id,
+                display_name: format!("MCP {server_id}.{tool_name}"),
+                description,
+                required_action: RuntimeAction::UseMcpTool,
+                input_schema: ToolInputSchema { fields },
+            })
+        })
+        .collect()
+}
+
 fn mcp_server_config_for_policy(
     store: &BrownieStore,
+    record: &TaskRecord,
     server_id: &str,
 ) -> anyhow::Result<Option<brownie_modepack::ModePackMcpServerConfig>> {
-    let Some(snapshot) = brownie_modepack::load_workspace_modepack_with_options(
-        store.workspace_root(),
-        ModePackLoadOptions::trusted_local_developer(),
-    )?
-    else {
+    let events = store.tasks().read_ledger_events(&record.run_id)?;
+    let expected_activation_fingerprint = events
+        .iter()
+        .rev()
+        .find(|event| event.kind == LedgerEventKind::ModeResolved)
+        .and_then(|event| event.payload.as_ref())
+        .and_then(|payload| payload.get("external_modepack_task_provenance"))
+        .and_then(|provenance| provenance.get("activation_fingerprint"))
+        .and_then(Value::as_str);
+    let Some(expected_activation_fingerprint) = expected_activation_fingerprint else {
         return Ok(None);
     };
+    let Some(snapshot) = store.read_active_modepack_snapshot()? else {
+        return Ok(None);
+    };
+    if snapshot.summary.activation_fingerprint != expected_activation_fingerprint {
+        return Ok(None);
+    }
     Ok(snapshot
         .mcp_servers
         .into_iter()
+        .filter_map(|server| {
+            serde_json::from_value::<brownie_modepack::ModePackMcpServerConfig>(server).ok()
+        })
         .find(|server| server.server_id == server_id))
 }
 
@@ -762,7 +882,9 @@ pub(super) fn append_tool_intent_events(
             "parser": parsed.summary,
         })),
     )?;
-    let evaluation = ToolIntentEvaluator::evaluate(policy, parsed);
+    let dynamic_tools = pinned_mcp_dynamic_tool_definitions(store, record)?;
+    let evaluation =
+        ToolIntentEvaluator::evaluate_with_dynamic_tools(policy, parsed, &dynamic_tools);
     for rejected in evaluation.rejected {
         store.tasks().append_task_event_with_payload(
             record,
@@ -817,9 +939,11 @@ pub(super) fn handle_approved_workspace_intents(
     policy: &CompiledModePolicy,
     assistant_content: &str,
 ) -> anyhow::Result<()> {
-    let evaluation = ToolIntentEvaluator::evaluate(
+    let dynamic_tools = pinned_mcp_dynamic_tool_definitions(store, record)?;
+    let evaluation = ToolIntentEvaluator::evaluate_with_dynamic_tools(
         policy,
         ToolIntentParser::parse_assistant_content(assistant_content),
+        &dynamic_tools,
     );
     let is_verification_recovery_task = record.verification_recovery_provenance.is_some();
     let mut verification_recovery_proposal_seen =

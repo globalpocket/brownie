@@ -678,6 +678,8 @@ pub struct ToolPlanDecisionSummary {
 pub struct ToolIntentParseParams {
     pub assistant_content: String,
     pub mode_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
