@@ -467,13 +467,41 @@ fn format_mcp_tool_catalog(catalog: &serde_json::Value) -> Option<String> {
 
 fn format_mcp_tool_catalog_entry(tool: &serde_json::Value) -> Option<String> {
     let tool_id = tool.get("tool_id")?.as_str()?;
+    let description = tool
+        .get("description")
+        .and_then(|value| value.as_str())
+        .unwrap_or("<none>");
     let input_schema_fingerprint = tool.get("input_schema_fingerprint")?.as_str()?;
     let output_schema_fingerprint = tool
         .get("output_schema_fingerprint")
         .and_then(|value| value.as_str())
         .unwrap_or("<none>");
+    let input_schema_summary = tool
+        .get("input_schema_summary")
+        .and_then(|value| value.as_array())
+        .map(|fields| {
+            fields
+                .iter()
+                .filter_map(format_mcp_input_schema_field)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|fields| !fields.is_empty())
+        .unwrap_or_else(|| "    - <none>".to_string());
     Some(format!(
-        "  - tool_id: {tool_id}\n    input_schema_fingerprint: {input_schema_fingerprint}\n    output_schema_fingerprint: {output_schema_fingerprint}"
+        "  - tool_id: {tool_id}\n    description: {description}\n    input_schema_fingerprint: {input_schema_fingerprint}\n    output_schema_fingerprint: {output_schema_fingerprint}\n    input_schema_summary:\n{input_schema_summary}"
+    ))
+}
+
+fn format_mcp_input_schema_field(field: &serde_json::Value) -> Option<String> {
+    let name = field.get("name")?.as_str()?;
+    let value_type = field.get("type")?.as_str()?;
+    let required = field
+        .get("required")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    Some(format!(
+        "    - name: {name}\n      type: {value_type}\n      required: {required}"
     ))
 }
 
@@ -1767,13 +1795,30 @@ mod tests {
                         "service_control": false,
                         "destructive": false,
                         "can_spawn_subtasks": true,
-                        "codebase_index": true
+                        "codebase_index": true,
+                        "mcp_tool_access": true
                     },
                     "workspace_write_scopes": [{
                         "file_regex": "\\.md$",
                         "description": "Markdown documentation only"
                     }],
-                    "allowed_handoff_targets": ["reviewer-lite"]
+                    "allowed_handoff_targets": ["reviewer-lite"],
+                    "mcp_tool_catalogs": [{
+                        "server_id": "github",
+                        "protocol_version": "2026-07-28",
+                        "server_config_identity_fingerprint": "sha256:config",
+                        "catalog_fingerprint": "sha256:catalog",
+                        "tools": [{
+                            "tool_id": "mcp.github.search_code",
+                            "description": "Search code through a bounded MCP catalog.",
+                            "input_schema_fingerprint": "sha256:input",
+                            "input_schema_summary": [{
+                                "name": "query",
+                                "type": "string",
+                                "required": true
+                            }]
+                        }]
+                    }]
                 })),
             }],
             child_completion_summaries: vec![],
@@ -1793,6 +1838,12 @@ mod tests {
         assert!(summary.contains("allowed_handoff_targets:"));
         assert!(summary.contains("- reviewer-lite"));
         assert!(summary.contains("codebase_index: true"));
+        assert!(summary.contains("mcp.github.search_code"));
+        assert!(summary.contains("description: Search code through a bounded MCP catalog."));
+        assert!(summary.contains("name: query"));
+        assert!(summary.contains("type: string"));
+        assert!(summary.contains("required: true"));
+        assert!(!summary.contains("inputSchema"));
     }
 
     #[test]

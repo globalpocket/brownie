@@ -402,6 +402,7 @@ impl BrownieStore {
                     event_id: event.event_id,
                     previous_snapshot: ActiveModePackSnapshot {
                         summary: previous,
+                        mcp_servers: Vec::new(),
                         global_policy_artifacts: Vec::new(),
                         policies: Vec::new(),
                     },
@@ -454,6 +455,7 @@ impl BrownieStore {
                     event_id: event.event_id,
                     current_snapshot: ActiveModePackSnapshot {
                         summary: current,
+                        mcp_servers: Vec::new(),
                         global_policy_artifacts: Vec::new(),
                         policies: Vec::new(),
                     },
@@ -2029,6 +2031,8 @@ pub struct ActiveModePackPolicySnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ActiveModePackSnapshot {
     pub summary: ModePackActiveSnapshotSummary,
+    #[serde(default)]
+    pub mcp_servers: Vec<serde_json::Value>,
     #[serde(default)]
     pub global_policy_artifacts: Vec<serde_json::Value>,
     pub policies: Vec<ActiveModePackPolicySnapshot>,

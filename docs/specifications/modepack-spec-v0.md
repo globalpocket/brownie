@@ -29,6 +29,7 @@ The active snapshot should record:
 - branch or tag
 - commit id
 - schema version
+- structured MCP server configuration when present
 - compilation time
 
 ## Running task rule
@@ -76,10 +77,11 @@ M2 does not fetch remote Mode Packs. M9.2 permits Mode Packs to opt into metadat
 MP-1 allows external Mode Packs to declare trusted `workspace_write` and
 `process_exec` capability bits for editor, tester, and integrator-style modes.
 `read_only` is summary metadata and must not be combined with side-effect
-capabilities. Network access, service control, and destructive operations remain
-declared capability bits only; they cannot authorize a side effect unless source
-trust and the runtime capability ceiling preserve them. The runtime compiles
-declared capability bits into effective policy data and continues to require
+capabilities. Network access, service control, and destructive operations are
+reserved v0 protocol fields: external Mode Packs may contain those fields for
+schema compatibility, but effective runtime policy must narrow them to `false`
+even for trusted local or trusted signed sources. The runtime compiles declared
+grantable capability bits into effective policy data and continues to require
 every side effect to pass `RuntimePermissionGate`; prompt text, role
 definitions, and completion rules cannot grant capability authority.
 MP-1 does not add Mode Pack entrypoint selection, AgentModes compiler expansion,
@@ -306,7 +308,9 @@ Mode Pack MCP server command configuration is structured runtime policy. It is
 not prompt authority, and raw command configuration, credentials, environment
 values, or secret headers must not be copied into prompt, ledger, or RPC
 evidence. Task admission stores bounded catalog provenance instead; see
-`mcp-client-spec-v0.md`.
+`mcp-client-spec-v0.md`. Running task execution resolves MCP configuration from
+the runtime-owned active snapshot identity selected at task start, not by
+re-reading the live workspace Mode Pack file.
 
 ## Non-goals for v0
 

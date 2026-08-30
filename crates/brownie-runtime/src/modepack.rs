@@ -4838,6 +4838,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
         &mode_ids,
         snapshot.entrypoints.default_mode_id(),
     );
+    let mcp_servers = modepack_mcp_servers_payload(&snapshot);
     let summary = ModePackActiveSnapshotSummary {
         activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
         activation_fingerprint,
@@ -4855,6 +4856,7 @@ pub(super) fn build_active_modepack_snapshot_from_approved_candidate(
     Ok((
         ActiveModePackSnapshot {
             summary,
+            mcp_servers,
             global_policy_artifacts,
             policies,
         },
@@ -4936,6 +4938,7 @@ pub(super) fn build_active_modepack_snapshot(
         &mode_ids,
         snapshot.entrypoints.default_mode_id(),
     );
+    let mcp_servers = modepack_mcp_servers_payload(&snapshot);
     let summary = ModePackActiveSnapshotSummary {
         activation_id: format!("modepack_activation_{}", &activation_fingerprint[7..23]),
         activation_fingerprint,
@@ -4952,6 +4955,7 @@ pub(super) fn build_active_modepack_snapshot(
     };
     Ok(ActiveModePackSnapshot {
         summary,
+        mcp_servers,
         global_policy_artifacts,
         policies: policy_snapshots,
     })

@@ -299,14 +299,15 @@ use brownie_store::{
     VerificationRecoveryTaskStartParams,
 };
 use brownie_tools::{
-    BuiltinToolRegistry, RejectedToolIntent, ToolExecutionRequest, ToolExecutionStatus,
-    ToolExecutor, ToolIntentDecision, ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision,
-    ToolPlanEvaluator, ToolPlanner, ToolPlanningInput, WorkspacePatchOperation,
-    WorkspaceReadExecutor, CODEBASE_INDEX_SELECTION_READ_TOOL_ID,
-    DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS, DEFAULT_PROPOSAL_PREVIEW_CHARS,
-    MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS, MAX_WORKSPACE_READ_BYTES,
-    SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID, VERIFICATION_CARGO_FMT_CHECK_TOOL_ID,
-    VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID, WORKSPACE_WRITE_TOOL_ID,
+    BuiltinToolRegistry, RejectedToolIntent, ToolDefinition, ToolExecutionRequest,
+    ToolExecutionStatus, ToolExecutor, ToolInputField, ToolInputSchema, ToolIntentDecision,
+    ToolIntentEvaluator, ToolIntentParser, ToolPlanDecision, ToolPlanEvaluator, ToolPlanner,
+    ToolPlanningInput, WorkspacePatchOperation, WorkspaceReadExecutor,
+    CODEBASE_INDEX_SELECTION_READ_TOOL_ID, DEFAULT_MAX_WORKSPACE_WRITE_CONTENT_CHARS,
+    DEFAULT_PROPOSAL_PREVIEW_CHARS, MAX_BOUNDED_CARGO_DIAGNOSTICS, MAX_SUBTASK_SPAWN_GOAL_CHARS,
+    MAX_WORKSPACE_READ_BYTES, SUBTASK_SPAWN_TOOL_ID, VERIFICATION_CARGO_CHECK_TOOL_ID,
+    VERIFICATION_CARGO_FMT_CHECK_TOOL_ID, VERIFICATION_CARGO_TEST_TOOL_ID, WORKSPACE_READ_TOOL_ID,
+    WORKSPACE_WRITE_TOOL_ID,
 };
 use codebase_index::*;
 use controlled_tool_execution::*;
@@ -12585,17 +12586,10 @@ fn mcp_tool_catalogs_payload(
     store: &BrownieStore,
     policy: &CompiledModePolicy,
 ) -> anyhow::Result<Value> {
-    let Some(snapshot) = brownie_modepack::load_workspace_modepack_with_options(
-        store.workspace_root(),
-        ModePackLoadOptions::trusted_local_developer(),
-    )?
-    else {
-        anyhow::bail!("MCP policy requires structured Mode Pack server configuration");
-    };
+    let configs = active_modepack_mcp_server_configs(store)?;
     let mut catalogs = Vec::new();
     for access in &policy.mcp_access {
-        let Some(config) = snapshot
-            .mcp_servers
+        let Some(config) = configs
             .iter()
             .find(|server| server.server_id == access.server_id)
         else {
@@ -12624,6 +12618,31 @@ fn mcp_tool_catalogs_payload(
         }));
     }
     Ok(Value::Array(catalogs))
+}
+
+fn active_modepack_mcp_server_configs(
+    store: &BrownieStore,
+) -> anyhow::Result<Vec<brownie_modepack::ModePackMcpServerConfig>> {
+    let Some(snapshot) = store.read_active_modepack_snapshot()? else {
+        anyhow::bail!("MCP policy requires active structured Mode Pack server configuration");
+    };
+    snapshot
+        .mcp_servers
+        .into_iter()
+        .map(|server| {
+            serde_json::from_value(server).map_err(|error| {
+                anyhow::anyhow!("active Mode Pack MCP server configuration is invalid: {error}")
+            })
+        })
+        .collect()
+}
+
+fn modepack_mcp_servers_payload(snapshot: &brownie_modepack::ModePackSnapshot) -> Vec<Value> {
+    snapshot
+        .mcp_servers
+        .iter()
+        .filter_map(|server| serde_json::to_value(server).ok())
+        .collect()
 }
 
 fn resolve_policy_for_task_run(
@@ -16332,6 +16351,7 @@ mod tests {
                     activated_at,
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts,
                 policies: policy_snapshots,
             })
@@ -24447,6 +24467,7 @@ mod tests {
                     activated_at,
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
                 policies: policy_snapshots,
             })
@@ -26806,6 +26827,7 @@ mod tests {
                     activated_at: "2026-08-18T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
@@ -53636,6 +53658,7 @@ mod tests {
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
@@ -53782,6 +53805,7 @@ mod tests {
                     activated_at: "2026-08-12T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
@@ -54088,6 +54112,7 @@ mod tests {
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
                 policies: Vec::new(),
             })
@@ -55173,6 +55198,7 @@ mod tests {
                     activated_at: "2026-08-13T00:00:00Z".to_string(),
                     activation_event_id: String::new(),
                 },
+                mcp_servers: Vec::new(),
                 global_policy_artifacts: Vec::new(),
 
                 policies: Vec::new(),
@@ -60469,6 +60495,94 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_stdio_requests_include_2026_07_28_required_client_metadata() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "strict_meta");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use conformant MCP metadata","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute");
+
+        assert_eq!(response["status"], json!("Completed"));
+    }
+
+    #[test]
+    fn tool_intent_parse_uses_task_pinned_mcp_dynamic_catalog() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "ok");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP through tool intent","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id");
+        let allowed = handle_tool_intent_parse(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "assistant_content": "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"mcp.github.search_code\",\"reason\":\"Use task-pinned MCP catalog.\",\"input\":{\"query\":\"bounded\"}}]}\n```"
+            })),
+        )
+        .result
+        .expect("allowed mcp intent");
+
+        assert_eq!(
+            allowed["items"][0]["tool_id"],
+            json!("mcp.github.search_code")
+        );
+        assert_eq!(allowed["items"][0]["required_action"], json!("UseMcpTool"));
+        assert_eq!(allowed["items"][0]["allowed"], json!(true));
+        assert!(allowed["items"][0].get("input").is_none());
+
+        let rejected = handle_tool_intent_parse(
+            json!(3),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "assistant_content": "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"mcp.github.get_file\",\"reason\":\"Outside allow list.\",\"input\":{}}]}\n```"
+            })),
+        )
+        .result
+        .expect("rejected mcp intent");
+
+        assert!(rejected["items"].as_array().expect("items").is_empty());
+        assert_eq!(rejected["rejected"][0]["code"], json!("unknown_tool"));
+    }
+
+    #[test]
     fn mcp_tool_rejects_unknown_server_tool_and_mode_without_capability() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -60553,6 +60667,9 @@ content-length: {}
             "malformed_schema",
             "oversized_schema",
             "protocol_error",
+            "invalid_jsonrpc",
+            "mismatched_id",
+            "result_and_error",
             "timeout",
             "exit",
         ] {
@@ -60570,6 +60687,37 @@ content-length: {}
                 r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
             );
             assert!(start_response.error.is_some(), "{scenario}");
+        }
+    }
+
+    #[test]
+    fn mcp_stdio_timeout_cleans_up_process_without_accumulating_children() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        for attempt in 0..2 {
+            let temp = tempfile::tempdir().expect("temp dir");
+            let fake_server = write_fake_mcp_server(temp.path(), "timeout_pid");
+            write_mcp_modepack(
+                temp.path(),
+                fake_server.to_str().unwrap(),
+                "search_code",
+                true,
+            );
+            commit_trusted_mcp_active_snapshot(temp.path());
+            let _cwd = super::tests::CwdGuard::enter(temp.path());
+            let start_response = parse_line(
+                r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+            );
+            assert!(start_response.error.is_some(), "attempt {attempt}");
+            let pid_file = temp.path().join("mcp-timeout.pid");
+            let pid = std::fs::read_to_string(&pid_file)
+                .expect("pid file")
+                .trim()
+                .parse::<u32>()
+                .expect("pid");
+            assert!(
+                !process_exists(pid),
+                "MCP timeout left process {pid} alive on attempt {attempt}"
+            );
         }
     }
 
@@ -60665,6 +60813,52 @@ content-length: {}
     }
 
     #[test]
+    fn mcp_execution_uses_active_snapshot_config_not_live_workspace_modepack() {
+        let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("temp dir");
+        let fake_server = write_fake_mcp_server(temp.path(), "ok");
+        write_mcp_modepack(
+            temp.path(),
+            fake_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        commit_trusted_mcp_active_snapshot(temp.path());
+        let _cwd = super::tests::CwdGuard::enter(temp.path());
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Use MCP safely","mode_id":"reviewer"}}"#,
+        )
+        .result
+        .expect("task start");
+        let task_id = start["task_id"].as_str().expect("task id").to_string();
+
+        let failing_server = write_fake_mcp_server(temp.path(), "exit");
+        write_mcp_modepack(
+            temp.path(),
+            failing_server.to_str().unwrap(),
+            "search_code",
+            true,
+        );
+        let response = handle_tool_execute(
+            json!(2),
+            Some(json!({
+                "task_id": task_id,
+                "mode_id": "reviewer",
+                "tool_id": "mcp.github.search_code",
+                "input": {"query": "bounded"}
+            })),
+        )
+        .result
+        .expect("mcp execute from active snapshot");
+
+        assert_eq!(response["status"], json!("Completed"));
+        assert_eq!(
+            response["output"]["catalog_provenance"]["server_id"],
+            json!("github")
+        );
+    }
+
+    #[test]
     fn mcp_mode_resolved_pins_bounded_catalog_without_raw_config_or_schema() {
         let _lock = super::tests::ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("temp dir");
@@ -60696,6 +60890,9 @@ content-length: {}
 
         assert!(serialized.contains("mcp.github.search_code"));
         assert!(serialized.contains("input_schema_fingerprint"));
+        assert!(serialized.contains("input_schema_summary"));
+        assert!(serialized.contains(r#""name":"query""#));
+        assert!(serialized.contains(r#""type":"string""#));
         assert!(!serialized.contains(fake_server.to_str().unwrap()));
         assert!(!serialized.contains(r#""inputSchema""#));
     }
@@ -60779,15 +60976,59 @@ read request
 printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"boom"}}'
 "#
             }
+            "invalid_jsonrpc" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"1.0","id":1,"result":{"tools":[]}}'
+"#
+            }
+            "mismatched_id" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"tools":[]}}'
+"#
+            }
+            "result_and_error" => {
+                r#"#!/bin/sh
+read request
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[]},"error":{"code":-32603,"message":"boom"}}'
+"#
+            }
             "timeout" => {
                 r#"#!/bin/sh
 read request
 sleep 5
 "#
             }
+            "timeout_pid" => {
+                r#"#!/bin/sh
+printf '%s\n' "$$" > "$(dirname "$0")/mcp-timeout.pid"
+read request
+sleep 30
+"#
+            }
             "exit" => {
                 r#"#!/bin/sh
 exit 7
+"#
+            }
+            "strict_meta" => {
+                r#"#!/bin/sh
+read request
+case "$request" in *io.modelcontextprotocol/protocolVersion*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing protocolVersion"}}'; exit 0 ;; esac
+case "$request" in *io.modelcontextprotocol/clientInfo*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientInfo"}}'; exit 0 ;; esac
+case "$request" in *io.modelcontextprotocol/clientCapabilities*) ;; *) printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing clientCapabilities"}}'; exit 0 ;; esac
+case "$request" in
+  *tools/list*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"tools":[{"name":"search_code","description":"catalog text is not authority","inputSchema":{"type":"object","properties":{"query":{"type":"string"}}},"outputSchema":{"type":"object"}}]}}'
+    ;;
+  *tools/call*)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"ok"}],"isError":false}}'
+    ;;
+  *)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"missing required MCP 2026-07-28 client metadata"}}'
+    ;;
+esac
 "#
             }
             _ => {
@@ -60816,6 +61057,19 @@ esac
             std::fs::set_permissions(&path, permissions).expect("permissions");
         }
         path
+    }
+
+    #[cfg(unix)]
+    fn process_exists(pid: u32) -> bool {
+        unsafe extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        unsafe { kill(pid as i32, 0) == 0 }
+    }
+
+    #[cfg(not(unix))]
+    fn process_exists(_pid: u32) -> bool {
+        false
     }
 
     fn write_changed_schema_mcp_server(path: &std::path::Path) {
@@ -60891,6 +61145,7 @@ esac
             &mode_ids,
             snapshot.entrypoints.default_mode_id(),
         );
+        let mcp_servers = modepack_mcp_servers_payload(&snapshot);
         store
             .commit_active_modepack_snapshot(&ActiveModePackSnapshot {
                 summary: brownie_protocol::ModePackActiveSnapshotSummary {
@@ -60910,6 +61165,7 @@ esac
                     activated_at,
                     activation_event_id: String::new(),
                 },
+                mcp_servers,
                 global_policy_artifacts,
                 policies: policy_snapshots,
             })
