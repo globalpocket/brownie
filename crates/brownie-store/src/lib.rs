@@ -32,6 +32,7 @@ pub const WORKSPACE_STATE_DIR: &str = ".brownie";
 pub const RUNS_DIR: &str = "runs";
 pub const CODEBASE_INDEX_DIR: &str = "codebase-index";
 const HEADLESS_CONTINUATIONS_DIR: &str = "headless-continuations";
+const HEADLESS_OBJECTIVE_ADMISSIONS_DIR: &str = "headless-objective-admissions";
 const HEADLESS_JOURNEY_EXECUTIONS_DIR: &str = "headless-journey-executions";
 const HEADLESS_JOURNEYS_DIR: &str = "headless-journeys";
 const HEADLESS_RUN_SESSIONS_DIR: &str = "headless-run-sessions";
@@ -2524,6 +2525,18 @@ pub struct HeadlessJourneyStartCheckpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct HeadlessObjectiveAdmissionCheckpoint {
+    pub admission_id: String,
+    pub material_fingerprint: String,
+    pub journey_id: String,
+    pub session_id: String,
+    pub drive_id: String,
+    pub task_id: String,
+    pub run_id: String,
+    pub journey_fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct HeadlessJourneyExecutionCheckpoint {
     pub journey_id: String,
     pub session_id: String,
@@ -4397,6 +4410,60 @@ impl TaskStore {
         Ok(())
     }
 
+    pub fn read_headless_objective_admission_checkpoint(
+        &self,
+        admission_id: &str,
+    ) -> Result<Option<HeadlessObjectiveAdmissionCheckpoint>> {
+        let path = self.headless_objective_admission_path(admission_id);
+        match fs::read_to_string(&path) {
+            Ok(body) => serde_json::from_str(&body)
+                .with_context(|| format!("failed to parse {}", path.display()))
+                .map(Some),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error).with_context(|| format!("failed to read {}", path.display())),
+        }
+    }
+
+    pub fn write_headless_objective_admission_checkpoint(
+        &self,
+        checkpoint: &HeadlessObjectiveAdmissionCheckpoint,
+    ) -> Result<()> {
+        let path = self.headless_objective_admission_path(&checkpoint.admission_id);
+        if let Some(existing) =
+            self.read_headless_objective_admission_checkpoint(&checkpoint.admission_id)?
+        {
+            if existing == *checkpoint {
+                return Ok(());
+            }
+            bail!(
+                "conflicting headless objective admission checkpoint for {}",
+                checkpoint.admission_id
+            );
+        }
+        let body = serde_json::to_string_pretty(checkpoint)
+            .context("failed to serialize headless objective admission checkpoint")?;
+        write_file_atomically(&path, body.as_bytes())
+    }
+
+    pub fn remove_headless_objective_admission_checkpoint(
+        &self,
+        checkpoint: &HeadlessObjectiveAdmissionCheckpoint,
+    ) -> Result<()> {
+        let path = self.headless_objective_admission_path(&checkpoint.admission_id);
+        match self.read_headless_objective_admission_checkpoint(&checkpoint.admission_id)? {
+            Some(existing) if existing == *checkpoint => {
+                fs::remove_file(&path)
+                    .with_context(|| format!("failed to remove {}", path.display()))?;
+            }
+            Some(_) => bail!(
+                "refusing to remove conflicting headless objective admission checkpoint for {}",
+                checkpoint.admission_id
+            ),
+            None => {}
+        }
+        Ok(())
+    }
+
     pub fn remove_task_run(&self, task_id: &str, run_id: &str) -> Result<()> {
         let Some(record) = self.get_task(task_id)? else {
             return Ok(());
@@ -4605,6 +4672,13 @@ impl TaskStore {
             .join(WORKSPACE_STATE_DIR)
             .join(HEADLESS_CONTINUATIONS_DIR)
             .join(format!("{continuation_id}.json"))
+    }
+
+    fn headless_objective_admission_path(&self, admission_id: &str) -> PathBuf {
+        self.workspace_root
+            .join(WORKSPACE_STATE_DIR)
+            .join(HEADLESS_OBJECTIVE_ADMISSIONS_DIR)
+            .join(format!("{admission_id}.json"))
     }
 
     fn headless_run_session_current_path(&self, session_id: &str) -> PathBuf {

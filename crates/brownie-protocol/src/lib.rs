@@ -1506,6 +1506,8 @@ pub struct HeadlessRunJourneyAdmission {
     pub journey_id: String,
     pub authorize_journey_start: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admission_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_start: Option<HeadlessRunJourneyTaskStartEnvelope>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub objective_context: Option<HeadlessRunJourneyObjectiveContext>,
