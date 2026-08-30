@@ -12949,6 +12949,7 @@ struct SelectedCandidateProvenanceMaterial {
 fn append_workspace_patch_proposal(
     store: &BrownieStore,
     record: &brownie_protocol::TaskRecord,
+    policy: &CompiledModePolicy,
     decision: &ToolIntentDecision,
 ) -> anyhow::Result<()> {
     let path = decision
@@ -12966,6 +12967,31 @@ fn append_workspace_patch_proposal(
         .get("operation")
         .and_then(Value::as_str)
         .unwrap_or(WorkspacePatchOperation::ReplaceFile.as_str());
+    let scope_decision = RuntimePermissionGate::check_workspace_write_path(policy, path);
+    let permission_payload = json!({
+        "scope": "workspace.write",
+        "tool_id": WORKSPACE_WRITE_TOOL_ID,
+        "path": path,
+        "operation": operation,
+        "mode_id": policy.mode_id,
+        "required_action": "WriteWorkspace",
+        "workspace_write_scope_count": policy.workspace_write_scopes.len(),
+        "allowed": scope_decision.allowed,
+        "reason": scope_decision.reason,
+    });
+    store.tasks().append_task_event_with_payload(
+        record,
+        LedgerEventKind::PermissionChecked,
+        Some(permission_payload.clone()),
+    )?;
+    if !scope_decision.allowed {
+        store.tasks().append_task_event_with_payload(
+            record,
+            LedgerEventKind::PermissionDenied,
+            Some(permission_payload),
+        )?;
+        return Ok(());
+    }
     let proposal =
         build_workspace_patch_proposal_from_input(store, path, operation, content, &decision.input);
     let proposal_id = format!("proposal_{}", uuid::Uuid::new_v4().simple());
@@ -33603,6 +33629,72 @@ mod tests {
     }
 
     #[test]
+    fn scoped_workspace_write_intents_are_checked_at_proposal_creation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("docs")).expect("docs dir");
+        std::fs::write(temp.path().join("docs/guide.md"), "old docs").expect("docs file");
+        std::fs::write(temp.path().join("README.md"), "old readme").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::new(temp.path());
+        commit_trusted_workspace_modepack_snapshot(&store);
+        let task = store
+            .tasks()
+            .start_task(brownie_protocol::TaskStartParams {
+                goal: "Update scoped docs".into(),
+                mode_id: Some("external-integrator".into()),
+                verification_recovery_source: None,
+                patch_apply_recovery_source: None,
+                verification_recovery_retry_source: None,
+                llm_provider_failure_retry_source: None,
+                product_continuation_source: None,
+            })
+            .expect("start task");
+        let policy = resolve_workspace_mode_policy(&store, "external-integrator")
+            .expect("resolve policy")
+            .expect("policy");
+        let assistant_content = "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Update docs.\",\"input\":{\"path\":\"docs/guide.md\",\"operation\":\"replace_file\",\"content\":\"new docs\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Update root readme.\",\"input\":{\"path\":\"README.md\",\"operation\":\"replace_file\",\"content\":\"new readme\"}}]}\n```";
+
+        append_tool_intent_events(&store, &task, &policy, assistant_content)
+            .expect("append intents");
+        handle_approved_workspace_intents(&store, &task, &policy, assistant_content)
+            .expect("handle workspace intents");
+
+        let events = store
+            .tasks()
+            .read_ledger_events(&task.run_id)
+            .expect("events");
+        let proposals: Vec<_> = events
+            .iter()
+            .filter(|event| event.kind == LedgerEventKind::WorkspacePatchProposed)
+            .collect();
+        assert_eq!(proposals.len(), 1);
+        let proposal_payload = proposals[0].payload.as_ref().expect("proposal payload");
+        assert_eq!(proposal_payload["path"], "docs/guide.md");
+        assert!(events.iter().any(|event| {
+            event.kind == LedgerEventKind::PermissionDenied
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("scope"))
+                    .and_then(Value::as_str)
+                    == Some("workspace.write")
+                && event
+                    .payload
+                    .as_ref()
+                    .and_then(|payload| payload.get("path"))
+                    .and_then(Value::as_str)
+                    == Some("README.md")
+        }));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "old readme"
+        );
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+    }
+
+    #[test]
     fn external_mode_handoff_selector_allows_valid_member_and_denies_self() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -42883,6 +42975,102 @@ mod tests {
     }
 
     #[test]
+    fn proposal_apply_denies_out_of_scope_write_before_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::write(temp.path().join("README.md"), "original README").expect("write readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        commit_trusted_workspace_modepack_snapshot(&store);
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Update README","mode_id":"external-integrator"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_out_of_scope_apply",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated README",
+        );
+        let approve = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"proposal_out_of_scope_apply","reason":"approval does not bypass scoped write policy"}}}}"#
+        ));
+        assert!(approve.error.is_none());
+        let preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_out_of_scope_apply"}}}}"#
+        ));
+        let expected_hash = preflight.result.expect("preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_out_of_scope_apply","expected_target_sha256":"{expected_hash}","replacement_content":"updated README","authorize":true}}}}"#
+        ));
+        let apply_result = apply.result.expect("apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["applied"], false);
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert!(apply_result["apply_result"]["failed_checks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|check| check == "apply_time_write_workspace_permission"));
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original README"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(events.iter().any(|event| {
+            event["kind"] == "PermissionDenied"
+                && event["payload"]["scope"] == "proposal.apply"
+                && event["payload"]["path"] == "README.md"
+                && event["payload"]["allowed"] == false
+        }));
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original README",
+            "updated README",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
     fn proposal_apply_replace_file_transaction_updates_two_files_with_bounded_result() {
         let _guard = ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
@@ -43010,6 +43198,123 @@ mod tests {
             .unwrap()
             .iter()
             .any(|check| check == "transaction_approvals_unconsumed"));
+
+        std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
+        clear_llm_env_for_test();
+    }
+
+    #[test]
+    fn proposal_apply_transaction_denies_out_of_scope_item_before_mutation() {
+        let _guard = ENV_LOCK.lock().expect("env lock");
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir(temp.path().join("docs")).expect("docs dir");
+        std::fs::write(temp.path().join("docs/guide.md"), "original docs").expect("docs");
+        std::fs::write(temp.path().join("README.md"), "original readme").expect("readme");
+        std::env::set_var("BROWNIE_WORKSPACE_ROOT", temp.path());
+        clear_llm_env_for_test();
+        write_capability_test_modepack(temp.path());
+        let store = BrownieStore::from_env_or_cwd().expect("store");
+        commit_trusted_workspace_modepack_snapshot(&store);
+
+        let start = parse_line(
+            r#"{"jsonrpc":"2.0","id":1,"method":"task.start","params":{"goal":"Update docs and readme","mode_id":"external-integrator"}}"#,
+        );
+        let run_id = start.result.expect("start result")["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let task = store
+            .tasks()
+            .get_task_by_run_id(&run_id)
+            .expect("task lookup")
+            .expect("task");
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_docs_scope",
+            "docs/guide.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated docs",
+        );
+        append_generated_patch_proposal(
+            &store,
+            &task,
+            "proposal_tx_readme_scope",
+            "README.md",
+            WorkspacePatchOperation::ReplaceFile.as_str(),
+            "updated readme",
+        );
+        for proposal_id in ["proposal_tx_docs_scope", "proposal_tx_readme_scope"] {
+            let approve = parse_line(&format!(
+                r#"{{"jsonrpc":"2.0","id":2,"method":"proposal.approve","params":{{"run_id":"{run_id}","proposal_id":"{proposal_id}","reason":"approved"}}}}"#
+            ));
+            assert!(approve.error.is_none());
+        }
+        let docs_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":3,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_docs_scope"}}}}"#
+        ));
+        let docs_hash = docs_preflight.result.expect("docs preflight")["snapshot"]["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let readme_preflight = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":4,"method":"proposal.preflight","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_readme_scope"}}}}"#
+        ));
+        let readme_hash = readme_preflight.result.expect("readme preflight")["snapshot"]
+            ["file_sha256"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let apply = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":5,"method":"proposal.apply","params":{{"run_id":"{run_id}","proposal_id":"proposal_tx_docs_scope","authorize":true,"transaction_items":[{{"proposal_id":"proposal_tx_docs_scope","expected_target_sha256":"{docs_hash}","replacement_content":"updated docs"}},{{"proposal_id":"proposal_tx_readme_scope","expected_target_sha256":"{readme_hash}","replacement_content":"updated readme"}}]}}}}"#
+        ));
+        let apply_result = apply.result.expect("transaction apply result");
+        assert_eq!(apply_result["apply_result"]["apply_status"], "Denied");
+        assert_eq!(apply_result["apply_result"]["transaction_status"], "Denied");
+        assert_eq!(
+            apply_result["apply_result"]["authorization_consumed"],
+            false
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("docs/guide.md")).unwrap(),
+            "original docs"
+        );
+        assert_eq!(
+            std::fs::read_to_string(temp.path().join("README.md")).unwrap(),
+            "original readme"
+        );
+
+        let events = parse_line(&format!(
+            r#"{{"jsonrpc":"2.0","id":6,"method":"run.events","params":{{"run_id":"{run_id}"}}}}"#
+        ));
+        let events = events.result.expect("events result")["events"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert!(events.iter().any(|event| {
+            event["kind"] == "PermissionDenied"
+                && event["payload"]["scope"] == "proposal.apply"
+                && event["payload"]["path"] == "README.md"
+                && event["payload"]["allowed"] == false
+        }));
+        let serialized_events = serde_json::to_string(&events).unwrap();
+        for forbidden in [
+            "raw_content",
+            "full_content",
+            "patch",
+            "diff",
+            "raw_input",
+            "canonical_path",
+            "absolute_path",
+            "file_content",
+            "original docs",
+            "updated docs",
+            "original readme",
+            "updated readme",
+        ] {
+            assert!(!serialized_events.contains(&format!(r#"\"{forbidden}\""#)));
+        }
 
         std::env::remove_var("BROWNIE_WORKSPACE_ROOT");
         clear_llm_env_for_test();
