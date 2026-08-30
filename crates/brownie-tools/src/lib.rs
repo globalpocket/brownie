@@ -2237,7 +2237,18 @@ impl ToolIntentEvaluator {
                 });
                 continue;
             };
-            let decision = RuntimePermissionGate::check(policy, definition.required_action.clone());
+            let decision = if definition.tool_id == WORKSPACE_WRITE_TOOL_ID {
+                request
+                    .input
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .map(|path| RuntimePermissionGate::check_workspace_write_path(policy, path))
+                    .unwrap_or_else(|| {
+                        RuntimePermissionGate::check(policy, definition.required_action.clone())
+                    })
+            } else {
+                RuntimePermissionGate::check(policy, definition.required_action.clone())
+            };
             items.push(ToolIntentDecision {
                 tool_id: definition.tool_id,
                 required_action: definition.required_action,
@@ -2695,6 +2706,36 @@ mod tests {
             .find(|item| item.tool_id == "workspace.read")
             .expect("read decision");
         assert_eq!(read.input["path"], "README.md");
+    }
+
+    #[test]
+    fn intent_evaluator_checks_workspace_write_scopes_by_path() {
+        let mut policy = BuiltinModeRegistry::get("implementer").expect("policy");
+        policy.workspace_write_scopes = vec![brownie_agentmodes::WorkspaceWriteScope {
+            file_regex: Some("^docs/.*\\.md$".to_string()),
+            description: Some("Documentation files only.".to_string()),
+        }];
+        let parsed = ToolIntentParser::parse_assistant_content(
+            "```brownie-tool-intent\n{\"tool_requests\":[{\"tool_id\":\"workspace.write\",\"reason\":\"Update docs.\",\"input\":{\"path\":\"docs/guide.md\",\"operation\":\"replace_file\",\"content\":\"new docs\"}},{\"tool_id\":\"workspace.write\",\"reason\":\"Update code.\",\"input\":{\"path\":\"src/lib.rs\",\"operation\":\"replace_file\",\"content\":\"pub fn new() {}\"}}]}\n```",
+        );
+
+        let evaluation = ToolIntentEvaluator::evaluate(&policy, parsed);
+
+        assert_eq!(evaluation.items.len(), 2);
+        let docs = evaluation
+            .items
+            .iter()
+            .find(|item| item.input["path"] == "docs/guide.md")
+            .expect("docs decision");
+        assert!(docs.allowed);
+        assert!(docs.reason.contains("within compiled scope"));
+        let source = evaluation
+            .items
+            .iter()
+            .find(|item| item.input["path"] == "src/lib.rs")
+            .expect("source decision");
+        assert!(!source.allowed);
+        assert!(source.reason.contains("outside compiled scope"));
     }
 
     #[test]

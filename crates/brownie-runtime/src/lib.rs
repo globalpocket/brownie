@@ -34218,20 +34218,27 @@ mod tests {
         assert_eq!(proposals.len(), 1);
         let proposal_payload = proposals[0].payload.as_ref().expect("proposal payload");
         assert_eq!(proposal_payload["path"], "docs/guide.md");
+        assert_eq!(
+            events
+                .iter()
+                .filter(|event| event.kind == LedgerEventKind::ToolIntentApproved)
+                .count(),
+            1
+        );
         assert!(events.iter().any(|event| {
-            event.kind == LedgerEventKind::PermissionDenied
+            event.kind == LedgerEventKind::ToolIntentDenied
                 && event
                     .payload
                     .as_ref()
-                    .and_then(|payload| payload.get("scope"))
+                    .and_then(|payload| payload.get("tool_id"))
                     .and_then(Value::as_str)
-                    == Some("workspace.write")
+                    == Some(WORKSPACE_WRITE_TOOL_ID)
                 && event
                     .payload
                     .as_ref()
-                    .and_then(|payload| payload.get("path"))
+                    .and_then(|payload| payload.get("reason"))
                     .and_then(Value::as_str)
-                    == Some("README.md")
+                    .is_some_and(|reason| reason.contains("outside compiled scope"))
         }));
         assert_eq!(
             std::fs::read_to_string(temp.path().join("README.md")).unwrap(),

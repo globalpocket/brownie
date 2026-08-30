@@ -6,6 +6,13 @@ The runtime parses these blocks without executing any tool. Every assistant-requ
 
 Validated assistant tool intent is evaluated by `RuntimePermissionGate` using the compiled mode policy. Runtime permissions take precedence over assistant intent. Denied and rejected tool intent does not execute and does not fail `task.run` in Phase 1.6.
 
+MP-4 requires `workspace.write` intent evaluation to check the requested
+workspace-relative `path` through the task-pinned compiled policy when a mode
+has `workspace_write_scopes`. A matching path may produce bounded
+`WorkspacePatchProposed` evidence; an out-of-scope path records denied intent
+and does not create a proposal or mutate the workspace. Prompt prose cannot
+widen compiled scopes.
+
 Real tool execution, file reads, file writes, patch application, process command execution, subtask spawning, real LLM API calls, and OpenAI-compatible HTTP clients remain non-goals for this phase.
 
 ## Phase 1.7 read-only tool execution note
@@ -37,6 +44,11 @@ Rejected tool intent uses stable codes such as `malformed_json`, `invalid_schema
 ## Phase 3.0 workspace.write dry-run proposals
 
 `workspace.write` supports only `replace_file` input for Phase 3.0. The parser preflights `path`, `operation`, and `content`, and invalid input is rejected with `code = "invalid_input"` without returning raw content. Approved intents remain dry-run and produce patch proposals only; the runtime does not write files or apply patches.
+
+Later generic workspace editing phases extend supported proposal operations, but
+the admission rule stays the same: the tool intent may only become proposal
+evidence after the compiled permission gate allows `WriteWorkspace` for the
+requested path.
 
 ## M5 subtask orchestration queue
 

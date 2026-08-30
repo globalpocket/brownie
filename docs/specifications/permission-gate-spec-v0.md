@@ -32,6 +32,13 @@ workspace-relative path against the compiled static scope, such as an AgentModes
 `edit.fileRegex`. A path outside the compiled scope is denied even though the
 mode has the general write bit. Prompt prose cannot widen or add scopes.
 
+MP-4 wires those scoped checks into generic workspace editing. Assistant
+`workspace.write` intent is checked against the concrete requested path before
+proposal admission, and `proposal.apply` repeats the check against the
+task-pinned proposal path before mutation. Approval and preflight evidence do
+not grant permission; they only satisfy additional apply gates after
+`RuntimePermissionGate` allows the scoped write.
+
 ## JSON-RPC
 
 `permission.check` accepts a built-in `mode_id` and action name, resolves the mode through the built-in registry, and returns an allowed/denied decision with a human-readable reason. Unknown modes return JSON-RPC `-32602`.
